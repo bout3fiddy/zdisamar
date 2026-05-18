@@ -117,60 +117,61 @@ pub fn renormalizeZeroFourierPhaseKernel(
 }
 
 // Rsingle: single-scattering reflection for a homogeneous layer.
-fn singleScatterR(
+fn fillSingleScatterR(
+    out: *basis.Mat,
     a: f64,
     E: *const basis.Vec,
     Zmin: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     const n = geo.nmutot;
-    if (n == 12) return singleScatterR12(a, E, Zmin, geo);
-    var result = basis.Mat.zero(n);
+    if (n == 12) return fillSingleScatterR12(out, a, E, Zmin, geo);
+    out.* = basis.Mat.zero(n);
 
     for (0..n) |j| {
         const ej = E.data[j];
         var idx = j;
         for (0..n) |i| {
             const eer = E.data[i] * ej;
-            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            out.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
             idx += n;
         }
     }
-    return result;
 }
 
-fn singleScatterR12(
+fn fillSingleScatterR12(
+    out: *basis.Mat,
     a: f64,
     E: *const basis.Vec,
     Zmin: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     // INVARIANT: the fixed 12x12 loops assign every active matrix element.
-    var result = basis.Mat{ .data = undefined, .n = 12 };
+    out.* = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
         var idx = j;
         inline for (0..12) |i| {
             const eer = E.data[i] * ej;
-            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            out.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
             idx += 12;
         }
     }
-    return result;
 }
 
 // Tsingle: single-scattering transmission for a homogeneous layer.
-fn singleScatterT(
+fn fillSingleScatterT(
+    out: *basis.Mat,
     a: f64,
     b: f64,
     E: *const basis.Vec,
     Zplus: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     const n = geo.nmutot;
-    if (n == 12) return singleScatterT12(a, b, E, Zplus, geo);
-    var result = basis.Mat.zero(n);
+    if (n == 12) return fillSingleScatterT12(out, a, b, E, Zplus, geo);
+    out.* = basis.Mat.zero(n);
 
     for (0..n) |j| {
         const ej = E.data[j];
@@ -182,22 +183,22 @@ fn singleScatterT(
             } else {
                 eet = E.data[i] - ej;
             }
-            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            out.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += n;
         }
     }
-    return result;
 }
 
-fn singleScatterT12(
+fn fillSingleScatterT12(
+    out: *basis.Mat,
     a: f64,
     b: f64,
     E: *const basis.Vec,
     Zplus: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     // INVARIANT: the fixed 12x12 loops assign every active matrix element.
-    var result = basis.Mat{ .data = undefined, .n = 12 };
+    out.* = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
@@ -209,11 +210,10 @@ fn singleScatterT12(
             } else {
                 eet = E.data[i] - ej;
             }
-            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            out.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += 12;
         }
     }
-    return result;
 }
 
 fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
@@ -257,13 +257,15 @@ fn doDouble(
     n: usize,
     n_gauss: usize,
     threshold_mul: f64,
-    geo: *const basis.Geometry,
-    b_start: f64,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
 ) void {
-    var b = b_start;
+    if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
+        doDouble12x10(ndouble, threshold_mul, R, T, E);
+        return;
+    }
+
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
     var current_r = R;
@@ -287,7 +289,8 @@ fn doDouble(
             Trace.plotU("matrix_qseries", 1);
             Trace.plotU("matrix_smul_q_product", 1);
             Trace.plotU("matrix_smul_add_semul3", 1);
-            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, current_r, current_r);
+            var Q: basis.Mat = undefined;
+            basis.qseriesKnownNonzeroProductInto(&Q, n, n_gauss, current_r, current_r);
             basis.smulAddSemul3KnownRightTraceInto(&d_storage, n, n_gauss, threshold_mul, &Q, E, current_t, trace_t);
             break :blk &d_storage;
         };
@@ -347,20 +350,125 @@ fn doDouble(
         next_t = previous_t;
         final_in_scratch = !final_in_scratch;
 
-        b *= 2.0;
-        if (b < 0.001) {
-            for (0..geo.nmutot) |imu| {
-                E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
-            }
-        } else {
-            Trace.plotU("doubling_square_evals", @intCast(n));
-            squareAttenuation(n, E);
-        }
+        Trace.plotU("doubling_square_evals", @intCast(n));
+        squareAttenuation(n, E);
     }
 
     if (final_in_scratch) {
         R.* = current_r.*;
         T.* = current_t.*;
+    }
+}
+
+fn doDouble12x10(
+    ndouble: usize,
+    threshold_mul: f64,
+    R: *basis.Mat,
+    T: *basis.Mat,
+    E: *basis.Vec,
+) void {
+    var r_storage: basis.Mat = undefined;
+    var t_storage: basis.Mat = undefined;
+    var current_r = R;
+    var current_t = T;
+    var next_r = &r_storage;
+    var next_t = &t_storage;
+    var final_in_scratch = false;
+
+    for (0..ndouble) |_| {
+        Trace.plotU("doubling_steps", 1);
+        doDouble12x10Step(threshold_mul, current_r, current_t, E, next_r, next_t);
+
+        const previous_r = current_r;
+        const previous_t = current_t;
+        current_r = next_r;
+        current_t = next_t;
+        next_r = previous_r;
+        next_t = previous_t;
+        final_in_scratch = !final_in_scratch;
+
+        Trace.plotU("doubling_square_evals", basis.max_nmutot);
+        squareAttenuation12(E);
+    }
+
+    if (final_in_scratch) {
+        R.* = current_r.*;
+        T.* = current_t.*;
+    }
+}
+
+inline fn doDouble12x10Step(
+    threshold_mul: f64,
+    current_r: *const basis.Mat,
+    current_t: *const basis.Mat,
+    E: *const basis.Vec,
+    next_r: *basis.Mat,
+    next_t: *basis.Mat,
+) void {
+    const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
+    const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
+    const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+
+    var d_storage: basis.Mat = undefined;
+    const D = if (q_is_zero) blk: {
+        Trace.plotU("doubling_qseries_skipped", 1);
+        break :blk current_t;
+    } else blk: {
+        Trace.plotU("doubling_qseries_nonzero", 1);
+        Trace.plotU("matrix_qseries", 1);
+        Trace.plotU("matrix_smul_q_product", 1);
+        Trace.plotU("matrix_smul_add_semul3", 1);
+        var Q: basis.Mat = undefined;
+        basis.qseriesKnownNonzeroProductInto(&Q, basis.max_nmutot, basis.max_gauss, current_r, current_r);
+        basis.smulAddSemul3KnownRightTraceInto(&d_storage, basis.max_nmutot, basis.max_gauss, threshold_mul, &Q, E, current_t, trace_t);
+        break :blk &d_storage;
+    };
+    const trace_d = if (q_is_zero) trace_t else gaussTrace(basis.max_nmutot, basis.max_gauss, D);
+
+    Trace.plotU("matrix_smul_rd", 1);
+    const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+
+    var U: basis.Mat = undefined;
+    if (rd_nonzero) {
+        Trace.plotU("matrix_smul_rd_nonzero", 1);
+        Trace.plotU("matrix_semul_add", 1);
+        basis.semulAddProductKnownNonzeroInto(&U, basis.max_nmutot, basis.max_gauss, current_r, E, D);
+    } else {
+        Trace.plotU("matrix_semul", 1);
+        basis.semulInto(&U, basis.max_nmutot, current_r, E);
+    }
+    const trace_u = gaussTrace(basis.max_nmutot, basis.max_gauss, &U);
+
+    Trace.plotU("matrix_smul_tu", 1);
+    const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+
+    if (tu_nonzero) {
+        Trace.plotU("matrix_smul_tu_nonzero", 1);
+        Trace.plotU("matrix_mat_add_esmul3", 1);
+        basis.matAddEsmul3ProductKnownNonzeroInto(next_r, basis.max_nmutot, basis.max_gauss, current_r, E, &U, current_t);
+    } else {
+        Trace.plotU("matrix_mat_add_esmul", 1);
+        basis.matAddEsmulInto(next_r, basis.max_nmutot, current_r, E, &U);
+    }
+
+    Trace.plotU("matrix_smul_td", 1);
+    const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+
+    if (td_nonzero) {
+        Trace.plotU("matrix_smul_td_nonzero", 1);
+        Trace.plotU("matrix_esmul_semul_add", 1);
+        if (q_is_zero) {
+            basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, current_t);
+        } else {
+            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
+        }
+    } else {
+        Trace.plotU("matrix_esmul_semul", 1);
+        if (q_is_zero) {
+            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
+        } else {
+            basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
+        }
     }
 }
 
@@ -508,6 +616,8 @@ pub fn calcRTlayersIntoWithBasis(
             }
             b_start = bd;
         }
+        const needs_renormalized_phase =
+            use_doubling and i_fourier == 0 and controls.renorm_phase_function;
 
         var E = basis.Vec.zero(geo.nmutot);
         {
@@ -519,44 +629,34 @@ pub fn calcRTlayersIntoWithBasis(
         }
         Trace.plotU("initial_exp_evals", @intCast(geo.nmutot));
 
-        var R: basis.Mat = undefined;
-        var T: basis.Mat = undefined;
+        if (needs_renormalized_phase) {
+            {
+                const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
+                defer zone.end();
+                renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
+            }
+            Trace.plotU("phase_renormalizations", 1);
+        }
+
+        const layer_rt = &rt[rt_idx];
         {
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
             defer zone.end();
-            R = singleScatterR(a, &E, &z.Zmin, geo);
-            T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+            fillSingleScatterR(&layer_rt.R, a, &E, &z.Zmin, geo);
+            fillSingleScatterT(&layer_rt.T, a, b_start, &E, &z.Zplus, geo);
         }
         Trace.plotU("single_scatter_r", 1);
         Trace.plotU("single_scatter_t", 1);
 
         if (use_doubling) {
             Trace.plotU("doubled_layers", 1);
-            if (i_fourier == 0 and controls.renorm_phase_function) {
-                {
-                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
-                    defer zone.end();
-                    renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
-                }
-                Trace.plotU("phase_renormalizations", 1);
-                {
-                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
-                    defer zone.end();
-                    R = singleScatterR(a, &E, &z.Zmin, geo);
-                    T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
-                }
-                Trace.plotU("single_scatter_r", 1);
-                Trace.plotU("single_scatter_t", 1);
-            }
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
-                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, geo, b_start, &R, &T, &E);
+                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, &layer_rt.R, &layer_rt.T, &E);
             }
         }
 
-        rt[rt_idx].R = R;
-        rt[rt_idx].T = T;
         if (rt_active) |active| active[rt_idx] = a != 0.0;
     }
 }

@@ -23,6 +23,14 @@ pub const SpectralEvaluationCache = struct {
         self.irradiance.clearRetainingCapacity();
     }
 
+    pub fn reserveForward(self: *SpectralEvaluationCache, count: usize) Allocator.Error!void {
+        try self.forward.ensureTotalCapacity(@intCast(count));
+    }
+
+    pub fn reserveIrradiance(self: *SpectralEvaluationCache, count: usize) Allocator.Error!void {
+        try self.irradiance.ensureTotalCapacity(@intCast(count));
+    }
+
     pub fn deinit(self: *SpectralEvaluationCache) void {
         self.forward.deinit();
         self.irradiance.deinit();

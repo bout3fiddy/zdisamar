@@ -59,7 +59,7 @@ pub fn resolveSharedRtmSubgrid(
 pub fn accumulateSharedCarrier(
     breakdown: *OpticalDepthBreakdown,
     phase_numerator: *[phase_coefficient_count]f64,
-    carrier: carrier_eval.SharedOpticalCarrier,
+    carrier: *const carrier_eval.SharedOpticalCarrier,
     weight_km: f64,
 ) void {
     const weighted_gas_absorption = carrier.gas_absorption_optical_depth_per_km * weight_km;
@@ -167,7 +167,7 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
             strong_line_state,
             profile_cache,
         );
-        accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
+        accumulateSharedCarrier(&breakdown, &phase_numerator, &carrier, weight_km);
     }
     return evaluatedLayerFromSharedCarrier(
         scene,
@@ -206,13 +206,14 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
             if (local_index < states.len) &states[local_index] else null
         else
             null;
-        const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithCarrierCache(
+        var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
+        const carrier = wavelength_cache.cachedSupportRowRef(
             self,
             wavelength_nm,
             support_sublayer,
             @intCast(support_sublayer.global_sublayer_index),
             strong_line_state,
-            wavelength_cache,
+            &fallback_carrier,
         );
         accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
     }
@@ -260,7 +261,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
             .optical_depth = optical_depth,
         };
         if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+            attenuation_layers[sample_index].optical_depth = optical_depth;
         }
         sample_index += 1;
     }
@@ -285,24 +286,25 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
             if (local_index < states.len) &states[local_index] else null
         else
             null;
-        const optical_depth = if (weight_km > 0.0)
-            weight_km * carrier_eval.sharedOpticalCarrierAtSupportRowWithCarrierCache(
+        const optical_depth = if (weight_km > 0.0) optical_depth: {
+            var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
+            const carrier = wavelength_cache.cachedSupportRowRef(
                 self,
                 wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
-                wavelength_cache,
-            ).totalOpticalDepthPerKm()
-        else
-            0.0;
+                &fallback_carrier,
+            );
+            break :optical_depth weight_km * carrier.totalOpticalDepthPerKm();
+        } else 0.0;
         attenuation_samples[sample_index] = .{
             .altitude_km = support_sublayer.altitude_km,
             .thickness_km = weight_km,
             .optical_depth = optical_depth,
         };
         if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+            attenuation_layers[sample_index].optical_depth = optical_depth;
         }
         sample_index += 1;
     }
@@ -362,7 +364,7 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         accumulateSharedCarrier(
             &breakdown,
             &phase_numerator,
-            carrier,
+            &carrier,
             weight_km,
         );
     }
@@ -441,7 +443,7 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
             .optical_depth = optical_depth,
         };
         if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+            attenuation_layers[sample_index].optical_depth = optical_depth;
         }
         sample_index += 1;
     }

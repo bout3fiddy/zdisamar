@@ -1,7 +1,7 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 
-const allocator = std.heap.page_allocator;
+const allocator = std.heap.smp_allocator;
 
 pub const ZdsStatus = enum(c_int) {
     ok = 0,

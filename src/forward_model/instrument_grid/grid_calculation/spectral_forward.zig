@@ -26,6 +26,7 @@ pub const ForwardIntegratedSample = struct {
 
 pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
 const forward_prefetch_chunk_size: usize = 8;
+const forward_prefetch_pooled_chunk_size: usize = 16;
 
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
@@ -120,10 +121,24 @@ const ForwardPrefetchWorker = struct {
     error_state: *ForwardPrefetchErrorState,
     start_index: usize,
     end_index: usize,
+    queue: ?*work_partition.ChunkQueue = null,
     worker_index: usize = 0,
 };
 
 pub fn radianceFromForward(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    wavelength_nm: f64,
+    safe_span: f64,
+    phase: f64,
+    forward: common.ForwardResult,
+) f64 {
+    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
+    return forward.toa_reflectance_factor * scale;
+}
+
+fn radianceScaleFromForward(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
@@ -142,7 +157,7 @@ pub fn radianceFromForward(
         .phase = phase,
         .forward = forward,
     });
-    return solar_cosine * (forward.toa_reflectance_factor * surface_gain) * solar_irradiance / std.math.pi;
+    return solar_cosine * surface_gain * solar_irradiance / std.math.pi;
 }
 
 fn radianceJacobianFromForward(
@@ -155,17 +170,27 @@ fn radianceJacobianFromForward(
     forward: common.ForwardResult,
 ) jacobian.Vector {
     const reflectance_jacobian = forward.jacobian orelse return jacobian.zero();
-    const solar_irradiance = solar_compat.irradianceAtWavelength(scene, wavelength_nm);
-    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
-    const surface_gain = implementations.surface.brdfFactor(.{
-        .scene = scene,
-        .prepared = prepared,
-        .wavelength_nm = wavelength_nm,
-        .safe_span = safe_span,
-        .phase = phase,
-        .forward = forward,
-    });
-    return jacobian.scale(reflectance_jacobian, solar_cosine * surface_gain * solar_irradiance / std.math.pi);
+    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
+    return jacobian.scale(reflectance_jacobian, scale);
+}
+
+fn integratedSampleFromForward(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    wavelength_nm: f64,
+    safe_span: f64,
+    phase: f64,
+    forward: common.ForwardResult,
+) ForwardIntegratedSample {
+    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
+    return .{
+        .radiance = forward.toa_reflectance_factor * scale,
+        .jacobian = if (forward.jacobian) |reflectance_jacobian|
+            jacobian.scale(reflectance_jacobian, scale)
+        else
+            jacobian.zero(),
+    };
 }
 
 pub fn computeForwardSampleAtWavelength(
@@ -267,11 +292,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
         else
             try implementations.transport.executePrepared(allocator, effective_route, input);
     };
-    const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
-    return .{
-        .radiance = radiance,
-        .jacobian = radianceJacobianFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward),
-    };
+    return integratedSampleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
@@ -287,7 +308,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -302,13 +323,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     };
     defer scratch.deinit(allocator);
 
-    var chunk_start = worker.start_index;
-    while (chunk_start < worker.end_index) {
-        const chunk = .{
-            .start = chunk_start,
-            .end = @min(chunk_start + forward_prefetch_chunk_size, worker.end_index),
-        };
-        chunk_start = chunk.end;
+    while (nextForwardPrefetchChunk(worker)) |chunk| {
         {
             const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
@@ -348,6 +363,17 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     }
 }
 
+fn nextForwardPrefetchChunk(worker: *ForwardPrefetchWorker) ?work_partition.Range {
+    if (worker.queue) |queue| return queue.next();
+    if (worker.start_index >= worker.end_index) return null;
+    const chunk = work_partition.Range{
+        .start = worker.start_index,
+        .end = @min(worker.start_index + forward_prefetch_chunk_size, worker.end_index),
+    };
+    worker.start_index = chunk.end;
+    return chunk;
+}
+
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -358,6 +384,7 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
+    thread_pool: ?*std.Thread.Pool,
 ) Error!void {
     if (misses.len == 0) return;
 
@@ -401,8 +428,6 @@ pub fn prefetchForwardSamples(
     var error_state = ForwardPrefetchErrorState{};
     const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
     defer allocator.free(workers);
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
 
     for (0..worker_count) |worker_index| {
         const range = work_partition.staticRange(misses.len, worker_count, worker_index);
@@ -422,6 +447,21 @@ pub fn prefetchForwardSamples(
         };
     }
 
+    if (thread_pool) |pool| {
+        var queue = work_partition.ChunkQueue.init(misses.len, forward_prefetch_pooled_chunk_size);
+        for (workers) |*worker| worker.queue = &queue;
+        var wait_group = std.Thread.WaitGroup{};
+        for (0..worker_count - 1) |worker_index| {
+            pool.spawnWg(&wait_group, prefetchForwardWorkerMain, .{&workers[worker_index]});
+        }
+        prefetchForwardWorkerMain(&workers[worker_count - 1]);
+        wait_group.wait();
+        if (error_state.err) |err| return err;
+        return;
+    }
+
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
     var started_thread_count: usize = 0;
     for (0..worker_count - 1) |worker_index| {
         threads[started_thread_count] = std.Thread.spawn(

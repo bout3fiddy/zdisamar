@@ -147,7 +147,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
         wavelength_nm,
         layer_inputs,
         source_interfaces,
-        &wavelength_cache.profile_cache,
+        wavelength_cache.profile_cache,
     );
 }
 

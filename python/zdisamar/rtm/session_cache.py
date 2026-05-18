@@ -22,10 +22,10 @@ class SessionCache:
             self.load(self.case)
             self._handle.warm_cache()
 
-    def load(self, case: O2AInput) -> None:
+    def load(self, case: O2AInput, *, copy_case: bool = True) -> None:
         """Load a wavelength-band case into the cached RTM storage."""
 
-        self._handle.load_o2a_case(case)
+        self._handle.load_o2a_case(case, copy_case=copy_case)
         self.case = case
 
     def spectrum(
@@ -34,17 +34,19 @@ class SessionCache:
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
+        include_case: bool = True,
     ):
         """Run the RTM using cached storage."""
 
         if case is not None:
-            self.load(case)
+            self.load(case, copy_case=include_case)
         elif self.case is None:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
+            include_case=include_case,
         )
 
     def atmospheric_budget(self, wavelengths_nm):

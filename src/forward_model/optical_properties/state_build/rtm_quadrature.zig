@@ -306,7 +306,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             wavelength_nm,
             layer_inputs,
             rtm_levels,
-            &wavelength_cache.profile_cache,
+            wavelength_cache.profile_cache,
         );
     }
 

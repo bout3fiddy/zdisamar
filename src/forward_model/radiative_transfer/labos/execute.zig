@@ -194,23 +194,34 @@ fn layerResolvedLabosWithWorkspace(
         owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
         break :blk &owned_geo;
     };
-    const owned_atten = workspace == null;
-    var atten = if (workspace) |scratch|
-        try scratch.attenuation(
-            input.layers,
-            input.pseudo_spherical_grid,
-            geo,
-            controls.use_spherical_correction,
-        )
-    else
-        try fillAttenuationDynamicWithGrid(
+    var runtime_atten: ?attenuation.RuntimeAttenArray = null;
+    var dynamic_atten: ?attenuation.DynamicAttenArray = null;
+    if (workspace) |scratch| {
+        if (use_integrated_source) {
+            runtime_atten = try scratch.runtimeAttenuation(
+                input.layers,
+                input.pseudo_spherical_grid,
+                geo,
+                controls.use_spherical_correction,
+            );
+        } else {
+            dynamic_atten = try scratch.attenuation(
+                input.layers,
+                input.pseudo_spherical_grid,
+                geo,
+                controls.use_spherical_correction,
+            );
+        }
+    } else {
+        dynamic_atten = try fillAttenuationDynamicWithGrid(
             allocator,
             input.layers,
             input.pseudo_spherical_grid,
             geo,
             controls.use_spherical_correction,
         );
-    defer if (owned_atten) atten.deinit();
+    }
+    defer if (workspace == null) if (dynamic_atten) |*atten| atten.deinit();
     const rt = if (workspace) |scratch|
         try scratch.layerRt(nlayer + 1)
     else blk: {
@@ -310,57 +321,63 @@ fn layerResolvedLabosWithWorkspace(
             const orders_result = orders_result: {
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
-                break :orders_result if (use_integrated_source)
-                    if (compute_jacobian)
-                        if (workspace != null) orders_mod.ordersScatIntoWithActiveLocalSum(
+                break :orders_result if (use_integrated_source) blk: {
+                    if (runtime_atten) |*atten| {
+                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithActiveLocalSum(
                             orders_workspace,
                             0,
                             nlayer,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             num_orders_max,
-                        ) else orders_mod.ordersScatIntoWithLocalSum(
+                        ) else orders_mod.ordersScatIntoWithActive(
                             orders_workspace,
                             0,
                             nlayer,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             num_orders_max,
-                        )
-                    else if (workspace != null) orders_mod.ordersScatIntoWithActive(
+                        );
+                    }
+                    if (dynamic_atten) |*atten| {
+                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithLocalSum(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        ) else orders_mod.ordersScatInto(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        );
+                    }
+                    unreachable;
+                } else blk: {
+                    if (dynamic_atten) |*atten| break :blk orders_mod.ordersScatTransportInto(
                         orders_workspace,
                         0,
                         nlayer,
                         geo,
-                        &atten,
-                        rt,
-                        controls,
-                        num_orders_max,
-                    ) else orders_mod.ordersScatInto(
-                        orders_workspace,
-                        0,
-                        nlayer,
-                        geo,
-                        &atten,
-                        rt,
-                        controls,
-                        num_orders_max,
-                    )
-                else
-                    orders_mod.ordersScatTransportInto(
-                        orders_workspace,
-                        0,
-                        nlayer,
-                        geo,
-                        &atten,
+                        atten,
                         rt,
                         controls,
                         num_orders_max,
                     );
+                    unreachable;
+                };
             };
             const refl_fc = refl_fc: {
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
@@ -409,19 +426,21 @@ fn layerResolvedLabosWithWorkspace(
                             plm_basis,
                             adjacent_layer_phase_max_indices,
                         )
-                    else
-                        try nonIntegratedReflectanceTangent(
+                    else blk: {
+                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
                             allocator,
                             input.layers,
                             .aerosol_optical_depth,
                             i_fourier,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             plm_basis,
                             num_orders_max,
                         );
+                        unreachable;
+                    };
                 };
                 const weighted_tangent_refl_fc = if (i_fourier == 0)
                     tangent_refl_fc
@@ -445,18 +464,19 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     ) else blk: {
                         if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
-                        break :blk try nonIntegratedReflectanceTangent(
+                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
                             allocator,
                             input.layers,
                             .aerosol_layer_mid_pressure_hpa,
                             i_fourier,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             plm_basis,
                             num_orders_max,
                         );
+                        unreachable;
                     };
                 };
                 const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {

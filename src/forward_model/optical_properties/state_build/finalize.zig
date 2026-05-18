@@ -25,7 +25,7 @@ pub fn assemble(
     else
         PhaseSupportKind.none;
 
-    const prepared: State.PreparedOpticalState = .{
+    var prepared: State.PreparedOpticalState = .{
         .layers = context.layers,
         .sublayers = context.sublayers,
         .strong_line_states = absorbers.strong_line_states,
@@ -87,6 +87,8 @@ pub fn assemble(
         .aerosol_fraction_control = context.aerosol_fraction_control,
         .cloud_fraction_control = context.cloud_fraction_control,
     };
+    prepared.spectroscopy_plan_key = prepared.computeSpectroscopyPlanKey();
+    prepared.spectroscopy_profile_cache_inputs_key = prepared.computeSpectroscopyProfileCacheInputsKey();
 
     context.layers = &.{};
     context.sublayers = &.{};

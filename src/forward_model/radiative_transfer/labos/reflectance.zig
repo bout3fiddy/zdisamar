@@ -9,6 +9,16 @@ const PhaseRows = struct {
     zmin: []const f64,
 };
 
+const PhaseRowCache = struct {
+    rows: [basis.max_nmutot]basis.PhaseKernelRow,
+    n: usize,
+};
+
+const UnitPhase = struct {
+    coefficients: [basis.max_phase_coef]f64,
+    max_index: usize,
+};
+
 const ScatteringSourceRowSums = struct {
     pplusplus_ed: f64,
     pminplus_ed: f64,
@@ -477,6 +487,102 @@ fn unitPhaseCoefficientsFromScaled(
     return unit;
 }
 
+fn unitPhaseFromScaled(
+    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+) ?UnitPhase {
+    const scale = scaled_phase_coefficients[0];
+    if (scale <= 0.0) return null;
+    const coefficients = unitPhaseCoefficientsFromScaled(scaled_phase_coefficients);
+    return .{
+        .coefficients = coefficients,
+        .max_index = maxPhaseCoefficientIndex(coefficients),
+    };
+}
+
+fn sameUnitPhase(
+    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    reference: UnitPhase,
+) bool {
+    const candidate = unitPhaseFromScaled(scaled_phase_coefficients) orelse return true;
+    for (0..basis.max_phase_coef) |index| {
+        if (@abs(candidate.coefficients[index] - reference.coefficients[index]) > 1.0e-12) return false;
+    }
+    return true;
+}
+
+fn commonActiveAerosolUnitPhase(
+    rtm_quadrature: common.RtmQuadratureGrid,
+    bounds: AerosolIntervalBounds,
+) ?UnitPhase {
+    var result: ?UnitPhase = null;
+    for (bounds.bottom..bounds.top) |ilevel| {
+        const scaled_phase_coefficients = rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km;
+        const current = unitPhaseFromScaled(scaled_phase_coefficients) orelse continue;
+        if (result) |reference| {
+            if (!sameUnitPhase(scaled_phase_coefficients, reference)) return null;
+        } else {
+            result = current;
+        }
+    }
+    return result;
+}
+
+fn buildPhaseRowCache(
+    phase_coefficients: [basis.max_phase_coef]f64,
+    max_phase_index: usize,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+) PhaseRowCache {
+    var cache = PhaseRowCache{
+        .rows = undefined,
+        .n = geo.nmutot,
+    };
+    for (0..geo.nmutot) |row_index| {
+        cache.rows[row_index] = basis.fillZplusZminRowFromBasisLimited(
+            i_fourier,
+            phase_coefficients,
+            max_phase_index,
+            geo,
+            plm_basis,
+            row_index,
+        );
+    }
+    return cache;
+}
+
+inline fn scatteringSourceRowSumsFromRows(
+    rows: PhaseRows,
+    level: *const basis.UDField,
+    geo: *const basis.Geometry,
+    row_index: usize,
+) ScatteringSourceRowSums {
+    const solar_col: usize = 1;
+    const solar_idx = geo.n_gauss + 1;
+    const mu_row = @max(geo.u[row_index], 1.0e-12);
+    var sums = ScatteringSourceRowSums{
+        .pplusplus_ed = 0.0,
+        .pminplus_ed = 0.0,
+        .pminmin_u = 0.0,
+        .pplusmin_u = 0.0,
+    };
+    for (0..geo.n_gauss) |imu| {
+        const mu_col = @max(geo.u[imu], 1.0e-12);
+        const pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
+        const pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
+        sums.pplusplus_ed += pplus * level.D.col[solar_col].get(imu);
+        sums.pminplus_ed += pmin * level.D.col[solar_col].get(imu);
+        sums.pminmin_u += pplus * level.U.col[solar_col].get(imu);
+        sums.pplusmin_u += pmin * level.U.col[solar_col].get(imu);
+    }
+    const mu_solar = @max(geo.u[solar_idx], 1.0e-12);
+    const pplus_direct = (0.25 * rows.zplus[solar_idx] / mu_row) / mu_solar;
+    const pmin_direct = (0.25 * rows.zmin[solar_idx] / mu_row) / mu_solar;
+    sums.pplusplus_ed += pplus_direct * level.E.get(solar_idx);
+    sums.pminplus_ed += pmin_direct * level.E.get(solar_idx);
+    return sums;
+}
+
 fn scatteringCoefficientInterfaceWeighting(
     scaled_phase_coefficients: [basis.max_phase_coef]f64,
     ud: []const basis.UDField,
@@ -510,12 +616,75 @@ fn scatteringCoefficientInterfaceWeighting(
     );
 }
 
+fn scatteringCoefficientInterfaceWeightingFromPhaseRows(
+    phase_rows: *const PhaseRowCache,
+    ud: []const basis.UDField,
+    ud_sum_local: []const basis.UDLocal,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ilevel: usize,
+    use_pseudo_spherical: bool,
+    geo: *const basis.Geometry,
+) f64 {
+    return scatteringSourceWeightingFromPhaseRows(
+        phase_rows,
+        ud,
+        ilevel,
+        geo,
+    ) + absorptionInterfaceWeighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        ilevel,
+        use_pseudo_spherical,
+        geo,
+    );
+}
+
 fn aerosolTotalExtinctionInterfaceWeighting(
     scattering_weighting: f64,
     absorption_weighting: f64,
     aerosol_ssa: f64,
 ) f64 {
     return aerosol_ssa * scattering_weighting + (1.0 - aerosol_ssa) * absorption_weighting;
+}
+
+fn scatteringSourceWeightingFromPhaseRows(
+    phase_rows: *const PhaseRowCache,
+    ud: []const basis.UDField,
+    ilevel: usize,
+    geo: *const basis.Geometry,
+) f64 {
+    const view_col: usize = 0;
+    const view_idx = geo.viewIdx();
+    const level = &ud[ilevel];
+
+    var sum: f64 = 0.0;
+    for (0..geo.n_gauss) |row_index| {
+        const cached_row = &phase_rows.rows[row_index];
+        const row = scatteringSourceRowSumsFromRows(
+            .{
+                .zplus = cached_row.zplus[0..phase_rows.n],
+                .zmin = cached_row.zmin[0..phase_rows.n],
+            },
+            level,
+            geo,
+            row_index,
+        );
+        sum += level.D.col[view_col].get(row_index) * (row.pminplus_ed + row.pminmin_u) +
+            level.U.col[view_col].get(row_index) * (row.pplusplus_ed + row.pplusmin_u);
+    }
+    const cached_view_row = &phase_rows.rows[view_idx];
+    const view_row = scatteringSourceRowSumsFromRows(
+        .{
+            .zplus = cached_view_row.zplus[0..phase_rows.n],
+            .zmin = cached_view_row.zmin[0..phase_rows.n],
+        },
+        level,
+        geo,
+        view_idx,
+    );
+    sum += level.E.get(view_idx) * (view_row.pminplus_ed + view_row.pminmin_u);
+    return sum;
 }
 
 pub fn calcAerosolOpticalDepthWeightingWithBasis(
@@ -540,19 +709,37 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
             rtm_quadrature.levels[bounds.top - 1].altitude_km -
             rtm_quadrature.levels[bounds.bottom].altitude_km;
         if (denominator <= 0.0) return 0.0;
+        const cached_phase_rows = if (commonActiveAerosolUnitPhase(rtm_quadrature, bounds)) |unit_phase|
+            if (i_fourier <= unit_phase.max_index)
+                buildPhaseRowCache(unit_phase.coefficients, unit_phase.max_index, i_fourier, geo, plm_basis)
+            else
+                return 0.0
+        else
+            null;
         var integral: f64 = 0.0;
         var previous = aerosolTotalExtinctionInterfaceWeighting(
-            scatteringCoefficientInterfaceWeighting(
-                rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
-                ud,
-                ud_sum_local,
-                rtm_quadrature,
-                bounds.bottom,
-                i_fourier,
-                use_pseudo_spherical,
-                geo,
-                plm_basis,
-            ),
+            if (cached_phase_rows) |phase_rows|
+                scatteringCoefficientInterfaceWeightingFromPhaseRows(
+                    &phase_rows,
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    bounds.bottom,
+                    use_pseudo_spherical,
+                    geo,
+                )
+            else
+                scatteringCoefficientInterfaceWeighting(
+                    rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    bounds.bottom,
+                    i_fourier,
+                    use_pseudo_spherical,
+                    geo,
+                    plm_basis,
+                ),
             if (needs_absorption_weighting)
                 absorptionInterfaceWeighting(
                     ud,
@@ -568,17 +755,28 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
         );
         for (bounds.bottom + 1..bounds.top) |ilevel| {
             const current = aerosolTotalExtinctionInterfaceWeighting(
-                scatteringCoefficientInterfaceWeighting(
-                    rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km,
-                    ud,
-                    ud_sum_local,
-                    rtm_quadrature,
-                    ilevel,
-                    i_fourier,
-                    use_pseudo_spherical,
-                    geo,
-                    plm_basis,
-                ),
+                if (cached_phase_rows) |phase_rows|
+                    scatteringCoefficientInterfaceWeightingFromPhaseRows(
+                        &phase_rows,
+                        ud,
+                        ud_sum_local,
+                        rtm_quadrature,
+                        ilevel,
+                        use_pseudo_spherical,
+                        geo,
+                    )
+                else
+                    scatteringCoefficientInterfaceWeighting(
+                        rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km,
+                        ud,
+                        ud_sum_local,
+                        rtm_quadrature,
+                        ilevel,
+                        i_fourier,
+                        use_pseudo_spherical,
+                        geo,
+                        plm_basis,
+                    ),
                 if (needs_absorption_weighting)
                     absorptionInterfaceWeighting(
                         ud,

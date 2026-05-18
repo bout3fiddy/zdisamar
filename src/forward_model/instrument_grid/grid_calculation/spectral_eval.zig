@@ -146,8 +146,11 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     cache: *SpectralEvaluationCache,
+    thread_pool: ?*std.Thread.Pool,
 ) Error!void {
     if (misses.len == 0) return;
+
+    try cache.reserveForward(misses.len);
 
     const results = try allocator.alloc(ForwardIntegratedSample, misses.len);
     defer allocator.free(results);
@@ -162,6 +165,7 @@ pub fn prefetchForwardSamples(
         misses,
         profile_spectroscopy_caches,
         results,
+        thread_pool,
     );
     for (misses, results) |miss, result| {
         try cache.forward.put(miss.key, result);

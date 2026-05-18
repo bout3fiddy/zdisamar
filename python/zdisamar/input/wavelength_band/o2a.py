@@ -1,7 +1,7 @@
 """Typed O2 A wavelength-band input object and JSON conversion."""
 
 import json
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -182,34 +182,40 @@ class O2AInput(NotebookDisplay):
     def with_resolved_asset_resolver(self, resolver) -> Self:
         """Return a copy with every reference-data file path resolved."""
 
-        resolved = deepcopy(self)
-        resolved.reference_assets.atmosphere_profile = (
-            resolved.reference_assets.atmosphere_profile.with_resolved_path(resolver)
+        resolved = copy(self)
+        resolved.reference_assets = ReferenceAssets(
+            atmosphere_profile=self.reference_assets.atmosphere_profile.with_resolved_path(
+                resolver
+            ),
+            vendor_reference_csv=self.reference_assets.vendor_reference_csv.with_resolved_path(
+                resolver
+            ),
+            raw_solar_reference=self.reference_assets.raw_solar_reference.with_resolved_path(
+                resolver
+            ),
+            airmass_factor_lut=self.reference_assets.airmass_factor_lut.with_resolved_path(
+                resolver
+            ),
         )
-        resolved.reference_assets.vendor_reference_csv = (
-            resolved.reference_assets.vendor_reference_csv.with_resolved_path(resolver)
-        )
-        resolved.reference_assets.raw_solar_reference = (
-            resolved.reference_assets.raw_solar_reference.with_resolved_path(resolver)
-        )
-        resolved.reference_assets.airmass_factor_lut = (
-            resolved.reference_assets.airmass_factor_lut.with_resolved_path(resolver)
-        )
-        resolved.o2_lines.line_list_asset = resolved.o2_lines.line_list_asset.with_resolved_path(
+        resolved.o2_lines = copy(self.o2_lines)
+        resolved.o2_lines.isotopes_sim = list(self.o2_lines.isotopes_sim)
+        resolved.o2_lines.line_list_asset = self.o2_lines.line_list_asset.with_resolved_path(
             resolver
         )
-        resolved.o2_lines.line_mixing_asset = (
-            resolved.o2_lines.line_mixing_asset.with_resolved_path(resolver)
+        resolved.o2_lines.line_mixing_asset = self.o2_lines.line_mixing_asset.with_resolved_path(
+            resolver
         )
-        resolved.o2_lines.strong_lines_asset = (
-            resolved.o2_lines.strong_lines_asset.with_resolved_path(resolver)
+        resolved.o2_lines.strong_lines_asset = self.o2_lines.strong_lines_asset.with_resolved_path(
+            resolver
         )
 
-        if resolved.collision_induced_absorption.cross_section_asset is not None:
+        resolved.collision_induced_absorption = copy(self.collision_induced_absorption)
+
+        cia_asset = self.collision_induced_absorption.cross_section_asset
+
+        if cia_asset is not None:
             resolved.collision_induced_absorption.cross_section_asset = (
-                resolved.collision_induced_absorption.cross_section_asset.with_resolved_path(
-                    resolver
-                )
+                cia_asset.with_resolved_path(resolver)
             )
 
         return resolved

@@ -166,15 +166,15 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var s = a0 * loadPair(b0, j);
-            s += a1 * loadPair(b1, j);
-            s += a2 * loadPair(b2, j);
-            s += a3 * loadPair(b3, j);
-            s += a4 * loadPair(b4, j);
-            s += a5 * loadPair(b5, j);
-            s += a6 * loadPair(b6, j);
-            s += a7 * loadPair(b7, j);
-            s += a8 * loadPair(b8, j);
-            s += a9 * loadPair(b9, j);
+            s = @mulAdd(@Vector(2, f64), a1, loadPair(b1, j), s);
+            s = @mulAdd(@Vector(2, f64), a2, loadPair(b2, j), s);
+            s = @mulAdd(@Vector(2, f64), a3, loadPair(b3, j), s);
+            s = @mulAdd(@Vector(2, f64), a4, loadPair(b4, j), s);
+            s = @mulAdd(@Vector(2, f64), a5, loadPair(b5, j), s);
+            s = @mulAdd(@Vector(2, f64), a6, loadPair(b6, j), s);
+            s = @mulAdd(@Vector(2, f64), a7, loadPair(b7, j), s);
+            s = @mulAdd(@Vector(2, f64), a8, loadPair(b8, j), s);
+            s = @mulAdd(@Vector(2, f64), a9, loadPair(b9, j), s);
             result.data[row + j] = s[0];
             result.data[row + j + 1] = s[1];
         }
@@ -182,7 +182,13 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
 }
 
 inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
-    return .{ row[j], row[j + 1] };
+    const pair: *align(1) const @Vector(2, f64) = @ptrCast(&row[j]);
+    return pair.*;
+}
+
+inline fn storePair(row: []f64, comptime j: usize, values: @Vector(2, f64)) void {
+    const pair: *align(1) @Vector(2, f64) = @ptrCast(&row[j]);
+    pair.* = values;
 }
 
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
@@ -356,6 +362,7 @@ pub inline fn semulAddProductKnownNonzeroInto(
 }
 
 pub inline fn semulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec) void {
+    if (n == 12) return semul12Into(out, a, e);
     out.* = semul(n, a, e);
 }
 
@@ -462,6 +469,12 @@ fn esmul12(e: *const Vec, a: *const Mat) Mat {
 
 fn semul12(a: *const Mat, e: *const Vec) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    semul12Into(&result, a, e);
+    return result;
+}
+
+fn semul12Into(noalias result: *Mat, a: *const Mat, e: *const Vec) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
@@ -470,7 +483,6 @@ fn semul12(a: *const Mat, e: *const Vec) Mat {
             idx += 12;
         }
     }
-    return result;
 }
 
 fn matAddSemul3_12(noalias a: *const Mat, noalias b: *const Mat, noalias e: *const Vec, noalias c: *const Mat) Mat {
@@ -548,14 +560,23 @@ fn smulAddSemul3_12KnownTraces(threshold_mul: f64, a: *const Mat, e: *const Vec,
 }
 
 fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) void {
+    @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     if (@abs(tra * trc) <= threshold_mul) {
-        inline for (0..12) |j| {
-            const ej = e.data[j];
-            var idx = j;
-            inline for (0..12) |_| {
-                result.data[idx] = c.data[idx] + a.data[idx] * ej;
-                idx += 12;
+        inline for (0..12) |i| {
+            const row = i * 12;
+            const a_row = a.data[row .. row + 12];
+            const c_row = c.data[row .. row + 12];
+            const result_row = result.data[row .. row + 12];
+            inline for (0..6) |pair_index| {
+                const j = pair_index * 2;
+                const value = @mulAdd(
+                    @Vector(2, f64),
+                    loadPair(a_row, j),
+                    loadPair(e.data[0..], j),
+                    loadPair(c_row, j),
+                );
+                storePair(result_row, j, value);
             }
         }
         return;
@@ -583,19 +604,38 @@ fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: 
         const c7 = c.data[84..96];
         const c8 = c.data[96..108];
         const c9 = c.data[108..120];
-        inline for (0..12) |j| {
-            var s = a0 * c0[j];
-            s += a1 * c1[j];
-            s += a2 * c2[j];
-            s += a3 * c3[j];
-            s += a4 * c4[j];
-            s += a5 * c5[j];
-            s += a6 * c6[j];
-            s += a7 * c7[j];
-            s += a8 * c8[j];
-            s += a9 * c9[j];
-            const idx = row + j;
-            result.data[idx] = (c.data[idx] + a.data[idx] * e.data[j]) + s;
+        const a_row = a.data[row .. row + 12];
+        const c_row = c.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        const a0v: @Vector(2, f64) = @splat(a0);
+        const a1v: @Vector(2, f64) = @splat(a1);
+        const a2v: @Vector(2, f64) = @splat(a2);
+        const a3v: @Vector(2, f64) = @splat(a3);
+        const a4v: @Vector(2, f64) = @splat(a4);
+        const a5v: @Vector(2, f64) = @splat(a5);
+        const a6v: @Vector(2, f64) = @splat(a6);
+        const a7v: @Vector(2, f64) = @splat(a7);
+        const a8v: @Vector(2, f64) = @splat(a8);
+        const a9v: @Vector(2, f64) = @splat(a9);
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var product = a0v * loadPair(c0, j);
+            product = @mulAdd(@Vector(2, f64), a1v, loadPair(c1, j), product);
+            product = @mulAdd(@Vector(2, f64), a2v, loadPair(c2, j), product);
+            product = @mulAdd(@Vector(2, f64), a3v, loadPair(c3, j), product);
+            product = @mulAdd(@Vector(2, f64), a4v, loadPair(c4, j), product);
+            product = @mulAdd(@Vector(2, f64), a5v, loadPair(c5, j), product);
+            product = @mulAdd(@Vector(2, f64), a6v, loadPair(c6, j), product);
+            product = @mulAdd(@Vector(2, f64), a7v, loadPair(c7, j), product);
+            product = @mulAdd(@Vector(2, f64), a8v, loadPair(c8, j), product);
+            product = @mulAdd(@Vector(2, f64), a9v, loadPair(c9, j), product);
+            const base = @mulAdd(
+                @Vector(2, f64),
+                loadPair(a_row, j),
+                loadPair(e.data[0..], j),
+                loadPair(c_row, j),
+            );
+            storePair(result_row, j, base + product);
         }
     }
 }
@@ -637,6 +677,7 @@ fn matAddEsmul12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *co
 }
 
 fn matAddEsmul3ProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) void {
+    @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -660,19 +701,34 @@ fn matAddEsmul3ProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *co
         const b7 = b.data[84..96];
         const b8 = b.data[96..108];
         const b9 = b.data[108..120];
-        inline for (0..12) |j| {
-            var product = c0 * b0[j];
-            product += c1 * b1[j];
-            product += c2 * b2[j];
-            product += c3 * b3[j];
-            product += c4 * b4[j];
-            product += c5 * b5[j];
-            product += c6 * b6[j];
-            product += c7 * b7[j];
-            product += c8 * b8[j];
-            product += c9 * b9[j];
-            const idx = row + j;
-            result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + product;
+        const a_row = a.data[row .. row + 12];
+        const b_row = b.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        const ei: @Vector(2, f64) = @splat(e.data[i]);
+        const c0v: @Vector(2, f64) = @splat(c0);
+        const c1v: @Vector(2, f64) = @splat(c1);
+        const c2v: @Vector(2, f64) = @splat(c2);
+        const c3v: @Vector(2, f64) = @splat(c3);
+        const c4v: @Vector(2, f64) = @splat(c4);
+        const c5v: @Vector(2, f64) = @splat(c5);
+        const c6v: @Vector(2, f64) = @splat(c6);
+        const c7v: @Vector(2, f64) = @splat(c7);
+        const c8v: @Vector(2, f64) = @splat(c8);
+        const c9v: @Vector(2, f64) = @splat(c9);
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var product = c0v * loadPair(b0, j);
+            product = @mulAdd(@Vector(2, f64), c1v, loadPair(b1, j), product);
+            product = @mulAdd(@Vector(2, f64), c2v, loadPair(b2, j), product);
+            product = @mulAdd(@Vector(2, f64), c3v, loadPair(b3, j), product);
+            product = @mulAdd(@Vector(2, f64), c4v, loadPair(b4, j), product);
+            product = @mulAdd(@Vector(2, f64), c5v, loadPair(b5, j), product);
+            product = @mulAdd(@Vector(2, f64), c6v, loadPair(b6, j), product);
+            product = @mulAdd(@Vector(2, f64), c7v, loadPair(b7, j), product);
+            product = @mulAdd(@Vector(2, f64), c8v, loadPair(b8, j), product);
+            product = @mulAdd(@Vector(2, f64), c9v, loadPair(b9, j), product);
+            const value = (loadPair(a_row, j) + ei * loadPair(b_row, j)) + product;
+            storePair(result_row, j, value);
         }
     }
 }
@@ -696,6 +752,7 @@ fn semulAdd12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const
 }
 
 fn semulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+    @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -719,19 +776,32 @@ fn semulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const 
         const b7 = b.data[84..96];
         const b8 = b.data[96..108];
         const b9 = b.data[108..120];
-        inline for (0..12) |j| {
-            var product = a0 * b0[j];
-            product += a1 * b1[j];
-            product += a2 * b2[j];
-            product += a3 * b3[j];
-            product += a4 * b4[j];
-            product += a5 * b5[j];
-            product += a6 * b6[j];
-            product += a7 * b7[j];
-            product += a8 * b8[j];
-            product += a9 * b9[j];
-            const idx = row + j;
-            result.data[idx] = a.data[idx] * e.data[j] + product;
+        const a_row = a.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        const a0v: @Vector(2, f64) = @splat(a0);
+        const a1v: @Vector(2, f64) = @splat(a1);
+        const a2v: @Vector(2, f64) = @splat(a2);
+        const a3v: @Vector(2, f64) = @splat(a3);
+        const a4v: @Vector(2, f64) = @splat(a4);
+        const a5v: @Vector(2, f64) = @splat(a5);
+        const a6v: @Vector(2, f64) = @splat(a6);
+        const a7v: @Vector(2, f64) = @splat(a7);
+        const a8v: @Vector(2, f64) = @splat(a8);
+        const a9v: @Vector(2, f64) = @splat(a9);
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var product = a0v * loadPair(b0, j);
+            product = @mulAdd(@Vector(2, f64), a1v, loadPair(b1, j), product);
+            product = @mulAdd(@Vector(2, f64), a2v, loadPair(b2, j), product);
+            product = @mulAdd(@Vector(2, f64), a3v, loadPair(b3, j), product);
+            product = @mulAdd(@Vector(2, f64), a4v, loadPair(b4, j), product);
+            product = @mulAdd(@Vector(2, f64), a5v, loadPair(b5, j), product);
+            product = @mulAdd(@Vector(2, f64), a6v, loadPair(b6, j), product);
+            product = @mulAdd(@Vector(2, f64), a7v, loadPair(b7, j), product);
+            product = @mulAdd(@Vector(2, f64), a8v, loadPair(b8, j), product);
+            product = @mulAdd(@Vector(2, f64), a9v, loadPair(b9, j), product);
+            const value = loadPair(a_row, j) * loadPair(e.data[0..], j) + product;
+            storePair(result_row, j, value);
         }
     }
 }
@@ -787,6 +857,7 @@ fn esmulSemulAdd12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *
 }
 
 fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) void {
+    @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -810,24 +881,40 @@ fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *c
         const a7 = a.data[84..96];
         const a8 = a.data[96..108];
         const a9 = a.data[108..120];
-        inline for (0..12) |j| {
-            var product = b0 * a0[j];
-            product += b1 * a1[j];
-            product += b2 * a2[j];
-            product += b3 * a3[j];
-            product += b4 * a4[j];
-            product += b5 * a5[j];
-            product += b6 * a6[j];
-            product += b7 * a7[j];
-            product += b8 * a8[j];
-            product += b9 * a9[j];
-            const idx = row + j;
-            result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * e.data[j]) + product;
+        const a_row = a.data[row .. row + 12];
+        const b_row = b.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        const ei: @Vector(2, f64) = @splat(e.data[i]);
+        const b0v: @Vector(2, f64) = @splat(b0);
+        const b1v: @Vector(2, f64) = @splat(b1);
+        const b2v: @Vector(2, f64) = @splat(b2);
+        const b3v: @Vector(2, f64) = @splat(b3);
+        const b4v: @Vector(2, f64) = @splat(b4);
+        const b5v: @Vector(2, f64) = @splat(b5);
+        const b6v: @Vector(2, f64) = @splat(b6);
+        const b7v: @Vector(2, f64) = @splat(b7);
+        const b8v: @Vector(2, f64) = @splat(b8);
+        const b9v: @Vector(2, f64) = @splat(b9);
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var product = b0v * loadPair(a0, j);
+            product = @mulAdd(@Vector(2, f64), b1v, loadPair(a1, j), product);
+            product = @mulAdd(@Vector(2, f64), b2v, loadPair(a2, j), product);
+            product = @mulAdd(@Vector(2, f64), b3v, loadPair(a3, j), product);
+            product = @mulAdd(@Vector(2, f64), b4v, loadPair(a4, j), product);
+            product = @mulAdd(@Vector(2, f64), b5v, loadPair(a5, j), product);
+            product = @mulAdd(@Vector(2, f64), b6v, loadPair(a6, j), product);
+            product = @mulAdd(@Vector(2, f64), b7v, loadPair(a7, j), product);
+            product = @mulAdd(@Vector(2, f64), b8v, loadPair(a8, j), product);
+            product = @mulAdd(@Vector(2, f64), b9v, loadPair(a9, j), product);
+            const value = (ei * loadPair(a_row, j) + loadPair(b_row, j) * loadPair(e.data[0..], j)) + product;
+            storePair(result_row, j, value);
         }
     }
 }
 
 fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat) void {
+    @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -851,19 +938,33 @@ fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e
         const c7 = a.data[84..96];
         const c8 = a.data[96..108];
         const c9 = a.data[108..120];
-        inline for (0..12) |j| {
-            var product = a0 * c0[j];
-            product += a1 * c1[j];
-            product += a2 * c2[j];
-            product += a3 * c3[j];
-            product += a4 * c4[j];
-            product += a5 * c5[j];
-            product += a6 * c6[j];
-            product += a7 * c7[j];
-            product += a8 * c8[j];
-            product += a9 * c9[j];
-            const idx = row + j;
-            result.data[idx] = a.data[idx] * (e.data[i] + e.data[j]) + product;
+        const a_row = a.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        const ei: @Vector(2, f64) = @splat(e.data[i]);
+        const a0v: @Vector(2, f64) = @splat(a0);
+        const a1v: @Vector(2, f64) = @splat(a1);
+        const a2v: @Vector(2, f64) = @splat(a2);
+        const a3v: @Vector(2, f64) = @splat(a3);
+        const a4v: @Vector(2, f64) = @splat(a4);
+        const a5v: @Vector(2, f64) = @splat(a5);
+        const a6v: @Vector(2, f64) = @splat(a6);
+        const a7v: @Vector(2, f64) = @splat(a7);
+        const a8v: @Vector(2, f64) = @splat(a8);
+        const a9v: @Vector(2, f64) = @splat(a9);
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var product = a0v * loadPair(c0, j);
+            product = @mulAdd(@Vector(2, f64), a1v, loadPair(c1, j), product);
+            product = @mulAdd(@Vector(2, f64), a2v, loadPair(c2, j), product);
+            product = @mulAdd(@Vector(2, f64), a3v, loadPair(c3, j), product);
+            product = @mulAdd(@Vector(2, f64), a4v, loadPair(c4, j), product);
+            product = @mulAdd(@Vector(2, f64), a5v, loadPair(c5, j), product);
+            product = @mulAdd(@Vector(2, f64), a6v, loadPair(c6, j), product);
+            product = @mulAdd(@Vector(2, f64), a7v, loadPair(c7, j), product);
+            product = @mulAdd(@Vector(2, f64), a8v, loadPair(c8, j), product);
+            product = @mulAdd(@Vector(2, f64), a9v, loadPair(c9, j), product);
+            const value = loadPair(a_row, j) * (ei + loadPair(e.data[0..], j)) + product;
+            storePair(result_row, j, value);
         }
     }
 }
@@ -876,6 +977,25 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
 pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     const ab = smulNonzeroProduct(n, n_gauss, a, b);
     return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+pub inline fn qseriesKnownNonzeroProductInto(noalias out: *Mat, n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) void {
+    @setEvalBranchQuota(20_000);
+    var ab: Mat = undefined;
+    if (n == 12 and n_gauss == 10) {
+        smul12x10Into(&ab, a, b);
+    } else {
+        ab = smulNonzeroProduct(n, n_gauss, a, b);
+    }
+    qseriesFromProductInto(out, n, n_gauss, &ab);
+}
+
+inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, noalias ab: *const Mat) void {
+    if (n == 12 and n_gauss == 10) {
+        qseriesFromProduct12x10Into(out, ab);
+        return;
+    }
+    out.* = qseriesFromProduct(n, n_gauss, ab);
 }
 
 inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
@@ -1015,6 +1135,13 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
 }
 
 fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
+    var result: Mat = undefined;
+    qseriesFromProduct12x10Into(&result, ab);
+    return result;
+}
+
+fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     var trab = ab.data[0];
     trab += ab.data[13];
     trab += ab.data[26];
@@ -1025,7 +1152,10 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
     trab += ab.data[91];
     trab += ab.data[104];
     trab += ab.data[117];
-    if (@abs(trab) < threshold_q) return ab.*;
+    if (@abs(trab) < threshold_q) {
+        result.* = ab.*;
+        return;
+    }
 
     var one_minus_ab_gg: [types.max_gauss * types.max_gauss]f64 = undefined;
     inline for (0..10) |i| {
@@ -1062,7 +1192,10 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
             pivot_offset[max_row] = tmp_offset;
         }
         const diag = one_minus_ab_gg[pivot_offset[col] + col];
-        if (@abs(diag) < 1.0e-30) return ab.*;
+        if (@abs(diag) < 1.0e-30) {
+            result.* = ab.*;
+            return;
+        }
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;
         for (col + 1..10) |row| {
@@ -1099,7 +1232,6 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
         inline for (0..10) |i| inverse[i * 10 + rhs_col] = x[i];
     }
 
-    var result = Mat{ .data = undefined, .n = 12 };
     inline for (0..10) |i| {
         inline for (0..10) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
@@ -1135,8 +1267,6 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
             result.data[i * 12 + j] = s + ab.data[i * 12 + j];
         }
     }
-
-    return result;
 }
 
 inline fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {

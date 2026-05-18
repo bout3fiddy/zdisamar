@@ -282,6 +282,17 @@ pub fn fillZplusZminRowFromBasisLimited(
     row_index: usize,
 ) PhaseKernelRow {
     const n = geo.nmutot;
+    if (n == 12) {
+        return fillZplusZminRowFromBasisLimited12(
+            i_fourier,
+            phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+            row_index,
+        );
+    }
+
     const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
     if (row_index >= n or i_fourier > bounded_max_phase_index) {
         return .{
@@ -339,6 +350,60 @@ pub fn fillZplusZminRowFromBasisLimited(
             .zplus = .{0.0} ** types.max_nmutot,
             .zmin = .{0.0} ** types.max_nmutot,
             .n = n,
+        };
+    }
+    return row;
+}
+
+fn fillZplusZminRowFromBasisLimited12(
+    i_fourier: usize,
+    phase_coefs: [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+    row_index: usize,
+) PhaseKernelRow {
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (row_index >= 12 or i_fourier > bounded_max_phase_index) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = 12,
+        };
+    }
+
+    var row = PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = 12,
+    };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = phase_coefs[l];
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_l = &plm_basis.minus[l];
+            if (first_order) {
+                fillPhaseRow12(&row, alpha1, plus_l, minus_l, row_index, true);
+            } else {
+                fillPhaseRow12(&row, alpha1, plus_l, minus_l, row_index, false);
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            if (first_order) {
+                fillPhaseRow12(&row, alpha1, &plm.plus, &plm.minus, row_index, true);
+            } else {
+                fillPhaseRow12(&row, alpha1, &plm.plus, &plm.minus, row_index, false);
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = 12,
         };
     }
     return row;
@@ -409,6 +474,29 @@ inline fn fillPhaseTerm12(
                 zplus.data[idx] += plus_i * scaled_plus_col[j];
                 zmin.data[idx] += minus_i * scaled_plus_col[j];
             }
+        }
+    }
+}
+
+inline fn fillPhaseRow12(
+    noalias row: *PhaseKernelRow,
+    alpha1: f64,
+    noalias plus_l: *const [types.max_nmutot]f64,
+    noalias minus_l: *const [types.max_nmutot]f64,
+    row_index: usize,
+    comptime first_order: bool,
+) void {
+    const scaled_plus_row = alpha1 * plus_l[row_index];
+    const scaled_minus_row = alpha1 * minus_l[row_index];
+    inline for (0..12) |j| {
+        const zplus_value = scaled_plus_row * plus_l[j];
+        const zmin_value = scaled_minus_row * plus_l[j];
+        if (first_order) {
+            row.zplus[j] = zplus_value;
+            row.zmin[j] = zmin_value;
+        } else {
+            row.zplus[j] += zplus_value;
+            row.zmin[j] += zmin_value;
         }
     }
 }

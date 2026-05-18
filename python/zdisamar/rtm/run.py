@@ -26,6 +26,7 @@ def spectrum(
     cache: SessionCache | None = None,
     jacobian: bool = False,
     jacobian_state_names: tuple[str, ...] | None = None,
+    include_case: bool = True,
 ):
     """Run radiative transfer for one wavelength-band case."""
 
@@ -34,12 +35,14 @@ def spectrum(
             case,
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
+            include_case=include_case,
         )
 
     with _temporary_cache(case) as temporary:
         return temporary.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
+            include_case=include_case,
         )
 
 

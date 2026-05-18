@@ -332,7 +332,7 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
             attenuation_samples,
             level_sample_starts,
             level_altitudes_km,
-            &wavelength_cache.profile_cache,
+            wavelength_cache.profile_cache,
         );
     }
 

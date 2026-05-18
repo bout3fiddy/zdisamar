@@ -103,7 +103,8 @@ const ProfileCacheBuildWorker = struct {
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
     caches: []SpectroscopyState.ProfileNodeSpectroscopyCache,
-    queue: *work_partition.ChunkQueue,
+    start_index: usize,
+    end_index: usize,
     worker_index: usize = 0,
 };
 
@@ -120,7 +121,13 @@ fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
     zone.value(@intCast(worker.worker_index));
     defer zone.end();
 
-    while (worker.queue.next()) |chunk| {
+    var chunk_start = worker.start_index;
+    while (chunk_start < worker.end_index) {
+        const chunk = .{
+            .start = chunk_start,
+            .end = @min(chunk_start + profile_cache_build_chunk_size, worker.end_index),
+        };
+        chunk_start = chunk.end;
         for (chunk.start..chunk.end) |index| {
             worker.caches[index] = SpectroscopyState.ProfileNodeSpectroscopyCache.init(
                 worker.prepared,
@@ -196,10 +203,13 @@ fn ensureProfileSpectroscopyCaches(
     storage.profile_spectroscopy_cache_key = 0;
     storage.profile_spectroscopy_cache_valid = false;
 
+    const worker_count = SpectralEval.preferredForwardWorkerCount(forward_misses.len);
+    const thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
     storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
         allocator,
         prepared,
         forward_misses,
+        thread_pool,
     );
     storage.profile_spectroscopy_cache_key = cache_key;
     storage.profile_spectroscopy_cache_valid = true;
@@ -210,6 +220,7 @@ fn buildProfileSpectroscopyCaches(
     allocator: Allocator,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
+    thread_pool: ?*std.Thread.Pool,
 ) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(forward_misses.len));
@@ -226,35 +237,45 @@ fn buildProfileSpectroscopyCaches(
         return caches;
     }
 
-    var queue = work_partition.ChunkQueue.init(forward_misses.len, profile_cache_build_chunk_size);
     const workers = try allocator.alloc(ProfileCacheBuildWorker, worker_count);
     defer allocator.free(workers);
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
-
-    var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
+        const range = work_partition.staticRange(forward_misses.len, worker_count, worker_index);
         workers[worker_index] = .{
             .prepared = prepared,
             .forward_misses = forward_misses,
             .caches = caches,
-            .queue = &queue,
+            .start_index = range.start,
+            .end_index = range.end,
             .worker_index = worker_index,
         };
-        if (worker_index + 1 < worker_count) {
-            threads[started_thread_count] = std.Thread.spawn(
-                .{},
-                profileCacheBuildWorkerMain,
-                .{&workers[worker_index]},
-            ) catch {
-                profileCacheBuildWorkerMain(&workers[worker_index]);
-                continue;
-            };
-            started_thread_count += 1;
-        } else {
-            profileCacheBuildWorkerMain(&workers[worker_index]);
-        }
     }
+
+    if (thread_pool) |pool| {
+        var wait_group = std.Thread.WaitGroup{};
+        for (0..worker_count - 1) |worker_index| {
+            pool.spawnWg(&wait_group, profileCacheBuildWorkerMain, .{&workers[worker_index]});
+        }
+        profileCacheBuildWorkerMain(&workers[worker_count - 1]);
+        wait_group.wait();
+        return caches;
+    }
+
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
+    var started_thread_count: usize = 0;
+    for (0..worker_count - 1) |worker_index| {
+        threads[started_thread_count] = std.Thread.spawn(
+            .{},
+            profileCacheBuildWorkerMain,
+            .{&workers[worker_index]},
+        ) catch {
+            profileCacheBuildWorkerMain(&workers[worker_index]);
+            continue;
+        };
+        started_thread_count += 1;
+    }
+    profileCacheBuildWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
     return caches;
 }
@@ -291,6 +312,7 @@ pub fn simulateInternal(
         setup,
         simulation_plan,
         evaluation_cache,
+        wavelength_plan_storage,
     );
 
     var summary = RunningSummary.init();
@@ -327,6 +349,7 @@ pub fn simulateInternal(
     const mean_jacobian = try processJacobianSamples(
         scene,
         prepared,
+        route.derivative_state_mask,
         setup,
         buffers,
         &summary,
@@ -470,11 +493,17 @@ fn prefetchSimulationPlan(
     setup: SimulationSetup,
     simulation_plan: ResolvedSimulationPlan,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
         zone.value(@intCast(simulation_plan.forward_misses.len));
         defer zone.end();
+        const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_misses.len);
+        const thread_pool = if (wavelength_plan_storage) |storage|
+            storage.forwardPrefetchPool(allocator, worker_count)
+        else
+            null;
         try SpectralEval.prefetchForwardSamples(
             allocator,
             scene,
@@ -485,6 +514,7 @@ fn prefetchSimulationPlan(
             simulation_plan.forward_misses,
             simulation_plan.profile_spectroscopy_caches,
             evaluation_cache,
+            thread_pool,
         );
     }
 }
@@ -582,6 +612,7 @@ fn fillIrradianceSamples(
     {
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
+        try evaluation_cache.reserveIrradiance(irradianceCacheCapacity(wavelength_sampling));
         for (wavelength_sampling, 0..) |plan, index| {
             buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
                 scene,
@@ -613,6 +644,17 @@ fn fillIrradianceSamples(
             buffers.scratch_aux,
         );
     }
+}
+
+fn irradianceCacheCapacity(wavelength_sampling: []const WavelengthSampling.WavelengthSampling) usize {
+    var count: usize = 0;
+    for (wavelength_sampling) |plan| {
+        count += if (plan.irradiance_integration.enabled)
+            @as(usize, @intCast(plan.irradiance_integration.sample_count))
+        else
+            1;
+    }
+    return count;
 }
 
 fn applyRingCorrection(scene: *const Scene, buffers: Storage.Buffers) Storage.Error!void {
@@ -722,6 +764,7 @@ fn materializeNoiseSamples(
 fn processJacobianSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
+    derivative_state_mask: jacobian.StateMask,
     setup: SimulationSetup,
     buffers: Storage.Buffers,
     summary: *RunningSummary,
@@ -732,12 +775,14 @@ fn processJacobianSamples(
             defer zone.end();
             if (!setup.uses_integrated_radiance_sampling) {
                 for (0..jacobian.state_count) |state_index| {
+                    if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
                     copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
                     try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
                     copyScratchToJacobianColumn(buffers.scratch_aux, jacobian_buffer, state_index);
                 }
             }
             for (0..jacobian.state_count) |state_index| {
+                if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
                 copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
                 try Postprocess.applyChannelJacobianCorrections(
                     scene,
@@ -776,7 +821,11 @@ fn wavelengthPlanKey(
     updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
     updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
     updateAdaptiveReferenceGrid(&hash, scene.observation_model.adaptive_reference_grid);
-    updateSpectroscopyPlanInputs(&hash, prepared);
+    const spectroscopy_plan_key = if (prepared.spectroscopy_plan_key != 0)
+        prepared.spectroscopy_plan_key
+    else
+        prepared.computeSpectroscopyPlanKey();
+    updateInt(&hash, spectroscopy_plan_key);
     updateChannelControls(&hash, scene, .radiance);
     updateChannelControls(&hash, scene, .irradiance);
     return hash.final();
@@ -791,58 +840,12 @@ fn profileSpectroscopyCacheKey(
     for (forward_misses) |miss| {
         updateFloat(&hash, miss.wavelength_nm);
     }
-    updateFloatSlice(&hash, prepared.spectroscopy_profile_altitudes_km);
-    updateFloatSlice(&hash, prepared.spectroscopy_profile_pressures_hpa);
-    updateFloatSlice(&hash, prepared.spectroscopy_profile_temperatures_k);
-    updateSpectroscopyCacheInputs(&hash, prepared);
+    const spectroscopy_profile_key = if (prepared.spectroscopy_profile_cache_inputs_key != 0)
+        prepared.spectroscopy_profile_cache_inputs_key
+    else
+        prepared.computeSpectroscopyProfileCacheInputsKey();
+    updateInt(&hash, spectroscopy_profile_key);
     return hash.final();
-}
-
-fn updateSpectroscopyCacheInputs(
-    hash: *std.hash.Wyhash,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-) void {
-    updateInt(hash, prepared.spectroscopy_lines != null);
-    if (prepared.spectroscopy_lines) |line_list| updateFullLineListInputs(hash, line_list);
-    updateInt(hash, prepared.operational_o2_lut.enabled());
-    updateStrongLinePreparedStates(hash, prepared.spectroscopy_profile_strong_line_states);
-    updateWeakLinePreparedStates(hash, prepared.spectroscopy_profile_weak_line_states);
-}
-
-fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
-    updateInt(hash, states != null);
-    if (states) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |state| {
-            updateInt(hash, state.line_count);
-            updateFloat(hash, state.sig_moy_cm1);
-            updateFloatSlice(hash, state.population_t);
-            updateFloatSlice(hash, state.dipole_t);
-            updateFloatSlice(hash, state.mod_sig_cm1);
-            updateFloatSlice(hash, state.half_width_cm1_at_t);
-            updateFloatSlice(hash, state.line_mixing_coefficients);
-            updateFloatSlice(hash, state.relaxation_weights);
-        }
-    }
-}
-
-fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
-    updateInt(hash, states != null);
-    if (states) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |state| {
-            updateInt(hash, state.line_count);
-            updateInt(hash, state.lines.len);
-            for (state.lines) |line| {
-                updateFloat(hash, line.shifted_center_wavenumber_cm1);
-                updateFloat(hash, line.cte);
-                updateFloat(hash, line.line_shape_y);
-                updateFloat(hash, line.prefactor_base);
-                updateFloat(hash, line.safe_temperature);
-                updateFloat(hash, line.safe_pressure);
-            }
-        }
-    }
 }
 
 fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: SpectralChannel) void {
@@ -881,114 +884,6 @@ fn updateAdaptiveReferenceGrid(
     updateInt(hash, adaptive.points_per_fwhm);
     updateInt(hash, adaptive.strong_line_min_divisions);
     updateInt(hash, adaptive.strong_line_max_divisions);
-}
-
-fn updateSpectroscopyPlanInputs(
-    hash: *std.hash.Wyhash,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-) void {
-    updateInt(hash, prepared.spectroscopy_lines != null);
-    if (prepared.spectroscopy_lines) |line_list| {
-        updateLineListPlanInputs(hash, line_list);
-    }
-    updateInt(hash, prepared.line_absorbers.len);
-    for (prepared.line_absorbers) |line_absorber| {
-        updateLineListPlanInputs(hash, line_absorber.line_list);
-    }
-}
-
-fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
-    updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
-    updateInt(hash, line_list.lines.len);
-    for (line_list.lines) |line| {
-        updateFloat(hash, line.center_wavelength_nm);
-        updateFloat(hash, line.line_strength_cm2_per_molecule);
-    }
-}
-
-fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
-    updateFloat(hash, line_list.strong_line_tolerance_nm);
-    updateInt(hash, line_list.lines_sorted_ascending);
-    updateInt(hash, line_list.preserve_anchor_weak_lines);
-    updateInt(hash, line_list.vendor_strong_line_partition);
-    updateOptionalIntSlice(hash, line_list.strong_line_match_by_line);
-    updateFullRuntimeControls(hash, line_list.runtime_controls);
-
-    updateInt(hash, line_list.lines.len);
-    for (line_list.lines) |line| {
-        updateInt(hash, line.gas_index);
-        updateInt(hash, line.isotope_number);
-        updateFloat(hash, line.abundance_fraction);
-        updateInt(hash, line.vendor_filter_metadata_from_source);
-        updateFloat(hash, line.center_wavelength_nm);
-        updateFloat(hash, line.center_wavenumber_cm1);
-        updateFloat(hash, line.line_strength_cm2_per_molecule);
-        updateFloat(hash, line.air_half_width_nm);
-        updateFloat(hash, line.air_half_width_cm1);
-        updateFloat(hash, line.temperature_exponent);
-        updateFloat(hash, line.lower_state_energy_cm1);
-        updateFloat(hash, line.pressure_shift_nm);
-        updateFloat(hash, line.pressure_shift_cm1);
-        updateFloat(hash, line.line_mixing_coefficient);
-        updateOptionalInt(hash, line.branch_ic1);
-        updateOptionalInt(hash, line.branch_ic2);
-        updateOptionalInt(hash, line.rotational_nf);
-    }
-
-    updateInt(hash, line_list.strong_lines != null);
-    if (line_list.strong_lines) |strong_lines| {
-        updateInt(hash, strong_lines.len);
-        for (strong_lines) |line| {
-            updateFloat(hash, line.center_wavenumber_cm1);
-            updateFloat(hash, line.center_wavelength_nm);
-            updateFloat(hash, line.population_t0);
-            updateFloat(hash, line.dipole_ratio);
-            updateFloat(hash, line.dipole_t0);
-            updateFloat(hash, line.lower_state_energy_cm1);
-            updateFloat(hash, line.air_half_width_cm1);
-            updateFloat(hash, line.air_half_width_nm);
-            updateFloat(hash, line.temperature_exponent);
-            updateFloat(hash, line.pressure_shift_cm1);
-            updateFloat(hash, line.pressure_shift_nm);
-            updateInt(hash, line.rotational_index_m1);
-        }
-    }
-
-    updateInt(hash, line_list.relaxation_matrix != null);
-    if (line_list.relaxation_matrix) |matrix| {
-        updateInt(hash, matrix.line_count);
-        updateFloatSlice(hash, matrix.wt0);
-        updateFloatSlice(hash, matrix.bw);
-    }
-}
-
-fn updateFullRuntimeControls(hash: *std.hash.Wyhash, controls: anytype) void {
-    updateOptionalInt(hash, controls.gas_index);
-    updateInt(hash, controls.active_isotopes.len);
-    hash.update(controls.active_isotopes);
-    updateOptionalFloat(hash, controls.threshold_line_scale);
-    updateOptionalFloat(hash, controls.cutoff_cm1);
-    updateFloatSlice(hash, controls.cutoff_grid_wavelengths_nm);
-    updateFloatSlice(hash, controls.cutoff_grid_wavenumbers_cm1);
-    updateFloat(hash, controls.line_mixing_factor);
-}
-
-fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateInt(hash, resolved);
-}
-
-fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |item| updateOptionalInt(hash, item);
-    }
-}
-
-fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateFloat(hash, resolved);
 }
 
 fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {

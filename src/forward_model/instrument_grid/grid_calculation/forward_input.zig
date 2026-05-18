@@ -21,12 +21,19 @@ pub fn configuredForwardInput(
     support_carriers: []CarrierEval.SharedOpticalCarrier,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
+    var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
+    const resolved_profile_cache = if (profile_spectroscopy_cache) |cache|
+        cache
+    else cache: {
+        local_profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
+        break :cache &local_profile_cache;
+    };
     var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
         prepared,
         wavelength_nm,
         support_carrier_valid,
         support_carriers,
-        profile_spectroscopy_cache,
+        resolved_profile_cache,
     );
     const optical_depths = optical_depths: {
         const zone = Trace.deepStaticZone(@src(), "forward_input.layers");

@@ -371,7 +371,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
         scene,
         wavelength_nm,
         layer_inputs,
-        &wavelength_cache.profile_cache,
+        wavelength_cache.profile_cache,
     );
 }
 

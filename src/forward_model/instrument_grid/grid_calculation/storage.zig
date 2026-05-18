@@ -77,8 +77,14 @@ pub const SummaryStorage = struct {
     forward_misses_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
+    forward_prefetch_pool: std.Thread.Pool = undefined,
+    forward_prefetch_pool_worker_threads: usize = 0,
+    forward_prefetch_pool_valid: bool = false,
 
     pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
+        if (self.forward_prefetch_pool_valid) {
+            self.forward_prefetch_pool.deinit();
+        }
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
         freeBuffer(allocator, self.irradiance);
@@ -102,6 +108,35 @@ pub const SummaryStorage = struct {
         allocator.free(self.forward_misses);
         allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
+    }
+
+    pub fn forwardPrefetchPool(
+        self: *SummaryStorage,
+        allocator: Allocator,
+        worker_count: usize,
+    ) ?*std.Thread.Pool {
+        if (worker_count <= 1) return null;
+
+        const worker_thread_count = worker_count - 1;
+        if (self.forward_prefetch_pool_valid and
+            self.forward_prefetch_pool_worker_threads == worker_thread_count)
+        {
+            return &self.forward_prefetch_pool;
+        }
+
+        if (self.forward_prefetch_pool_valid) {
+            self.forward_prefetch_pool.deinit();
+            self.forward_prefetch_pool_valid = false;
+            self.forward_prefetch_pool_worker_threads = 0;
+        }
+
+        self.forward_prefetch_pool.init(.{
+            .allocator = allocator,
+            .n_jobs = worker_thread_count,
+        }) catch return null;
+        self.forward_prefetch_pool_worker_threads = worker_thread_count;
+        self.forward_prefetch_pool_valid = true;
+        return &self.forward_prefetch_pool;
     }
 
     pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {

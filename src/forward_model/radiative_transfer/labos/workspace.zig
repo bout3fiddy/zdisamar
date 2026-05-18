@@ -10,6 +10,7 @@ pub const Workspace = struct {
     allocator: Allocator,
     attenuation_data: []f64 = &.{},
     attenuation_layer_transmittance: []f64 = &.{},
+    attenuation_top_to_level: []f64 = &.{},
     rt_layers: []basis.LayerRT = &.{},
     layer_phase_max_indices: []usize = &.{},
     layer_effective_scattering_suffix: []f64 = &.{},
@@ -32,6 +33,7 @@ pub const Workspace = struct {
         if (self.orders) |*orders| orders.deinit();
         self.allocator.free(self.attenuation_data);
         self.allocator.free(self.attenuation_layer_transmittance);
+        self.allocator.free(self.attenuation_top_to_level);
         self.allocator.free(self.rt_layers);
         self.allocator.free(self.layer_phase_max_indices);
         self.allocator.free(self.layer_effective_scattering_suffix);
@@ -60,6 +62,26 @@ pub const Workspace = struct {
             self.allocator,
             self.attenuation_data,
             self.attenuation_layer_transmittance,
+            layers,
+            pseudo_spherical_grid,
+            geo,
+            use_spherical_correction,
+        );
+    }
+
+    pub fn runtimeAttenuation(
+        self: *Workspace,
+        layers: []const common.LayerInput,
+        pseudo_spherical_grid: common.PseudoSphericalGrid,
+        geo: *const basis.Geometry,
+        use_spherical_correction: bool,
+    ) !attenuation_mod.RuntimeAttenArray {
+        const nlevel = layers.len + 1;
+        try ensureCapacity(f64, self.allocator, &self.attenuation_layer_transmittance, geo.nmutot * layers.len);
+        try ensureCapacity(f64, self.allocator, &self.attenuation_top_to_level, geo.nmutot * nlevel);
+        return attenuation_mod.fillRuntimeAttenuationWithGridInBuffers(
+            self.attenuation_layer_transmittance,
+            self.attenuation_top_to_level,
             layers,
             pseudo_spherical_grid,
             geo,

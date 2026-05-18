@@ -22,7 +22,12 @@ def case_for_state(
 ) -> O2AInput:
     """Create a wavelength-band case for one retrieval state."""
 
-    case = copy.deepcopy(template)
+    case = copy.copy(template)
+    case.aerosol = copy.copy(template.aerosol)
+    case.aerosol.placement = copy.copy(template.aerosol.placement)
+    case.atmosphere = copy.copy(template.atmosphere)
+    case.atmosphere.intervals = [copy.copy(interval) for interval in template.atmosphere.intervals]
+    case.surface = copy.copy(template.surface)
     state_vector.write_to(case, state)
 
     return case
@@ -160,11 +165,12 @@ def evaluate_reflectance(
         cache=cache,
         jacobian=True,
         jacobian_state_names=state_names,
+        include_case=False,
     )
-    wavelength_nm = spectrum.wavelength_nm.copy()
-    reflectance = spectrum.reflectance.copy()
-    radiance_jacobian = spectrum.radiance_jacobian.copy()
-    irradiance = spectrum.irradiance.copy()
+    wavelength_nm = spectrum.wavelength_nm
+    reflectance = spectrum.reflectance
+    radiance_jacobian = spectrum.radiance_jacobian
+    irradiance = spectrum.irradiance
     available_state_names = spectrum.jacobian_state_names
 
     reflectance_jacobian_all = rtm.reflectance_jacobian_from_radiance_jacobian(

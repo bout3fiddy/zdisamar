@@ -124,25 +124,33 @@ pub fn combinePhaseCoefficientsWithRayleigh2(
 ) [phase_coefficient_count]f64 {
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
+    if (aerosol_scattering_optical_depth == 0.0 and cloud_scattering_optical_depth == 0.0) {
+        return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
+    }
 
     var combined: [phase_coefficient_count]f64 = undefined;
-    for (0..phase_coefficient_count) |index| {
-        const gas_phase_coefficient: f64 = if (index == 0)
-            1.0
-        else if (index == 2)
-            rayleigh_coef2
-        else
-            0.0;
-        var numerator = gas_scattering_optical_depth * gas_phase_coefficient;
-        if (aerosol_scattering_optical_depth != 0.0) {
-            numerator += aerosol_scattering_optical_depth * aerosol_phase_coefficients[index];
+    const inv_total = 1.0 / total_scattering;
+    const gas_weight = gas_scattering_optical_depth * inv_total;
+    const aerosol_weight = aerosol_scattering_optical_depth * inv_total;
+    const cloud_weight = cloud_scattering_optical_depth * inv_total;
+
+    if (cloud_scattering_optical_depth == 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] = aerosol_weight * aerosol_phase_coefficients[index];
         }
-        if (cloud_scattering_optical_depth != 0.0) {
-            numerator += cloud_scattering_optical_depth * cloud_phase_coefficients[index];
+    } else if (aerosol_scattering_optical_depth == 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] = cloud_weight * cloud_phase_coefficients[index];
         }
-        combined[index] = numerator / total_scattering;
+    } else {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] =
+                aerosol_weight * aerosol_phase_coefficients[index] +
+                cloud_weight * cloud_phase_coefficients[index];
+        }
     }
     combined[0] = 1.0;
+    combined[2] += gas_weight * rayleigh_coef2;
     return combined;
 }
 

@@ -76,6 +76,10 @@ fn transportToOtherLevels(
             transportToOtherLevelsDynamic12(start_level, end_level, atten, ud_local, ud_orde);
             return;
         }
+        if (comptime isRuntimeAttenPointer(@TypeOf(atten))) {
+            transportToOtherLevelsRuntime12(start_level, end_level, atten, ud_local, ud_orde);
+            return;
+        }
         transportToOtherLevels12(start_level, end_level, atten, ud_local, ud_orde);
         return;
     }
@@ -116,6 +120,13 @@ fn transportToOtherLevels(
 fn isDynamicAttenPointer(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .pointer => |ptr| ptr.child == attenuation_mod.DynamicAttenArray,
+        else => false,
+    };
+}
+
+fn isRuntimeAttenPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| ptr.child == attenuation_mod.RuntimeAttenArray,
         else => false,
     };
 }
@@ -163,6 +174,46 @@ fn transportToOtherLevelsDynamic12(
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
         inline for (0..basis.max_nmutot) |imu| {
             const att = dynamicAttenAt(atten, stream_stride, imu, level_offset);
+            out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
+            out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
+        }
+    }
+}
+
+fn transportToOtherLevelsRuntime12(
+    start_level: usize,
+    end_level: usize,
+    atten: *const attenuation_mod.RuntimeAttenArray,
+    ud_local: []const basis.UDLocal,
+    ud_orde: []basis.UDField,
+) void {
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |ilevel| {
+        const local_u0 = ud_local[ilevel].U.col[0].data;
+        const local_u1 = ud_local[ilevel].U.col[1].data;
+        const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
+        const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+        const out_u0 = &ud_orde[ilevel].U.col[0].data;
+        const out_u1 = &ud_orde[ilevel].U.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
+            const att = atten.adjacent(imu, ilevel - 1);
+            out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
+            out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
+        }
+    }
+
+    ud_orde[end_level].D = basis.Vec2.zero(basis.max_nmutot);
+    var ilevel = end_level;
+    while (ilevel > start_level) {
+        ilevel -= 1;
+        const local_d0 = ud_local[ilevel].D.col[0].data;
+        const local_d1 = ud_local[ilevel].D.col[1].data;
+        const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
+        const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+        const out_d0 = &ud_orde[ilevel].D.col[0].data;
+        const out_d1 = &ud_orde[ilevel].D.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
+            const att = atten.adjacent(imu, ilevel);
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
         }
@@ -288,7 +339,7 @@ const DotPair = struct {
     col1: f64,
 };
 
-fn dotGaussPair(
+inline fn dotGaussPair(
     mat: *const basis.Mat,
     row: usize,
     vec_col0: *const basis.Vec,
@@ -300,27 +351,7 @@ fn dotGaussPair(
         const data = mat.data[row_offset..];
         const vec0 = vec_col0.data;
         const vec1 = vec_col1.data;
-        var s0 = data[0] * vec0[0];
-        var s1 = data[0] * vec1[0];
-        s0 += data[1] * vec0[1];
-        s1 += data[1] * vec1[1];
-        s0 += data[2] * vec0[2];
-        s1 += data[2] * vec1[2];
-        s0 += data[3] * vec0[3];
-        s1 += data[3] * vec1[3];
-        s0 += data[4] * vec0[4];
-        s1 += data[4] * vec1[4];
-        s0 += data[5] * vec0[5];
-        s1 += data[5] * vec1[5];
-        s0 += data[6] * vec0[6];
-        s1 += data[6] * vec1[6];
-        s0 += data[7] * vec0[7];
-        s1 += data[7] * vec1[7];
-        s0 += data[8] * vec0[8];
-        s1 += data[8] * vec1[8];
-        s0 += data[9] * vec0[9];
-        s1 += data[9] * vec1[9];
-        return .{ .col0 = s0, .col1 = s1 };
+        return dotGaussPair10(data, &vec0, &vec1);
     }
     var s0: f64 = 0.0;
     var s1: f64 = 0.0;
@@ -330,6 +361,32 @@ fn dotGaussPair(
         s1 += value * vec_col1.data[k];
     }
     return .{ .col0 = s0, .col1 = s1 };
+}
+
+inline fn dotGaussPair10(
+    data: []const f64,
+    vec0: *const [basis.max_nmutot]f64,
+    vec1: *const [basis.max_nmutot]f64,
+) DotPair {
+    const Vec2 = @Vector(2, f64);
+    var sum0: Vec2 = @as(Vec2, .{ data[0], data[1] }) * @as(Vec2, .{ vec0[0], vec0[1] });
+    var sum1: Vec2 = @as(Vec2, .{ data[0], data[1] }) * @as(Vec2, .{ vec1[0], vec1[1] });
+    const data2: Vec2 = @as(Vec2, .{ data[2], data[3] });
+    sum0 += data2 * @as(Vec2, .{ vec0[2], vec0[3] });
+    sum1 += data2 * @as(Vec2, .{ vec1[2], vec1[3] });
+    const data4: Vec2 = @as(Vec2, .{ data[4], data[5] });
+    sum0 += data4 * @as(Vec2, .{ vec0[4], vec0[5] });
+    sum1 += data4 * @as(Vec2, .{ vec1[4], vec1[5] });
+    const data6: Vec2 = @as(Vec2, .{ data[6], data[7] });
+    sum0 += data6 * @as(Vec2, .{ vec0[6], vec0[7] });
+    sum1 += data6 * @as(Vec2, .{ vec1[6], vec1[7] });
+    const data8: Vec2 = @as(Vec2, .{ data[8], data[9] });
+    sum0 += data8 * @as(Vec2, .{ vec0[8], vec0[9] });
+    sum1 += data8 * @as(Vec2, .{ vec1[8], vec1[9] });
+    return .{
+        .col0 = @reduce(.Add, sum0),
+        .col1 = @reduce(.Add, sum1),
+    };
 }
 
 fn rtLayerHasSignal(rt: *const basis.LayerRT, nmutot: usize) bool {
