@@ -78,6 +78,7 @@ pub fn configuredForwardInput(
         if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
                 .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
+                .aerosol_phase_coefficients = &prepared.aerosol_phase_coefficients,
             };
         } else if (prepared.interval_semantics != .none) {
             // INVARIANT:

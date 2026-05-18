@@ -924,6 +924,74 @@ Conclusion:
   larger remaining integration-kernel opportunity is to write compact plans
   directly instead of routing through max-capacity scratch arrays
 
+### Experiment 16: encode RTM aerosol phase rows as scalars
+
+Changed:
+- `RtmQuadratureLevel` now stores aerosol scattering/source scalars instead of
+  three scaled `[151]f64` aerosol phase rows
+- `RtmQuadratureGrid` carries a pointer to the prepared aerosol unit phase row
+- LABOS aerosol optical-depth and pressure-shift weighting multiply the scalar
+  by the shared unit phase at the consumer boundary
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `RtmQuadratureLevel` | 4,856 B | 1,256 B | -74.14% |
+| per RTM quadrature level | 4.742 KiB | 1.227 KiB | -3,600 B |
+| 48-level RTM buffer | 233,088 B | 60,288 B | -172,800 B |
+| 701 forward misses x 48 RTM levels | 163,394,688 B | 42,261,888 B | -121,132,800 B |
+| `RtmQuadratureGrid` view | 16 B | 24 B | +8 B |
+| `ForwardInput` | 288 B | 296 B | +8 B |
+
+Interpretation:
+- the old level layout stored `aerosol_ksca_phase_above_per_km`,
+  `aerosol_ksca_phase_below_per_km`, and `aerosol_ksca_phase_jacobian` as full
+  phase rows
+- each row was the same prepared aerosol phase coefficients scaled by a
+  per-level scattering or Jacobian scalar
+- this keeps the combined `phase_coefficients` row inline because the integrated
+  source-function reflectance path reads it per active RTM level
+- the tradeoff is one 8 B prepared-phase pointer in the grid view and an 8 B
+  `ForwardInput` size increase, while removing 3,600 B from every RTM level row
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `323393204562446faf91328641b4db2d`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.004529 s | 0.999941 s | 0.9954 |
+| forward session setup | 0.713348 s | 0.724321 s | 1.0154 |
+| forward session cached median | 0.301993 s | 0.296183 s | 0.9808 |
+| forward fast four-scene median | 4.891560 s | 4.816070 s | 0.9846 |
+| OE session setup median | 0.716125 s | 0.717254 s | 1.0016 |
+| OE session retrieval median | 1.267720 s | 1.236359 s | 0.9753 |
+| OE fast retrieval median | 0.987037 s | 0.970431 s | 0.9832 |
+| OE sweep session total wall | 21.117324 s | 20.667756 s | 0.9787 |
+| OE sweep fast total wall | 11.409060 s | 11.375178 s | 0.9970 |
+
+Conclusion:
+- this is a retained-layout win on a LABOS hot-path struct and removes about
+  115.52 MiB of possible copied RTM-level aerosol phase payload across a
+  701-miss, 48-level fill
+- the benchmark is faster on all steady-state and OE retrieval surfaces; the
+  only notable increase is session setup, which is outside the cached execution
+  hot path and small relative to the retained row reduction
+- this is the preferred shape over lazy recomputing three dense rows because the
+  hot consumers now receive the exact scalar and the shared unit phase without
+  carrying duplicate arrays through every level
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1042,30 +1110,31 @@ Relevant layout facts:
 
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
-| `PreparedSublayer` | 3,896 B | three `[151]f64` phase arrays | 48 |
-| `SharedOpticalCarrier` | 2,472 B | two `[151]f64` phase arrays | 0 |
-| `SharedBoundaryCarrier` | 6,096 B | multiple `[151]f64` phase arrays | 0 |
-| `RtmQuadratureLevel` | 7,272 B | phase and phase-jacobian arrays | 0 |
+| `PreparedSublayer` | 272 B | scalar layer state + shared phase references | 48 |
+| `SharedOpticalCarrier` | 1,264 B | combined `[151]f64` phase row | 0 |
+| `SharedBoundaryCarrier` | 2,472 B | above/below combined phase rows | 0 |
+| `RtmQuadratureLevel` | 1,256 B | combined phase row + aerosol scattering scalars | 0 |
 | `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
 | `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + carrier slice | 0 |
 
 Memory access shape:
 - scalar optical-depth values and phase coefficient vectors are stored in the
   same row objects
-- `PreparedSublayer` carries aerosol, cloud, and combined phase coefficients
-  even though scalar absorption/extinction fields are often the first hot data
-  consumed
+- `PreparedSublayer` now carries scalar layer state and reads shared prepared
+  particle phase data instead of carrying per-row copies
 - `WavelengthCarrierCache` uses `support_row_valid: []bool` and a
   `[]SharedOpticalCarrier` cache for support-row reuse
-- `SharedRtmSubgrid` now returns slices over `GaussRuleScratch`; the scratch
-  still reserves capacity for dynamic Gauss rules
+- `RtmQuadratureLevel` now keeps combined source phase inline but stores aerosol
+  phase-dependent source/Jacobian data as scalars plus the grid-level unit phase
+- `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
+  reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated
   layer-specific fill of phase arrays dominates the PLM basis itself
 
 Potential direction:
 - split scalar optical-depth columns from phase-coefficient side storage
-- store phase coefficient handles or ranges on rows and keep the actual arrays
-  in side storage only for scattering-positive particle support
+- inspect whether combined phase rows can use side storage without moving
+  expensive phase recomputation into the LABOS hot loop
 - use generation tags or active support-row lists for `support_row_valid` when
   the cache is repeatedly reset per wavelength
 - keep `SharedRtmSubgrid` as a workspace slice and next inspect whether

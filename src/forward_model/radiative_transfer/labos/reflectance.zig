@@ -504,7 +504,7 @@ fn activeAerosolInteriorBounds(
     var first_active: ?usize = null;
     var last_active: ?usize = null;
     for (0..end_level + 1) |ilevel| {
-        if (rtm_quadrature.levels[ilevel].aerosol_ksca_phase_jacobian[0] <= 0.0) continue;
+        if (rtm_quadrature.levels[ilevel].aerosol_ksca_jacobian <= 0.0) continue;
         if (first_active == null) first_active = ilevel;
         last_active = ilevel;
     }
@@ -525,56 +525,23 @@ fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
     return math.clamp(aerosol_scattering_optical_depth / aerosol_optical_depth, 0.0, 1.0);
 }
 
-fn unitPhaseCoefficientsFromScaled(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
-) [basis.max_phase_coef]f64 {
-    var unit = [_]f64{0.0} ** basis.max_phase_coef;
-    const scale = scaled_phase_coefficients[0];
-    if (scale <= 0.0) return unit;
-    for (0..basis.max_phase_coef) |index| {
-        unit[index] = scaled_phase_coefficients[index] / scale;
-    }
-    return unit;
-}
-
-fn unitPhaseFromScaled(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
-) ?UnitPhase {
-    const scale = scaled_phase_coefficients[0];
-    if (scale <= 0.0) return null;
-    const coefficients = unitPhaseCoefficientsFromScaled(scaled_phase_coefficients);
+fn unitAerosolPhase(rtm_quadrature: common.RtmQuadratureGrid) ?UnitPhase {
+    const coefficients = rtm_quadrature.aerosol_phase_coefficients.*;
+    if (coefficients[0] <= 0.0) return null;
     return .{
         .coefficients = coefficients,
         .max_index = maxPhaseCoefficientIndex(coefficients),
     };
 }
 
-fn sameUnitPhase(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
-    reference: UnitPhase,
-) bool {
-    const candidate = unitPhaseFromScaled(scaled_phase_coefficients) orelse return true;
-    for (0..basis.max_phase_coef) |index| {
-        if (@abs(candidate.coefficients[index] - reference.coefficients[index]) > 1.0e-12) return false;
-    }
-    return true;
-}
-
 fn commonActiveAerosolUnitPhase(
     rtm_quadrature: common.RtmQuadratureGrid,
     bounds: AerosolIntervalBounds,
 ) ?UnitPhase {
-    var result: ?UnitPhase = null;
     for (bounds.bottom..bounds.top) |ilevel| {
-        const scaled_phase_coefficients = rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km;
-        const current = unitPhaseFromScaled(scaled_phase_coefficients) orelse continue;
-        if (result) |reference| {
-            if (!sameUnitPhase(scaled_phase_coefficients, reference)) return null;
-        } else {
-            result = current;
-        }
+        if (rtm_quadrature.levels[ilevel].aerosol_ksca_above_per_km > 0.0) return unitAerosolPhase(rtm_quadrature);
     }
-    return result;
+    return null;
 }
 
 // hot path:
@@ -639,7 +606,7 @@ inline fn scatteringSourceRowSumsFromRows(
 }
 
 fn scatteringCoefficientInterfaceWeighting(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    aerosol_ksca_per_km: f64,
     ud: []const basis.UDField,
     ud_sum_local: []const basis.UDLocal,
     rtm_quadrature: common.RtmQuadratureGrid,
@@ -649,12 +616,12 @@ fn scatteringCoefficientInterfaceWeighting(
     geo: *const basis.Geometry,
     plm_basis: *const basis.FourierPlmBasis,
 ) f64 {
-    const unit_phase_coefficients = unitPhaseCoefficientsFromScaled(scaled_phase_coefficients);
-    if (unit_phase_coefficients[0] == 0.0) return 0.0;
-    const max_phase_index = maxPhaseCoefficientIndex(unit_phase_coefficients);
+    if (aerosol_ksca_per_km <= 0.0) return 0.0;
+    const unit_phase = unitAerosolPhase(rtm_quadrature) orelse return 0.0;
+    const max_phase_index = unit_phase.max_index;
     if (i_fourier > max_phase_index) return 0.0;
     return scatteringSourceWeightingFromScaledPhase(
-        unit_phase_coefficients,
+        unit_phase.coefficients,
         max_phase_index,
         ud,
         ilevel,
@@ -795,7 +762,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
                 )
             else
                 scatteringCoefficientInterfaceWeighting(
-                    rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
+                    rtm_quadrature.levels[bounds.bottom].aerosol_ksca_above_per_km,
                     ud,
                     ud_sum_local,
                     rtm_quadrature,
@@ -832,7 +799,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
                     )
                 else
                     scatteringCoefficientInterfaceWeighting(
-                        rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km,
+                        rtm_quadrature.levels[ilevel].aerosol_ksca_above_per_km,
                         ud,
                         ud_sum_local,
                         rtm_quadrature,
@@ -864,16 +831,16 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
     }
 
     var weighting: f64 = 0.0;
+    const unit_phase = unitAerosolPhase(rtm_quadrature) orelse return 0.0;
     for (0..end_level + 1) |ilevel| {
         const level = rtm_quadrature.levels[ilevel];
         if (level.weight <= 0.0) continue;
-        const scaled_phase_coefficients = level.aerosol_ksca_phase_jacobian;
-        const d_sca_d_tau = scaled_phase_coefficients[0];
+        const d_sca_d_tau = level.aerosol_ksca_jacobian;
         if (d_sca_d_tau == 0.0) continue;
-        const source_max_phase_index = maxPhaseCoefficientIndex(scaled_phase_coefficients);
+        const source_max_phase_index = unit_phase.max_index;
         if (i_fourier > source_max_phase_index) continue;
-        const source_weighting = scatteringSourceWeightingFromScaledPhase(
-            scaled_phase_coefficients,
+        const source_weighting = d_sca_d_tau * scatteringSourceWeightingFromScaledPhase(
+            unit_phase.coefficients,
             source_max_phase_index,
             ud,
             ilevel,
@@ -914,7 +881,7 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
     const bounds = activeAerosolInteriorBounds(rtm_quadrature, end_level) orelse return 0.0;
     const aerosol_ssa = aerosolSingleScatteringAlbedo(layers);
     const top_sca_weighting = scatteringCoefficientInterfaceWeighting(
-        rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km,
+        rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km,
         ud,
         ud_sum_local,
         rtm_quadrature,
@@ -925,7 +892,7 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
         plm_basis,
     );
     const bottom_sca_weighting = scatteringCoefficientInterfaceWeighting(
-        rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
+        rtm_quadrature.levels[bounds.bottom].aerosol_ksca_above_per_km,
         ud,
         ud_sum_local,
         rtm_quadrature,
@@ -935,7 +902,7 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
         geo,
         plm_basis,
     );
-    const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km[0];
+    const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km;
     const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
     if (kabs == 0.0) return (top_sca_weighting - bottom_sca_weighting) * ksca;
     const top_abs_weighting = absorptionInterfaceWeighting(
