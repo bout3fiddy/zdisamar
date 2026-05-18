@@ -1123,6 +1123,69 @@ Conclusion:
   state shrinks by 128 KiB per direct state while the benchmark gate does not
   show an end-to-end regression on the OE surfaces
 
+### Experiment 19: encode minus PLM basis by parity
+
+Changed:
+- `FourierPlmBasis` now stores only the weighted plus-side PLM rows
+- minus-side rows are recovered at the consumer boundary using
+  `(-1)^(coef_idx - i_fourier)`
+- the fallback `PlmArrays` helper uses the same encoding instead of carrying a
+  second 12-value row
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `FourierPlmBasis` | 29,008 B | 14,512 B | -49.97% |
+| one cached Fourier basis array slot | 28.3 KiB | 14.2 KiB | -14,496 B |
+| 151-slot workspace PLM cache | 4,380,208 B | 2,191,312 B | -2.087 MiB |
+| fallback `PlmArrays` | 192 B | 96 B | -50.00% |
+
+Interpretation:
+- for a fixed Fourier order, the recurrence gives the minus-side basis as the
+  plus-side basis with alternating coefficient parity
+- phase matrix and phase-row builders read the plus row and apply the parity
+  sign when building `Zmin`
+- this removes one dense `[151][12]f64` array from each cached PLM basis without
+  changing the phase coefficient input or matrix output layout
+- the workspace still caches one basis per Fourier order; the cache now stores
+  half the PLM payload per slot
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `11cb5060e18e449e830950b963e2a157`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.005797 s | 1.004422 s | 0.9986 |
+| forward session setup | 0.711739 s | 0.709770 s | 0.9972 |
+| forward session cached median | 0.296306 s | 0.295492 s | 0.9973 |
+| forward fast four-scene median | 4.814990 s | 4.823127 s | 1.0017 |
+| OE session setup median | 0.716440 s | 0.716281 s | 0.9998 |
+| OE session retrieval median | 1.236149 s | 1.228667 s | 0.9939 |
+| OE fast retrieval median | 0.959866 s | 0.954082 s | 0.9940 |
+| OE sweep session total wall | 20.465027 s | 20.547215 s | 1.0040 |
+| OE sweep fast total wall | 11.185478 s | 11.179253 s | 0.9994 |
+
+Conclusion:
+- this cuts the LABOS PLM basis payload roughly in half and removes about
+  2.09 MiB from the full workspace PLM cache allocation
+- the benchmark residuals are unchanged; OE single retrieval improves in this
+  run, while the session sweep movement is a small 0.4% increase
+- this is worth keeping because the consumer loop still streams dense plus rows
+  and adds only one parity sign per coefficient term while halving the cached
+  basis memory
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1189,6 +1252,7 @@ Files:
 - `src/forward_model/radiative_transfer/labos/orders.zig`
 - `src/forward_model/radiative_transfer/labos/layers.zig`
 - `src/forward_model/radiative_transfer/labos/reflectance.zig`
+- `src/forward_model/radiative_transfer/labos/phase_basis.zig`
 
 Relevant layout facts:
 
@@ -1203,6 +1267,7 @@ Relevant layout facts:
 | `UDField` | 536 B | `E`, `U`, `D` vectors | 0 |
 | `UDLocal` | 432 B | `U`, `D` vectors | 0 |
 | `Geometry` | 2,832 B | `dmu_plus`, `dmu_min`, `dmu_same` | 0 |
+| `FourierPlmBasis` | 14,512 B | weighted plus-side PLM rows | 0 |
 | `OrdersWorkspace` | 104 B plus backing slices | `UD*`, active flags | 0 |
 
 Memory access shape:
@@ -1213,6 +1278,8 @@ Memory access shape:
   uncommon non-adjacent paths
 - `UDField` and `UDLocal` group `U` and `D` together even though transport has
   separate upward and downward passes
+- `FourierPlmBasis` now stores plus-side PLM rows and derives minus-side rows
+  by coefficient parity while building `Zmin`
 - `Vec` and `Vec2` carry `n` metadata inside many small fixed-capacity values
 - `rt_active: []bool` marks active layers and is read during transport loops
 

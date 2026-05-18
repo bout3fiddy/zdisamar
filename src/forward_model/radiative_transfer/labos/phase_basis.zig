@@ -5,16 +5,16 @@ const Mat = types.Mat;
 const Geometry = types.Geometry;
 
 // layout(64-bit):
-//   size: 192 B, align: 8 B
-//   field storage: plus=96 B, minus=96 B; padding: 0 B (0 bits)
+//   size: 96 B, align: 8 B
+//   field storage: plus=96 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: plus:[12]f64=96 B, minus:[12]f64=96 B
-//   cache span: 3 cache line(s) at 64 B per line
+//   encoded fields: minus derives from plus by (-1)^(coef_idx - i_fourier)
+//   inline arrays: plus:[12]f64=96 B
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 192 B (0.188 KiB); total = per instance * live instance count
+//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
 const PlmArrays = struct {
     plus: [types.max_nmutot]f64,
-    minus: [types.max_nmutot]f64,
 };
 
 // layout(64-bit):
@@ -50,29 +50,27 @@ pub const PhaseKernelRow = struct {
 //   data: PLM basis arrays, Gaussian stream geometry, Fourier index
 //   follow: fillZplusZminFromBasisLimited and reflectance phase-row builders
 // layout(64-bit):
-//   size: 29008 B, align: 8 B
-//   field storage: i_fourier=8 B, max_phase_index=8 B, plus=14496 B, minus=14496 B; padding: 0 B (0 bits)
+//   size: 14512 B, align: 8 B
+//   field storage: i_fourier=8 B, max_phase_index=8 B, plus=14496 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: plus:[151][12]f64=14496 B, minus:[151][12]f64=14496 B
-//   cache span: 454 cache line(s) at 64 B per line
+//   encoded fields: minus basis derives from plus by (-1)^(coef_idx - i_fourier)
+//   inline arrays: plus:[151][12]f64=14496 B
+//   cache span: 227 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 29008 B (28.3 KiB); total = per instance * live instance count
+//   footprint: per instance = 14512 B (14.2 KiB); total = per instance * live instance count
 pub const FourierPlmBasis = struct {
     i_fourier: usize,
     max_phase_index: usize,
     plus: [types.max_phase_coef][types.max_nmutot]f64,
-    minus: [types.max_phase_coef][types.max_nmutot]f64,
 
     fn storeWeighted(
         self: *FourierPlmBasis,
         coef_idx: usize,
         p_l_plus: *const [types.max_nmutot]f64,
-        p_l_minus: *const [types.max_nmutot]f64,
         geo: *const Geometry,
     ) void {
         for (0..geo.nmutot) |imu| {
             self.plus[coef_idx][imu] = p_l_plus[imu] * geo.w[imu];
-            self.minus[coef_idx][imu] = p_l_minus[imu] * geo.w[imu];
         }
     }
 
@@ -81,7 +79,6 @@ pub const FourierPlmBasis = struct {
             .i_fourier = i_fourier,
             .max_phase_index = max_phase_index,
             .plus = undefined,
-            .minus = undefined,
         };
         if (max_phase_index < i_fourier) return result;
 
@@ -94,9 +91,6 @@ pub const FourierPlmBasis = struct {
 
         var p_lm1_plus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
         var p_l_plus: [types.max_nmutot]f64 = undefined;
-        var p_lm1_minus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
-        var p_l_minus: [types.max_nmutot]f64 = undefined;
-
         for (0..geo.nmutot) |imu| {
             const u = geo.u[imu];
             const one_minus_uu = 1.0 - u * u;
@@ -115,10 +109,9 @@ pub const FourierPlmBasis = struct {
                 },
             };
             p_l_plus[imu] = start_val;
-            p_l_minus[imu] = start_val;
         }
 
-        result.storeWeighted(i_fourier, &p_l_plus, &p_l_minus, geo);
+        result.storeWeighted(i_fourier, &p_l_plus, geo);
         if (max_phase_index == i_fourier) return result;
 
         for (i_fourier..max_phase_index) |l| {
@@ -129,23 +122,22 @@ pub const FourierPlmBasis = struct {
                 const p_lp1 = (b_plus * p_l_plus[imu] + c_coef * p_lm1_plus[imu]) / a_coef;
                 p_lm1_plus[imu] = p_l_plus[imu];
                 p_l_plus[imu] = p_lp1;
-
-                const b_minus = -(2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
-                const p_lp1_m = (b_minus * p_l_minus[imu] + c_coef * p_lm1_minus[imu]) / a_coef;
-                p_lm1_minus[imu] = p_l_minus[imu];
-                p_l_minus[imu] = p_lp1_m;
             }
-            result.storeWeighted(l + 1, &p_l_plus, &p_l_minus, geo);
+            result.storeWeighted(l + 1, &p_l_plus, geo);
         }
 
         return result;
     }
 };
 
+inline fn minusParitySign(i_fourier: usize, coef_idx: usize) f64 {
+    return if (((coef_idx - i_fourier) & 1) == 0) 1.0 else -1.0;
+}
+
 fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays {
     const n = geo.nmutot;
     if (coef_idx < i_fourier) {
-        return .{ .plus = .{0.0} ** types.max_nmutot, .minus = .{0.0} ** types.max_nmutot };
+        return .{ .plus = .{0.0} ** types.max_nmutot };
     }
 
     var sqlm: [types.max_phase_coef]f64 = .{0.0} ** types.max_phase_coef;
@@ -156,11 +148,8 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
     }
 
     var plm_plus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
-    var plm_minus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
     var p_lm1_plus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
     var p_l_plus: [types.max_nmutot]f64 = undefined;
-    var p_lm1_minus: [types.max_nmutot]f64 = .{0.0} ** types.max_nmutot;
-    var p_l_minus: [types.max_nmutot]f64 = undefined;
 
     for (0..n) |imu| {
         const u = geo.u[imu];
@@ -180,15 +169,13 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
             },
         };
         p_l_plus[imu] = start_val;
-        p_l_minus[imu] = start_val;
     }
 
     if (coef_idx == i_fourier) {
         for (0..n) |imu| {
             plm_plus[imu] = p_l_plus[imu] * geo.w[imu];
-            plm_minus[imu] = p_l_minus[imu] * geo.w[imu];
         }
-        return .{ .plus = plm_plus, .minus = plm_minus };
+        return .{ .plus = plm_plus };
     }
 
     for (i_fourier..coef_idx) |l| {
@@ -199,19 +186,13 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
             const p_lp1 = (b_plus * p_l_plus[imu] + c_coef * p_lm1_plus[imu]) / a_coef;
             p_lm1_plus[imu] = p_l_plus[imu];
             p_l_plus[imu] = p_lp1;
-
-            const b_minus = -(2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
-            const p_lp1_m = (b_minus * p_l_minus[imu] + c_coef * p_lm1_minus[imu]) / a_coef;
-            p_lm1_minus[imu] = p_l_minus[imu];
-            p_l_minus[imu] = p_lp1_m;
         }
     }
 
     for (0..n) |imu| {
         plm_plus[imu] = p_l_plus[imu] * geo.w[imu];
-        plm_minus[imu] = p_l_minus[imu] * geo.w[imu];
     }
-    return .{ .plus = plm_plus, .minus = plm_minus };
+    return .{ .plus = plm_plus };
 }
 
 pub fn fillZplusZminFromBasis(
@@ -262,11 +243,11 @@ pub fn fillZplusZminFromBasisLimited(
         if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
-            const minus_l = &plm_basis.minus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
                 for (0..n) |i| {
                     const scaled_plus_i = alpha1 * plus_l[i];
-                    const scaled_minus_i = alpha1 * minus_l[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plus_l[i];
                     const row = i * n;
                     for (0..n) |j| {
                         zplus.data[row + j] = scaled_plus_i * plus_l[j];
@@ -276,7 +257,7 @@ pub fn fillZplusZminFromBasisLimited(
             } else {
                 for (0..n) |i| {
                     const scaled_plus_i = alpha1 * plus_l[i];
-                    const scaled_minus_i = alpha1 * minus_l[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plus_l[i];
                     const row = i * n;
                     for (0..n) |j| {
                         zplus.data[row + j] += scaled_plus_i * plus_l[j];
@@ -286,10 +267,11 @@ pub fn fillZplusZminFromBasisLimited(
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
                 for (0..n) |i| {
                     const scaled_plus_i = alpha1 * plm.plus[i];
-                    const scaled_minus_i = alpha1 * plm.minus[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plm.plus[i];
                     const row = i * n;
                     for (0..n) |j| {
                         zplus.data[row + j] = scaled_plus_i * plm.plus[j];
@@ -299,7 +281,7 @@ pub fn fillZplusZminFromBasisLimited(
             } else {
                 for (0..n) |i| {
                     const scaled_plus_i = alpha1 * plm.plus[i];
-                    const scaled_minus_i = alpha1 * plm.minus[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plm.plus[i];
                     const row = i * n;
                     for (0..n) |j| {
                         zplus.data[row + j] += scaled_plus_i * plm.plus[j];
@@ -360,9 +342,9 @@ pub fn fillZplusZminRowFromBasisLimited(
         if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
-            const minus_l = &plm_basis.minus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
             const scaled_plus_row = alpha1 * plus_l[row_index];
-            const scaled_minus_row = alpha1 * minus_l[row_index];
+            const scaled_minus_row = alpha1 * minus_sign * plus_l[row_index];
             if (first_order) {
                 for (0..n) |j| {
                     row.zplus[j] = scaled_plus_row * plus_l[j];
@@ -376,8 +358,9 @@ pub fn fillZplusZminRowFromBasisLimited(
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
             const scaled_plus_row = alpha1 * plm.plus[row_index];
-            const scaled_minus_row = alpha1 * plm.minus[row_index];
+            const scaled_minus_row = alpha1 * minus_sign * plm.plus[row_index];
             if (first_order) {
                 for (0..n) |j| {
                     row.zplus[j] = scaled_plus_row * plm.plus[j];
@@ -430,18 +413,19 @@ fn fillZplusZminRowFromBasisLimited12(
         if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
-            const minus_l = &plm_basis.minus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
-                fillPhaseRow12(&row, alpha1, plus_l, minus_l, row_index, true);
+                fillPhaseRow12(&row, alpha1, plus_l, minus_sign, row_index, true);
             } else {
-                fillPhaseRow12(&row, alpha1, plus_l, minus_l, row_index, false);
+                fillPhaseRow12(&row, alpha1, plus_l, minus_sign, row_index, false);
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
-                fillPhaseRow12(&row, alpha1, &plm.plus, &plm.minus, row_index, true);
+                fillPhaseRow12(&row, alpha1, &plm.plus, minus_sign, row_index, true);
             } else {
-                fillPhaseRow12(&row, alpha1, &plm.plus, &plm.minus, row_index, false);
+                fillPhaseRow12(&row, alpha1, &plm.plus, minus_sign, row_index, false);
             }
         }
         first_order = false;
@@ -474,18 +458,19 @@ fn fillZplusZminFromBasisLimited12(
         if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
-            const minus_l = &plm_basis.minus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
-                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_l, true);
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_sign, true);
             } else {
-                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_l, false);
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_sign, false);
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
             if (first_order) {
-                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, &plm.minus, true);
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, minus_sign, true);
             } else {
-                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, &plm.minus, false);
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, minus_sign, false);
             }
         }
         first_order = false;
@@ -500,7 +485,7 @@ inline fn fillPhaseTerm12(
     noalias zmin: *Mat,
     alpha1: f64,
     noalias plus_l: *const [types.max_nmutot]f64,
-    noalias minus_l: *const [types.max_nmutot]f64,
+    minus_sign: f64,
     comptime first_order: bool,
 ) void {
     var scaled_plus_col: [12]f64 = undefined;
@@ -510,7 +495,7 @@ inline fn fillPhaseTerm12(
 
     inline for (0..12) |i| {
         const plus_i = plus_l[i];
-        const minus_i = minus_l[i];
+        const minus_i = minus_sign * plus_l[i];
         const row = i * 12;
         inline for (0..12) |j| {
             const idx = row + j;
@@ -529,12 +514,12 @@ inline fn fillPhaseRow12(
     noalias row: *PhaseKernelRow,
     alpha1: f64,
     noalias plus_l: *const [types.max_nmutot]f64,
-    noalias minus_l: *const [types.max_nmutot]f64,
+    minus_sign: f64,
     row_index: usize,
     comptime first_order: bool,
 ) void {
     const scaled_plus_row = alpha1 * plus_l[row_index];
-    const scaled_minus_row = alpha1 * minus_l[row_index];
+    const scaled_minus_row = alpha1 * minus_sign * plus_l[row_index];
     inline for (0..12) |j| {
         const zplus_value = scaled_plus_row * plus_l[j];
         const zmin_value = scaled_minus_row * plus_l[j];
