@@ -11,7 +11,7 @@ const spline = @import("../../../common/math/interpolation/spline.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
-const max_spectroscopy_profile_nodes: usize = 256;
+const max_spectroscopy_profile_nodes: usize = 64;
 const min_parallel_profile_cache_node_count: usize = 8;
 const profile_cache_node_chunk_size: usize = 2;
 
@@ -41,14 +41,14 @@ const ProfileCacheValueWorker = struct {
 //   data: pressure, temperature, density, VMR, prepared profile line-state arrays
 //   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
 // layout(64-bit):
-//   size: 20504 B, align: 8 B
-//   field storage: 20504 B across 12 fields; largest: weak_values=2048 B, strong_values=2048 B, line_values=2048 B; padding: 0 B (0 bits)
+//   size: 5144 B, align: 8 B
+//   field storage: 5144 B across 12 fields; largest: weak_values=512 B, strong_values=512 B, line_values=512 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 10 fields reserve 20480 B inside each instance
+//   inline arrays: 10 fields reserve 5120 B inside each instance
 //   out-of-line: altitudes_km carry references/descriptors; referenced storage is not included in size
-//   cache span: 321 cache line(s) at 64 B per line
+//   cache span: 81 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 20504 B (20.0 KiB); total also includes referenced storage above
+//   footprint: per instance = 5144 B (5.023 KiB); total also includes referenced storage above
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},

@@ -256,6 +256,70 @@ Conclusion:
 - this is a strong follow-up target because it improves memory footprint,
   preparation setup time, forward time, and OE sweep time together
 
+### Experiment 5: tighten spectroscopy profile cache capacity
+
+Changed:
+- profile spectroscopy caches now reserve 64 profile nodes instead of 256
+- this affects the total-only prepared-state cache and the full layer
+  spectroscopy cache
+- cache construction still returns an empty cache when the runtime node count is
+  outside the fixed capacity, so larger profiles use the existing direct
+  evaluation path instead of silently truncating data
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `ProfileNodeSpectroscopyCache` | 4,104 B | 1,032 B | -74.85% |
+| `ProfileSpectroscopyCache` | 20,504 B | 5,144 B | -74.91% |
+| retained table across 701 cached forward misses | 2,876,904 B | 723,432 B | -2,153,472 B |
+| prepare-time layer spectroscopy cache | 20,504 B | 5,144 B | -15,360 B |
+
+Interpretation:
+- the current retained O2 A profile has 47 data rows, so 64 nodes leaves room
+  for the measured profile while removing fixed unused cache capacity
+- the total-only cache is retained per cached forward miss, so the 3,072 B
+  per-instance reduction compounds across the 701-sample benchmark grid
+- the full layer cache is a stack-local prepare cache, so the same capacity
+  tightening reduces preparation memory traffic and cache span
+- there is no unused padding or bool slack in either struct; the removed memory
+  is fixed-capacity array storage that the benchmark profile does not fill
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture reflectance max_abs `5.393e-14`;
+  session-vs-no-session residuals all `0.0`; fast-mode spectra worst
+  `4.963e-04` (`1.600x` noise); OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `3.778e-03`, pressure delta
+  `5.099e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.054551 s | 1.056516 s | 1.0019 |
+| forward session setup | 0.710656 s | 0.709138 s | 0.9979 |
+| forward session cached median | 0.345292 s | 0.348221 s | 1.0085 |
+| forward fast four-scene median | 5.018039 s | 5.020846 s | 1.0006 |
+| OE session setup median | 0.717431 s | 0.715823 s | 0.9978 |
+| OE session retrieval median | 1.436078 s | 1.449589 s | 1.0094 |
+| OE fast retrieval median | 1.124246 s | 1.133547 s | 1.0083 |
+| OE sweep session total wall | 21.647506 s | 21.652913 s | 1.0002 |
+| OE sweep fast total wall | 11.955781 s | 11.963831 s | 1.0007 |
+
+Conclusion:
+- the memory win is concentrated in one cache family: about 2.05 MiB less
+  retained profile-cache payload across the benchmark grid, plus a smaller
+  prepare-time stack reduction
+- end-to-end benchmark movement is flat on the sweep boundary; single-case
+  retrieval medians moved by less than 1%
+- this is acceptable as capacity tightening, but the next larger target remains
+  splitting total-only spectroscopy data from breakdown arrays instead of only
+  shrinking the fixed capacity
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
