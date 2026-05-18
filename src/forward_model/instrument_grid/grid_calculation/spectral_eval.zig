@@ -12,7 +12,6 @@ const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
-const OperationalInstrumentIntegration = @import("../../implementations/instrument.zig").IntegrationKernel;
 const Error = Storage.Error;
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
@@ -53,12 +52,13 @@ pub fn integrateForwardAtNominal(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     cache: *SpectralEvaluationCache,
-    integration: *const OperationalInstrumentIntegration,
+    integration: *const Plan.IntegrationKernelRef,
+    kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!ForwardIntegratedSample {
     // DECISION:
     //   When the instrument has no internal integration routine, fall back to
     //   the quantized cached forward sample at the nominal wavelength.
-    if (!integration.enabled) {
+    if (!integration.enabled()) {
         return cachedForwardAtWavelength(
             allocator,
             scene,
@@ -80,9 +80,8 @@ pub fn integrateForwardAtNominal(
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian.zero();
-    for (0..integration.sample_count) |index| {
-        const offset_nm = integration.offsets_nm[index];
-        const weight = integration.weights[index];
+    const samples = integration.samples(kernel_storage);
+    for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
         const sample = try cachedForwardAtWavelength(
             allocator,
@@ -122,19 +121,19 @@ pub fn integrateIrradianceAtNominal(
     nominal_wavelength_nm: f64,
     safe_span: f64,
     cache: *SpectralEvaluationCache,
-    integration: *const OperationalInstrumentIntegration,
+    integration: *const Plan.IntegrationKernelRef,
+    kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!f64 {
     // DECISION:
     //   Integrated instruments sample irradiance through the same routine used
     //   for radiance so the instrument response stays aligned.
-    if (!integration.enabled) {
+    if (!integration.enabled()) {
         return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
 
     var irradiance_sum: f64 = 0.0;
-    for (0..integration.sample_count) |index| {
-        const offset_nm = integration.offsets_nm[index];
-        const weight = integration.weights[index];
+    const samples = integration.samples(kernel_storage);
+    for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         irradiance_sum += weight * try cachedIrradianceAtWavelength(
             scene,
             prepared,

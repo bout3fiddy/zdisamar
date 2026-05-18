@@ -58,13 +58,13 @@ pub const Buffers = struct {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 584 B, align: 8 B
-//   field storage: 580 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, noise_sigma=16 B; padding: 4 B (32 bits)
+//   size: 616 B, align: 8 B
+//   field storage: 612 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 28 bool-storage slack = 60 bits
 //   out-of-line: noise_sigma, forward_misses, irradiance, reflectance, scratch, +16 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 584 B (0.570 KiB); total also includes referenced storage above
+//   footprint: per instance = 616 B (0.602 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -85,7 +85,7 @@ pub const SummaryStorage = struct {
     irradiance_noise_sigma: []f64 = &.{},
     reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
-    wavelength_sampling: []Plan.WavelengthSampling = &.{},
+    wavelength_sampling: Plan.OwnedWavelengthSampling = .{},
     forward_misses: []Plan.ForwardCacheMiss = &.{},
     profile_spectroscopy_caches: []SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
     wavelength_plan_key: u64 = 0,
@@ -120,7 +120,7 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.irradiance_noise_sigma);
         freeBuffer(allocator, self.reflectance_noise_sigma);
         if (self.evaluation_cache) |*cache| cache.deinit();
-        allocator.free(self.wavelength_sampling);
+        self.wavelength_sampling.deinit(allocator);
         allocator.free(self.forward_misses);
         allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
@@ -156,10 +156,10 @@ pub const SummaryStorage = struct {
     }
 
     pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {
-        allocator.free(self.wavelength_sampling);
+        self.wavelength_sampling.deinit(allocator);
         allocator.free(self.forward_misses);
         allocator.free(self.profile_spectroscopy_caches);
-        self.wavelength_sampling = &.{};
+        self.wavelength_sampling = .{};
         self.forward_misses = &.{};
         self.profile_spectroscopy_caches = &.{};
         self.wavelength_plan_key = 0;

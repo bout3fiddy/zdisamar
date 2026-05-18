@@ -42,22 +42,22 @@ const SimulationSetup = struct {
 };
 
 // layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: 80 B across 5 fields; largest: wavelength_sampling=16 B, forward_misses=16 B, profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
+//   size: 144 B, align: 8 B
+//   field storage: 144 B across 5 fields; largest: wavelength_sampling=48 B, owned_wavelength_sampling=48 B, forward_misses=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: wavelength_sampling, forward_misses, profile_spectroscopy_caches, owned_wavelength_sampling, owned_forward_misses carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
+//   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced storage above
+//   footprint: per instance = 144 B (0.141 KiB); total also includes referenced storage above
 const ResolvedSimulationPlan = struct {
-    wavelength_sampling: []const WavelengthSampling.WavelengthSampling = &.{},
+    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable = .{},
     forward_misses: []const SpectralEval.ForwardCacheMiss = &.{},
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
-    owned_wavelength_sampling: []WavelengthSampling.WavelengthSampling = &.{},
+    owned_wavelength_sampling: WavelengthSampling.OwnedWavelengthSampling = .{},
     owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{},
 
     fn deinit(self: *ResolvedSimulationPlan, allocator: Allocator) void {
-        allocator.free(self.owned_wavelength_sampling);
+        self.owned_wavelength_sampling.deinit(allocator);
         allocator.free(self.owned_forward_misses);
         self.* = undefined;
     }
@@ -207,7 +207,7 @@ pub fn warmWavelengthPlan(
     );
     storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
         allocator,
-        storage.wavelength_sampling,
+        storage.wavelength_sampling.view(),
     );
     storage.forward_misses_valid = true;
     _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
@@ -466,7 +466,7 @@ fn resolveSimulationPlan(
 
         if (wavelength_plan_storage) |storage| {
             if (storage.wavelength_plan_valid and storage.wavelength_plan_key == setup.plan_key) {
-                break :blk storage.wavelength_sampling;
+                break :blk storage.wavelength_sampling.view();
             }
             storage.invalidateWavelengthPlan(allocator);
             storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
@@ -480,7 +480,7 @@ fn resolveSimulationPlan(
             );
             storage.wavelength_plan_key = setup.plan_key;
             storage.wavelength_plan_valid = true;
-            break :blk storage.wavelength_sampling;
+            break :blk storage.wavelength_sampling.view();
         }
         plan.owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
             allocator,
@@ -491,7 +491,7 @@ fn resolveSimulationPlan(
             setup.irradiance_calibration,
             implementations,
         );
-        break :blk plan.owned_wavelength_sampling;
+        break :blk plan.owned_wavelength_sampling.view();
     };
     plan.forward_misses = blk: {
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
@@ -588,7 +588,7 @@ fn fillRadianceSamples(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
     setup: SimulationSetup,
-    wavelength_sampling: []const WavelengthSampling.WavelengthSampling,
+    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     transport_layer_count: usize,
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
@@ -596,7 +596,7 @@ fn fillRadianceSamples(
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
-        for (wavelength_sampling, 0..) |plan, index| {
+        for (wavelength_sampling.rows, 0..) |plan, index| {
             const nominal_wavelength_nm = plan.nominal_wavelength_nm;
             buffers.wavelengths[index] = nominal_wavelength_nm;
 
@@ -617,6 +617,7 @@ fn fillRadianceSamples(
                 buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
                 evaluation_cache,
                 &plan.radiance_integration,
+                wavelength_sampling.kernel_storage,
             );
             buffers.scratch[index] = integrated.radiance;
             if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
@@ -656,7 +657,7 @@ fn fillIrradianceSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     setup: SimulationSetup,
-    wavelength_sampling: []const WavelengthSampling.WavelengthSampling,
+    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!void {
@@ -664,7 +665,7 @@ fn fillIrradianceSamples(
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
         try evaluation_cache.reserveIrradiance(irradianceCacheCapacity(wavelength_sampling));
-        for (wavelength_sampling, 0..) |plan, index| {
+        for (wavelength_sampling.rows, 0..) |plan, index| {
             buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
                 scene,
                 prepared,
@@ -672,6 +673,7 @@ fn fillIrradianceSamples(
                 setup.safe_span,
                 evaluation_cache,
                 &plan.irradiance_integration,
+                wavelength_sampling.kernel_storage,
             );
         }
     }
@@ -697,13 +699,10 @@ fn fillIrradianceSamples(
     }
 }
 
-fn irradianceCacheCapacity(wavelength_sampling: []const WavelengthSampling.WavelengthSampling) usize {
+fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSamplingTable) usize {
     var count: usize = 0;
-    for (wavelength_sampling) |plan| {
-        count += if (plan.irradiance_integration.enabled)
-            @as(usize, @intCast(plan.irradiance_integration.sample_count))
-        else
-            1;
+    for (wavelength_sampling.rows) |plan| {
+        count += plan.irradiance_integration.activeSampleCount();
     }
     return count;
 }

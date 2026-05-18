@@ -269,14 +269,14 @@ pub const ZdsRadiativeTransferDiagnostics = extern struct {
 };
 
 // layout(64-bit):
-//   size: 5784 B, align: 8 B
-//   field storage: 5777 B across 10 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=584 B; padding: 7 B (56 bits)
+//   size: 5816 B, align: 8 B
+//   field storage: 5809 B across 10 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=616 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   inline arrays: last_error:[256:0]u8=257 B
 //   out-of-line: results, atmospheric_budgets, o2_line_contribution_tables, instrument_response_tables, o2_o2_cia_tables, +1 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 91 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 5784 B (5.648 KiB); total also includes referenced storage above
+//   footprint: per instance = 5816 B (5.680 KiB); total also includes referenced storage above
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
