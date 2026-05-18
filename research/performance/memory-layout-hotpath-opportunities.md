@@ -1186,6 +1186,70 @@ Conclusion:
   and adds only one parity sign per coefficient term while halving the cached
   basis memory
 
+### Experiment 20: reuse integration kernel arrays as adaptive sample scratch
+
+Changed:
+- adaptive integration builders no longer allocate separate
+  `[2048]f64` wavelength and raw-weight sample arrays
+- candidate wavelengths are written into `IntegrationKernel.offsets_nm` and raw
+  weights into `IntegrationKernel.weights`
+- `finalizeAdaptiveKernel` now sorts, merges, and normalizes those same arrays
+  in place for the final kernel
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| duplicate adaptive sample scratch per builder call | 32,768 B | 0 B | -100.00% |
+| builder-local sample storage plus `IntegrationKernel` | 65,552 B | 32,784 B | -49.99% |
+| 701 wavelengths x 2 channels duplicate scratch | 45,940,736 B | 0 B | -43.81 MiB |
+| retained `IntegrationKernel` layout | 32,784 B | 32,784 B | unchanged |
+
+Interpretation:
+- the adaptive builder needs candidate wavelengths and raw weights only until
+  final normalization
+- the output kernel already has two max-capacity arrays with the same element
+  type and capacity
+- using those arrays as scratch removes a second max-capacity sample pair from
+  the call frame
+- the retained compact wavelength-plan layout is unchanged; this only removes
+  transient duplicate scratch from adaptive kernel construction
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `dadb8461a8fb4437811d5456a1a9617b`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.004422 s | 1.005817 s | 1.0014 |
+| forward session setup | 0.709770 s | 0.711012 s | 1.0018 |
+| forward session cached median | 0.295492 s | 0.295037 s | 0.9985 |
+| forward fast four-scene median | 4.823127 s | 4.817733 s | 0.9989 |
+| OE session setup median | 0.716281 s | 0.716079 s | 0.9997 |
+| OE session retrieval median | 1.228667 s | 1.230433 s | 1.0014 |
+| OE fast retrieval median | 0.954082 s | 0.954111 s | 1.0000 |
+| OE sweep session total wall | 20.547215 s | 20.517402 s | 0.9985 |
+| OE sweep fast total wall | 11.179253 s | 11.188192 s | 1.0008 |
+
+Conclusion:
+- this removes duplicate adaptive sample storage without changing the retained
+  kernel or compact wavelength-plan representation
+- the benchmark gate is flat: cached forward and session sweep improve, while
+  no-session forward, OE session retrieval, and fast sweep move by less than
+  0.2%
+- this is worth keeping as a memory-traffic cleanup because the hot builder now
+  carries one max-capacity sample pair instead of two
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1200,7 +1264,7 @@ Strategy checklist used while reading:
 
 ## Highest-Signal Findings
 
-### 1. Instrument wavelength plans store maximum kernels inline
+### 1. Instrument wavelength plans now use compact rows; adaptive scratch remains max capacity
 
 Files:
 - `src/forward_model/instrument_grid/grid_calculation/wavelength_plan.zig`
@@ -1213,36 +1277,38 @@ Relevant layout facts:
 
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
-| `WavelengthSampling` | 65,592 B | two `IntegrationKernel` values | 0 |
+| `WavelengthSampling` | 200 B | nominal wavelength + compact kernel refs | 0 |
 | `IntegrationKernel` | 32,784 B | `[2048]f64` offsets + `[2048]f64` weights | 63 |
-| `AdaptiveIntervalPlan` | 49,160 B | `[2048]AdaptiveIntervalDescriptor` | 0 |
-| `AdaptiveKernelCache` | 49,184 B | embedded `AdaptiveIntervalPlan` | 63 |
+| `AdaptiveIntervalPlan` | 20,504 B | interval ends + division counts | 0 |
+| `AdaptiveKernelCache` | 20,512 B | embedded `AdaptiveIntervalPlan` + ready flag | 63 |
 
 Memory access shape:
-- one `WavelengthSampling` is allocated per nominal wavelength plan
-- each plan row reserves space for two 2048-sample kernels even when a channel
-  is disabled or uses the default small kernel
-- adaptive planning also creates fixed 2048-element scratch arrays for sample
-  wavelengths and raw weights
+- one compact `WavelengthSampling` row is allocated per nominal wavelength plan
+- plan rows store small inline kernels or ranges into side-storage offsets and
+  weights instead of embedding two `IntegrationKernel` payloads
+- adaptive planning still uses fixed 2048-capacity interval plans and
+  `IntegrationKernel` scratch for candidate samples
+- adaptive builders now reuse the output kernel arrays as candidate scratch
+  instead of carrying duplicate sample arrays
 - `collectUniqueForwardMisses` scans the plan rows and then builds a hash map
   of cache misses
 
 Potential direction:
-- make `WavelengthSampling` a descriptor: nominal/radiance/irradiance
-  wavelength plus kernel handles or ranges into side storage
-- keep the common small kernel inline, for example 5 offsets and weights
-- store large adaptive kernels out-of-band only for rows that need them
-- encode disabled integration as a tag or empty range instead of a bool inside
-  a 32 KiB object
+- inspect whether adaptive interval counts justify exact-size side storage
+  rather than a fixed 2048-capacity `AdaptiveIntervalPlan`
+- keep the common small kernel inline and store large adaptive kernels
+  out-of-band only for rows that need them
+- measure whether `IntegrationKernel` can become a caller-owned sample builder
+  with exact active capacity without adding allocation to the hot path
 - deduplicate kernels by handle when radiance or irradiance kernels repeat
 
-Why this is the first memory-layout experiment:
-- the current layout is `sample_count * 64.1 KiB`
-- if a run has 701 nominal samples, the plan array alone is
-  `65,592 * 701 = 45,979,992 B`, or about 43.85 MiB
-- most of that footprint is maximum capacity, not active payload
-- this is a clean fit for handles, small-inline storage, sparse side storage,
-  and boolean-out-of-band strategies
+Completed layout changes:
+- compact wavelength rows removed the original `sample_count * 64.1 KiB`
+  retained plan payload
+- integration-kernel reset no longer clears inactive max capacity
+- adaptive builders no longer carry duplicate max-capacity sample arrays
+- remaining max-capacity storage is concentrated in explicit scratch types,
+  not in retained wavelength-plan rows
 
 ### 2. LABOS attenuation already moved toward lazy storage, but transport fields remain AoS-heavy
 
@@ -1693,9 +1759,12 @@ table verifies all markers are covered by this scratch analysis.
 
 ## Current Priority Order
 
-1. compact wavelength plan and integration-kernel storage
-2. split optical carrier scalar state from phase coefficient side storage
-3. prototype LABOS order workspace SoA and active-layer lists
+1. measure adaptive interval and integration sample-count distributions before
+   changing remaining max-capacity scratch
+2. prototype LABOS order workspace SoA and active-layer lists
+3. generation tags or active lists for repeatedly reset support-row valid caches
 4. use total-only spectroscopy cache by default and side-store breakdown arrays
-5. right-size strong-line relaxation weights
-6. generation tags or active lists for repeatedly reset valid-bit caches
+5. inspect whether remaining combined phase rows can use side storage without
+   adding scattered source reads
+6. measure non-adjacent `RuntimeAttenArray.get` calls before changing
+   attenuation storage again

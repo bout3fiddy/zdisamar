@@ -92,7 +92,7 @@ const AdaptiveSupportRange = struct {
 // hot path:
 //   when: integrated instrument sampling builds a kernel for one nominal wavelength
 //   work: constructs an adaptive interval plan, emits candidate samples, and finalizes weights
-//   data: strong-line centers, response support window, sample wavelength/weight arrays
+//   data: strong-line centers, response support window, integration-kernel scratch arrays
 //   follow: buildAdaptiveIntervalPlan, appendAdaptiveSamplesFromPlan, and finalizeAdaptiveKernel
 pub fn buildAdaptiveIntegrationKernel(
     scene: *const Scene,
@@ -118,8 +118,6 @@ pub fn buildAdaptiveIntegrationKernel(
     var plan: AdaptiveIntervalPlan = .{};
     if (!buildAdaptiveIntervalPlan(scene, prepared, response, &plan)) return false;
 
-    var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
-    var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
     var sample_count: usize = 0;
     if (!appendAdaptiveSamplesFromPlan(
         &plan,
@@ -128,16 +126,16 @@ pub fn buildAdaptiveIntegrationKernel(
         support_window.global_start_nm,
         support_window.global_end_nm,
         apply_disamar_midpoint_bias,
-        &sample_wavelengths_nm,
-        &sample_raw_weights,
+        &kernel.offsets_nm,
+        &kernel.weights,
         &sample_count,
     )) return false;
 
     return finalizeAdaptiveKernel(
         kernel,
         nominal_wavelength_nm,
-        sample_wavelengths_nm[0..sample_count],
-        sample_raw_weights[0..sample_count],
+        kernel.offsets_nm[0..sample_count],
+        kernel.weights[0..sample_count],
     );
 }
 
@@ -219,8 +217,6 @@ pub fn buildDisamarRealizedKernel(
         &plan,
     )) return false;
 
-    var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
-    var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
     var sample_count: usize = 0;
     if (!appendAdaptiveSamplesFromPlan(
         &plan,
@@ -229,16 +225,16 @@ pub fn buildDisamarRealizedKernel(
         support_window.global_start_nm,
         support_window.global_end_nm,
         apply_disamar_midpoint_bias,
-        &sample_wavelengths_nm,
-        &sample_raw_weights,
+        &kernel.offsets_nm,
+        &kernel.weights,
         &sample_count,
     )) return false;
 
     return finalizeAdaptiveKernel(
         kernel,
         nominal_wavelength_nm,
-        sample_wavelengths_nm[0..sample_count],
-        sample_raw_weights[0..sample_count],
+        kernel.offsets_nm[0..sample_count],
+        kernel.weights[0..sample_count],
     );
 }
 

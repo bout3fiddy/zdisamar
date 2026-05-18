@@ -39,8 +39,6 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
 ) bool {
     if (!cache.ready) return false;
 
-    var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
-    var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
     var sample_count: usize = 0;
     if (!adaptive_plan.appendAdaptiveSamplesFromPlan(
         &cache.plan,
@@ -49,15 +47,15 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
         cache.plan.global_start_nm,
         cache.plan.global_end_nm,
         apply_disamar_midpoint_bias,
-        &sample_wavelengths_nm,
-        &sample_raw_weights,
+        &kernel.offsets_nm,
+        &kernel.weights,
         &sample_count,
     )) return false;
 
     return adaptive_plan.finalizeAdaptiveKernel(
         kernel,
         nominal_wavelength_nm,
-        sample_wavelengths_nm[0..sample_count],
-        sample_raw_weights[0..sample_count],
+        kernel.offsets_nm[0..sample_count],
+        kernel.weights[0..sample_count],
     );
 }
