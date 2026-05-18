@@ -148,7 +148,7 @@ pub fn fillForwardLayersAtWavelength(
 //   when: forward input construction fills transport layers without a wavelength carrier cache
 //   work: reduces prepared layers or support rows into layer input optical-depth fields
 //   data: prepared layers/sublayers, profile spectroscopy cache, layer input array
-//   follow: shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache
+//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -178,7 +178,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     //   `RTMweightSub` values. Re-integrating a new Gauss
                     //   subgrid here changes line-shoulder absorption even
                     //   when the support grid itself matches.
-                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
+                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                         self,
                         scene,
                         wavelength_nm,
@@ -186,10 +186,10 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         support.strong_line_states,
                         layer_geometry,
                         profile_cache,
+                        layer_input,
                     );
-                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
                     attachAerosolOpticalDepthJacobian(scene, layer_input);
-                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                    Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
             }
@@ -200,7 +200,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
                 const support = shared_geometry.sharedSupportSlices(self, sublayers, start_index, count);
-                const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
+                const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                     self,
                     scene,
                     wavelength_nm,
@@ -215,10 +215,10 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         .support_count = layer.sublayer_count,
                     },
                     profile_cache,
+                    layer_input,
                 );
-                layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
                 attachAerosolOpticalDepthJacobian(scene, layer_input);
-                Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                Evaluation.accumulateBreakdown(&totals, breakdown);
             }
             return totals;
         }
@@ -335,7 +335,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
 //   when: forward input construction fills transport layers for a cached wavelength solve
 //   work: reduces shared support rows through WavelengthCarrierCache and writes layer inputs
 //   data: shared RTM geometry, support sublayers, carrier cache, layer input array
-//   follow: shared_carrier.evaluateReducedLayerFromSupportRowsWithCarrierCache
+//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache
 pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -358,7 +358,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         support_start_index,
                         support_count,
                     );
-                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithCarrierCache(
+                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache(
                         self,
                         scene,
                         wavelength_nm,
@@ -366,10 +366,10 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         support.strong_line_states,
                         layer_geometry,
                         wavelength_cache,
+                        layer_input,
                     );
-                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
                     attachAerosolOpticalDepthJacobian(scene, layer_input);
-                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                    Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
             }

@@ -6,6 +6,7 @@ const State = @import("state.zig");
 const carrier_eval = @import("carrier_eval.zig");
 const shared_geometry = @import("shared_geometry.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
+const PhaseFunctions = @import("../shared/phase_functions.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
 const PreparedSublayer = State.PreparedSublayer;
@@ -13,7 +14,7 @@ const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
 const EvaluatedLayer = State.EvaluatedLayer;
 const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
 
-const phase_coefficient_count = @import("../shared/phase_functions.zig").phase_coefficient_count;
+const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
 // layout(64-bit):
 //   size: 32 B, align: 8 B
@@ -110,7 +111,7 @@ pub fn evaluatedLayerFromSharedCarrier(
     phase_numerator: [phase_coefficient_count]f64,
 ) EvaluatedLayer {
     const total_scattering = breakdown.totalScatteringOpticalDepth();
-    var phase_coefficients = @import("../shared/phase_functions.zig").gasPhaseCoefficientsAtWavelength(wavelength_nm);
+    var phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
     if (total_scattering > 0.0) {
         for (0..phase_coefficient_count) |index| {
             phase_coefficients[index] = phase_numerator[index] / total_scattering;
@@ -124,6 +125,44 @@ pub fn evaluatedLayerFromSharedCarrier(
         .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
         .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
     };
+}
+
+fn fillLayerInputFromSharedCarrier(
+    scene: *const Scene,
+    wavelength_nm: f64,
+    altitude_km: f64,
+    breakdown: OpticalDepthBreakdown,
+    phase_numerator: *const [phase_coefficient_count]f64,
+    layer_input: *transport_common.LayerInput,
+) void {
+    const total_optical_depth = breakdown.totalOpticalDepth();
+    const total_scattering = breakdown.totalScatteringOpticalDepth();
+    layer_input.* = .{
+        .gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth,
+        .gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth,
+        .cia_optical_depth = breakdown.cia_optical_depth,
+        .aerosol_optical_depth = breakdown.aerosol_optical_depth,
+        .aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth,
+        .cloud_optical_depth = breakdown.cloud_optical_depth,
+        .cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth,
+        .optical_depth = total_optical_depth,
+        .scattering_optical_depth = total_scattering,
+        .single_scatter_albedo = breakdown.singleScatterAlbedo(),
+        .optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
+        .scattering_optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
+        .single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
+        .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
+        .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
+        .phase_coefficients = undefined,
+    };
+    if (total_scattering > 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            layer_input.phase_coefficients[index] = phase_numerator[index] / total_scattering;
+        }
+        layer_input.phase_coefficients[0] = 1.0;
+        return;
+    }
+    layer_input.phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
 }
 
 pub fn evaluateReducedLayerFromSupportRows(
@@ -192,6 +231,48 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     );
 }
 
+pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    layer_input: *transport_common.LayerInput,
+) OpticalDepthBreakdown {
+    var breakdown: OpticalDepthBreakdown = .{};
+    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+    if (support_sublayers.len >= 2) {
+        for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+            const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
+            if (weight_km <= 0.0) continue;
+            const strong_line_state = if (strong_line_states) |states|
+                if (local_index < states.len) &states[local_index] else null
+            else
+                null;
+            const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+                self,
+                wavelength_nm,
+                support_sublayer,
+                @intCast(support_sublayer.global_sublayer_index),
+                strong_line_state,
+                profile_cache,
+            );
+            accumulateSharedCarrier(&breakdown, &phase_numerator, &carrier, weight_km);
+        }
+    }
+    fillLayerInputFromSharedCarrier(
+        scene,
+        wavelength_nm,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        &phase_numerator,
+        layer_input,
+    );
+    return breakdown;
+}
+
 // hot path:
 //   when: forward input construction reduces support rows into a transport layer
 //   work: samples carrier cache rows and accumulates layer optical properties
@@ -243,6 +324,49 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
         breakdown,
         phase_numerator,
     );
+}
+
+pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    layer_input: *transport_common.LayerInput,
+) OpticalDepthBreakdown {
+    var breakdown: OpticalDepthBreakdown = .{};
+    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+    if (support_sublayers.len >= 2) {
+        for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+            const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
+            if (weight_km <= 0.0) continue;
+            const strong_line_state = if (strong_line_states) |states|
+                if (local_index < states.len) &states[local_index] else null
+            else
+                null;
+            var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
+            const carrier = wavelength_cache.cachedSupportRowRef(
+                self,
+                wavelength_nm,
+                support_sublayer,
+                @intCast(support_sublayer.global_sublayer_index),
+                strong_line_state,
+                &fallback_carrier,
+            );
+            accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
+        }
+    }
+    fillLayerInputFromSharedCarrier(
+        scene,
+        wavelength_nm,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        &phase_numerator,
+        layer_input,
+    );
+    return breakdown;
 }
 
 pub fn fillSharedPseudoSphericalSamplesFromSupportRows(

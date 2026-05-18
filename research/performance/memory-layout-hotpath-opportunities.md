@@ -1250,6 +1250,78 @@ Conclusion:
 - this is worth keeping as a memory-traffic cleanup because the hot builder now
   carries one max-capacity sample pair instead of two
 
+### Experiment 21: fill shared-grid layer inputs directly
+
+Changed:
+- shared support-row layer reduction now writes the final `LayerInput` row
+  directly
+- the older evaluated-layer return path remains for other callers, but the
+  forward input shared-grid hot path no longer materializes an intermediate
+  `EvaluatedLayer`
+- phase coefficients are still accumulated from the same support-row carriers;
+  the change removes the extra full-width layer payload between accumulation
+  and the transport input row
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| intermediate `EvaluatedLayer` per shared-grid transport layer | 1,280 B | 0 B | -100.00% |
+| current 47-layer forward miss | 60,160 B | 0 B | -58.75 KiB |
+| 701 forward misses x 47 transport layers | 42,172,160 B | 0 B | -40.22 MiB |
+
+Interpretation:
+- `EvaluatedLayer` carries a `[151]f64` phase row plus optical-depth scalars
+  before `layerInputFromEvaluated` copies the same phase row into `LayerInput`
+- the direct writer keeps the accumulation loop unchanged and writes the
+  optical-depth scalars, cosines, Jacobian zero rows, and normalized phase row
+  into the final transport row once
+- this is a memory-traffic change, not a retained-footprint change: `LayerInput`
+  remains the LABOS-facing row type consumed by the transport solver
+- the current benchmark shared-grid shape has 701 forward misses and 47
+  transport layers, so avoiding the intermediate row removes about 40.22 MiB of
+  hot per-forward-fill payload movement
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `5a2ede235eec4ca7b79a5702a17dec9a`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- a first clean run was also taken and discarded for retained evidence because
+  the session sweep moved +0.64%; the second clean run below is the retained
+  benchmark artifact
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.005817 s | 0.999074 s | 0.9933 |
+| forward session setup | 0.711012 s | 0.711489 s | 1.0007 |
+| forward session cached median | 0.295037 s | 0.291684 s | 0.9886 |
+| forward fast four-scene median | 4.817733 s | 4.810844 s | 0.9986 |
+| OE session setup median | 0.716079 s | 0.716797 s | 1.0010 |
+| OE session retrieval median | 1.230433 s | 1.226624 s | 0.9969 |
+| OE fast retrieval median | 0.954111 s | 0.944750 s | 0.9902 |
+| OE sweep session total wall | 20.517402 s | 20.579478 s | 1.0030 |
+| OE sweep fast total wall | 11.188192 s | 11.169467 s | 0.9983 |
+
+Conclusion:
+- this removes about 40.22 MiB of intermediate phase-row layer traffic from the
+  shared-grid forward fill without changing the LABOS input layout or adding
+  recomputation
+- the retained run is flat-to-faster on forward medians, cached forward, single
+  OE retrieval, and fast sweep; the session sweep moved +0.30%, which is within
+  the same small single-run band seen in prior memory-traffic experiments
+- this is worth keeping as a direct-fill cleanup, while the next larger
+  retained-footprint targets remain the inline phase rows in `LayerInput`,
+  `SourceInterfaceInput`, and `RtmQuadratureLevel`
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
