@@ -9,8 +9,9 @@ Scope:
 - hot-path markers inspected: 223
 - struct layout comments inspected: 310
 - target CPU model for layout comments: 64-bit, 64 B cache line assumption
-- no benchmark runs in this file; every optimization below needs parity and
-  timing evidence before implementation
+- experiment log entries record retained benchmark evidence; every implemented
+  optimization still needs `uv run benchmark/run_benchmark.py` before it is
+  treated as accepted
 
 ## Experiment Log
 
@@ -39,7 +40,7 @@ Interpretation:
 - the header growth is bounded and not proportional to spectral sample count
 - side storage grows only for kernels larger than the inline 5-sample payload
 
-Validation and benchmark evidence:
+Benchmark evidence:
 - `zig build check`: passed
 - `zig build test-fast`: passed
 - `uv run validation/spectra/validate_spectra.py`: max_abs `9.569e-14`
@@ -71,6 +72,69 @@ Conclusion:
   be treated as benchmark noise unless repeated runs show the same slowdown
 - residual and OE gates stayed within the existing validation contract
 - this experiment is acceptable as a first memory-layout reduction
+
+### Experiment 2: fill prepared strong-line state directly
+
+Changed:
+- `prepareStrongLineStateInto` no longer builds a max-capacity
+  `StrongLineConvTPState` and then copies active values into
+  `StrongLinePreparedState`
+- the prepared path now fills the already allocated exact-size prepared slices
+  directly
+- `strongLineContribution` now receives the max-capacity direct-evaluation
+  state by pointer instead of by value
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| prepared strong-line temp state | 136,208 B | 0 B | -100.00% |
+| active prepared-state copy for 70 lines | 42,000 B | 0 B | -100.00% |
+| per prepared profile node transient traffic | >=178,208 B | 0 B | -100.00% |
+| 47-node O2 A spectroscopy profile | >=8,375,776 B | 0 B | -100.00% |
+| retained prepared-state heap payload | unchanged | unchanged | 0 |
+
+Interpretation:
+- the retained heap layout was already compact because `StrongLinePreparedState`
+  owns exact-size slices for `line_count`
+- the waste was in transient preparation: a 133.0 KiB max-capacity stack object
+  was filled first, then the active payload was copied into the retained slices
+- the current O2 A strong-line asset has 70 strong lines and a 70 x 70
+  relaxation matrix, so each prepared node copied 42,000 B after the temporary
+  state had already been written
+- the default spectroscopy profile has 47 data rows, so one optical prepare
+  avoids at least 7.99 MiB of stack/copy traffic before considering possible
+  return-value copies
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  fast-mode spectra worst `4.963e-04` (`1.600x` noise); OE session AOD diff
+  `8.699e-08`; fast-vs-session sweep max AOD delta `3.766e-03`, pressure delta
+  `5.085e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.073332 s | 1.079016 s | 1.0053 |
+| forward session cached median | 0.347028 s | 0.344589 s | 0.9930 |
+| forward fast four-scene median | 5.099479 s | 5.098077 s | 0.9997 |
+| OE session retrieval median | 1.442676 s | 1.444513 s | 1.0013 |
+| OE fast retrieval median | 1.129291 s | 1.128454 s | 0.9993 |
+| OE sweep session total wall | 21.802155 s | 21.761115 s | 0.9981 |
+| OE sweep fast total wall | 12.053975 s | 12.036307 s | 0.9985 |
+
+Conclusion:
+- the retained footprint is unchanged, but preparation memory traffic drops by
+  about 8.0 MiB per default O2 A optical prepare
+- benchmark movement is flat-to-slightly-faster on the OE sweep and not a
+  measured regression on the intended benchmark boundary
+- this is an acceptable memory-traffic reduction and a better target than
+  removing phase-coefficient memoization without a proven latency win
 
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the

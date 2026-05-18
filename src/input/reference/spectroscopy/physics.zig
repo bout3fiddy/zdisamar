@@ -22,6 +22,7 @@ pub const weakLineContributionWithWavelengthState = @import("physics_core.zig").
 pub const strongLineContribution = @import("strong_lines.zig").strongLineContribution;
 pub const strongLineContributionPrepared = @import("strong_lines.zig").strongLineContributionPrepared;
 pub const prepareStrongLineConvTPState = @import("strong_lines.zig").prepareStrongLineConvTPState;
+pub const prepareStrongLinePreparedStateInto = @import("strong_lines.zig").prepareStrongLinePreparedStateInto;
 pub const shiftedLineCenterWavenumberCm1 = @import("strong_lines.zig").shiftedLineCenterWavenumberCm1;
 pub const partitionRatioT0OverT = @import("strong_lines.zig").partitionRatioT0OverT;
 pub const deriveIsotopologueCode = @import("strong_lines.zig").deriveIsotopologueCode;

@@ -24,7 +24,7 @@ pub const StrongLineConvTPState = struct {
     relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 =
         [_]f64{0.0} ** (Types.max_strong_line_sidecars * Types.max_strong_line_sidecars),
 
-    pub fn weightAt(self: StrongLineConvTPState, row: usize, col: usize) f64 {
+    pub fn weightAt(self: *const StrongLineConvTPState, row: usize, col: usize) f64 {
         return self.relaxation_weights[row * self.line_count + col];
     }
 
@@ -37,7 +37,7 @@ pub fn strongLineContribution(
     wavelength_nm: f64,
     strong_lines: []const Types.SpectroscopyStrongLine,
     strong_index: usize,
-    convtp_state: StrongLineConvTPState,
+    convtp_state: *const StrongLineConvTPState,
     temperature_k: f64,
     pressure_scale: f64,
 ) Types.SpectroscopyEvaluation {
@@ -153,6 +153,70 @@ pub fn prepareStrongLineConvTPState(
     var state = StrongLineConvTPState{ .line_count = line_count };
     if (line_count == 0) return state;
 
+    fillStrongLineState(
+        &state,
+        strong_lines,
+        relaxation_matrix,
+        line_count,
+        safe_temperature,
+        temperature_ratio,
+        partition_ratio,
+        pressure_atm,
+    );
+
+    return state;
+}
+
+// hot path:
+//   when: preparing persistent strong-line state for profile nodes or support rows
+//   work: fills exactly-sized prepared slices and avoids the 136 KiB max-capacity temporary
+//   data: strong-line sidecars, relaxation matrix, pressure/temperature inputs, prepared output
+//   follow: prepareStrongLineStateInto and strongLineContributionPrepared
+pub fn prepareStrongLinePreparedStateInto(
+    strong_lines: []const Types.SpectroscopyStrongLine,
+    relaxation_matrix: Types.RelaxationMatrix,
+    temperature_k: f64,
+    pressure_atm: f64,
+    prepared: *Types.StrongLinePreparedState,
+) void {
+    const safe_temperature = @max(temperature_k, 150.0);
+    const temperature_ratio = Types.hitran_reference_temperature_k / safe_temperature;
+    const partition_ratio = hitran_partition_tables.ratioT0OverT(66, safe_temperature, Types.hitran_reference_temperature_k) orelse temperature_ratio;
+    const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), Types.max_strong_line_sidecars);
+    std.debug.assert(prepared.population_t.len >= line_count);
+    std.debug.assert(prepared.dipole_t.len >= line_count);
+    std.debug.assert(prepared.mod_sig_cm1.len >= line_count);
+    std.debug.assert(prepared.half_width_cm1_at_t.len >= line_count);
+    std.debug.assert(prepared.line_mixing_coefficients.len >= line_count);
+    std.debug.assert(line_count <= Types.max_strong_line_sidecars);
+    std.debug.assert(line_count == 0 or prepared.relaxation_weights.len / line_count >= line_count);
+
+    prepared.line_count = line_count;
+    prepared.sig_moy_cm1 = 0.0;
+    if (line_count == 0) return;
+
+    fillStrongLineState(
+        prepared,
+        strong_lines,
+        relaxation_matrix,
+        line_count,
+        safe_temperature,
+        temperature_ratio,
+        partition_ratio,
+        pressure_atm,
+    );
+}
+
+fn fillStrongLineState(
+    state: anytype,
+    strong_lines: []const Types.SpectroscopyStrongLine,
+    relaxation_matrix: Types.RelaxationMatrix,
+    line_count: usize,
+    safe_temperature: f64,
+    temperature_ratio: f64,
+    partition_ratio: f64,
+    pressure_atm: f64,
+) void {
     for (0..line_count) |row_index| {
         const strong_line = strong_lines[row_index];
         state.population_t[row_index] = strong_line.population_t0 *
@@ -247,8 +311,6 @@ pub fn prepareStrongLineConvTPState(
         }
         state.line_mixing_coefficients[line_index] = pressure_atm * mixing_sum;
     }
-
-    return state;
 }
 
 pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm: f64) f64 {

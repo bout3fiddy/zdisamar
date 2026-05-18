@@ -248,7 +248,7 @@ fn appendRowsForWavelength(
                     &strong_line_anchors,
                     relevant_lines,
                     relevant_window.start_index,
-                    strong_state,
+                    &strong_state,
                 ),
             );
         }
@@ -337,7 +337,7 @@ fn strongLineRow(
     strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
-    strong_state: Physics.StrongLineConvTPState,
+    strong_state: *const Physics.StrongLineConvTPState,
 ) O2LineContributionRow {
     const pressure_atm = @max(
         thermodynamic_state.pressure_hpa / 1013.25,

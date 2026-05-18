@@ -148,7 +148,7 @@ pub fn totalSigmaWithStrongLineSidecars(
             wavelength_nm,
             strong_lines,
             strong_index,
-            convtp_state,
+            &convtp_state,
             safe_temperature,
             pressure_scale,
         );

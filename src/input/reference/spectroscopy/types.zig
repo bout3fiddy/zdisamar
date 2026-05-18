@@ -234,8 +234,12 @@ pub const StrongLinePreparedState = struct {
         self.* = undefined;
     }
 
-    pub fn weightAt(self: StrongLinePreparedState, row: usize, col: usize) f64 {
+    pub fn weightAt(self: *const StrongLinePreparedState, row: usize, col: usize) f64 {
         return self.relaxation_weights[row * self.line_count + col];
+    }
+
+    pub fn setWeight(self: *StrongLinePreparedState, row: usize, col: usize, value: f64) void {
+        self.relaxation_weights[row * self.line_count + col] = value;
     }
 };
 

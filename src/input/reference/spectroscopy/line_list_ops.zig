@@ -166,33 +166,13 @@ pub fn prepareStrongLineStateInto(
 ) void {
     std.debug.assert(self.hasStrongLineSidecars());
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
-    const stack_state = Physics.prepareStrongLineConvTPState(
+    Physics.prepareStrongLinePreparedStateInto(
         self.strong_lines.?,
         self.relaxation_matrix.?,
         @max(temperature_k, 150.0),
         pressure_scale,
+        prepared,
     );
-    const line_count = stack_state.line_count;
-    std.debug.assert(prepared.population_t.len >= line_count);
-    std.debug.assert(prepared.dipole_t.len >= line_count);
-    std.debug.assert(prepared.mod_sig_cm1.len >= line_count);
-    std.debug.assert(prepared.half_width_cm1_at_t.len >= line_count);
-    std.debug.assert(prepared.line_mixing_coefficients.len >= line_count);
-    std.debug.assert(prepared.relaxation_weights.len >= line_count * line_count);
-
-    prepared.line_count = line_count;
-    prepared.sig_moy_cm1 = stack_state.sig_moy_cm1;
-    @memcpy(prepared.population_t[0..line_count], stack_state.population_t[0..line_count]);
-    @memcpy(prepared.dipole_t[0..line_count], stack_state.dipole_t[0..line_count]);
-    @memcpy(prepared.mod_sig_cm1[0..line_count], stack_state.mod_sig_cm1[0..line_count]);
-    @memcpy(prepared.half_width_cm1_at_t[0..line_count], stack_state.half_width_cm1_at_t[0..line_count]);
-    @memcpy(prepared.line_mixing_coefficients[0..line_count], stack_state.line_mixing_coefficients[0..line_count]);
-    for (0..line_count) |row_index| {
-        for (0..line_count) |column_index| {
-            prepared.relaxation_weights[row_index * line_count + column_index] =
-                stack_state.weightAt(row_index, column_index);
-        }
-    }
 }
 
 pub fn prepareWeakLineState(
