@@ -27,7 +27,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayers(
 //   when: forward input construction fills source interfaces without a wavelength carrier cache
 //   work: evaluates boundary carriers or derives interfaces from adjacent layer inputs
 //   data: layer input array, shared RTM level geometry, profile spectroscopy cache, source-interface output
-//   follow: carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache
+//   follow: carrier_eval.fillSourceInterfaceAtLevelWithSpectroscopyCache
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -41,15 +41,16 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
         if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
-                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+                    carrier_eval.fillSourceInterfaceAtLevelWithSpectroscopyCache(
                         self,
                         wavelength_nm,
                         sublayers,
                         if (self.strong_line_states) |states| states else null,
                         level_geometry,
+                        level_geometry.weight_km,
                         profile_cache,
+                        source_interface,
                     );
-                    source_interface.* = sourceInterfaceFromBoundaryCarrier(level_geometry.weight_km, boundary_carrier);
                 }
                 return;
             }
@@ -119,7 +120,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
 //   when: forward input construction fills source interfaces for a cached wavelength solve
 //   work: evaluates boundary carriers through WavelengthCarrierCache and writes source-interface rows
 //   data: layer input array, shared RTM level geometry, carrier cache, source-interface output
-//   follow: carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache
+//   follow: carrier_eval.fillSourceInterfaceAtLevelWithCarrierCache
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -133,15 +134,16 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
         if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
-                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache(
+                    carrier_eval.fillSourceInterfaceAtLevelWithCarrierCache(
                         self,
                         wavelength_nm,
                         sublayers,
                         if (self.strong_line_states) |states| states else null,
                         level_geometry,
+                        level_geometry.weight_km,
                         wavelength_cache,
+                        source_interface,
                     );
-                    source_interface.* = sourceInterfaceFromBoundaryCarrier(level_geometry.weight_km, boundary_carrier);
                 }
                 return;
             }
@@ -157,21 +159,4 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
         source_interfaces,
         wavelength_cache.profile_cache,
     );
-}
-
-fn sourceInterfaceFromBoundaryCarrier(
-    rtm_weight: f64,
-    boundary_carrier: carrier_eval.SharedBoundaryCarrier,
-) transport_common.SourceInterfaceInput {
-    return .{
-        .source_weight = 0.0,
-        .rtm_weight = rtm_weight,
-        .gas_ksca = boundary_carrier.gas_scattering_optical_depth_per_km,
-        .particle_ksca_above = boundary_carrier.particle_scattering_optical_depth_above_per_km,
-        .particle_ksca_below = boundary_carrier.particle_scattering_optical_depth_below_per_km,
-        .ksca_above = boundary_carrier.ksca_above,
-        .ksca_below = boundary_carrier.ksca_below,
-        .phase_coefficients_above = boundary_carrier.phase_coefficients_above,
-        .phase_coefficients_below = boundary_carrier.phase_coefficients_below,
-    };
 }

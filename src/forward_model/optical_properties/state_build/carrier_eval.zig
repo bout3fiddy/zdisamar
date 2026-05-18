@@ -6,6 +6,7 @@ const PhaseFunctions = @import("../shared/phase_functions.zig");
 const State = @import("state.zig");
 const Scalar = @import("state_scalar.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
+const transport_common = @import("../../radiative_transfer/root.zig");
 
 const PreparedSublayer = State.PreparedSublayer;
 const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
@@ -520,6 +521,324 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
             self.aerosol_phase_coefficients,
             self.cloud_phase_coefficients,
         ),
+    };
+}
+
+// hot path:
+//   when: shared-grid source interfaces are filled for one wavelength solve
+//   work: composes boundary scattering scalars and writes final interface rows
+//   data: support-row gas cache, particle boundary rows, prepared phase rows
+//   follow: source_interfaces carrier-cache and spectroscopy-cache shared-grid paths
+pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    rtm_weight: f64,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    source_interface: *transport_common.SourceInterfaceInput,
+) void {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) {
+        source_interface.* = .{ .rtm_weight = rtm_weight };
+        return;
+    }
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+        profile_cache,
+    );
+    const particle_above = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+    );
+    const particle_below = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+    );
+    fillSourceInterfaceFromBoundaryParts(
+        self,
+        wavelength_nm,
+        gas_carrier.gas_scattering_optical_depth_per_km,
+        particle_above,
+        particle_below,
+        rtm_weight,
+        null,
+        source_interface,
+    );
+}
+
+pub fn fillSourceInterfaceAtLevelWithCarrierCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    rtm_weight: f64,
+    wavelength_cache: *WavelengthCarrierCache,
+    source_interface: *transport_common.SourceInterfaceInput,
+) void {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) {
+        source_interface.* = .{ .rtm_weight = rtm_weight };
+        return;
+    }
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    var fallback_gas_carrier: SharedOpticalCarrier = undefined;
+    const gas_carrier = wavelength_cache.cachedSupportRowRef(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+        &fallback_gas_carrier,
+    );
+    const particle_above = particleBoundaryCarrierFromIndexWithScales(
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+        wavelength_cache.particle_scales,
+    );
+    const particle_below = particleBoundaryCarrierFromIndexWithScales(
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+        wavelength_cache.particle_scales,
+    );
+    fillSourceInterfaceFromBoundaryParts(
+        self,
+        wavelength_nm,
+        gas_carrier.gas_scattering_optical_depth_per_km,
+        particle_above,
+        particle_below,
+        rtm_weight,
+        wavelength_cache.rayleigh_phase_coefficient2,
+        source_interface,
+    );
+}
+
+fn fillSourceInterfaceFromBoundaryParts(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    gas_scattering_optical_depth_per_km: f64,
+    particle_above: ParticleBoundaryCarrier,
+    particle_below: ParticleBoundaryCarrier,
+    rtm_weight: f64,
+    rayleigh_phase_coefficient2: ?f64,
+    source_interface: *transport_common.SourceInterfaceInput,
+) void {
+    const particle_above_total = particle_above.totalScatteringOpticalDepthPerKm();
+    const particle_below_total = particle_below.totalScatteringOpticalDepthPerKm();
+    source_interface.* = .{
+        .source_weight = 0.0,
+        .rtm_weight = rtm_weight,
+        .gas_ksca = gas_scattering_optical_depth_per_km,
+        .particle_ksca_above = particle_above_total,
+        .particle_ksca_below = particle_below_total,
+        .ksca_above = gas_scattering_optical_depth_per_km + particle_above_total,
+        .ksca_below = gas_scattering_optical_depth_per_km + particle_below_total,
+        .phase_coefficients_above = if (rayleigh_phase_coefficient2) |coefficient2|
+            PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+                coefficient2,
+                gas_scattering_optical_depth_per_km,
+                particle_above.aerosol_scattering_optical_depth_per_km,
+                particle_above.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            )
+        else
+            PhaseFunctions.combinePhaseCoefficients(
+                wavelength_nm,
+                gas_scattering_optical_depth_per_km,
+                particle_above.aerosol_scattering_optical_depth_per_km,
+                particle_above.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            ),
+        .phase_coefficients_below = if (rayleigh_phase_coefficient2) |coefficient2|
+            PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+                coefficient2,
+                gas_scattering_optical_depth_per_km,
+                particle_below.aerosol_scattering_optical_depth_per_km,
+                particle_below.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            )
+        else
+            PhaseFunctions.combinePhaseCoefficients(
+                wavelength_nm,
+                gas_scattering_optical_depth_per_km,
+                particle_below.aerosol_scattering_optical_depth_per_km,
+                particle_below.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            ),
+    };
+}
+
+// hot path:
+//   when: integrated source-function routes fill RTM quadrature levels
+//   work: composes boundary scattering scalars and writes final quadrature rows
+//   data: support-row gas cache, particle boundary rows, prepared phase rows
+//   follow: rtm_quadrature carrier-cache and spectroscopy-cache shared-grid paths
+pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+) void {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) {
+        fillZeroRtmQuadratureLevel(level_geometry, rtm_level);
+        return;
+    }
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+        profile_cache,
+    );
+    const particle_above = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+    );
+    const particle_below = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+    );
+    fillRtmQuadratureLevelFromBoundaryParts(
+        self,
+        wavelength_nm,
+        level_geometry,
+        gas_carrier.gas_scattering_optical_depth_per_km,
+        particle_above,
+        particle_below,
+        null,
+        rtm_level,
+    );
+}
+
+pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    wavelength_cache: *WavelengthCarrierCache,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+) void {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) {
+        fillZeroRtmQuadratureLevel(level_geometry, rtm_level);
+        return;
+    }
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    var fallback_gas_carrier: SharedOpticalCarrier = undefined;
+    const gas_carrier = wavelength_cache.cachedSupportRowRef(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+        &fallback_gas_carrier,
+    );
+    const particle_above = particleBoundaryCarrierFromIndexWithScales(
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+        wavelength_cache.particle_scales,
+    );
+    const particle_below = particleBoundaryCarrierFromIndexWithScales(
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+        wavelength_cache.particle_scales,
+    );
+    fillRtmQuadratureLevelFromBoundaryParts(
+        self,
+        wavelength_nm,
+        level_geometry,
+        gas_carrier.gas_scattering_optical_depth_per_km,
+        particle_above,
+        particle_below,
+        wavelength_cache.rayleigh_phase_coefficient2,
+        rtm_level,
+    );
+}
+
+fn fillRtmQuadratureLevelFromBoundaryParts(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    level_geometry: SharedRtmLevelGeometry,
+    gas_scattering_optical_depth_per_km: f64,
+    particle_above: ParticleBoundaryCarrier,
+    particle_below: ParticleBoundaryCarrier,
+    rayleigh_phase_coefficient2: ?f64,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+) void {
+    rtm_level.* = .{
+        .altitude_km = level_geometry.altitude_km,
+        .weight = level_geometry.weight_km,
+        .ksca = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
+        .phase_coefficients = if (rayleigh_phase_coefficient2) |coefficient2|
+            PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+                coefficient2,
+                gas_scattering_optical_depth_per_km,
+                particle_above.aerosol_scattering_optical_depth_per_km,
+                particle_above.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            )
+        else
+            PhaseFunctions.combinePhaseCoefficients(
+                wavelength_nm,
+                gas_scattering_optical_depth_per_km,
+                particle_above.aerosol_scattering_optical_depth_per_km,
+                particle_above.cloud_scattering_optical_depth_per_km,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            ),
+        .aerosol_ksca_above_per_km = particle_above.aerosol_scattering_optical_depth_per_km,
+        .aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
+    };
+}
+
+fn fillZeroRtmQuadratureLevel(
+    level_geometry: SharedRtmLevelGeometry,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+) void {
+    rtm_level.* = .{
+        .altitude_km = level_geometry.altitude_km,
+        .weight = level_geometry.weight_km,
+        .ksca = 0.0,
+        .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
     };
 }
 

@@ -1322,6 +1322,81 @@ Conclusion:
   retained-footprint targets remain the inline phase rows in `LayerInput`,
   `SourceInterfaceInput`, and `RtmQuadratureLevel`
 
+### Experiment 22: fill shared-grid boundary rows directly
+
+Changed:
+- shared-grid source-interface and RTM quadrature writers now fill final output
+  rows directly from support-row gas carriers, particle boundary scalars, and
+  prepared phase rows
+- `SharedBoundaryCarrier` remains available for existing callers, but the hot
+  carrier-cache writer no longer materializes it before writing
+  `RtmQuadratureLevel`
+- the spectroscopy-cache RTM path also no longer builds a local `LevelCarrier`
+  just to copy the same above-boundary phase row into the quadrature level
+- invalid source-interface boundary rows preserve the existing zero-scattering
+  row with the RTM weight retained
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| intermediate `SharedBoundaryCarrier` per shared-grid boundary | 2,472 B | 0 B | -100.00% |
+| current 48-level RTM quadrature fill | 118,656 B | 0 B | -115.88 KiB |
+| 701 forward misses x 48 RTM levels | 83,177,856 B | 0 B | -79.33 MiB |
+| spectroscopy-cache local `LevelCarrier` per RTM level | 1,224 B | 0 B | -100.00% |
+
+Interpretation:
+- `SharedBoundaryCarrier` carries above and below combined phase rows; the RTM
+  quadrature path only stores the above row plus boundary aerosol scattering
+  scalars in `RtmQuadratureLevel`
+- the direct writer computes the same above phase row into the final quadrature
+  level and still carries below aerosol scattering as a scalar for the aerosol
+  source-Jacobian path
+- this is a memory-traffic change, not a retained-layout change:
+  `SourceInterfaceInput` and `RtmQuadratureLevel` still expose the same fields to
+  LABOS
+- the source-interface shared-grid path receives the same direct-fill treatment,
+  but the current retained benchmark primarily exercises the RTM quadrature
+  carrier-cache path
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `0af6293f0f774efc8ea786dac109a512`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- a first final-code run also passed; the retained run below is the second clean
+  final-code run after preserving the invalid-boundary RTM weight behavior
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.999074 s | 1.008663 s | 1.0096 |
+| forward session setup | 0.711489 s | 0.718924 s | 1.0104 |
+| forward session cached median | 0.291684 s | 0.289888 s | 0.9938 |
+| forward fast four-scene median | 4.810844 s | 4.818098 s | 1.0015 |
+| OE session setup median | 0.716797 s | 0.724329 s | 1.0105 |
+| OE session retrieval median | 1.226624 s | 1.207204 s | 0.9842 |
+| OE fast retrieval median | 0.944750 s | 0.934268 s | 0.9889 |
+| OE sweep session total wall | 20.579478 s | 20.468999 s | 0.9946 |
+| OE sweep fast total wall | 11.169467 s | 11.126235 s | 0.9961 |
+
+Conclusion:
+- this removes about 79.33 MiB of intermediate boundary-carrier payload traffic
+  from the current shared-grid RTM quadrature fill
+- the retained OE timings improve materially, including both sweep totals; the
+  no-session/setup forward surfaces moved slower in this retained run, so this
+  should be treated as an OE-hot-path win rather than a universal forward
+  latency win
+- the next retained-footprint step should target the inline final phase rows
+  themselves, but only with a representation that keeps LABOS phase access dense
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1462,6 +1537,9 @@ Memory access shape:
   `[]SharedOpticalCarrier` cache for support-row reuse
 - `RtmQuadratureLevel` now keeps combined source phase inline but stores aerosol
   phase-dependent source/Jacobian data as scalars plus the grid-level unit phase
+- shared-grid layer, source-interface, and RTM quadrature builders now write
+  final rows directly instead of materializing `EvaluatedLayer`,
+  `SharedBoundaryCarrier`, or local `LevelCarrier` intermediates
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
   reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated

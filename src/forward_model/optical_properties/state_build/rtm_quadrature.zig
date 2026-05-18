@@ -8,19 +8,6 @@ const carrier_eval = @import("carrier_eval.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
-// layout(64-bit):
-//   size: 1224 B, align: 8 B
-//   field storage: ksca=8 B, aerosol_scattering_optical_depth_per_km=8 B, phase_coefficients=1208 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[151]f64=1208 B
-//   cache span: 20 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1224 B (1.195 KiB); total = per instance * live instance count
-const LevelCarrier = struct {
-    ksca: f64,
-    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
-    phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-};
 
 fn fillAerosolSourceJacobian(
     self: *const PreparedOpticalState,
@@ -104,7 +91,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
 //   when: integrated source-function routes fill RTM quadrature without a wavelength carrier cache
 //   work: evaluates boundary carriers, phase data, and aerosol source Jacobian rows at RTM levels
 //   data: layer input array, shared RTM levels, profile spectroscopy cache, quadrature output
-//   follow: sharedBoundaryCarrierAtLevelWithSpectroscopyCache and fillAerosolSourceJacobian
+//   follow: carrier_eval.fillRtmQuadratureLevelAtLevelWithSpectroscopyCache and fillAerosolSourceJacobian
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -118,31 +105,19 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
         if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
             for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
-                const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+                carrier_eval.fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
                     self,
                     wavelength_nm,
                     sublayers,
                     if (self.strong_line_states) |states| states else null,
                     level_geometry,
                     profile_cache,
+                    rtm_level,
                 );
-                const level_carrier = LevelCarrier{
-                    .ksca = boundary_carrier.ksca_above,
-                    .aerosol_scattering_optical_depth_per_km = boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
-                    .phase_coefficients = boundary_carrier.phase_coefficients_above,
-                };
-                rtm_level.* = .{
-                    .altitude_km = level_geometry.altitude_km,
-                    .weight = level_geometry.weight_km,
-                    .ksca = level_carrier.ksca,
-                    .phase_coefficients = level_carrier.phase_coefficients,
-                    .aerosol_ksca_above_per_km = boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
-                    .aerosol_ksca_below_per_km = boundary_carrier.aerosol_scattering_optical_depth_below_per_km,
-                };
                 fillAerosolSourceJacobian(
                     self,
                     rtm_level,
-                    level_carrier.aerosol_scattering_optical_depth_per_km,
+                    rtm_level.aerosol_ksca_above_per_km,
                 );
             }
             // PARITY:
@@ -263,7 +238,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 //   when: integrated source-function routes fill RTM quadrature for a cached wavelength solve
 //   work: evaluates boundary carriers through WavelengthCarrierCache and writes RTM level rows
 //   data: layer input array, shared RTM levels, carrier cache, quadrature output
-//   follow: sharedBoundaryCarrierAtLevelWithCarrierCache and aerosol source Jacobian fields
+//   follow: carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache and aerosol source Jacobian fields
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -297,26 +272,19 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     };
 
     for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
-        const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache(
+        carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache(
             self,
             wavelength_nm,
             sublayers,
             if (self.strong_line_states) |states| states else null,
             level_geometry,
             wavelength_cache,
+            rtm_level,
         );
-        rtm_level.* = .{
-            .altitude_km = level_geometry.altitude_km,
-            .weight = level_geometry.weight_km,
-            .ksca = boundary_carrier.ksca_above,
-            .phase_coefficients = boundary_carrier.phase_coefficients_above,
-            .aerosol_ksca_above_per_km = boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
-            .aerosol_ksca_below_per_km = boundary_carrier.aerosol_scattering_optical_depth_below_per_km,
-        };
         fillAerosolSourceJacobian(
             self,
             rtm_level,
-            boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+            rtm_level.aerosol_ksca_above_per_km,
         );
     }
     fillSharedAerosolSourceJacobianFromLayers(self, layer_inputs, rtm_levels);
