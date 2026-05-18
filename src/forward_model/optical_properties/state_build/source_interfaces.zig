@@ -3,8 +3,6 @@ const transport_common = @import("../../radiative_transfer/root.zig");
 const State = @import("state.zig");
 const shared_geometry = @import("shared_geometry.zig");
 const carrier_eval = @import("carrier_eval.zig");
-const PhaseFunctions = @import("../shared/phase_functions.zig");
-const Rayleigh = @import("../../../input/reference/rayleigh.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
@@ -173,7 +171,6 @@ fn sourceInterfaceFromBoundaryCarrier(
         .particle_ksca_below = boundary_carrier.particle_scattering_optical_depth_below_per_km,
         .ksca_above = boundary_carrier.ksca_above,
         .ksca_below = boundary_carrier.ksca_below,
-        .gas_phase_coefficients = boundary_carrier.gas_phase_coefficients,
         .phase_coefficients_above = boundary_carrier.phase_coefficients_above,
         .phase_coefficients_below = boundary_carrier.phase_coefficients_below,
     };
