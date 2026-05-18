@@ -442,6 +442,66 @@ Conclusion:
 - this is worth keeping because it removes optional-tag storage from a repeated
   strong-line setup object without adding range limits or extra lookup work
 
+### Experiment 8: make shared RTM subgrid a scratch-backed view
+
+Changed:
+- `SharedRtmSubgrid` no longer embeds fixed `[128]f64` altitude and weight
+  arrays
+- `resolveSharedRtmSubgrid` writes transformed altitude and weight values into
+  the existing `GaussRuleScratch` buffers and returns slices over that scratch
+- shared-layer evaluation and pseudo-spherical sample filling iterate over the
+  returned slice length instead of a separate `count` field
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SharedRtmSubgrid` | 2,056 B | 32 B | -98.44% |
+| inline arrays per returned subgrid | 2,048 B | 0 B | -100.00% |
+
+Interpretation:
+- the subgrid is request-local and consumed immediately while the caller-owned
+  `GaussRuleScratch` remains alive
+- the previous value copied altitude and weight samples into a second fixed
+  array object even though the scratch already had two `[128]f64` buffers
+- the O2 A benchmark uses four sublayer divisions, so this removes a repeated
+  max-capacity return object without changing the Gauss-rule capacity or the
+  numerical quadrature rule
+- the retained scratch capacity is unchanged; this experiment removes duplicate
+  stack/value payload in the shared RTM layer route
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture reflectance max_abs `5.393e-14`;
+  session-vs-no-session residuals all `0.0`; fast-mode spectra worst
+  `4.963e-04` (`1.600x` noise); OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `3.778e-03`, pressure delta
+  `5.099e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.058444 s | 1.056010 s | 0.9977 |
+| forward session setup | 0.711574 s | 0.709332 s | 0.9968 |
+| forward session cached median | 0.346334 s | 0.345011 s | 0.9962 |
+| forward fast four-scene median | 5.002590 s | 5.003318 s | 1.0001 |
+| OE session setup median | 0.716066 s | 0.715836 s | 0.9997 |
+| OE session retrieval median | 1.434888 s | 1.435147 s | 1.0002 |
+| OE fast retrieval median | 1.122163 s | 1.121711 s | 0.9996 |
+| OE sweep session total wall | 21.625501 s | 21.636362 s | 1.0005 |
+| OE sweep fast total wall | 11.912201 s | 11.925660 s | 1.0011 |
+
+Conclusion:
+- this is a local stack/value-layout improvement, not a retained heap reduction
+- benchmark timing is effectively flat; the slight sweep movement is smaller
+  than the normal single-run noise while forward/session timings improved
+- this is worth keeping because it removes duplicate fixed-capacity arrays and
+  keeps the same quadrature samples in one scratch owner
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -564,7 +624,7 @@ Relevant layout facts:
 | `SharedOpticalCarrier` | 2,472 B | two `[151]f64` phase arrays | 0 |
 | `SharedBoundaryCarrier` | 6,096 B | multiple `[151]f64` phase arrays | 0 |
 | `RtmQuadratureLevel` | 7,272 B | phase and phase-jacobian arrays | 0 |
-| `SharedRtmSubgrid` | 2,056 B | `[128]f64` altitudes + weights | 0 |
+| `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
 | `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + carrier slice | 0 |
 
 Memory access shape:
@@ -575,8 +635,8 @@ Memory access shape:
   consumed
 - `WavelengthCarrierCache` uses `support_row_valid: []bool` and a
   `[]SharedOpticalCarrier` cache for support-row reuse
-- `SharedRtmSubgrid` reserves 128 nodes in each value even when the sample count
-  is small
+- `SharedRtmSubgrid` now returns slices over `GaussRuleScratch`; the scratch
+  still reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated
   layer-specific fill of phase arrays dominates the PLM basis itself
 
@@ -586,8 +646,8 @@ Potential direction:
   in side storage only for scattering-positive particle support
 - use generation tags or active support-row lists for `support_row_valid` when
   the cache is repeatedly reset per wavelength
-- make `SharedRtmSubgrid` a small inline buffer with side storage or a workspace
-  slice if actual `sample_count` is usually far below 128
+- keep `SharedRtmSubgrid` as a workspace slice and next inspect whether
+  `GaussRuleScratch` capacity itself should remain 128
 - benchmark before replacing phase memoization: recomputing phase coefficients
   may be cheaper than carrying arrays, but phase fill is already a known hot
   path and must be measured with the RTM caller intact

@@ -16,18 +16,16 @@ const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
 const phase_coefficient_count = @import("../shared/phase_functions.zig").phase_coefficient_count;
 
 // layout(64-bit):
-//   size: 2056 B, align: 8 B
-//   field storage: altitudes_km=1024 B, weights_km=1024 B, count=8 B; padding: 0 B (0 bits)
+//   size: 32 B, align: 8 B
+//   field storage: altitudes_km=16 B, weights_km=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: count=8 B
-//   inline arrays: altitudes_km:[128]f64=1024 B, weights_km:[128]f64=1024 B
-//   cache span: 33 cache line(s) at 64 B per line
+//   out-of-line: altitudes_km and weights_km are views into GaussRuleScratch storage
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2056 B (2.008 KiB); total = per instance * live instance count
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced scratch storage
 pub const SharedRtmSubgrid = struct {
-    altitudes_km: [128]f64 = [_]f64{0.0} ** 128,
-    weights_km: [128]f64 = [_]f64{0.0} ** 128,
-    count: usize = 0,
+    altitudes_km: []const f64 = &.{},
+    weights_km: []const f64 = &.{},
 };
 
 pub fn sharedRtmSubgridSampleCount(scene: *const Scene) usize {
@@ -40,29 +38,36 @@ pub fn resolveSharedRtmSubgrid(
     sample_count: usize,
     scratch: *shared_geometry.GaussRuleScratch,
 ) SharedRtmSubgrid {
-    var subgrid: SharedRtmSubgrid = .{ .count = sample_count };
-    if (sample_count == 0) return subgrid;
+    if (sample_count == 0) return .{};
 
     if (sample_count == 1) {
-        subgrid.altitudes_km[0] = 0.5 * (lower_altitude_km + upper_altitude_km);
-        subgrid.weights_km[0] = @max(upper_altitude_km - lower_altitude_km, 0.0);
-        return subgrid;
+        scratch.nodes[0] = 0.5 * (lower_altitude_km + upper_altitude_km);
+        scratch.weights[0] = @max(upper_altitude_km - lower_altitude_km, 0.0);
+        return .{
+            .altitudes_km = scratch.nodes[0..1],
+            .weights_km = scratch.weights[0..1],
+        };
     }
 
     const rule = shared_geometry.resolveGaussRule(sample_count, scratch);
     for (0..sample_count) |node_index| {
-        subgrid.altitudes_km[node_index] = shared_geometry.intervalAltitudeAtNode(
+        const node = rule.nodes[node_index];
+        const weight = rule.weights[node_index];
+        scratch.nodes[node_index] = shared_geometry.intervalAltitudeAtNode(
             lower_altitude_km,
             upper_altitude_km,
-            rule.nodes[node_index],
+            node,
         );
-        subgrid.weights_km[node_index] = shared_geometry.intervalWeightKm(
+        scratch.weights[node_index] = shared_geometry.intervalWeightKm(
             lower_altitude_km,
             upper_altitude_km,
-            rule.weights[node_index],
+            weight,
         );
     }
-    return subgrid;
+    return .{
+        .altitudes_km = scratch.nodes[0..sample_count],
+        .weights_km = scratch.weights[0..sample_count],
+    };
 }
 
 pub fn accumulateSharedCarrier(
@@ -374,7 +379,7 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     );
     var breakdown: OpticalDepthBreakdown = .{};
     var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
-    for (0..subgrid.count) |node_index| {
+    for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         if (weight_km <= 0.0) continue;
         const carrier = carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
@@ -448,7 +453,7 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
         scratch,
     );
     var sample_index = sample_index_start;
-    for (0..subgrid.count) |node_index| {
+    for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         const optical_depth = if (weight_km > 0.0)
             weight_km * carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
