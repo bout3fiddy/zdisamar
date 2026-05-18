@@ -316,6 +316,7 @@ fn fillWavelengthSamplingPlanRange(
     start: usize,
     end: usize,
 ) Error!void {
+    var integration_scratch: IntegrationKernel = undefined;
     for (start..end) |index| {
         plans[index] = try buildWavelengthSamplingPlan(
             allocator,
@@ -328,6 +329,7 @@ fn fillWavelengthSamplingPlanRange(
             radiance_adaptive_cache,
             irradiance_adaptive_cache,
             kernel_storage_builder,
+            &integration_scratch,
             index,
         );
     }
@@ -349,10 +351,10 @@ fn buildWavelengthSamplingPlan(
     radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
     irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
     kernel_storage_builder: *KernelStorageBuilder,
+    integration_scratch: *IntegrationKernel,
     index: usize,
 ) Error!WavelengthSampling {
     const nominal_wavelength_nm = resolvedSampleAtAssumeValid(resolved_axis, index);
-    var radiance_integration: IntegrationKernel = undefined;
     if (can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
             scene,
@@ -360,7 +362,7 @@ fn buildWavelengthSamplingPlan(
             .radiance,
             nominal_wavelength_nm,
             radiance_adaptive_cache,
-            &radiance_integration,
+            integration_scratch,
         );
     } else {
         try instrument_integration.integrationForWavelengthChecked(
@@ -368,10 +370,10 @@ fn buildWavelengthSamplingPlan(
             prepared,
             .radiance,
             nominal_wavelength_nm,
-            &radiance_integration,
+            integration_scratch,
         );
     }
-    var irradiance_integration: IntegrationKernel = undefined;
+    const radiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, integration_scratch);
     if (can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
             scene,
@@ -379,7 +381,7 @@ fn buildWavelengthSamplingPlan(
             .irradiance,
             nominal_wavelength_nm,
             irradiance_adaptive_cache,
-            &irradiance_integration,
+            integration_scratch,
         );
     } else {
         try instrument_integration.integrationForWavelengthChecked(
@@ -387,9 +389,10 @@ fn buildWavelengthSamplingPlan(
             prepared,
             .irradiance,
             nominal_wavelength_nm,
-            &irradiance_integration,
+            integration_scratch,
         );
     }
+    const irradiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, integration_scratch);
     return .{
         .nominal_wavelength_nm = nominal_wavelength_nm,
         .radiance_wavelength_nm = calibration.shiftedWavelength(
@@ -400,8 +403,8 @@ fn buildWavelengthSamplingPlan(
             irradiance_calibration,
             nominal_wavelength_nm,
         ),
-        .radiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, &radiance_integration),
-        .irradiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, &irradiance_integration),
+        .radiance_integration = radiance_integration,
+        .irradiance_integration = irradiance_integration,
     };
 }
 

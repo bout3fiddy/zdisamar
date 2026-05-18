@@ -861,6 +861,69 @@ Conclusion:
   deletes copied write-only arrays without moving new arithmetic into the hot
   loop
 
+### Experiment 15: stop clearing inactive integration-kernel capacity
+
+Changed:
+- `resetKernel` now resets only `enabled` and `sample_count`
+- one-sample fallback kernels explicitly write `offsets_nm[0] = 0` and
+  `weights[0] = 1`
+- wavelength-plan construction reuses one `IntegrationKernel` scratch value per
+  worker range and compacts radiance before reusing the scratch for irradiance
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| array bytes cleared by one `resetKernel` | 32,768 B | 0 B | -32,768 B |
+| adaptive path clears per realized kernel | 65,536 B | 0 B | -65,536 B |
+| 701 wavelengths x 2 channels, adaptive path | 91,881,472 B | 0 B | -87.62 MiB zero-fill traffic |
+| wavelength-plan live integration scratch | 65,568 B | 32,784 B | -32,784 B |
+
+Interpretation:
+- `IntegrationKernel` stores max-capacity offset and weight arrays, but consumers
+  only read `0..sample_count`
+- zeroing inactive capacity does not contribute to correctness when the active
+  identity kernel writes its first offset and weight explicitly
+- adaptive/DISAMAR-realized kernels previously cleared the max arrays at function
+  entry and again before finalizing the active samples
+- the retained `WavelengthSampling` layout is unchanged; this experiment targets
+  hot transient memory traffic and stack scratch, not retained heap size
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `6606719304614ce6973f50d78b688b32`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process check before and after timing showed no active zdisamar benchmark,
+  validation, plotting, or forward-model process
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.014387 s | 1.004529 s | 0.9903 |
+| forward session setup | 0.711899 s | 0.713348 s | 1.0020 |
+| forward session cached median | 0.304713 s | 0.301993 s | 0.9911 |
+| forward fast four-scene median | 4.859552 s | 4.891560 s | 1.0066 |
+| OE session setup median | 0.719659 s | 0.716125 s | 0.9951 |
+| OE session retrieval median | 1.267872 s | 1.267720 s | 0.9999 |
+| OE fast retrieval median | 0.989494 s | 0.987037 s | 0.9975 |
+| OE sweep session total wall | 21.100117 s | 21.117324 s | 1.0008 |
+| OE sweep fast total wall | 11.477791 s | 11.409060 s | 0.9940 |
+
+Conclusion:
+- this removes tens of MiB of unnecessary zero-fill memory traffic in the
+  integration-plan build without changing retained plan encoding or RTM math
+- the benchmark gate is flat-to-faster on OE and session-cached paths; the
+  single forward fast-mode increase is small and isolated in this run
+- this is worth keeping as a low-risk companion to the retained-layout work; the
+  larger remaining integration-kernel opportunity is to write compact plans
+  directly instead of routing through max-capacity scratch arrays
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

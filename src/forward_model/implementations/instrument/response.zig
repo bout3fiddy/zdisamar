@@ -20,8 +20,14 @@ pub fn adaptiveKernelHalfSpanNm(response: InstrumentModel.SpectralResponse) f64 
 pub fn resetKernel(kernel: *types.IntegrationKernel) void {
     kernel.enabled = false;
     kernel.sample_count = 0;
-    @memset(kernel.offsets_nm[0..], 0.0);
-    @memset(kernel.weights[0..], 0.0);
+}
+
+pub fn writeIdentityKernel(kernel: *types.IntegrationKernel, enabled: bool) void {
+    resetKernel(kernel);
+    kernel.enabled = enabled;
+    kernel.sample_count = 1;
+    kernel.offsets_nm[0] = 0.0;
+    kernel.weights[0] = 1.0;
 }
 
 // hot path:

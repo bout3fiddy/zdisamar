@@ -46,8 +46,7 @@ pub fn integrationForWavelength(
         nominal_wavelength_nm,
         kernel,
     ) catch {
-        response_support.resetKernel(kernel);
-        kernel.sample_count = 1;
+        response_support.writeIdentityKernel(kernel, false);
     };
 }
 
@@ -84,8 +83,7 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         cached_adaptive_kernel,
         kernel,
     ) catch {
-        response_support.resetKernel(kernel);
-        kernel.sample_count = 1;
+        response_support.writeIdentityKernel(kernel, false);
     };
 }
 
@@ -105,7 +103,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     response_support.resetKernel(kernel);
     const response = scene.observation_model.resolvedChannelControls(channel).response;
     if (!usesIntegratedInstrumentSampling(scene, channel)) {
-        kernel.sample_count = 1;
+        response_support.writeIdentityKernel(kernel, false);
         return;
     }
 
@@ -116,10 +114,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             kernel.weights[0..],
         );
         if (kernel.sample_count == 0) {
-            response_support.resetKernel(kernel);
-            kernel.enabled = true;
-            kernel.sample_count = 1;
-            kernel.weights[0] = 1.0;
+            response_support.writeIdentityKernel(kernel, true);
             return;
         }
         // PARITY:
@@ -135,10 +130,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             kernel.weights[0..],
         );
         if (kernel.sample_count == 0) {
-            response_support.resetKernel(kernel);
-            kernel.enabled = true;
-            kernel.sample_count = 1;
-            kernel.weights[0] = 1.0;
+            response_support.writeIdentityKernel(kernel, true);
             return;
         }
         kernel.enabled = true;
@@ -198,13 +190,14 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             kernel.weights[sample_count] = response_weight;
             sample_count += 1;
         }
-        if (sample_count == 0) sample_count = 1;
+        if (sample_count == 0) {
+            response_support.writeIdentityKernel(kernel, true);
+            return;
+        }
         var total_weight: f64 = 0.0;
         for (0..sample_count) |index| total_weight += kernel.weights[index];
         if (total_weight <= 0.0) {
-            response_support.resetKernel(kernel);
-            kernel.offsets_nm[0] = 0.0;
-            kernel.weights[0] = 1.0;
+            response_support.writeIdentityKernel(kernel, true);
             sample_count = 1;
         } else {
             for (0..sample_count) |index| kernel.weights[index] /= total_weight;
@@ -245,7 +238,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
 
     switch (scene.observation_model.sampling) {
         .operational, .measured_channels => {
-            kernel.sample_count = 1;
+            response_support.writeIdentityKernel(kernel, false);
             return;
         },
         .native, .synthetic => {},
