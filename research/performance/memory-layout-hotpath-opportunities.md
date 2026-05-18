@@ -502,6 +502,235 @@ Conclusion:
 - this is worth keeping because it removes duplicate fixed-capacity arrays and
   keeps the same quadrature samples in one scratch owner
 
+### Experiment 9: drop unused gas phase interface payload
+
+Changed:
+- `SharedBoundaryCarrier` no longer stores the unused
+  `gas_phase_coefficients: [151]f64` payload
+- `SourceInterfaceInput` no longer stores the same unused gas phase coefficient
+  row
+- source-interface construction stopped copying a 1,208 B payload that the
+  downstream interface routines did not read
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| gas phase coefficient row | 1,208 B | 0 B | -100.00% |
+| `SharedBoundaryCarrier` | 6,096 B | 4,888 B | -19.82% |
+| `SourceInterfaceInput` | 3,680 B | 2,472 B | -32.83% |
+
+Interpretation:
+- the removed field was a full phase-coefficient-width row in two interface
+  carrier structs
+- the hot source-interface path already receives the scattering and source
+  quantities it actually consumes through other fields
+- this is not lazy recomputation; it is deletion of copied data with no reader
+- the remaining carriers keep the source-interface inputs in their existing
+  order and keep residuals unchanged
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; OE session AOD diff
+  `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.056010 s | 1.058139 s | 1.0020 |
+| forward session cached median | 0.345011 s | 0.345345 s | 1.0010 |
+| forward fast four-scene median | 5.003318 s | 5.004702 s | 1.0003 |
+| OE session retrieval median | 1.435147 s | 1.430738 s | 0.9969 |
+| OE fast retrieval median | 1.121711 s | 1.118815 s | 0.9974 |
+| OE sweep session total wall | 21.636362 s | 21.573211 s | 0.9971 |
+| OE sweep fast total wall | 11.925660 s | 11.889423 s | 0.9970 |
+
+Conclusion:
+- this removes 1,208 B from each affected source-interface carrier without
+  adding computation or changing interface semantics
+- benchmark timing is flat-to-slightly-faster on the OE boundaries
+- the experiment is worth keeping because it deletes copied payload that had no
+  hot-path consumer
+
+### Experiment 10: encode aerosol quadrature Jacobian row
+
+Changed:
+- `RtmQuadratureLevel` no longer stores a dense
+  `[jacobian.state_count][151]f64` phase-coefficient Jacobian payload
+- the retained quadrature level now stores only the aerosol phase-coefficient
+  derivative row that the RTM layer route consumes
+- the default derivative row is zero-filled so inactive derivatives do not
+  introduce a unit phase coefficient
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| dense phase Jacobian rows | 3,624 B | 1,208 B | -66.67% |
+| `RtmQuadratureLevel` | 7,272 B | 4,856 B | -33.22% |
+| savings per RTM quadrature level | 0 B | 2,416 B | -2,416 B |
+
+Interpretation:
+- the old layout carried one full phase-coefficient derivative row per state
+  column, even though the layer route only used the aerosol scattering phase
+  derivative
+- this is an encoding change from dense state matrix to the active derivative
+  row used by the hot RTM path
+- the row still has the full `151` phase-coefficient width, so phase-order
+  accuracy is unchanged
+- this reduces per-level retained prepared-state payload and the memory read by
+  the source-interface layer path
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; OE session AOD diff
+  `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.058139 s | 1.049360 s | 0.9917 |
+| forward session cached median | 0.345345 s | 0.337821 s | 0.9782 |
+| forward fast four-scene median | 5.004702 s | 4.943020 s | 0.9877 |
+| OE session retrieval median | 1.430738 s | 1.399653 s | 0.9783 |
+| OE fast retrieval median | 1.118815 s | 1.094454 s | 0.9782 |
+| OE sweep session total wall | 21.573211 s | 21.406189 s | 0.9923 |
+| OE sweep fast total wall | 11.889423 s | 11.735139 s | 0.9870 |
+
+Conclusion:
+- this is a clear retained-footprint reduction and also a measured speedup on
+  the benchmark boundary
+- the win comes from not carrying inactive state rows through each quadrature
+  level
+- the residual rows stayed unchanged after correcting the zero-derivative
+  default
+
+### Experiment 11: remove dense static attenuation table
+
+Changed:
+- the old dense `AttenArray` storage for all Fourier orders and all possible
+  level pairs was removed from the LABOS layer path
+- one-layer LABOS attenuation now uses `RuntimeAttenArray` and stack buffers for
+  the active transmittance/top-to-level values
+- LABOS exports now expose `max_attenuation_levels` instead of the removed dense
+  array type and fill helper
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| dense static attenuation table | 405,616 B | 0 B | -100.00% |
+| table payload shape | `[12][65][65]f64` | active slices | removed |
+| one-layer active buffers | dense table | `[nmutot]f64 + [nmutot * 2]f64` | active-only |
+
+Interpretation:
+- the removed table allocated every Fourier-order and level-pair combination up
+  to the maximum capacity even when the one-layer path only needs active
+  attenuation values
+- the runtime path now stores the active one-layer values directly in bounded
+  stack buffers and passes a view over those buffers
+- this is an active-data encoding rather than a physics change: attenuation
+  values are still computed from the same layer inputs
+- the large struct disappeared from the size ranking after this commit
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; OE session AOD diff
+  `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.049360 s | 1.050646 s | 1.0012 |
+| forward session cached median | 0.337821 s | 0.339688 s | 1.0055 |
+| forward fast four-scene median | 4.943020 s | 4.938934 s | 0.9992 |
+| OE session retrieval median | 1.399653 s | 1.405865 s | 1.0044 |
+| OE fast retrieval median | 1.094454 s | 1.096403 s | 1.0018 |
+| OE sweep session total wall | 21.406189 s | 21.545654 s | 1.0065 |
+| OE sweep fast total wall | 11.735139 s | 11.751053 s | 1.0014 |
+
+Conclusion:
+- this is a large fixed-footprint removal with unchanged benchmark residuals
+- timing moved slightly slower on the session sweep and slightly faster on the
+  four-scene forward median, all within about 0.7%
+- the memory reduction is worth keeping because it deletes a max-capacity table
+  from the one-layer path and replaces it with active data
+
+### Experiment 12: encode adaptive interval plan storage
+
+Changed:
+- `AdaptiveIntervalPlan` no longer stores a `[2048]AdaptiveIntervalDescriptor`
+  array with start, end, and `usize` division count per interval
+- interval starts are encoded by the plan global start and the previous interval
+  end
+- division counts are stored as `u16` values, matching the bounded adaptive-grid
+  controls
+- adaptive sample construction now uses the caller sample arrays as candidate
+  storage instead of allocating a second pair of 2048-element candidate arrays
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `AdaptiveIntervalPlan` | 49,160 B | 20,504 B | -58.29% |
+| `AdaptiveKernelCache` | 49,184 B | 20,512 B | -58.29% |
+| duplicate candidate arrays per adaptive sample build | 32,768 B | 0 B | -100.00% |
+| two adaptive caches in wavelength sampling | 98,368 B | 41,024 B | -57,344 B |
+
+Interpretation:
+- interval starts are sequential and already implied by the previous end point
+- the old descriptor paid 8 B for `division_count` per interval even though the
+  configured counts are small bounded integers
+- moving to end-points plus compact division counts keeps the interval order and
+  avoids pointer chasing
+- reusing the caller sample arrays removes duplicate temporary candidate storage
+  before final support selection
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; OE session AOD diff
+  `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.050646 s | 1.051584 s | 1.0009 |
+| forward session cached median | 0.339688 s | 0.339848 s | 1.0005 |
+| forward fast four-scene median | 4.938934 s | 4.956055 s | 1.0035 |
+| OE session retrieval median | 1.405865 s | 1.407150 s | 1.0009 |
+| OE fast retrieval median | 1.096403 s | 1.098145 s | 1.0016 |
+| OE sweep session total wall | 21.545654 s | 21.562965 s | 1.0008 |
+| OE sweep fast total wall | 11.751053 s | 11.783081 s | 1.0027 |
+
+Conclusion:
+- this is a substantial stack/cache layout reduction for the adaptive
+  instrument-grid hot path
+- benchmark residuals stayed unchanged; timing moved slower by less than 0.35%
+  on the retained benchmark metrics
+- this is acceptable as a memory-layout win because it removes fixed-capacity
+  descriptor payload and duplicate candidate buffers without changing the
+  integration samples
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
