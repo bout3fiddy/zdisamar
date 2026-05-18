@@ -5,16 +5,14 @@ const InstrumentModel = @import("../../../input/Instrument.zig").Instrument;
 const Scene = @import("../../../input/Scene.zig").Scene;
 
 // layout(64-bit):
-//   size: 49184 B, align: 8 B
-//   field storage: global_start_nm=8 B, global_end_nm=8 B, plan=49160 B, ready=1 B; padding: 7 B (56 bits)
+//   size: 20512 B, align: 8 B
+//   field storage: plan=20504 B, ready=1 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   cache span: 769 cache line(s) at 64 B per line
+//   cache span: 321 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 49184 B (48.0 KiB); total = per instance * live instance count
+//   footprint: per instance = 20512 B (20.0 KiB); total = per instance * live instance count
 pub const AdaptiveKernelCache = struct {
     ready: bool = false,
-    global_start_nm: f64 = 0.0,
-    global_end_nm: f64 = 0.0,
     plan: adaptive_plan.AdaptiveIntervalPlan = .{},
 };
 
@@ -25,17 +23,10 @@ pub fn prepareAdaptiveKernelCache(
     cache: *AdaptiveKernelCache,
 ) bool {
     cache.* = .{};
-    const support_window = adaptive_plan.adaptiveKernelSupportWindow(
-        scene,
-        response,
-        scene.spectral_grid.start_nm,
-    );
     if (!adaptive_plan.buildAdaptiveIntervalPlan(scene, prepared, response, &cache.plan)) {
         return false;
     }
     cache.ready = true;
-    cache.global_start_nm = support_window.global_start_nm;
-    cache.global_end_nm = support_window.global_end_nm;
     return true;
 }
 
@@ -55,8 +46,8 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
         &cache.plan,
         response,
         nominal_wavelength_nm,
-        cache.global_start_nm,
-        cache.global_end_nm,
+        cache.plan.global_start_nm,
+        cache.plan.global_end_nm,
         apply_disamar_midpoint_bias,
         &sample_wavelengths_nm,
         &sample_raw_weights,

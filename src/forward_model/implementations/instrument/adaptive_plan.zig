@@ -23,29 +23,59 @@ pub const AdaptiveKernelSupportWindow = struct {
 };
 
 // layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: interval_start_nm=8 B, interval_end_nm=8 B, division_count=8 B; padding: 0 B (0 bits)
+//   size: 20504 B, align: 8 B
+//   field storage: count=8 B, global_start_nm=8 B, global_end_nm=8 B, interval_end_nm=16384 B, division_counts=4096 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: count=8 B, global_start_nm=8 B, global_end_nm=8 B
+//   encoded fields: interval starts derive from global_start_nm and previous interval_end_nm
+//   inline arrays: interval_end_nm:[2048]f64=16384 B, division_counts:[2048]u16=4096 B
+//   cache span: 321 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
-pub const AdaptiveIntervalDescriptor = struct {
-    interval_start_nm: f64,
-    interval_end_nm: f64,
-    division_count: usize,
-};
-
-// layout(64-bit):
-//   size: 49160 B, align: 8 B
-//   field storage: count=8 B, intervals=49152 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: count=8 B
-//   inline arrays: intervals:[2048]AdaptiveIntervalDescriptor=49152 B
-//   cache span: 769 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 49160 B (48.0 KiB); total = per instance * live instance count
+//   footprint: per instance = 20504 B (20.0 KiB); total = per instance * live instance count
 pub const AdaptiveIntervalPlan = struct {
     count: usize = 0,
-    intervals: [types.max_integration_sample_count]AdaptiveIntervalDescriptor = undefined,
+    global_start_nm: f64 = 0.0,
+    global_end_nm: f64 = 0.0,
+    interval_end_nm: [types.max_integration_sample_count]f64 = undefined,
+    division_counts: [types.max_integration_sample_count]u16 = undefined,
+
+    pub inline fn reset(self: *AdaptiveIntervalPlan, global_start_nm: f64, global_end_nm: f64) void {
+        self.count = 0;
+        self.global_start_nm = global_start_nm;
+        self.global_end_nm = global_end_nm;
+    }
+
+    pub inline fn append(self: *AdaptiveIntervalPlan, interval_end_nm: f64, division_count: usize) bool {
+        if (self.count >= types.max_integration_sample_count) return false;
+        if (division_count > std.math.maxInt(u16)) return false;
+        self.interval_end_nm[self.count] = interval_end_nm;
+        self.division_counts[self.count] = @intCast(division_count);
+        self.count += 1;
+        return true;
+    }
+
+    pub inline fn setDivisionCount(self: *AdaptiveIntervalPlan, index: usize, division_count: usize) bool {
+        if (index >= self.count) return false;
+        if (division_count > std.math.maxInt(u16)) return false;
+        self.division_counts[index] = @intCast(division_count);
+        return true;
+    }
+
+    pub inline fn intervalStartNm(self: *const AdaptiveIntervalPlan, index: usize) f64 {
+        return if (index == 0) self.global_start_nm else self.interval_end_nm[index - 1];
+    }
+
+    pub inline fn intervalEndNm(self: *const AdaptiveIntervalPlan, index: usize) f64 {
+        return self.interval_end_nm[index];
+    }
+
+    pub inline fn intervalWidthNm(self: *const AdaptiveIntervalPlan, index: usize) f64 {
+        return self.intervalEndNm(index) - self.intervalStartNm(index);
+    }
+
+    pub inline fn divisionCount(self: *const AdaptiveIntervalPlan, index: usize) usize {
+        return @intCast(self.division_counts[index]);
+    }
 };
 
 // layout(64-bit):
@@ -135,17 +165,18 @@ pub fn buildAdaptiveSupportWavelengths(
     var gauss_nodes_01: [types.max_integration_sample_count]f64 = undefined;
     var gauss_weights_01: [types.max_integration_sample_count]f64 = undefined;
 
-    for (plan.intervals[0..plan.count]) |interval| {
-        const order = interval.division_count;
+    for (0..plan.count) |interval_index| {
+        const order = plan.divisionCount(interval_index);
         if (order == 0) continue;
         fillAdaptiveUnitGauss(response, order, gauss_nodes_01[0..order], gauss_weights_01[0..order]) catch return null;
 
-        const interval_width_nm = interval.interval_end_nm - interval.interval_start_nm;
+        const interval_start_nm = plan.intervalStartNm(interval_index);
+        const interval_width_nm = plan.intervalWidthNm(interval_index);
         for (0..order) |gauss_index| {
             // PARITY: `DISAMARModule::setupHRWavelengthGrid` consumes
             // Gauss division points already scaled to [0, 1], then applies
             // `sw + dw * x0`.
-            const wavelength_nm = interval.interval_start_nm + interval_width_nm * gauss_nodes_01[gauss_index];
+            const wavelength_nm = interval_start_nm + interval_width_nm * gauss_nodes_01[gauss_index];
             if (!std.math.isFinite(wavelength_nm)) continue;
             try support.append(allocator, wavelength_nm);
         }
@@ -256,7 +287,7 @@ pub fn buildAdaptiveIntervalPlan(
         &strong_center_count,
     )) return false;
 
-    plan.count = 0;
+    plan.reset(support_window.global_start_nm, support_window.global_end_nm);
     var current_nm = support_window.global_start_nm;
     var strong_index: usize = 0;
     while (strong_index < strong_center_count and strong_centers_nm[strong_index] <= current_nm + 1.0e-12) : (strong_index += 1) {}
@@ -270,12 +301,7 @@ pub fn buildAdaptiveIntervalPlan(
         if (next_nm <= current_nm + 1.0e-12) {
             next_nm = current_nm + fwhm_nm;
         }
-        plan.intervals[plan.count] = .{
-            .interval_start_nm = current_nm,
-            .interval_end_nm = next_nm,
-            .division_count = 1,
-        };
-        plan.count += 1;
+        if (!plan.append(next_nm, 1)) return false;
         current_nm = next_nm;
         while (strong_index < strong_center_count and strong_centers_nm[strong_index] <= current_nm + 1.0e-12) : (strong_index += 1) {}
         if (current_nm > support_window.global_end_nm) break;
@@ -283,14 +309,15 @@ pub fn buildAdaptiveIntervalPlan(
 
     if (plan.count == 0 or current_nm <= support_window.global_end_nm) return false;
 
-    const max_interval_nm = maxAdaptiveIntervalWidth(plan.intervals[0..plan.count]);
-    for (plan.intervals[0..plan.count]) |*interval| {
-        interval.division_count = adaptiveIntervalDivisionCount(
+    const max_interval_nm = maxAdaptiveIntervalWidth(plan);
+    for (0..plan.count) |interval_index| {
+        const division_count = adaptiveIntervalDivisionCount(
             adaptive,
-            interval.interval_end_nm - interval.interval_start_nm,
+            plan.intervalWidthNm(interval_index),
             max_interval_nm,
             strong_center_count != 0,
         );
+        if (!plan.setDivisionCount(interval_index, division_count)) return false;
     }
     return true;
 }
@@ -298,7 +325,7 @@ pub fn buildAdaptiveIntervalPlan(
 // hot path:
 //   when: an adaptive integration kernel emits samples for one nominal wavelength
 //   work: visits interval Gauss nodes, computes response weights, sorts candidates, and selects support range
-//   data: interval plan, candidate sample arrays, response weights, support-range indexes
+//   data: interval plan, sample/candidate arrays, response weights, support-range indexes
 //   follow: fillAdaptiveUnitGauss, insertionSortSamples, and selectVendorSupportRange
 pub fn appendAdaptiveSamplesFromPlan(
     plan: *const AdaptiveIntervalPlan,
@@ -315,8 +342,6 @@ pub fn appendAdaptiveSamplesFromPlan(
     const generation_start_nm = @max(global_start_nm, nominal_wavelength_nm - support_half_span_nm - @max(response.fwhm_nm, 1.0e-4));
     const generation_end_nm = @min(global_end_nm, nominal_wavelength_nm + support_half_span_nm + @max(response.fwhm_nm, 1.0e-4));
 
-    var candidate_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
-    var candidate_raw_weights: [types.max_integration_sample_count]f64 = undefined;
     var candidate_count: usize = 0;
 
     sample_count.* = 0;
@@ -324,30 +349,32 @@ pub fn appendAdaptiveSamplesFromPlan(
     var gauss_nodes_01: [types.max_integration_sample_count]f64 = undefined;
     var gauss_weights_01: [types.max_integration_sample_count]f64 = undefined;
 
-    for (plan.intervals[0..plan.count]) |interval| {
-        if (interval.interval_end_nm < generation_start_nm - 1.0e-12) continue;
-        if (interval.interval_start_nm > generation_end_nm + 1.0e-12) continue;
-        const order = interval.division_count;
+    for (0..plan.count) |interval_index| {
+        const interval_start_nm = plan.intervalStartNm(interval_index);
+        const interval_end_nm = plan.intervalEndNm(interval_index);
+        if (interval_end_nm < generation_start_nm - 1.0e-12) continue;
+        if (interval_start_nm > generation_end_nm + 1.0e-12) continue;
+        const order = plan.divisionCount(interval_index);
         if (order == 0) continue;
         fillAdaptiveUnitGauss(response, order, gauss_nodes_01[0..order], gauss_weights_01[0..order]) catch return false;
 
-        const interval_width_nm = interval.interval_end_nm - interval.interval_start_nm;
+        const interval_width_nm = interval_end_nm - interval_start_nm;
         for (0..order) |gauss_index| {
             // PARITY: preserve DISAMAR's Gauss division-point contract:
             // nodes and weights are first scaled to [0, 1], then interval
             // width is applied.
             const wavelength_nm = realizedIntervalWavelengthNm(
                 response,
-                interval.interval_start_nm,
+                interval_start_nm,
                 interval_width_nm,
                 gauss_nodes_01[gauss_index],
                 order,
                 gauss_index,
                 apply_disamar_midpoint_bias,
             );
-            if (!appendAdaptiveCandidateSample(
-                &candidate_wavelengths_nm,
-                &candidate_raw_weights,
+            if (!appendAdaptiveSample(
+                sample_wavelengths_nm,
+                sample_raw_weights,
                 &candidate_count,
                 wavelength_nm,
                 response_support.spectralResponseWeight(response, wavelength_nm - nominal_wavelength_nm) *
@@ -358,24 +385,20 @@ pub fn appendAdaptiveSamplesFromPlan(
     if (candidate_count == 0) return false;
 
     insertionSortSamples(
-        candidate_wavelengths_nm[0..candidate_count],
-        candidate_raw_weights[0..candidate_count],
+        sample_wavelengths_nm[0..candidate_count],
+        sample_raw_weights[0..candidate_count],
     );
 
     const support_range = selectVendorSupportRange(
-        candidate_wavelengths_nm[0..candidate_count],
+        sample_wavelengths_nm[0..candidate_count],
         nominal_wavelength_nm,
         support_half_span_nm,
     );
     var selected_count: usize = 0;
     for (support_range.start_index..support_range.end_index + 1) |candidate_index| {
-        if (!appendAdaptiveSample(
-            sample_wavelengths_nm,
-            sample_raw_weights,
-            &selected_count,
-            candidate_wavelengths_nm[candidate_index],
-            candidate_raw_weights[candidate_index],
-        )) return false;
+        sample_wavelengths_nm[selected_count] = sample_wavelengths_nm[candidate_index];
+        sample_raw_weights[selected_count] = sample_raw_weights[candidate_index];
+        selected_count += 1;
     }
     sample_count.* = selected_count;
     return sample_count.* != 0;
@@ -484,17 +507,18 @@ fn collectAdaptiveStrongLineCentersFromList(
     return true;
 }
 
-fn maxAdaptiveIntervalWidth(intervals: []const AdaptiveIntervalDescriptor) f64 {
-    if (intervals.len == 0) return 1.0;
+fn maxAdaptiveIntervalWidth(plan: *const AdaptiveIntervalPlan) f64 {
+    if (plan.count == 0) return 1.0;
     var max_width_nm: f64 = 0.0;
-    if (intervals.len > 2) {
-        for (intervals[1 .. intervals.len - 1]) |interval| {
-            max_width_nm = @max(max_width_nm, interval.interval_end_nm - interval.interval_start_nm);
+    if (plan.count > 2) {
+        const inner_end = plan.count - 1;
+        for (1..inner_end) |interval_index| {
+            max_width_nm = @max(max_width_nm, plan.intervalWidthNm(interval_index));
         }
     }
     if (max_width_nm <= 0.0) {
-        for (intervals) |interval| {
-            max_width_nm = @max(max_width_nm, interval.interval_end_nm - interval.interval_start_nm);
+        for (0..plan.count) |interval_index| {
+            max_width_nm = @max(max_width_nm, plan.intervalWidthNm(interval_index));
         }
     }
     return @max(max_width_nm, 1.0e-9);
@@ -580,16 +604,11 @@ fn buildDisamarIntervalPlan(
 ) bool {
     if (global_end_nm <= global_start_nm or interval_width_nm <= 0.0 or division_count == 0) return false;
 
-    plan.count = 0;
+    plan.reset(global_start_nm, global_end_nm);
     var current_nm = global_start_nm;
     while (current_nm < global_end_nm - 1.0e-12 and plan.count < types.max_integration_sample_count) {
         const next_nm = @min(current_nm + interval_width_nm, global_end_nm);
-        plan.intervals[plan.count] = .{
-            .interval_start_nm = current_nm,
-            .interval_end_nm = next_nm,
-            .division_count = division_count,
-        };
-        plan.count += 1;
+        if (!plan.append(next_nm, division_count)) return false;
         current_nm = next_nm;
     }
     return plan.count != 0 and current_nm >= global_end_nm - 1.0e-12;
@@ -611,21 +630,6 @@ fn appendAdaptiveSample(
     sample_wavelengths_nm[sample_count.*] = wavelength_nm;
     sample_raw_weights[sample_count.*] = raw_weight;
     sample_count.* += 1;
-    return true;
-}
-
-fn appendAdaptiveCandidateSample(
-    candidate_wavelengths_nm: *[types.max_integration_sample_count]f64,
-    candidate_raw_weights: *[types.max_integration_sample_count]f64,
-    candidate_count: *usize,
-    wavelength_nm: f64,
-    raw_weight: f64,
-) bool {
-    if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(raw_weight) or raw_weight < 0.0) return true;
-    if (candidate_count.* >= types.max_integration_sample_count) return false;
-    candidate_wavelengths_nm[candidate_count.*] = wavelength_nm;
-    candidate_raw_weights[candidate_count.*] = raw_weight;
-    candidate_count.* += 1;
     return true;
 }
 
