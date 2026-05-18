@@ -798,6 +798,69 @@ Conclusion:
 - this experiment is worth keeping because it removes repeated memoized phase
   data while also reducing temporary carrier copy traffic
 
+### Experiment 14: remove remaining copied aerosol phase carrier payloads
+
+Changed:
+- `SharedOpticalCarrier` no longer stores `aerosol_phase_coefficients`
+- `PreparedQuadratureCarrier` no longer stores `aerosol_phase_coefficients`
+- `SharedBoundaryCarrier` no longer stores aerosol phase arrays above and below
+- RTM quadrature and aerosol source Jacobian paths continue to read the
+  request-level aerosol phase coefficients from `PreparedOpticalState`
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SharedOpticalCarrier` | 2,472 B | 1,264 B | -48.87% |
+| `PreparedQuadratureCarrier` | 2,432 B | 1,224 B | -49.67% |
+| `SharedBoundaryCarrier` | 4,888 B | 2,472 B | -49.43% |
+| one 48-row support-carrier cache | 118,656 B | 60,672 B | -57,984 B |
+| 701 forward misses x 48 support rows | 83,196,288 B | 42,549,504 B | -40,646,784 B |
+
+Interpretation:
+- these aerosol phase rows became write-only after the prepared phase arrays
+  moved to `PreparedOpticalState`
+- combined phase rows are still computed where the RTM and layer-reduction paths
+  consume them, so this does not add lazy recomputation
+- the support-carrier cache keeps the combined phase row because layer
+  accumulation reads it directly
+- the current benchmark grid has 701 forward misses and the retained O2 A support
+  grid has 48 rows, so the support-cache field deletion removes about 38.76 MiB
+  of possible copied row payload across one full miss fill
+- boundary carriers also avoid copying two 151-f64 arrays per boundary return
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.004895 s | 1.014387 s | 1.0094 |
+| forward session setup | 0.711873 s | 0.711899 s | 1.0000 |
+| forward session cached median | 0.305400 s | 0.304713 s | 0.9978 |
+| forward fast four-scene median | 4.851848 s | 4.859552 s | 1.0016 |
+| OE session setup median | 0.717825 s | 0.719659 s | 1.0026 |
+| OE session retrieval median | 1.279187 s | 1.267872 s | 0.9912 |
+| OE fast retrieval median | 0.996457 s | 0.989494 s | 0.9930 |
+| OE sweep session total wall | 21.150677 s | 21.100117 s | 0.9976 |
+| OE sweep fast total wall | 11.470317 s | 11.477791 s | 1.0007 |
+
+Conclusion:
+- this keeps the large Experiment 13 phase-layout gain and removes the remaining
+  carrier-local aerosol phase copies that had no readers
+- the intended OE timing boundary is flat-to-faster, while the small forward
+  movements are within single-run noise for this benchmark setup
+- this is a safer alternative to removing combined phase memoization because it
+  deletes copied write-only arrays without moving new arithmetic into the hot
+  loop
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
