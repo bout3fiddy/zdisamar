@@ -1,6 +1,5 @@
 """Forward-model benchmark phases."""
 
-import time
 from typing import Any
 
 from zdisamar import rtm
@@ -9,7 +8,7 @@ from . import cases, config, residuals
 from .db import BenchmarkDb
 from .progress import Progress
 from .stats import timing_stats
-from .timing import timed
+from .timing import combine, elapsed_since, timed, timing_start
 
 
 def run(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
@@ -38,23 +37,24 @@ def run_no_session(
     samples = []
 
     for repeat in range(1, config.FORWARD_REPEATS + 1):
-        elapsed_s, spectrum = timed(
+        timing, spectrum = timed(
             lambda: rtm.spectrum(
                 case,
                 jacobian=True,
                 jacobian_state_names=config.FORWARD_STATE_NAMES,
             )
         )
-        samples.append((elapsed_s, spectrum))
+        samples.append((timing, spectrum))
         db.sample(
             run_id,
             phase="forward",
             mode="no_session",
             case_id="baseline",
             repeat=repeat,
-            elapsed_s=elapsed_s,
+            elapsed_s=timing.wall_s,
+            payload=timing_payload(timing),
         )
-        progress.log(phase, f"repeat {repeat}/{config.FORWARD_REPEATS} {elapsed_s:.3f}s")
+        progress.log(phase, f"repeat {repeat}/{config.FORWARD_REPEATS} {timing.wall_s:.3f}s")
 
     spectrum = samples[-1][1]
     metrics = residuals.reference_spectrum_metrics(case, spectrum)
@@ -62,7 +62,9 @@ def run_no_session(
         "label": "Forward, no session",
         "kind": "forward",
         "mode": "no_session",
-        "timing_s": timing_stats(elapsed_s for elapsed_s, _ in samples),
+        "timing_s": timing_stats(timing.wall_s for timing, _ in samples),
+        "process_cpu_s": timing_stats(timing.process_cpu_s for timing, _ in samples),
+        "average_active_cores": timing_stats(timing.average_active_cores for timing, _ in samples),
         "residuals": {
             "disamar_reference": {
                 "worst_interior_max_abs": max(
@@ -88,20 +90,21 @@ def run_session(
 
     phase = "forward/session"
     progress.log(phase, "start")
-    setup_start = time.perf_counter()
+    setup_start = timing_start()
 
     with rtm.SessionCache(case) as cache:
-        setup_s = time.perf_counter() - setup_start
+        setup = elapsed_since(setup_start)
         db.sample(
             run_id,
             phase="forward",
             mode="session_setup",
             case_id="baseline",
             repeat=1,
-            elapsed_s=setup_s,
+            elapsed_s=setup.wall_s,
+            payload=timing_payload(setup),
         )
-        progress.log(phase, f"setup {setup_s:.3f}s")
-        first_elapsed_s, first_sample = timed(
+        progress.log(phase, f"setup {setup.wall_s:.3f}s")
+        first_timing, first_sample = timed(
             lambda: cache.spectrum(
                 jacobian=True,
                 jacobian_state_names=config.FORWARD_STATE_NAMES,
@@ -113,41 +116,56 @@ def run_session(
             mode="session_first",
             case_id="baseline",
             repeat=1,
-            elapsed_s=first_elapsed_s,
+            elapsed_s=first_timing.wall_s,
+            payload=timing_payload(first_timing),
         )
-        progress.log(phase, f"first cached run {first_elapsed_s:.3f}s")
+        progress.log(phase, f"first cached run {first_timing.wall_s:.3f}s")
         cached = []
 
         for repeat in range(1, config.FORWARD_REPEATS + 1):
-            elapsed_s, _ = timed(
+            timing, _ = timed(
                 lambda: cache.spectrum(
                     jacobian=True,
                     jacobian_state_names=config.FORWARD_STATE_NAMES,
                 )
             )
-            cached.append(elapsed_s)
+            cached.append(timing)
             db.sample(
                 run_id,
                 phase="forward",
                 mode="session",
                 case_id="baseline",
                 repeat=repeat,
-                elapsed_s=elapsed_s,
+                elapsed_s=timing.wall_s,
+                payload=timing_payload(timing),
             )
             progress.log(
                 phase,
-                f"cached repeat {repeat}/{config.FORWARD_REPEATS} {elapsed_s:.3f}s",
+                f"cached repeat {repeat}/{config.FORWARD_REPEATS} {timing.wall_s:.3f}s",
             )
 
+    first_use = combine([setup, first_timing])
     summary = {
         "label": "Forward, session",
         "kind": "forward",
         "mode": "session",
         "timing_s": {
-            "setup_s": setup_s,
-            "first_use_total_s": setup_s + first_elapsed_s,
-            "first_cached_run_s": first_elapsed_s,
-            "cached_run_s": timing_stats(cached),
+            "setup_s": setup.wall_s,
+            "first_use_total_s": first_use.wall_s,
+            "first_cached_run_s": first_timing.wall_s,
+            "cached_run_s": timing_stats(timing.wall_s for timing in cached),
+        },
+        "process_cpu_s": {
+            "setup_s": setup.process_cpu_s,
+            "first_use_total_s": first_use.process_cpu_s,
+            "first_cached_run_s": first_timing.process_cpu_s,
+            "cached_run_s": timing_stats(timing.process_cpu_s for timing in cached),
+        },
+        "average_active_cores": {
+            "setup": setup.average_active_cores,
+            "first_use_total": first_use.average_active_cores,
+            "first_cached_run": first_timing.average_active_cores,
+            "cached_run": timing_stats(timing.average_active_cores for timing in cached),
         },
         "residuals": {
             "vs_no_session": residuals.spectrum_delta_metrics(no_session_sample, first_sample)
@@ -168,7 +186,7 @@ def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str,
     reference_baseline_times = []
 
     for spec, case in scene_cases:
-        elapsed_s, spectrum = timed(lambda case=case: rtm.spectrum(case))
+        timing, spectrum = timed(lambda case=case: rtm.spectrum(case))
         reference_by_scene[spec.label] = spectrum
         db.sample(
             run_id,
@@ -176,30 +194,32 @@ def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str,
             mode="reference",
             case_id=spec.label,
             repeat=1,
-            elapsed_s=elapsed_s,
+            elapsed_s=timing.wall_s,
+            payload=timing_payload(timing),
         )
-        progress.log(phase, f"reference {spec.label} {elapsed_s:.3f}s")
+        progress.log(phase, f"reference {spec.label} {timing.wall_s:.3f}s")
 
         if spec.label == "baseline":
-            reference_baseline_times.append(elapsed_s)
+            reference_baseline_times.append(timing)
 
     repeat_totals = []
     scene_metrics = {}
 
     for repeat in range(1, config.FORWARD_REPEATS + 1):
-        total_s = 0.0
+        scene_timings = []
 
         for spec, case in scene_cases:
             fast_case = cases.fast_case(case)
-            elapsed_s, spectrum = timed(lambda fast_case=fast_case: rtm.spectrum(fast_case))
-            total_s += elapsed_s
+            timing, spectrum = timed(lambda fast_case=fast_case: rtm.spectrum(fast_case))
+            scene_timings.append(timing)
             db.sample(
                 run_id,
                 phase="forward_fast_mode",
                 mode="fast_mode",
                 case_id=spec.label,
                 repeat=repeat,
-                elapsed_s=elapsed_s,
+                elapsed_s=timing.wall_s,
+                payload=timing_payload(timing),
             )
 
             if spec.label not in scene_metrics:
@@ -209,10 +229,11 @@ def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str,
                     spectrum,
                 )
 
-        repeat_totals.append(total_s)
+        total = combine(scene_timings)
+        repeat_totals.append(total)
         progress.log(
             phase,
-            f"repeat {repeat}/{config.FORWARD_REPEATS} four-scene total {total_s:.3f}s",
+            f"repeat {repeat}/{config.FORWARD_REPEATS} four-scene total {total.wall_s:.3f}s",
         )
 
     worst = max(scene_metrics.values(), key=lambda metric: metric["max_abs_residual"])
@@ -221,8 +242,26 @@ def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str,
         "kind": "forward",
         "mode": "fast_mode",
         "timing_s": {
-            "baseline_reference_run_s": timing_stats(reference_baseline_times),
-            "four_scene_fast_total_s": timing_stats(repeat_totals),
+            "baseline_reference_run_s": timing_stats(
+                timing.wall_s for timing in reference_baseline_times
+            ),
+            "four_scene_fast_total_s": timing_stats(timing.wall_s for timing in repeat_totals),
+        },
+        "process_cpu_s": {
+            "baseline_reference_run_s": timing_stats(
+                timing.process_cpu_s for timing in reference_baseline_times
+            ),
+            "four_scene_fast_total_s": timing_stats(
+                timing.process_cpu_s for timing in repeat_totals
+            ),
+        },
+        "average_active_cores": {
+            "baseline_reference_run": timing_stats(
+                timing.average_active_cores for timing in reference_baseline_times
+            ),
+            "four_scene_fast_total": timing_stats(
+                timing.average_active_cores for timing in repeat_totals
+            ),
         },
         "residuals": {
             "reference": "normal zdisamar forward",
@@ -235,3 +274,11 @@ def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str,
     progress.log(phase, "complete")
 
     return summary
+
+
+def timing_payload(timing: Any) -> dict[str, float]:
+
+    return {
+        "process_cpu_s": timing.process_cpu_s,
+        "average_active_cores": timing.average_active_cores,
+    }

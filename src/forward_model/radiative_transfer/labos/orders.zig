@@ -1078,12 +1078,13 @@ pub fn ordersScatTangent(
             }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel + 1);
+            const datt = atten_tangent.get(col_idx, end_level, ilevel + 1);
             const rt_t = &rt[ilevel + 1].T;
             const drt_t = &rt_tangent[ilevel + 1].T;
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
-                tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * atten_tangent.get(col_idx, end_level, ilevel + 1);
+                tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
                 rt_idx += rt_t.n;
             }
         }
@@ -1104,12 +1105,13 @@ pub fn ordersScatTangent(
             }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel);
+            const datt = atten_tangent.get(col_idx, end_level, ilevel);
             const rt_r = &rt[ilevel].R;
             const drt_r = &rt_tangent[ilevel].R;
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
-                tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * atten_tangent.get(col_idx, end_level, ilevel);
+                tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
                 rt_idx += rt_r.n;
             }
         }

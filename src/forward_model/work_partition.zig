@@ -49,17 +49,26 @@
 //! into a mostly single-worker run.
 //!
 //! This module also centralizes the worker-count threshold used by these loops.
-//! That is deliberately separate from the Linux Python wheel bug. On Linux, a
-//! Zig shared library loaded through Python must link libc so `std.Thread` uses
-//! pthreads. Without that, Zig can use its raw Linux clone/TLS path; inside a
-//! `.so` loaded by CPython, that path can observe thread-local state differently
-//! from a standalone executable. macOS reaches threads through libSystem/pthread
-//! already, so it did not show the same failure mode. The build fix belongs in
-//! `build.zig`; this file documents why the worker loops still use native
-//! `std.Thread` after that fix instead of inventing an application scheduler.
+//! Keep that policy here even though callers record trace labels around the same
+//! loops. A trace facade that also owns worker limits or runtime policy is a
+//! smell: instrumentation should observe scheduling decisions, not define them.
+//! Worker limits and runtime policy belong with partitioning/scheduling, not
+//! instrumentation.
+//!
+//! The worker-count threshold is deliberately separate from the Linux Python
+//! wheel bug. On Linux, a Zig shared library loaded through Python must link
+//! libc so `std.Thread` uses pthreads. Without that, Zig can use its raw Linux
+//! clone/TLS path; inside a `.so` loaded by CPython, that path can observe
+//! thread-local state differently from a standalone executable. macOS reaches
+//! threads through libSystem/pthread already, so it did not show the same
+//! failure mode. The build fix belongs in `build.zig`; this file documents why
+//! the worker loops still use native `std.Thread` after that fix instead of
+//! inventing an application scheduler.
 
 const std = @import("std");
-const Trace = @import("performance_trace.zig");
+
+pub const max_workers: usize = 64;
+pub const worker_limit_env = "ZDISAMAR_WORKER_LIMIT";
 
 pub const Range = struct {
     start: usize,
@@ -128,10 +137,40 @@ pub fn rangesAreBalanced(item_count: usize, worker_count: usize) bool {
 }
 
 pub fn preferredWorkerCount(item_count: usize, min_items_per_worker: usize) usize {
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    return preferredWorkerCountForCpuCount(
+        item_count,
+        min_items_per_worker,
+        cpu_count,
+        configuredWorkerLimit(),
+    );
+}
+
+pub fn preferredWorkerCountForCpuCount(
+    item_count: usize,
+    min_items_per_worker: usize,
+    cpu_count: usize,
+    worker_limit: ?usize,
+) usize {
     std.debug.assert(min_items_per_worker != 0);
     if (item_count < min_items_per_worker) return 1;
 
-    const cpu_count = std.Thread.getCpuCount() catch 1;
     const count_from_work = @max(@as(usize, 1), item_count / min_items_per_worker);
-    return @min(Trace.max_workers, @min(cpu_count, count_from_work));
+    var available_workers = @max(@as(usize, 1), cpu_count);
+    if (worker_limit) |limit| {
+        if (limit == 0) @panic(worker_limit_env ++ " must be a positive integer");
+        available_workers = @min(available_workers, limit);
+    }
+    return @min(max_workers, @min(available_workers, count_from_work));
+}
+
+fn configuredWorkerLimit() ?usize {
+    const limit = std.process.parseEnvVarInt(worker_limit_env, usize, 10) catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => @panic(worker_limit_env ++ " must be a positive integer"),
+    };
+    if (limit) |value| {
+        if (value == 0) @panic(worker_limit_env ++ " must be a positive integer");
+    }
+    return limit;
 }

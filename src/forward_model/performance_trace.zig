@@ -4,8 +4,6 @@ const ztracy = @import("ztracy");
 
 const SourceLocation = std.builtin.SourceLocation;
 
-pub const max_workers: usize = 64;
-
 pub const enabled: bool = if (@hasDecl(build_options, "enable_ztracy"))
     build_options.enable_ztracy
 else

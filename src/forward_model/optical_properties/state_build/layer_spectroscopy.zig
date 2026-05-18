@@ -199,8 +199,8 @@ fn fillProfileSpectroscopyCacheValues(
     }
 
     var queue = work_partition.ChunkQueue.init(cache.node_count, profile_cache_node_chunk_size);
-    var worker_buffer: [Trace.max_workers]ProfileCacheValueWorker = undefined;
-    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    var worker_buffer: [work_partition.max_workers]ProfileCacheValueWorker = undefined;
+    var thread_buffer: [work_partition.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
     const threads = thread_buffer[0 .. worker_count - 1];
     var started_thread_count: usize = 0;

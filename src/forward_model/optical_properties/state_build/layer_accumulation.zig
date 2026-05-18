@@ -450,8 +450,8 @@ fn populateParitySupportRowsParallel(
 
     var error_state = ParitySupportRowErrorState{};
     var queue = work_partition.ChunkQueue.init(context.sublayers.len, parity_support_row_chunk_size);
-    var worker_buffer: [Trace.max_workers]ParitySupportRowWorker = undefined;
-    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    var worker_buffer: [work_partition.max_workers]ParitySupportRowWorker = undefined;
+    var thread_buffer: [work_partition.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
     const threads = thread_buffer[0 .. worker_count - 1];
     var started_thread_count: usize = 0;

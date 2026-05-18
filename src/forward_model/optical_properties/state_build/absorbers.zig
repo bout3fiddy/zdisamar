@@ -292,8 +292,8 @@ fn fillProfileLineStates(
     }
 
     var queue = work_partition.ChunkQueue.init(temperatures_k.len, profile_line_state_chunk_size);
-    var worker_buffer: [Trace.max_workers]ProfileLineStateWorker = undefined;
-    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    var worker_buffer: [work_partition.max_workers]ProfileLineStateWorker = undefined;
+    var thread_buffer: [work_partition.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
     const threads = thread_buffer[0 .. worker_count - 1];
     var started_thread_count: usize = 0;
