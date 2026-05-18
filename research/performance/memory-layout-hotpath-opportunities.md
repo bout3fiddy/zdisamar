@@ -992,6 +992,70 @@ Conclusion:
   hot consumers now receive the exact scalar and the shared unit phase without
   carrying duplicate arrays through every level
 
+### Experiment 17: encode strong-line anchors as compact indexes
+
+Changed:
+- `StrongLineAnchorIndex` is now a typed `u32` index into the relevant-line
+  window
+- `StrongLineWavelengthWindow.anchors` stores 128 compact anchor indexes instead
+  of 128 host-width `usize` values
+- missing anchors still use an explicit sentinel value, now sized to the compact
+  anchor type
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StrongLineWavelengthWindow` | 1,048 B | 536 B | -48.85% |
+| anchor array inside each window | 1,024 B | 512 B | -512 B |
+| anchor element width | 8 B | 4 B | -50.00% |
+| cache span at 64 B per line | 17 lines | 9 lines | -8 lines |
+
+Interpretation:
+- anchor slots store indexes into the current relevant-line window, not memory
+  addresses or globally stable pointers
+- the window has at most 128 strong-line sidecar slots; each slot is either a
+  relevant-line index or the sentinel for missing anchor
+- the cast guard preserves the index contract if a future relevant-line window
+  ever exceeds the compact index range
+- this keeps the existing array-of-anchors access pattern and only changes the
+  width of the stored index
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `726382f4bf934fc7b354441cc8e386fe`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.999941 s | 0.998235 s | 0.9983 |
+| forward session setup | 0.724321 s | 0.709712 s | 0.9798 |
+| forward session cached median | 0.296183 s | 0.295524 s | 0.9978 |
+| forward fast four-scene median | 4.816070 s | 4.815198 s | 0.9998 |
+| OE session setup median | 0.717254 s | 0.715381 s | 0.9974 |
+| OE session retrieval median | 1.236359 s | 1.236752 s | 1.0003 |
+| OE fast retrieval median | 0.970431 s | 0.961629 s | 0.9909 |
+| OE sweep session total wall | 20.667756 s | 20.440127 s | 0.9890 |
+| OE sweep fast total wall | 11.375178 s | 11.186411 s | 0.9834 |
+
+Conclusion:
+- this is a narrow compact-index win for a hot stack/window struct used while
+  selecting and applying prepared strong-line anchors
+- the retained value is smaller per instance and crosses fewer cache lines, with
+  the same logical anchor table and sentinel behavior
+- benchmark movement is flat-to-faster on the retained harness; the only slower
+  reported timing is a 0.03% OE session retrieval change, which is below this
+  single-run noise floor and offset by faster sweep totals in the same run
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

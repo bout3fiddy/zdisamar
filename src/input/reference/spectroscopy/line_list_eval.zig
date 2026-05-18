@@ -10,18 +10,18 @@ const Types = @import("types.zig");
 const SpectroscopyLineList = LineList.SpectroscopyLineList;
 
 // layout(64-bit):
-//   size: 1048 B, align: 8 B
-//   field storage: lines=16 B, start_index=8 B, anchors=1024 B; padding: 0 B (0 bits)
+//   size: 536 B, align: 8 B
+//   field storage: lines=16 B, start_index=8 B, anchors=512 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: anchors:[128]usize=1024 B
+//   inline arrays: anchors:[128]StrongLineAnchorIndex=512 B
 //   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   cache span: 17 cache line(s) at 64 B per line
+//   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1048 B (1.023 KiB); total also includes referenced storage above
+//   footprint: per instance = 536 B (0.523 KiB); total also includes referenced storage above
 pub const StrongLineWavelengthWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,
-    anchors: [Types.max_strong_line_sidecars]usize,
+    anchors: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex,
 };
 
 // hot path:

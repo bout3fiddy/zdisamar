@@ -321,21 +321,22 @@ pub fn selectStrongLineAnchors(
     self: SpectroscopyLineList,
     relevant_lines: []const Types.SpectroscopyLine,
     start_index: usize,
-) [Types.max_strong_line_sidecars]usize {
-    var anchors = [_]usize{Types.missing_strong_line_anchor_index} ** Types.max_strong_line_sidecars;
+) [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex {
+    var anchors = [_]Types.StrongLineAnchorIndex{Types.missing_strong_line_anchor_index} ** Types.max_strong_line_sidecars;
     const strong_lines = self.strong_lines orelse return anchors;
     if (usesVendorStrongLinePartition(self)) return anchors;
 
     var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     for (relevant_lines, 0..) |line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
+        if (line_index > std.math.maxInt(Types.StrongLineAnchorIndex)) continue;
         const delta = @abs(strong_lines[strong_index].center_wavelength_nm - line.center_wavelength_nm);
         if (delta > deltas[strong_index]) continue;
         if (delta == deltas[strong_index] and anchors[strong_index] != Types.missing_strong_line_anchor_index) {
-            const incumbent = relevant_lines[anchors[strong_index]];
+            const incumbent = relevant_lines[@intCast(anchors[strong_index])];
             if (incumbent.line_strength_cm2_per_molecule >= line.line_strength_cm2_per_molecule) continue;
         }
-        anchors[strong_index] = line_index;
+        anchors[strong_index] = @intCast(line_index);
         deltas[strong_index] = delta;
     }
     return anchors;
@@ -371,7 +372,7 @@ pub fn shouldExcludeWeakLine(
     start_index: usize,
     line: Types.SpectroscopyLine,
     line_index: usize,
-    strong_line_anchors: *const [Types.max_strong_line_sidecars]usize,
+    strong_line_anchors: *const [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex,
 ) bool {
     if (usesVendorStrongLinePartition(self)) {
         if (self.preserve_anchor_weak_lines) return false;
@@ -380,7 +381,8 @@ pub fn shouldExcludeWeakLine(
     }
     const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse return false;
     if (self.preserve_anchor_weak_lines) return false;
-    return strong_line_anchors[strong_index] == line_index;
+    if (strong_line_anchors[strong_index] == Types.missing_strong_line_anchor_index) return false;
+    return @as(usize, @intCast(strong_line_anchors[strong_index])) == line_index;
 }
 
 pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
