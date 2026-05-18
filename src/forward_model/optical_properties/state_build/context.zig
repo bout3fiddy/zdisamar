@@ -8,6 +8,14 @@ const VerticalGrid = @import("vertical_grid.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: profile, spectroscopy_profile, cross_sections, lut, collision_induced_absorption, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
     spectroscopy_profile: ?*const ReferenceData.ClimatologyProfile = null,
@@ -19,6 +27,14 @@ pub const PreparationInputs = struct {
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
 };
 
+// layout(64-bit):
+//   size: 976 B, align: 8 B
+//   field storage: 976 B across 20 fields; largest: vertical_grid=256 B, spectroscopy_lines=216 B, aerosol_fraction_control=88 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +7 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 16 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 976 B (0.953 KiB); total also includes referenced storage above
 pub const PreparationContext = struct {
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,

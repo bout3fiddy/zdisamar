@@ -7,6 +7,14 @@ pub const CloudType = @import("atmospheric_types.zig").CloudType;
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
 
+// layout(64-bit):
+//   size: 224 B, align: 8 B
+//   field storage: 218 B across 13 fields; largest: fraction=88 B, placement=40 B, id=16 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 7 bool-storage slack = 55 bits
+//   out-of-line: id, provider carry references/descriptors; referenced storage is not included in size
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 224 B (0.219 KiB); total also includes referenced storage above
 pub const Cloud = struct {
     id: []const u8 = "",
     cloud_type: CloudType = .none,

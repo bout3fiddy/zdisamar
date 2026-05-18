@@ -11,6 +11,14 @@ const Types = @import("state_types.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 1056 B, align: 8 B
+//   field storage: 1054 B across 59 fields; largest: spectroscopy_lines=216 B, cloud_fraction_control=88 B, aerosol_fraction_control=88 B; padding: 2 B (16 bits)
+//   unused bits: 16 padding + 35 bool-storage slack = 51 bits
+//   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 17 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1056 B (1.031 KiB); total also includes referenced storage above
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -179,6 +187,9 @@ pub const PreparedOpticalState = struct {
         self.shared_rtm_geometry = try @import("transport.zig").buildSharedRtmGeometry(allocator, self);
     }
 
+    // layout(64-bit):
+    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn resolvedParticleSingleScatterAlbedos(self: *const PreparedOpticalState) struct {
         aerosol: f64,
         cloud: f64,

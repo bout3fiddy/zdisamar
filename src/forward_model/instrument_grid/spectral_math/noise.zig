@@ -160,6 +160,12 @@ pub fn sigmaFromS5Operational(
     }
 }
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: a=8 B, b=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const S5Coefficients = struct {
     a: f64,
     b: f64,

@@ -2,6 +2,13 @@ const std = @import("std");
 const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: wavelengths_nm=16 B, irradiance=16 B, spline_second_derivatives=16 B, owns_spline_state=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: wavelengths_nm, irradiance, spline_second_derivatives carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
 pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},

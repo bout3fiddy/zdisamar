@@ -3,11 +3,24 @@ const cholesky = @import("../../common/math/linalg/cholesky.zig");
 const dense = @import("../../common/math/linalg/small_dense.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wavelength_nm=8 B, sigma_cm2_per_molecule=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const CrossSectionPoint = struct {
     wavelength_nm: f64,
     sigma_cm2_per_molecule: f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const CrossSectionTable = struct {
     points: []CrossSectionPoint,
 
@@ -52,6 +65,9 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma(wavelength_nm);
     }
 
+    // layout(64-bit):
+    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per present payload = 16 B (0.016 KiB)
     pub fn bracketForWavelength(
         self: CrossSectionTable,
         wavelength_nm: f64,

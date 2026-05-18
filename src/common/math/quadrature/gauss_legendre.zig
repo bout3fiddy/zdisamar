@@ -1,3 +1,12 @@
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: nodes=80 B, weights=80 B, count=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   metadata fields: count=4 B
+//   inline arrays: nodes:[10]f64=80 B, weights:[10]f64=80 B
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const Rule = struct {
     count: u32,
     nodes: [10]f64,
@@ -366,6 +375,12 @@ pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     };
 }
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: value=8 B, previous_value=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const PolynomialState = struct {
     value: f64,
     previous_value: f64,

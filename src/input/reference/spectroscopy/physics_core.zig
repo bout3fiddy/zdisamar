@@ -3,21 +3,45 @@
 const std = @import("std");
 const Types = @import("types.zig");
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wr=8 B, wi=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const ComplexProbability = struct {
     wr: f64,
     wi: f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: real=8 B, imag=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const VoigtProfile = struct {
     real: f64,
     imag: f64,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: prefactor=8 B, cpf=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const WeakLineVoigtState = struct {
     prefactor: f64,
     cpf: ComplexProbability,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: evaluation_wavenumber_cm1=8 B, cutoff_grid_index=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const WeakLineWavelengthState = struct {
     evaluation_wavenumber_cm1: f64,
     cutoff_grid_index: ?usize,

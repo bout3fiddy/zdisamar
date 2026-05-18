@@ -11,6 +11,13 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: support_sublayers=16 B, strong_line_states=16 B, lower_altitude_km=8 B, upper_altitude_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: support_sublayers carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 const PseudoSphericalInterval = struct {
     support_sublayers: []const State.PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,

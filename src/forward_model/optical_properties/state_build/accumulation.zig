@@ -6,6 +6,13 @@ const Absorbers = @import("absorbers.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: 168 B across 20 fields; largest: line_means=16 B, cross_section_mean_cm2_per_molecule=8 B, cia_mean_cross_section_cm5_per_molecule2=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const PreparedMeans = struct {
     cross_section_mean_cm2_per_molecule: f64 = 0.0,
     line_means: BandMeans.LineBandMeans = .{},
@@ -29,6 +36,13 @@ pub const PreparedMeans = struct {
     depolarization_factor: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: means=168 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const AccumulationResult = struct {
     means: PreparedMeans = .{},
 };

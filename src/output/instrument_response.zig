@@ -12,6 +12,13 @@ const ResponseSampling = @field(InstrumentIntegration, "Integration" ++ "Ker" ++
 pub const channel_mask_radiance: u32 = 1 << 0;
 pub const channel_mask_irradiance: u32 = 1 << 1;
 
+// layout(64-bit):
+//   size: 88 B, align: 8 B
+//   field storage: 85 B across 14 fields; largest: nominal_wavelength_nm=8 B, offset_nm=8 B, support_wavelength_nm=8 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 88 B (0.086 KiB); total = per instance * live instance count
 pub const InstrumentResponseRow = struct {
     nominal_index: i32,
     nominal_wavelength_nm: f64,

@@ -70,6 +70,12 @@ const std = @import("std");
 pub const max_workers: usize = 64;
 pub const worker_limit_env = "ZDISAMAR_WORKER_LIMIT";
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: start=8 B, end=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const Range = struct {
     start: usize,
     end: usize,
@@ -79,6 +85,12 @@ pub const Range = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: mutex=16 B, next_index=8 B, item_count=8 B, chunk_size=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
 pub const ChunkQueue = struct {
     mutex: std.Thread.Mutex = .{},
     next_index: usize = 0,

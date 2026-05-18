@@ -7,6 +7,12 @@ pub const PhaseSupportKind = enum {
     mie_table,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: solar_zenith_deg=8 B, view_zenith_deg=8 B, relative_azimuth_deg=8 B, airmass_factor=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const AirmassFactorPoint = struct {
     solar_zenith_deg: f64,
     view_zenith_deg: f64,
@@ -14,6 +20,13 @@ pub const AirmassFactorPoint = struct {
     airmass_factor: f64,
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: wavelength_nm=8 B, extinction_scale=8 B, single_scatter_albedo=8 B, phase_coefficients=32 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: phase_coefficients:[4]f64=32 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 pub const MiePhasePoint = struct {
     wavelength_nm: f64,
     extinction_scale: f64,
@@ -21,6 +34,13 @@ pub const MiePhasePoint = struct {
     phase_coefficients: [4]f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const MiePhaseTable = struct {
     points: []MiePhasePoint,
 
@@ -69,6 +89,13 @@ pub const MiePhaseTable = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const AirmassFactorLut = struct {
     points: []AirmassFactorPoint,
 

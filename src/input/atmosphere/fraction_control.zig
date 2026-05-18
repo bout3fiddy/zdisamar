@@ -6,6 +6,14 @@ const types = @import("types.zig");
 pub const FractionTarget = types.FractionTarget;
 pub const FractionKind = types.FractionKind;
 
+// layout(64-bit):
+//   size: 88 B, align: 8 B
+//   field storage: 84 B across 10 fields; largest: wavelengths_nm=16 B, values=16 B, apriori_values=16 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 14 bool-storage slack = 46 bits
+//   out-of-line: wavelengths_nm, values, apriori_values, variance_values carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 88 B (0.086 KiB); total also includes referenced storage above
 pub const FractionControl = struct {
     enabled: bool = false,
     target: FractionTarget = .none,

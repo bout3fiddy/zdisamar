@@ -1,11 +1,25 @@
 const std = @import("std");
 const helpers = @import("reference_assets_formats_helpers.zig");
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: format=16 B, columns=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: format, columns carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const AssetSpec = struct {
     format: []const u8,
     columns: []const []const u8,
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: column_names=16 B, values=16 B, row_count=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   out-of-line: column_names, values carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const ParsedTable = struct {
     column_names: []const []const u8,
     values: []f64,

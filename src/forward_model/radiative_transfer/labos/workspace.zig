@@ -6,6 +6,14 @@ const orders_mod = @import("orders.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 3168 B, align: 8 B
+//   field storage: 3161 B across 17 fields; largest: cached_geometry=2832 B, orders=104 B, allocator=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: attenuation_data, attenuation_layer_transmittance, attenuation_top_to_level, rt_layers, layer_phase_max_indices, +8 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 50 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3168 B (3.094 KiB); total also includes referenced storage above
 pub const Workspace = struct {
     allocator: Allocator,
     attenuation_data: []f64 = &.{},
@@ -98,6 +106,13 @@ pub const Workspace = struct {
         return self.geometryWithStatus(n_gauss, mu0, muv).geometry;
     }
 
+    // layout(64-bit):
+    //   size: 16 B, align: 8 B
+    //   field storage: geometry=8 B, hit=1 B; padding: 7 B (56 bits)
+    //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+    //   out-of-line: geometry carry references/descriptors; referenced storage is not included in size
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
     pub const GeometryCacheStatus = struct {
         geometry: *const basis.Geometry,
         hit: bool,
@@ -178,6 +193,13 @@ pub const Workspace = struct {
         return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, geo)).plm_basis;
     }
 
+    // layout(64-bit):
+    //   size: 16 B, align: 8 B
+    //   field storage: plm_basis=8 B, hit=1 B, extended=1 B; padding: 6 B (48 bits)
+    //   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+    //   out-of-line: plm_basis carry references/descriptors; referenced storage is not included in size
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
     pub const PlmBasisCacheStatus = struct {
         plm_basis: *const basis.FourierPlmBasis,
         hit: bool,
@@ -211,6 +233,12 @@ pub const Workspace = struct {
         };
     }
 
+    // layout(64-bit):
+    //   size: 40 B, align: 8 B
+    //   field storage: 40 B across 5 fields; largest: layer_count=8 B, max_index_matches=8 B, signature_matches=8 B; padding: 0 B (0 bits)
+    //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
     pub const LayerPhaseSignatureProbe = struct {
         layer_count: usize = 0,
         max_index_matches: usize = 0,

@@ -5,6 +5,14 @@ const hitran_partition_tables = @import("../../hitran_partition_tables.zig");
 const Core = @import("physics_core.zig");
 const Types = @import("types.zig");
 
+// layout(64-bit):
+//   size: 136208 B, align: 8 B
+//   field storage: 136208 B across 8 fields; largest: relaxation_weights=131072 B, population_t=1024 B, dipole_t=1024 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 6 fields reserve 136192 B inside each instance
+//   cache span: 2129 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 136208 B (133.0 KiB); total = per instance * live instance count
 pub const StrongLineConvTPState = struct {
     line_count: usize = 0,
     sig_moy_cm1: f64 = 0.0,

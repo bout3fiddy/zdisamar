@@ -4,6 +4,13 @@ const SpectroscopyTypes = @import("../../../input/reference/spectroscopy/types.z
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: key=8 B, strong_states=16 B, weak_states=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: strong_states, weak_states carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 const Entry = struct {
     key: u64,
     strong_states: []ReferenceData.StrongLinePreparedState,

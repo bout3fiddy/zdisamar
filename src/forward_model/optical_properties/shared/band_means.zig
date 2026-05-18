@@ -5,6 +5,12 @@ const LineListEval = @import("../../../input/reference/spectroscopy/line_list_ev
 const OperationalReferenceGrid = @import("../../../input/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: line_mean_cross_section_cm2_per_molecule=8 B, line_mixing_mean_cross_section_cm2_per_molecule=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const LineBandMeans = struct {
     line_mean_cross_section_cm2_per_molecule: f64 = 0.0,
     line_mixing_mean_cross_section_cm2_per_molecule: f64 = 0.0,

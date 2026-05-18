@@ -14,6 +14,14 @@ const Allocator = std.mem.Allocator;
 const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
 
+// layout(64-bit):
+//   size: 288 B, align: 8 B
+//   field storage: 288 B across 7 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: temperatures_k, pressures_hpa, queue carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
@@ -24,6 +32,14 @@ const ProfileLineStateWorker = struct {
     worker_index: usize,
 };
 
+// layout(64-bit):
+//   size: 568 B, align: 8 B
+//   field storage: 565 B across 20 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B, active_line_absorbers=16 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 7 bool-storage slack = 31 bits
+//   out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers, owned_line_absorbers carry references/descriptors; referenced storage is not included in size
+//   cache span: 9 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
 pub const AbsorberBuildState = struct {
     active_line_absorbers: []State.ActiveLineAbsorber = &.{},
     active_cross_section_absorbers: []State.ActiveCrossSectionAbsorber = &.{},
@@ -584,6 +600,9 @@ fn sortLineList(line_list: *ReferenceData.SpectroscopyLineList) void {
         ReferenceData.SpectroscopyLine,
         line_list.lines,
         {},
+        // layout(64-bit):
+        //   anonymous comparator namespace: size 0 B, align 1 B
+        //   footprint: no runtime field storage; function declaration only
         struct {
             fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
                 return left.center_wavelength_nm < right.center_wavelength_nm;

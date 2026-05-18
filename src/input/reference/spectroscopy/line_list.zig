@@ -3,6 +3,14 @@
 
 const Types = @import("types.zig");
 
+// layout(64-bit):
+//   size: 208 B, align: 8 B
+//   field storage: 203 B across 9 fields; largest: runtime_controls=96 B, relaxation_matrix=48 B, lines=16 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 21 bool-storage slack = 61 bits
+//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 208 B (0.203 KiB); total also includes referenced storage above
 pub const SpectroscopyLineList = struct {
     lines: []Types.SpectroscopyLine,
     strong_lines: ?[]Types.SpectroscopyStrongLine = null,

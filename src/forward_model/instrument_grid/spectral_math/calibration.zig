@@ -2,6 +2,12 @@ const std = @import("std");
 const Instrument = @import("../../../input/Instrument.zig").Instrument;
 const sampling = @import("sampling.zig");
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: gain=8 B, offset=8 B, wavelength_shift_nm=8 B, stray_light=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const Calibration = struct {
     gain: f64 = 1.0,
     offset: f64 = 0.0,

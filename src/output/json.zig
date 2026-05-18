@@ -3,6 +3,12 @@ const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
 
 pub const spectrum_name = "generated_spectrum.csv";
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 44 B across 6 fields; largest: wavelength_start_nm=8 B, wavelength_end_nm=8 B, mean_radiance=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const SummaryReport = struct {
     sample_count: u32,
     wavelength_start_nm: f64,

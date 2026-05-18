@@ -26,6 +26,12 @@ const max_collision_complex_profile_nodes: usize = 256;
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ParitySupportRowErrorState = struct {
     mutex: std.Thread.Mutex = .{},
     err: ?anyerror = null,
@@ -37,6 +43,15 @@ const ParitySupportRowErrorState = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 2720 B, align: 8 B
+//   field storage: 2720 B across 18 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, totals=160 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   out-of-line: context, absorbers, profile_spectroscopy_cache, aerosol_sublayer_distribution, cloud_sublayer_distribution, +2 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 43 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2720 B (2.656 KiB); total also includes referenced storage above
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
@@ -116,6 +131,13 @@ fn collisionComplexPairDensityCm6(
     return @exp(sampled_log_vmr) * air_number_density_cm3;
 }
 
+// layout(64-bit):
+//   size: 160 B, align: 8 B
+//   field storage: 160 B across 20 fields; largest: base_single_scatter_albedo=8 B, aerosol_single_scatter_albedo=8 B, cloud_single_scatter_albedo=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count
 pub const LayerAccumulation = struct {
     base_single_scatter_albedo: f64 = 0.0,
     aerosol_single_scatter_albedo: f64 = 0.0,
@@ -139,6 +161,13 @@ pub const LayerAccumulation = struct {
     depolarization_weighted: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 61 B across 10 fields; largest: top_altitude_km=8 B, bottom_altitude_km=8 B, center_altitude_km=8 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
 const LayerGeometry = struct {
     top_altitude_km: f64,
     bottom_altitude_km: f64,
@@ -152,6 +181,13 @@ const LayerGeometry = struct {
     thickness_km: f64,
 };
 
+// layout(64-bit):
+//   size: 112 B, align: 8 B
+//   field storage: 112 B across 14 fields; largest: density_weight=8 B, density=8 B, temperature_weighted=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
 const LayerSums = struct {
     density_weight: f64 = 0.0,
     density: f64 = 0.0,
@@ -206,6 +242,13 @@ const LayerSums = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 112 B, align: 8 B
+//   field storage: 112 B across 14 fields; largest: density=8 B, temperature=8 B, pressure=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
 const SublayerLayerTerms = struct {
     density: f64,
     temperature: f64,

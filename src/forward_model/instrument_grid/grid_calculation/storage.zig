@@ -27,6 +27,14 @@ pub const Error =
         OutOfMemory,
     };
 
+// layout(64-bit):
+//   size: 288 B, align: 8 B
+//   field storage: 288 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, scratch, +8 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
 pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
@@ -49,6 +57,14 @@ pub const Buffers = struct {
 };
 
 // Reusable instrument grid storage that owns the backing storage.
+// layout(64-bit):
+//   size: 584 B, align: 8 B
+//   field storage: 580 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, noise_sigma=16 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
+//   out-of-line: noise_sigma, forward_misses, irradiance, reflectance, scratch, +16 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 10 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 584 B (0.570 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},

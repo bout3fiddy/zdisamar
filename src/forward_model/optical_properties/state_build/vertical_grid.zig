@@ -7,6 +7,14 @@ const gauss_legendre = @import("../../../common/math/quadrature/gauss_legendre.z
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 256 B, align: 8 B
+//   field storage: 256 B across 16 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_top_pressures_hpa=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_top_pressures_hpa, layer_bottom_pressures_hpa, layer_interval_indices_1based, +11 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 256 B (0.250 KiB); total also includes referenced storage above
 pub const OwnedVerticalGrid = struct {
     layer_top_altitudes_km: []f64,
     layer_bottom_altitudes_km: []f64,

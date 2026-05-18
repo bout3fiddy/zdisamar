@@ -20,6 +20,12 @@ pub const WavelengthSampling = Plan.WavelengthSampling;
 const min_parallel_wavelength_sample_count: usize = 64;
 const wavelength_sampling_chunk_size: usize = 16;
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const WavelengthSamplingErrorState = struct {
     mutex: std.Thread.Mutex = .{},
     err: ?Error = null,
@@ -31,6 +37,14 @@ const WavelengthSamplingErrorState = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 152 B, align: 8 B
+//   field storage: 145 B across 12 fields; largest: radiance_calibration=32 B, irradiance_calibration=32 B, plans=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: scene, prepared, resolved_axis, radiance_adaptive_cache, irradiance_adaptive_cache, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 152 B (0.148 KiB); total also includes referenced storage above
 const WavelengthSamplingWorker = struct {
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

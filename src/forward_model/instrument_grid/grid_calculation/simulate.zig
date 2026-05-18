@@ -20,6 +20,14 @@ const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 const profile_cache_build_chunk_size: usize = 8;
 
+// layout(64-bit):
+//   size: 216 B, align: 8 B
+//   field storage: 210 B across 10 fields; largest: resolved_axis=40 B, radiance_slit_kernel=40 B, irradiance_slit_kernel=40 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   inline arrays: radiance_slit_kernel:[5]f64=40 B, irradiance_slit_kernel:[5]f64=40 B
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 216 B (0.211 KiB); total = per instance * live instance count
 const SimulationSetup = struct {
     sample_count: usize,
     resolved_axis: grid.ResolvedAxis,
@@ -33,6 +41,14 @@ const SimulationSetup = struct {
     plan_key: u64,
 };
 
+// layout(64-bit):
+//   size: 80 B, align: 8 B
+//   field storage: 80 B across 5 fields; largest: wavelength_sampling=16 B, forward_misses=16 B, profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelength_sampling, forward_misses, profile_spectroscopy_caches, owned_wavelength_sampling, owned_forward_misses carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced storage above
 const ResolvedSimulationPlan = struct {
     wavelength_sampling: []const WavelengthSampling.WavelengthSampling = &.{},
     forward_misses: []const SpectralEval.ForwardCacheMiss = &.{},
@@ -47,6 +63,13 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 56 B across 5 fields; largest: jacobian_sum=24 B, radiance_sum=8 B, irradiance_sum=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: jacobian_sum:[3]f64=24 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 const RunningSummary = struct {
     radiance_sum: f64,
     irradiance_sum: f64,
@@ -99,6 +122,14 @@ const RunningSummary = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 6 fields; largest: forward_misses=16 B, caches=16 B, prepared=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: prepared, forward_misses, caches carry references/descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 const ProfileCacheBuildWorker = struct {
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,

@@ -3,6 +3,14 @@ const dispatcher = @import("../radiative_transfer/dispatcher.zig");
 const labos = @import("../radiative_transfer/labos/root.zig");
 const std = @import("std");
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 7 fields; largest: id=16 B, prepareRoute=8 B, executePrepared=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: id, prepareRoute, executePrepared, executePreparedWithLabosWorkspace, classificationForRoute, +2 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 pub const Implementation = struct {
     id: []const u8,
     prepareRoute: *const fn (request: common.DispatchRequest) common.PrepareError!common.Route,

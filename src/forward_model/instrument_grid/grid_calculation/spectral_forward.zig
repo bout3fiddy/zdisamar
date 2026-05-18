@@ -19,6 +19,13 @@ const Error = Storage.Error;
 // PUB FOR TEST: re-exported via measurement/internal.zig.
 pub const min_parallel_forward_miss_count: usize = 32;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: radiance=8 B, jacobian=24 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: jacobian:[3]f64=24 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const ForwardIntegratedSample = struct {
     radiance: f64,
     jacobian: jacobian.Vector = jacobian.zero(),
@@ -33,6 +40,14 @@ const forward_prefetch_pooled_chunk_size: usize = 16;
 //   work: owns reusable layer, source, quadrature, carrier, pseudo-spherical, and LABOS buffers
 //   data: per-worker scratch slices and labos.Workspace
 //   follow: reuse inside prefetchForwardWorkerMain across forward misses
+// layout(64-bit):
+//   size: 3312 B, align: 8 B
+//   field storage: 3312 B across 10 fields; largest: labos_workspace=3168 B, layer_inputs=16 B, pseudo_spherical_layers=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_inputs, pseudo_spherical_layers, source_interfaces, rtm_quadrature_levels, pseudo_spherical_samples, +4 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 52 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3312 B (3.234 KiB); total also includes referenced storage above
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
@@ -103,6 +118,12 @@ const ForwardSampleScratch = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ForwardPrefetchErrorState = struct {
     mutex: std.Thread.Mutex = .{},
     err: ?Error = null,
@@ -114,6 +135,14 @@ const ForwardPrefetchErrorState = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 352 B, align: 8 B
+//   field storage: 352 B across 13 fields; largest: implementations=168 B, route=72 B, misses=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 6 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 352 B (0.344 KiB); total also includes referenced storage above
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,

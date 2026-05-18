@@ -1,5 +1,11 @@
 const basis = @import("cross_section_lut_basis.zig");
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: sigma=8 B, d_sigma_d_temperature=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const Evaluation = struct {
     sigma: f64,
     d_sigma_d_temperature: f64,
@@ -159,6 +165,9 @@ fn scaledLogCoordinate(
 //   work: finds the bracketing LUT wavelengths and interpolation weight
 //   data: wavelength grid, target wavelength, bracket indexes
 //   follow: caller access order across repeated support-row wavelengths
+// layout(64-bit):
+//   anonymous return struct: size 24 B, align 8 B; padding 0 B (0 bits)
+//   footprint: per returned value = 24 B (0.023 KiB)
 fn wavelengthBracket(
     comptime LutType: type,
     self: *const LutType,

@@ -3,6 +3,14 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 128 B, align: 8 B
+//   field storage: 128 B across 8 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_interval_indices_1based=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_interval_indices_1based, sublayer_top_altitudes_km, sublayer_bottom_altitudes_km, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
 pub const PreparedVerticalGrid = struct {
     layer_top_altitudes_km: []const f64,
     layer_bottom_altitudes_km: []const f64,

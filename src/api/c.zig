@@ -8,6 +8,15 @@ pub const ZdsStatus = enum(c_int) {
     failure = 1,
 };
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 fields; largest: len=8 B, wavelength_nm=8 B, radiance=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: len=8 B
+//   out-of-line: wavelength_nm, radiance, irradiance, reflectance, result_handle carry references/descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 pub const ZdsSpectrum = extern struct {
     len: usize = 0,
     wavelength_nm: [*]const f64 = undefined,
@@ -19,6 +28,12 @@ pub const ZdsSpectrum = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 44 B across 6 fields; largest: wavelength_start_nm=8 B, wavelength_end_nm=8 B, mean_radiance=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const ZdsDiagnosticReport = extern struct {
     sample_count: u32 = 0,
     wavelength_start_nm: f64 = 0.0,
@@ -28,6 +43,13 @@ pub const ZdsDiagnosticReport = extern struct {
     mean_reflectance: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 240 B, align: 8 B
+//   field storage: 240 B across 33 fields; largest: wavelength_nm=8 B, altitude_km=8 B, top_altitude_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 240 B (0.234 KiB); total = per instance * live instance count
 pub const ZdsAtmosphericBudgetRow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -64,11 +86,26 @@ pub const ZdsAtmosphericBudgetRow = extern struct {
     single_scatter_albedo: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: len=8 B
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const ZdsAtmosphericBudget = extern struct {
     len: usize = 0,
     rows: [*]const ZdsAtmosphericBudgetRow = undefined,
 };
 
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: 159 B across 25 fields; largest: wavelength_nm=8 B, altitude_km=8 B, center_wavelength_nm=8 B; padding: 9 B (72 bits)
+//   unused bits: 72 padding + 0 bool-storage slack = 72 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const ZdsO2LineContributionRow = extern struct {
     wavelength_nm: f64 = 0.0,
     profile_node_index: u32 = 0,
@@ -97,6 +134,14 @@ pub const ZdsO2LineContributionRow = extern struct {
     abs_total_sigma_cm2_per_molecule: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: len=8 B, total_row_count=8 B, truncated=1 B, rows=8 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   metadata fields: len=8 B
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const ZdsO2LineContributions = extern struct {
     len: usize = 0,
     total_row_count: usize = 0,
@@ -104,6 +149,13 @@ pub const ZdsO2LineContributions = extern struct {
     rows: [*]const ZdsO2LineContributionRow = undefined,
 };
 
+// layout(64-bit):
+//   size: 96 B, align: 8 B
+//   field storage: 85 B across 14 fields; largest: nominal_wavelength_nm=8 B, offset_nm=8 B, support_wavelength_nm=8 B; padding: 11 B (88 bits)
+//   unused bits: 88 padding + 0 bool-storage slack = 88 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
 pub const ZdsInstrumentResponseRow = extern struct {
     nominal_index: i32 = 0,
     nominal_wavelength_nm: f64 = 0.0,
@@ -121,11 +173,26 @@ pub const ZdsInstrumentResponseRow = extern struct {
     response_enabled: u8 = 0,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: len=8 B
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const ZdsInstrumentResponse = extern struct {
     len: usize = 0,
     rows: [*]const ZdsInstrumentResponseRow = undefined,
 };
 
+// layout(64-bit):
+//   size: 112 B, align: 8 B
+//   field storage: 112 B across 16 fields; largest: wavelength_nm=8 B, altitude_km=8 B, pressure_hpa=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
 pub const ZdsO2O2CIARow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -145,11 +212,26 @@ pub const ZdsO2O2CIARow = extern struct {
     cia_share_of_total_optical_depth: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: len=8 B
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const ZdsO2O2CIADiagnostics = extern struct {
     len: usize = 0,
     rows: [*]const ZdsO2O2CIARow = undefined,
 };
 
+// layout(64-bit):
+//   size: 136 B, align: 8 B
+//   field storage: 133 B across 20 fields; largest: wavelength_nm=8 B, altitude_km=8 B, total_optical_depth=8 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
 pub const ZdsRadiativeTransferDiagnosticRow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -173,11 +255,28 @@ pub const ZdsRadiativeTransferDiagnosticRow = extern struct {
     final_radiance: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: len=8 B
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const ZdsRadiativeTransferDiagnostics = extern struct {
     len: usize = 0,
     rows: [*]const ZdsRadiativeTransferDiagnosticRow = undefined,
 };
 
+// layout(64-bit):
+//   size: 5784 B, align: 8 B
+//   field storage: 5777 B across 10 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=584 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   inline arrays: last_error:[256:0]u8=257 B
+//   out-of-line: results, atmospheric_budgets, o2_line_contribution_tables, instrument_response_tables, o2_o2_cia_tables, +1 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 91 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 5784 B (5.648 KiB); total also includes referenced storage above
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
@@ -275,6 +374,13 @@ const Context = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: prepared=8 B, wavelengths=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: prepared, wavelengths carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 const PreparedWavelengthRequest = struct {
     prepared: *zdisamar.PreparedO2A,
     wavelengths: []const f64,

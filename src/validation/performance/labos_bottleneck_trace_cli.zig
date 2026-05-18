@@ -9,12 +9,26 @@ const Trace = internal.forward_model.performance_trace;
 const default_labos_trace_output_dir = "research/performance/tracing/output/labos-bottleneck";
 const default_jacobian_trace_output_dir = "research/performance/tracing/output/o2a-jacobian-trace";
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: output_dir=16 B, output_dir_set=1 B, derivative_sweep=1 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 const Config = struct {
     output_dir: []const u8 = default_labos_trace_output_dir,
     output_dir_set: bool = false,
     derivative_sweep: bool = false,
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: name=16 B, state_label=16 B, states=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: name, state_label, states carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 const TraceVariant = struct {
     name: []const u8,
     state_label: []const u8,

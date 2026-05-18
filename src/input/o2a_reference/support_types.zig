@@ -12,11 +12,24 @@ pub const ReferenceSample = runtime.ReferenceSample;
 pub const ResolvedVendorO2ACase = runtime.ResolvedVendorO2ACase;
 pub const LineGasSpec = runtime.LineGasSpec;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wavelength_nm=8 B, value=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const RangeExtremum = struct {
     wavelength_nm: f64,
     value: f64,
 };
 
+// layout(64-bit):
+//   size: 120 B, align: 8 B
+//   field storage: 113 B across 15 fields; largest: sample_count=8 B, nonzero_sample_count=8 B, mean_signed_difference=8 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 120 B (0.117 KiB); total = per instance * live instance count
 pub const ComparisonMetrics = struct {
     sample_count: usize,
     nonzero_sample_count: usize,
@@ -35,6 +48,13 @@ pub const ComparisonMetrics = struct {
     red_wing_mean_difference: f64,
 };
 
+// layout(64-bit):
+//   size: 80 B, align: 8 B
+//   field storage: 80 B across 10 fields; largest: mean_abs_difference_abs=8 B, root_mean_square_difference_abs=8 B, max_abs_difference_abs=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
 pub const TrendTolerances = struct {
     mean_abs_difference_abs: f64,
     root_mean_square_difference_abs: f64,
@@ -61,6 +81,12 @@ pub const AssessmentVerdict = enum {
     nonzero_fail,
 };
 
+// layout(64-bit):
+//   size: 10 B, align: 1 B
+//   field storage: 10 B across 10 fields; largest: mean_abs_difference=1 B, root_mean_square_difference=1 B, max_abs_difference=1 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 10 B (0.010 KiB); total = per instance * live instance count
 pub const AssessmentTrend = struct {
     mean_abs_difference: TrendState,
     root_mean_square_difference: TrendState,
@@ -74,11 +100,25 @@ pub const AssessmentTrend = struct {
     red_wing_mean_difference: TrendState,
 };
 
+// layout(64-bit):
+//   size: 11 B, align: 1 B
+//   field storage: verdict=1 B, trend=10 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 11 B (0.011 KiB); total = per instance * live instance count
 pub const AssessmentOutcome = struct {
     verdict: AssessmentVerdict,
     trend: AssessmentTrend,
 };
 
+// layout(64-bit):
+//   size: 4144 B, align: 8 B
+//   field storage: 4144 B across 5 fields; largest: scene=2680 B, prepared=1056 B, product=320 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
+//   cache span: 65 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 4144 B (4.047 KiB); total also includes referenced storage above
 pub const VendorO2AReflectanceCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -95,6 +135,14 @@ pub const VendorO2AReflectanceCase = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 3824 B, align: 8 B
+//   field storage: reference=16 B, scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
+//   cache span: 60 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
 pub const VendorO2APreparedCase = struct {
     reference: []ReferenceSample,
     scene: Scene,

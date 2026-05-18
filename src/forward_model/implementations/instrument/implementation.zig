@@ -6,6 +6,13 @@ const PreparedOpticalState = @import("../../optical_properties/root.zig").Prepar
 const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 48 B across 5 fields; largest: id=16 B, calibrationForScene=8 B, usesIntegratedSampling=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: id, calibrationForScene, usesIntegratedSampling, integrationForWavelength, slitKernelForScene carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const Implementation = struct {
     id: []const u8,
     calibrationForScene: *const fn (scene: *const Scene, channel: SpectralChannel) calibration.Calibration,

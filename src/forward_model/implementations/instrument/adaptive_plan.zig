@@ -9,6 +9,12 @@ const InstrumentModel = @import("../../../input/Instrument.zig").Instrument;
 const Scene = @import("../../../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: global_start_nm=8 B, global_end_nm=8 B, window_start_nm=8 B, window_end_nm=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const AdaptiveKernelSupportWindow = struct {
     global_start_nm: f64,
     global_end_nm: f64,
@@ -16,17 +22,38 @@ pub const AdaptiveKernelSupportWindow = struct {
     window_end_nm: f64,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: interval_start_nm=8 B, interval_end_nm=8 B, division_count=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const AdaptiveIntervalDescriptor = struct {
     interval_start_nm: f64,
     interval_end_nm: f64,
     division_count: usize,
 };
 
+// layout(64-bit):
+//   size: 49160 B, align: 8 B
+//   field storage: count=8 B, intervals=49152 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: count=8 B
+//   inline arrays: intervals:[2048]AdaptiveIntervalDescriptor=49152 B
+//   cache span: 769 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 49160 B (48.0 KiB); total = per instance * live instance count
 pub const AdaptiveIntervalPlan = struct {
     count: usize = 0,
     intervals: [types.max_integration_sample_count]AdaptiveIntervalDescriptor = undefined,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: start_index=8 B, end_index=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const AdaptiveSupportRange = struct {
     start_index: usize,
     end_index: usize,

@@ -5,6 +5,13 @@ const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: ud, ud_sum_local carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const OrdersResult = struct {
     allocator: Allocator,
     ud: []basis.UDField,
@@ -17,11 +24,26 @@ pub const OrdersResult = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: ud, ud_sum_local carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const OrdersResultView = struct {
     ud: []const basis.UDField,
     ud_sum_local: []const basis.UDLocal,
 };
 
+// layout(64-bit):
+//   size: 96 B, align: 8 B
+//   field storage: 96 B across 6 fields; largest: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: ud, ud_sum_local, ud_orde, ud_local, rt_active carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
 pub const OrdersWorkspace = struct {
     allocator: Allocator,
     ud: []basis.UDField,
@@ -339,6 +361,12 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     return s;
 }
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: col0=8 B, col1=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const DotPair = struct {
     col0: f64,
     col1: f64,

@@ -15,6 +15,15 @@ const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
 
 const phase_coefficient_count = @import("../shared/phase_functions.zig").phase_coefficient_count;
 
+// layout(64-bit):
+//   size: 2056 B, align: 8 B
+//   field storage: altitudes_km=1024 B, weights_km=1024 B, count=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: count=8 B
+//   inline arrays: altitudes_km:[128]f64=1024 B, weights_km:[128]f64=1024 B
+//   cache span: 33 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2056 B (2.008 KiB); total = per instance * live instance count
 pub const SharedRtmSubgrid = struct {
     altitudes_km: [128]f64 = [_]f64{0.0} ** 128,
     weights_km: [128]f64 = [_]f64{0.0} ** 128,

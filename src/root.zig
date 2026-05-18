@@ -29,6 +29,13 @@ pub const RadiativeTransferSpectrumView = radiative_transfer_diagnostics.Spectru
 pub const RadiativeTransferPerformanceThresholds = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
 pub const RadiativeTransferJacobian = @import("forward_model/radiative_transfer/root.zig").Jacobian;
+// layout(64-bit):
+//   size: 7360 B, align: 8 B
+//   field storage: input=2680 B, reference_data=3040 B, optical_properties=1056 B, storage=584 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 115 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 7360 B (7.188 KiB); total = per instance * live instance count
 pub const PreparedInput = struct {
     input: Input,
     reference_data: ReferenceData,

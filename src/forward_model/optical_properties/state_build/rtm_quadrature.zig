@@ -8,6 +8,14 @@ const carrier_eval = @import("carrier_eval.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
+// layout(64-bit):
+//   size: 2432 B, align: 8 B
+//   field storage: ksca=8 B, aerosol_scattering_optical_depth_per_km=8 B, aerosol_phase_coefficients=1208 B, phase_coefficients=1208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, phase_coefficients:[151]f64=1208 B
+//   cache span: 38 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2432 B (2.375 KiB); total = per instance * live instance count
 const LevelCarrier = struct {
     ksca: f64,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,

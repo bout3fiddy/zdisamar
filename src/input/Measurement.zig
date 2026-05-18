@@ -4,6 +4,13 @@ const SpectralWindow = @import("Bands.zig").SpectralWindow;
 const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: band=16 B, exclude=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: band, exclude carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const SpectralMask = struct {
     band: []const u8 = "",
     exclude: []const SpectralWindow = &[_]SpectralWindow{},
@@ -25,6 +32,12 @@ pub const SpectralMask = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: floor=8 B, from_source_noise=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const ErrorModel = struct {
     from_source_noise: bool = false,
     floor: f64 = 0.0,
@@ -59,6 +72,14 @@ pub const Quantity = enum {
     }
 };
 
+// layout(64-bit):
+//   size: 128 B, align: 8 B
+//   field storage: 125 B across 6 fields; largest: source=56 B, mask=32 B, product_name=16 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   out-of-line: product_name carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
 pub const Measurement = struct {
     product_name: []const u8 = "",
     observable: Quantity = .radiance,

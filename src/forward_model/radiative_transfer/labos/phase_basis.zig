@@ -4,16 +4,40 @@ const types = @import("types.zig");
 const Mat = types.Mat;
 const Geometry = types.Geometry;
 
+// layout(64-bit):
+//   size: 192 B, align: 8 B
+//   field storage: plus=96 B, minus=96 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: plus:[12]f64=96 B, minus:[12]f64=96 B
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 192 B (0.188 KiB); total = per instance * live instance count
 const PlmArrays = struct {
     plus: [types.max_nmutot]f64,
     minus: [types.max_nmutot]f64,
 };
 
+// layout(64-bit):
+//   size: 2320 B, align: 8 B
+//   field storage: Zplus=1160 B, Zmin=1160 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 37 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2320 B (2.266 KiB); total = per instance * live instance count
 pub const PhaseKernel = struct {
     Zplus: Mat,
     Zmin: Mat,
 };
 
+// layout(64-bit):
+//   size: 200 B, align: 8 B
+//   field storage: zplus=96 B, zmin=96 B, n=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: n=8 B
+//   inline arrays: zplus:[12]f64=96 B, zmin:[12]f64=96 B
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 200 B (0.195 KiB); total = per instance * live instance count
 pub const PhaseKernelRow = struct {
     zplus: [types.max_nmutot]f64,
     zmin: [types.max_nmutot]f64,
@@ -25,6 +49,14 @@ pub const PhaseKernelRow = struct {
 //   work: stores associated Legendre basis values for stream and solar/view geometries
 //   data: PLM basis arrays, Gaussian stream geometry, Fourier index
 //   follow: fillZplusZminFromBasisLimited and reflectance phase-row builders
+// layout(64-bit):
+//   size: 29008 B, align: 8 B
+//   field storage: i_fourier=8 B, max_phase_index=8 B, plus=14496 B, minus=14496 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: plus:[151][12]f64=14496 B, minus:[151][12]f64=14496 B
+//   cache span: 454 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 29008 B (28.3 KiB); total = per instance * live instance count
 pub const FourierPlmBasis = struct {
     i_fourier: usize,
     max_phase_index: usize,

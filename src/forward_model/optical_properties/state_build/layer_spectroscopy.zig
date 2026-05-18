@@ -15,6 +15,14 @@ const max_spectroscopy_profile_nodes: usize = 256;
 const min_parallel_profile_cache_node_count: usize = 8;
 const profile_cache_node_chunk_size: usize = 2;
 
+// layout(64-bit):
+//   size: 2360 B, align: 8 B
+//   field storage: 2360 B across 9 fields; largest: wavelength_window=2080 B, line_list=208 B, prepared_states=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: cache, context, queue carry references/descriptors; referenced storage is not included in size
+//   cache span: 37 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2360 B (2.305 KiB); total also includes referenced storage above
 const ProfileCacheValueWorker = struct {
     cache: *ProfileSpectroscopyCache,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -32,6 +40,15 @@ const ProfileCacheValueWorker = struct {
 //   work: caches spline-derived profile values and per-node spectroscopy evaluations
 //   data: pressure, temperature, density, VMR, prepared profile line-state arrays
 //   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
+// layout(64-bit):
+//   size: 20504 B, align: 8 B
+//   field storage: 20504 B across 12 fields; largest: weak_values=2048 B, strong_values=2048 B, line_values=2048 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 10 fields reserve 20480 B inside each instance
+//   out-of-line: altitudes_km carry references/descriptors; referenced storage is not included in size
+//   cache span: 321 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 20504 B (20.0 KiB); total also includes referenced storage above
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},

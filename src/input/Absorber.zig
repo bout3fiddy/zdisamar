@@ -31,6 +31,14 @@ pub const resolveAbsorberSpeciesName = species_helpers.resolveAbsorberSpeciesNam
 
 pub const resolvedAbsorberSpecies = species_helpers.resolvedAbsorberSpecies;
 
+// layout(64-bit):
+//   size: 136 B, align: 8 B
+//   field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   out-of-line: isotopes_sim, isotopes_retr carry references/descriptors; referenced storage is not included in size
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 136 B (0.133 KiB); total also includes referenced storage above
 pub const LineGasControls = struct {
     factor_lm_sim: ?f64 = null,
     factor_lm_retr: ?f64 = null,
@@ -129,6 +137,14 @@ pub const LineGasControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 848 B, align: 8 B
+//   field storage: 841 B across 13 fields; largest: resolved_line_list=216 B, line_gas_controls=136 B, resolved_cross_section_lut=80 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   out-of-line: provider carry references/descriptors; referenced storage is not included in size
+//   cache span: 14 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 848 B (0.828 KiB); total also includes referenced storage above
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
     provider: []const u8 = "",
@@ -318,6 +334,14 @@ pub const Spectroscopy = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 960 B, align: 8 B
+//   field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not included in size
+//   cache span: 15 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 960 B (0.938 KiB); total also includes referenced storage above
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
@@ -363,6 +387,13 @@ pub const Absorber = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: items=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: items carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const AbsorberSet = struct {
     items: []const Absorber = &[_]Absorber{},
 

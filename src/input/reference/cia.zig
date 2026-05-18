@@ -5,6 +5,12 @@ const Allocator = std.mem.Allocator;
 
 const max_spline_window_points: usize = 256;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: wavelength_nm=8 B, a0=8 B, a1=8 B, a2=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const CollisionInducedAbsorptionPoint = struct {
     wavelength_nm: f64,
     a0: f64,
@@ -12,6 +18,13 @@ pub const CollisionInducedAbsorptionPoint = struct {
     a2: f64,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: scale_factor_cm5_per_molecule2=8 B, points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
     points: []const CollisionInducedAbsorptionPoint,
@@ -105,6 +118,13 @@ pub const CollisionInducedAbsorptionTable = struct {
 
 const CoefficientKind = enum { a0, a1, a2 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: start=8 B, count=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: count=8 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const SplineWindow = struct {
     start: usize,
     count: usize,

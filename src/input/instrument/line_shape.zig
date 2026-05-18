@@ -28,6 +28,13 @@ pub const BuiltinLineShapeKind = enum {
     }
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: offsets_nm=16 B, weights=16 B, sample_count=1 B, owns_memory=1 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 7 bool-storage slack = 55 bits
+//   out-of-line: offsets_nm, weights carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const InstrumentLineShape = struct {
     sample_count: u8 = 0,
     offsets_nm: []const f64 = &.{},
@@ -119,6 +126,13 @@ pub const InstrumentLineShape = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 52 B across 6 fields; largest: nominal_wavelengths_nm=16 B, offsets_nm=16 B, weights=16 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
+//   out-of-line: nominal_wavelengths_nm, offsets_nm, weights carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
 pub const InstrumentLineShapeTable = struct {
     nominal_count: u16 = 0,
     sample_count: u8 = 0,

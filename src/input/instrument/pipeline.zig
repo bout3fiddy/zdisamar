@@ -83,6 +83,14 @@ pub const SlitIndex = enum(u8) {
     }
 };
 
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: 68 B across 8 fields; largest: wavelengths_nm=16 B, values=16 B, variances=16 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
+//   out-of-line: wavelengths_nm, values, variances, characteristic_bias carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
 pub const NodalCorrection = struct {
     wavelengths_nm: []const f64 = &.{},
     values: []const f64 = &.{},
@@ -145,6 +153,13 @@ pub const NodalCorrection = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 152 B, align: 8 B
+//   field storage: 148 B across 12 fields; largest: instrument_line_shape_table=56 B, instrument_line_shape=40 B, fwhm_nm=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
 pub const SpectralResponse = struct {
     pub const IntegrationMode = enum {
         auto,
@@ -194,6 +209,12 @@ pub const SpectralResponse = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: multiplicative_percent=8 B, additive_percent_of_first=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const SimpleOffsets = struct {
     multiplicative_percent: f64 = 0.0,
     additive_percent_of_first: f64 = 0.0,
@@ -209,6 +230,12 @@ pub const SimpleOffsets = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 48 B across 6 fields; largest: additive_amplitude_percent=8 B, additive_period_nm=8 B, additive_phase_deg=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const SinusoidalFeatures = struct {
     additive_amplitude_percent: f64 = 0.0,
     additive_period_nm: f64 = 0.0,
@@ -236,6 +263,14 @@ pub const SinusoidalFeatures = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 112 B, align: 8 B
+//   field storage: 109 B across 14 fields; largest: snr_wavelengths_nm=16 B, snr_values=16 B, reference_signal=16 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 28 bool-storage slack = 52 bits
+//   out-of-line: snr_wavelengths_nm, snr_values, reference_signal, reference_sigma carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced storage above
 pub const NoiseControls = struct {
     explicit: bool = false,
     enabled: bool = false,
@@ -302,6 +337,13 @@ pub const NoiseControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 520 B, align: 8 B
+//   field storage: 514 B across 13 fields; largest: response=152 B, noise=112 B, multiplicative_nodes=72 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   cache span: 9 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 520 B (0.508 KiB); total = per instance * live instance count
 pub const SpectralChannelControls = struct {
     explicit: bool = false,
     response: SpectralResponse = .{},
@@ -344,6 +386,13 @@ pub const SpectralChannelControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 43 B across 11 fields; largest: spectrum=16 B, coefficient=8 B, fraction_raman_lines=8 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 49 bool-storage slack = 89 bits
+//   out-of-line: spectrum carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const RingControls = struct {
     explicit: bool = false,
     enabled: bool = false,
@@ -376,6 +425,13 @@ pub const RingControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 144 B, align: 8 B
+//   field storage: multiplicative_error=72 B, additive_error=72 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 144 B (0.141 KiB); total = per instance * live instance count
 pub const ReflectanceCalibration = struct {
     multiplicative_error: NodalCorrection = .{},
     additive_error: NodalCorrection = .{},
@@ -392,6 +448,13 @@ pub const ReflectanceCalibration = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 1232 B, align: 8 B
+//   field storage: radiance=520 B, irradiance=520 B, ring=48 B, reflectance_calibration=144 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 20 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1232 B (1.203 KiB); total = per instance * live instance count
 pub const MeasurementPipeline = struct {
     radiance: SpectralChannelControls = .{},
     irradiance: SpectralChannelControls = .{},

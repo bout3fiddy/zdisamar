@@ -4,21 +4,51 @@ const common = @import("../root.zig");
 
 const math = std.math;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: zplus=16 B, zmin=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: zplus, zmin carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 const PhaseRows = struct {
     zplus: []const f64,
     zmin: []const f64,
 };
 
+// layout(64-bit):
+//   size: 2408 B, align: 8 B
+//   field storage: rows=2400 B, n=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: n=8 B
+//   inline arrays: rows:[12]src.forward_model.radiative_transfer.labos.phase_basis.PhaseKernelRow=2400 B
+//   cache span: 38 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2408 B (2.352 KiB); total = per instance * live instance count
 const PhaseRowCache = struct {
     rows: [basis.max_nmutot]basis.PhaseKernelRow,
     n: usize,
 };
 
+// layout(64-bit):
+//   size: 1216 B, align: 8 B
+//   field storage: coefficients=1208 B, max_index=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: coefficients:[151]f64=1208 B
+//   cache span: 19 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1216 B (1.188 KiB); total = per instance * live instance count
 const UnitPhase = struct {
     coefficients: [basis.max_phase_coef]f64,
     max_index: usize,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: pplusplus_ed=8 B, pminplus_ed=8 B, pminmin_u=8 B, pplusmin_u=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const ScatteringSourceRowSums = struct {
     pplusplus_ed: f64,
     pminplus_ed: f64,
@@ -456,6 +486,12 @@ fn aerosolInterfaceWeightingFromScaledPhase(
     ) + d_sca_d_altitude * absorptionInterfaceWeighting(ud, &.{}, .{}, ilevel, false, geo);
 }
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: bottom=8 B, top=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const AerosolIntervalBounds = struct {
     bottom: usize,
     top: usize,

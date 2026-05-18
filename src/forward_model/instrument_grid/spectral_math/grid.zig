@@ -7,6 +7,12 @@ pub const Error = error{
     InvalidExplicitSamples,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: start_nm=8 B, end_nm=8 B, sample_count=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const SpectralGrid = struct {
     start_nm: f64,
     end_nm: f64,
@@ -25,6 +31,13 @@ pub const SpectralGrid = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: base=24 B, explicit_wavelengths_nm=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: explicit_wavelengths_nm carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const ResolvedAxis = struct {
     base: SpectralGrid,
     explicit_wavelengths_nm: []const f64 = &.{},

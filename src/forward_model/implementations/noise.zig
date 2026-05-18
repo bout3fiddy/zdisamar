@@ -5,6 +5,13 @@ const Scene = @import("../../input/Scene.zig").Scene;
 
 pub const Error = noise.Error;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: id=16 B, materializesSigma=8 B, materializeSigma=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: id, materializesSigma, materializeSigma carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const Implementation = struct {
     id: []const u8,
     materializesSigma: *const fn (scene: *const Scene, channel: SpectralChannel) bool,

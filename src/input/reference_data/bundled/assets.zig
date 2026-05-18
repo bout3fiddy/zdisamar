@@ -4,12 +4,20 @@ const AbsorberModel = @import("../../Absorber.zig");
 const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
+// layout(64-bit):
+//   size: 0 B, align: 1 B
+//   field storage: 0 B; padding: 0 B (0 bits)
+//   footprint: no runtime field storage; namespace/type declarations only
 pub const bundle_manifest_paths = struct {
     pub const climatology = "data/reference_data/climatologies/bundle_manifest.json";
     pub const cross_sections = "data/reference_data/cross_sections/bundle_manifest.json";
     pub const luts = "data/reference_data/luts/bundle_manifest.json";
 };
 
+// layout(64-bit):
+//   size: 0 B, align: 1 B
+//   field storage: 0 B; padding: 0 B (0 bits)
+//   footprint: no runtime field storage; namespace/type declarations only
 pub const asset_ids = struct {
     pub const standard_climatology_profile = "us_standard_1976_profile";
     pub const o2a_line_list = "o2a_hitran_07_hit08_tropomi";

@@ -4,6 +4,14 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
+// layout(64-bit):
+//   size: 405616 B, align: 8 B
+//   field storage: data=405600 B, nmutot=8 B, nlayer=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: data:[12][65][65]f64=405600 B
+//   cache span: 6338 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 405616 B (396.1 KiB); total = per instance * live instance count
 pub const AttenArray = struct {
     pub const max_levels: usize = 65;
 
@@ -20,6 +28,13 @@ pub const AttenArray = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: allocator=16 B, data=16 B, nmutot=8 B, nlevel=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: data carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const DynamicAttenArray = struct {
     allocator: Allocator,
     data: []f64,
@@ -60,6 +75,13 @@ pub const DynamicAttenArray = struct {
 //   work: serves cached adjacent and top-to-level transmittance values
 //   data: layer transmittance arrays, top-to-level arrays, runtime geometry dimensions
 //   follow: RuntimeAttenArray.get and transportToOtherLevels callers
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: layer_transmittance=16 B, top_to_level=16 B, nmutot=8 B, nlevel=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_transmittance, top_to_level carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const RuntimeAttenArray = struct {
     layer_transmittance: []const f64,
     top_to_level: []const f64,

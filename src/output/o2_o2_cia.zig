@@ -6,6 +6,13 @@ const Scene = @import("../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
+// layout(64-bit):
+//   size: 112 B, align: 8 B
+//   field storage: 112 B across 16 fields; largest: wavelength_nm=8 B, altitude_km=8 B, pressure_hpa=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
 pub const O2O2CIARow = struct {
     wavelength_nm: f64,
     layer_index: u32,

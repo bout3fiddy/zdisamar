@@ -4,6 +4,13 @@ const PreparedOpticalState = @import("../../optical_properties/root.zig").Prepar
 const InstrumentModel = @import("../../../input/Instrument.zig").Instrument;
 const Scene = @import("../../../input/Scene.zig").Scene;
 
+// layout(64-bit):
+//   size: 49184 B, align: 8 B
+//   field storage: global_start_nm=8 B, global_end_nm=8 B, plan=49160 B, ready=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 769 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 49184 B (48.0 KiB); total = per instance * live instance count
 pub const AdaptiveKernelCache = struct {
     ready: bool = false,
     global_start_nm: f64 = 0.0,

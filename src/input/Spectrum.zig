@@ -1,6 +1,12 @@
 const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: start_nm=8 B, end_nm=8 B, sample_count=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const SpectralGrid = struct {
     // UNITS:
     //   Public spectral bounds are stored in nanometers.

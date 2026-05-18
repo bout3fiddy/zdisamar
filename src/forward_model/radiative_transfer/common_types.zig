@@ -12,6 +12,12 @@ pub const ScatteringMode = enum(u2) {
     multiple = 2,
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 56 B across 9 fields; largest: fourier_tail_reflectance_epsilon=8 B, threshold_conv_first=8 B, threshold_conv_mult=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 pub const RadiativeTransferPerformanceThresholds = struct {
     num_orders_max: u16 = 0,
     fourier_floor_scalar: u16 = 2,
@@ -71,6 +77,13 @@ pub const RadiativeTransferPerformanceThresholds = struct {
 };
 
 // Resolved radiative transfer controls compiled from canonical configuration.
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 fields; largest: performance_thresholds=56 B, n_streams=2 B, scattering=1 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 28 bool-storage slack = 28 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
 pub const RadiativeTransferControls = struct {
     scattering: ScatteringMode = .multiple,
     n_streams: u16 = 16,
@@ -162,6 +175,13 @@ pub const ExecutionMode = enum {
 
 pub const DerivativeMode = SceneModel.DerivativeMode;
 
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: rtm_controls=64 B, regime=1 B, execution_mode=1 B, derivative_mode=1 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
 pub const DispatchRequest = struct {
     regime: Regime = .nadir,
     execution_mode: ExecutionMode = .scalar,
@@ -169,6 +189,13 @@ pub const DispatchRequest = struct {
     rtm_controls: RadiativeTransferControls = .{},
 };
 
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: 68 B across 6 fields; largest: rtm_controls=64 B, regime=1 B, execution_mode=1 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
 pub const Route = struct {
     family: TransportFamily,
     regime: Regime,
@@ -186,6 +213,14 @@ pub const Route = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 1376 B, align: 8 B
+//   field storage: 1376 B across 16 fields; largest: phase_coefficients=1208 B, optical_depth_jacobian=24 B, scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 4 fields reserve 1280 B inside each instance
+//   cache span: 22 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1376 B (1.344 KiB); total = per instance * live instance count
 pub const LayerInput = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -205,6 +240,14 @@ pub const LayerInput = struct {
     phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
 };
 
+// layout(64-bit):
+//   size: 3680 B, align: 8 B
+//   field storage: 3680 B across 10 fields; largest: gas_phase_coefficients=1208 B, phase_coefficients_above=1208 B, phase_coefficients_below=1208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: gas_phase_coefficients:[151]f64=1208 B, phase_coefficients_above:[151]f64=1208 B, phase_coefficients_below:[151]f64=1208 B
+//   cache span: 58 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3680 B (3.594 KiB); total = per instance * live instance count
 pub const SourceInterfaceInput = struct {
     source_weight: f64 = 0.0,
     rtm_weight: f64 = 0.0,
@@ -225,6 +268,14 @@ pub const SourceInterfaceInput = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 7272 B, align: 8 B
+//   field storage: 7272 B across 7 fields; largest: ksca_phase_coefficient_jacobian=3624 B, phase_coefficients=1208 B, aerosol_ksca_phase_above_per_km=1208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 4 fields reserve 7248 B inside each instance
+//   cache span: 114 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 7272 B (7.102 KiB); total = per instance * live instance count
 pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
@@ -240,6 +291,13 @@ pub const RtmQuadratureLevel = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: levels=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: levels carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const RtmQuadratureGrid = struct {
     levels: []const RtmQuadratureLevel = &.{},
 
@@ -248,12 +306,25 @@ pub const RtmQuadratureGrid = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: altitude_km=8 B, thickness_km=8 B, optical_depth=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const PseudoSphericalSample = struct {
     altitude_km: f64 = 0.0,
     thickness_km: f64 = 0.0,
     optical_depth: f64 = 0.0,
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: samples=16 B, level_sample_starts=16 B, level_altitudes_km=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: samples, level_sample_starts, level_altitudes_km carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const PseudoSphericalGrid = struct {
     samples: []const PseudoSphericalSample = &.{},
     level_sample_starts: []const usize = &.{},
@@ -276,6 +347,14 @@ pub const PseudoSphericalGrid = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 288 B, align: 8 B
+//   field storage: 288 B across 21 fields; largest: rtm_controls=64 B, pseudo_spherical_grid=48 B, layers=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layers, source_interfaces carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
 pub const ForwardInput = struct {
     wavelength_nm: f64 = 440.0,
     spectral_weight: f64 = 1.0,
@@ -300,6 +379,12 @@ pub const ForwardInput = struct {
     rtm_controls: RadiativeTransferControls = .{},
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: 43 B across 6 fields; largest: jacobian=32 B, toa_reflectance_factor=8 B, regime=1 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const ForwardResult = struct {
     family: TransportFamily,
     regime: Regime,

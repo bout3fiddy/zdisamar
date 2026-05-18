@@ -262,6 +262,13 @@ pub fn findStrongLineMatch(self: SpectroscopyLineList, wavelength_nm: f64) ?usiz
     return best_index;
 }
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: lines=16 B, start_index=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 pub const RelevantLineWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,

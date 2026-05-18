@@ -23,6 +23,13 @@ pub const BuiltinLineShapeKind = pipeline.BuiltinLineShapeKind;
 pub const InstrumentLineShape = pipeline.InstrumentLineShape;
 pub const InstrumentLineShapeTable = pipeline.InstrumentLineShapeTable;
 
+// layout(64-bit):
+//   size: 392 B, align: 8 B
+//   field storage: 387 B across 14 fields; largest: o2_operational_lut=72 B, o2o2_operational_lut=72 B, instrument_line_shape_table=56 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
+//   cache span: 7 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 392 B (0.383 KiB); total = per instance * live instance count
 pub const Instrument = struct {
     pub const SamplingMode = pipeline.SamplingMode;
     pub const NoiseModelKind = pipeline.NoiseModelKind;
@@ -37,6 +44,14 @@ pub const Instrument = struct {
     pub const ReflectanceCalibration = pipeline.ReflectanceCalibration;
     pub const MeasurementPipeline = pipeline.MeasurementPipeline;
 
+    // layout(64-bit):
+    //   size: 368 B, align: 8 B
+    //   field storage: 361 B across 10 fields; largest: o2_operational_lut=72 B, o2o2_operational_lut=72 B, instrument_line_shape_table=56 B; padding: 7 B (56 bits)
+    //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+    //   out-of-line: id carry references/descriptors; referenced storage is not included in size
+    //   cache span: 6 cache line(s) at 64 B per line
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 368 B (0.359 KiB); total also includes referenced storage above
     pub const OperationalBandSupport = struct {
         id: []const u8 = "",
         owns_id: bool = false,

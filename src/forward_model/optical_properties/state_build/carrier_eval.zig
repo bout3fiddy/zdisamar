@@ -13,6 +13,14 @@ const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
 
+// layout(64-bit):
+//   size: 2472 B, align: 8 B
+//   field storage: 2472 B across 9 fields; largest: aerosol_phase_coefficients=1208 B, phase_coefficients=1208 B, gas_absorption_optical_depth_per_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, phase_coefficients:[151]f64=1208 B
+//   cache span: 39 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2472 B (2.414 KiB); total = per instance * live instance count
 pub const SharedOpticalCarrier = struct {
     gas_absorption_optical_depth_per_km: f64 = 0.0,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
@@ -44,6 +52,14 @@ pub const SharedOpticalCarrier = struct {
 //   work: memoizes support-row optical carriers for the current wavelength
 //   data: valid-bit slice, carrier slice, prepared state, profile spectroscopy cache
 //   follow: cachedSupportRowRef and fills from shared support-row carrier functions
+// layout(64-bit):
+//   size: 120 B, align: 8 B
+//   field storage: 120 B across 8 fields; largest: cia_coefficients=40 B, support_row_valid=16 B, support_row_carriers=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: profile_cache, support_row_valid, support_row_carriers carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 120 B (0.117 KiB); total also includes referenced storage above
 pub const WavelengthCarrierCache = struct {
     profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     support_row_valid: []bool,
@@ -140,6 +156,12 @@ pub const WavelengthCarrierCache = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: scale_factor_cm5_per_molecule2=8 B, a0=8 B, a1=8 B, a2=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const CiaWavelengthCoefficients = struct {
     scale_factor_cm5_per_molecule2: f64,
     a0: f64,
@@ -170,6 +192,14 @@ const CiaWavelengthCoefficients = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 2432 B, align: 8 B
+//   field storage: ksca=8 B, aerosol_scattering_optical_depth_per_km=8 B, aerosol_phase_coefficients=1208 B, phase_coefficients=1208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, phase_coefficients:[151]f64=1208 B
+//   cache span: 38 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2432 B (2.375 KiB); total = per instance * live instance count
 pub const PreparedQuadratureCarrier = struct {
     ksca: f64,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
@@ -177,6 +207,14 @@ pub const PreparedQuadratureCarrier = struct {
     phase_coefficients: [phase_coefficient_count]f64,
 };
 
+// layout(64-bit):
+//   size: 6096 B, align: 8 B
+//   field storage: 6096 B across 12 fields; largest: gas_phase_coefficients=1208 B, aerosol_phase_coefficients_above=1208 B, aerosol_phase_coefficients_below=1208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 5 fields reserve 6040 B inside each instance
+//   cache span: 96 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 6096 B (5.953 KiB); total = per instance * live instance count
 pub const SharedBoundaryCarrier = struct {
     gas_scattering_optical_depth_per_km: f64 = 0.0,
     particle_scattering_optical_depth_above_per_km: f64 = 0.0,
@@ -192,6 +230,14 @@ pub const SharedBoundaryCarrier = struct {
     phase_coefficients_below: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
 };
 
+// layout(64-bit):
+//   size: 2448 B, align: 8 B
+//   field storage: 2448 B across 6 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, aerosol_optical_depth_per_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   cache span: 39 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2448 B (2.391 KiB); total = per instance * live instance count
 const ParticleBoundaryCarrier = struct {
     aerosol_optical_depth_per_km: f64 = 0.0,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
@@ -205,6 +251,12 @@ const ParticleBoundaryCarrier = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: aerosol=8 B, cloud=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const ParticleWavelengthScales = struct {
     aerosol: f64,
     cloud: f64,
@@ -228,6 +280,14 @@ const ParticleWavelengthScales = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 2496 B, align: 8 B
+//   field storage: 2496 B across 12 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, pressure_hpa=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   cache span: 39 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2496 B (2.438 KiB); total = per instance * live instance count
 pub const InterpolatedQuadratureState = struct {
     pressure_hpa: f64,
     temperature_k: f64,

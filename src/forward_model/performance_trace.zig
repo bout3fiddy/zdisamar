@@ -9,6 +9,11 @@ pub const enabled: bool = if (@hasDecl(build_options, "enable_ztracy"))
 else
     false;
 
+// layout(64-bit, enable_ztracy=false):
+//   size: 0 B, align: 1 B
+//   field storage: 0 B; padding: 0 B (0 bits)
+//   alternate: enable_ztracy=true stores ctx:?ztracy.ZoneCtx in the active branch
+//   footprint: disabled branch has no runtime field storage
 pub const Zone = if (enabled) struct {
     ctx: ?ztracy.ZoneCtx,
 
@@ -20,6 +25,9 @@ pub const Zone = if (enabled) struct {
         if (self.ctx) |ctx| ctx.Value(val);
     }
 } else struct {
+    // layout(64-bit, enable_ztracy=false):
+    //   disabled branch struct: size 0 B, align 1 B
+    //   footprint: no runtime field storage; no-op methods only
     pub inline fn end(self: Zone) void {
         _ = self;
     }

@@ -5,6 +5,12 @@ const Allocator = std.mem.Allocator;
 
 const max_spline_profile_rows: usize = 256;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: altitude_km=8 B, pressure_hpa=8 B, temperature_k=8 B, air_number_density_cm3=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const ClimatologyPoint = struct {
     altitude_km: f64,
     pressure_hpa: f64,
@@ -12,6 +18,13 @@ pub const ClimatologyPoint = struct {
     air_number_density_cm3: f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: rows=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const ClimatologyProfile = struct {
     rows: []ClimatologyPoint,
 

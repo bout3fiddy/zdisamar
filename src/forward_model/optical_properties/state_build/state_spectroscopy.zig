@@ -15,6 +15,14 @@ const max_spectroscopy_profile_nodes: usize = 256;
 //   work: evaluates sigma at profile nodes and builds spline second derivatives for altitude sampling
 //   data: spectroscopy profile arrays, prepared weak/strong states, total sigma cache
 //   follow: spectroscopyEvaluationAtAltitudeWithCache and support-row carrier evaluation
+// layout(64-bit):
+//   size: 4104 B, align: 8 B
+//   field storage: node_count=8 B, total_values=2048 B, total_second=2048 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: total_values:[256]f64=2048 B, total_second:[256]f64=2048 B
+//   cache span: 65 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 4104 B (4.008 KiB); total = per instance * live instance count
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,

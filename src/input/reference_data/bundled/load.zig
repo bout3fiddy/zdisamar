@@ -12,6 +12,14 @@ const workflows = @import("workflows.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 3040 B, align: 8 B
+//   field storage: 3034 B across 11 fields; largest: working_case=2680 B, spectroscopy_lines=216 B, collision_induced_absorption=32 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   out-of-line: generated_lut_assets, lut_execution_entries carry references/descriptors; referenced storage is not included in size
+//   cache span: 48 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3040 B (2.969 KiB); total also includes referenced storage above
 pub const Data = struct {
     profile: ReferenceData.ClimatologyProfile,
     cross_sections: ReferenceData.CrossSectionTable,

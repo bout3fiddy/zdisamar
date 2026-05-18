@@ -31,11 +31,24 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: reflectance=8 B, jacobian=24 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: jacobian:[3]f64=24 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const LabosComputation = struct {
     reflectance: f64,
     jacobian: jacobian.Vector = jacobian.zero(),
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: reflectance=8 B, surface_albedo_tangent=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const DirectSurfaceOnlyComputation = struct {
     reflectance: f64,
     surface_albedo_tangent: f64,

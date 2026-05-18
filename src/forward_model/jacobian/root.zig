@@ -10,6 +10,10 @@ pub const Vector = [state_count]f64;
 pub const StateMask = u8;
 pub const all_states_mask: StateMask = (1 << state_count) - 1;
 
+// layout(64-bit):
+//   size: 0 B, align: 1 B
+//   field storage: 0 B; padding: 0 B (0 bits)
+//   footprint: no runtime field storage; namespace/type declarations only
 pub const StateNames = struct {
     pub const surface_albedo = "surface_albedo";
     pub const aerosol_optical_depth = "aerosol_optical_depth";

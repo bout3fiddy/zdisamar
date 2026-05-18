@@ -145,6 +145,12 @@ pub fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []con
         std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
 }
 
+// layout(64-bit):
+//   size: 6 B, align: 2 B
+//   field storage: branch_ic1=2 B, branch_ic2=2 B, rotational_nf=2 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count
 pub const VendorO2ABranchMetadata = struct {
     branch_ic1: u16,
     branch_ic2: u16,
