@@ -15,19 +15,20 @@ const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
 
 // layout(64-bit):
-//   size: 288 B, align: 8 B
-//   field storage: 288 B across 7 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B (0 bits)
+//   size: 304 B, align: 8 B
+//   field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: temperatures_k, pressures_hpa, queue carry references/descriptors; referenced storage is not included in size
+//   out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
+//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weights: []f64,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
@@ -287,12 +288,23 @@ fn prepareProfileLineStates(
         }
     }
 
+    const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
+    const strong_weight_count = if (strong_states != null) line_list.strongLinePreparedWeightCount() else 0;
+    var empty_strong_relaxation_weight_scratch: [0]f64 = .{};
+    const strong_relaxation_weight_scratch: []f64 = if (strong_weight_count != 0)
+        try allocator.alloc(f64, worker_count * strong_weight_count)
+    else
+        empty_strong_relaxation_weight_scratch[0..];
+    defer if (strong_relaxation_weight_scratch.len != 0) allocator.free(strong_relaxation_weight_scratch);
+
     fillProfileLineStates(
         line_list,
         temperatures_k,
         pressures_hpa,
         weak_states,
         strong_states,
+        strong_relaxation_weight_scratch,
+        strong_weight_count,
     );
 }
 
@@ -307,6 +319,8 @@ fn fillProfileLineStates(
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weight_scratch: []f64,
+    strong_weight_count: usize,
 ) void {
     const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
     if (worker_count == 1) {
@@ -316,6 +330,7 @@ fn fillProfileLineStates(
             pressures_hpa,
             weak_states,
             strong_states,
+            strong_relaxation_weight_scratch[0..strong_weight_count],
             0,
             temperatures_k.len,
         );
@@ -336,6 +351,10 @@ fn fillProfileLineStates(
             .pressures_hpa = pressures_hpa,
             .weak_states = weak_states,
             .strong_states = strong_states,
+            .strong_relaxation_weights = if (strong_weight_count != 0)
+                strong_relaxation_weight_scratch[worker_index * strong_weight_count ..][0..strong_weight_count]
+            else
+                &.{},
             .queue = &queue,
             .worker_index = worker_index,
         };
@@ -381,6 +400,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
                 worker.pressures_hpa,
                 worker.weak_states,
                 worker.strong_states,
+                worker.strong_relaxation_weights,
                 chunk.start,
                 chunk.end,
             );
@@ -394,6 +414,7 @@ fn fillProfileLineStateRange(
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weights: []f64,
     start: usize,
     end: usize,
 ) void {
@@ -406,8 +427,9 @@ fn fillProfileLineStateRange(
             );
         }
         if (strong_states) |states| {
-            line_list.prepareStrongLineStateInto(
+            line_list.prepareStrongLineStateIntoWithScratch(
                 &states[index],
+                strong_relaxation_weights,
                 temperatures_k[index],
                 pressures_hpa[index],
             );

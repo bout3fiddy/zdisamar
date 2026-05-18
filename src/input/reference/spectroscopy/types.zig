@@ -207,13 +207,13 @@ pub const vendor_cutoff_boundary_margin_cm1: f64 = 0.115;
 pub const vendor_cutoff_prewindow_margin_cm1: f64 = 0.25;
 
 // layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 112 B across 8 fields; largest: population_t=16 B, dipole_t=16 B, mod_sig_cm1=16 B; padding: 0 B (0 bits)
+//   size: 96 B, align: 8 B
+//   field storage: 96 B across 7 fields; largest: population_t=16 B, dipole_t=16 B, mod_sig_cm1=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: population_t, dipole_t, mod_sig_cm1, half_width_cm1_at_t, line_mixing_coefficients, +1 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: population_t, dipole_t, mod_sig_cm1, half_width_cm1_at_t, line_mixing_coefficients carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced storage above
+//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
 pub const StrongLinePreparedState = struct {
     line_count: usize,
     sig_moy_cm1: f64,
@@ -222,7 +222,6 @@ pub const StrongLinePreparedState = struct {
     mod_sig_cm1: []f64,
     half_width_cm1_at_t: []f64,
     line_mixing_coefficients: []f64,
-    relaxation_weights: []f64,
 
     pub fn deinit(self: *StrongLinePreparedState, allocator: Allocator) void {
         allocator.free(self.population_t);
@@ -230,16 +229,7 @@ pub const StrongLinePreparedState = struct {
         allocator.free(self.mod_sig_cm1);
         allocator.free(self.half_width_cm1_at_t);
         allocator.free(self.line_mixing_coefficients);
-        allocator.free(self.relaxation_weights);
         self.* = undefined;
-    }
-
-    pub fn weightAt(self: *const StrongLinePreparedState, row: usize, col: usize) f64 {
-        return self.relaxation_weights[row * self.line_count + col];
-    }
-
-    pub fn setWeight(self: *StrongLinePreparedState, row: usize, col: usize, value: f64) void {
-        self.relaxation_weights[row * self.line_count + col] = value;
     }
 };
 

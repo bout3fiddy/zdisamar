@@ -60,16 +60,6 @@ pub fn clonePreparedStrongLineState(
     const half_width_cm1_at_t = try allocator.dupe(f64, state.half_width_cm1_at_t[0..state.line_count]);
     errdefer allocator.free(half_width_cm1_at_t);
     const line_mixing_coefficients = try allocator.dupe(f64, state.line_mixing_coefficients[0..state.line_count]);
-    errdefer allocator.free(line_mixing_coefficients);
-    const relaxation_weights = try allocator.alloc(f64, state.line_count * state.line_count);
-    errdefer allocator.free(relaxation_weights);
-
-    for (0..state.line_count) |row_index| {
-        for (0..state.line_count) |column_index| {
-            relaxation_weights[row_index * state.line_count + column_index] =
-                state.weightAt(row_index, column_index);
-        }
-    }
 
     return .{
         .line_count = state.line_count,
@@ -79,7 +69,6 @@ pub fn clonePreparedStrongLineState(
         .mod_sig_cm1 = mod_sig_cm1,
         .half_width_cm1_at_t = half_width_cm1_at_t,
         .line_mixing_coefficients = line_mixing_coefficients,
-        .relaxation_weights = relaxation_weights,
     };
 }
 

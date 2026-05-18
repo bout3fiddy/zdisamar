@@ -155,6 +155,7 @@ pub fn prepareStrongLineConvTPState(
 
     fillStrongLineState(
         &state,
+        state.relaxation_weights[0..],
         strong_lines,
         relaxation_matrix,
         line_count,
@@ -170,13 +171,14 @@ pub fn prepareStrongLineConvTPState(
 // hot path:
 //   when: preparing persistent strong-line state for profile nodes or support rows
 //   work: fills exactly-sized prepared slices and avoids the 136 KiB max-capacity temporary
-//   data: strong-line sidecars, relaxation matrix, pressure/temperature inputs, prepared output
+//   data: strong-line sidecars, relaxation-matrix scratch, pressure/temperature inputs, prepared output
 //   follow: prepareStrongLineStateInto and strongLineContributionPrepared
 pub fn prepareStrongLinePreparedStateInto(
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,
     temperature_k: f64,
     pressure_atm: f64,
+    relaxation_weights: []f64,
     prepared: *Types.StrongLinePreparedState,
 ) void {
     const safe_temperature = @max(temperature_k, 150.0);
@@ -189,7 +191,7 @@ pub fn prepareStrongLinePreparedStateInto(
     std.debug.assert(prepared.half_width_cm1_at_t.len >= line_count);
     std.debug.assert(prepared.line_mixing_coefficients.len >= line_count);
     std.debug.assert(line_count <= Types.max_strong_line_sidecars);
-    std.debug.assert(line_count == 0 or prepared.relaxation_weights.len / line_count >= line_count);
+    std.debug.assert(line_count == 0 or relaxation_weights.len / line_count >= line_count);
 
     prepared.line_count = line_count;
     prepared.sig_moy_cm1 = 0.0;
@@ -197,6 +199,7 @@ pub fn prepareStrongLinePreparedStateInto(
 
     fillStrongLineState(
         prepared,
+        relaxation_weights,
         strong_lines,
         relaxation_matrix,
         line_count,
@@ -209,6 +212,7 @@ pub fn prepareStrongLinePreparedStateInto(
 
 fn fillStrongLineState(
     state: anytype,
+    relaxation_weights: []f64,
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,
     line_count: usize,
@@ -228,7 +232,9 @@ fn fillStrongLineState(
             std.math.pow(f64, temperature_ratio, strong_line.temperature_exponent);
 
         for (0..line_count) |column_index| {
-            state.setWeight(
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
                 row_index,
                 column_index,
                 relaxation_matrix.weightAt(row_index, column_index) *
@@ -240,10 +246,12 @@ fn fillStrongLineState(
     for (0..line_count) |row_index| {
         for (0..line_count) |column_index| {
             if (strong_lines[column_index].lower_state_energy_cm1 < strong_lines[row_index].lower_state_energy_cm1) continue;
-            state.setWeight(
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
                 column_index,
                 row_index,
-                state.weightAt(row_index, column_index) *
+                relaxationWeightAt(relaxation_weights, line_count, row_index, column_index) *
                     state.population_t[column_index] /
                     @max(state.population_t[row_index], 1.0e-24),
             );
@@ -251,7 +259,7 @@ fn fillStrongLineState(
     }
 
     for (0..line_count) |index| {
-        state.setWeight(index, index, state.half_width_cm1_at_t[index]);
+        setRelaxationWeight(relaxation_weights, line_count, index, index, state.half_width_cm1_at_t[index]);
     }
 
     var weighted_center_sum: f64 = 0.0;
@@ -273,9 +281,11 @@ fn fillStrongLineState(
         var lower_sum: f64 = 0.0;
         for (0..line_count) |row_index| {
             if (row_index <= column_index) {
-                upper_sum += strong_lines[row_index].dipole_ratio * state.weightAt(row_index, column_index);
+                upper_sum += strong_lines[row_index].dipole_ratio *
+                    relaxationWeightAt(relaxation_weights, line_count, row_index, column_index);
             } else {
-                lower_sum += strong_lines[row_index].dipole_ratio * state.weightAt(row_index, column_index);
+                lower_sum += strong_lines[row_index].dipole_ratio *
+                    relaxationWeightAt(relaxation_weights, line_count, row_index, column_index);
             }
         }
         const rotational_gate = 1.0 -
@@ -287,11 +297,13 @@ fn fillStrongLineState(
 
         for (0..line_count) |row_index| {
             if (row_index <= column_index) continue;
-            const renormalized = -state.weightAt(row_index, column_index) *
+            const renormalized = -relaxationWeightAt(relaxation_weights, line_count, row_index, column_index) *
                 (upper_sum - renormalization_anchor) /
                 lower_sum;
-            state.setWeight(row_index, column_index, renormalized);
-            state.setWeight(
+            setRelaxationWeight(relaxation_weights, line_count, row_index, column_index, renormalized);
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
                 column_index,
                 row_index,
                 renormalized * state.population_t[column_index] / state.population_t[row_index],
@@ -306,11 +318,19 @@ fn fillStrongLineState(
             const delta_sig = state.mod_sig_cm1[line_index] - state.mod_sig_cm1[other_index];
             if (delta_sig == 0.0) continue;
             mixing_sum += 2.0 * state.dipole_t[other_index] / state.dipole_t[line_index] *
-                state.weightAt(other_index, line_index) /
+                relaxationWeightAt(relaxation_weights, line_count, other_index, line_index) /
                 delta_sig;
         }
         state.line_mixing_coefficients[line_index] = pressure_atm * mixing_sum;
     }
+}
+
+fn relaxationWeightAt(relaxation_weights: []const f64, line_count: usize, row: usize, col: usize) f64 {
+    return relaxation_weights[row * line_count + col];
+}
+
+fn setRelaxationWeight(relaxation_weights: []f64, line_count: usize, row: usize, col: usize, value: f64) void {
+    relaxation_weights[row * line_count + col] = value;
 }
 
 pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm: f64) f64 {

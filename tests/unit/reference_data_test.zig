@@ -916,7 +916,13 @@ test "strong-line convtp state applies detailed-balance and pressure-scaled line
     defer high_pressure.deinit(std.testing.allocator);
 
     try std.testing.expect(low_pressure.population_t[0] > 0.0);
-    try std.testing.expect(@abs(low_pressure.relaxation_weights[1] - low_pressure.relaxation_weights[2]) > 1.0e-10);
+    const low_convtp = ReferenceData.spectroscopy.physics.prepareStrongLineConvTPState(
+        line_list.strong_lines.?,
+        line_list.relaxation_matrix.?,
+        255.0,
+        0.5 / 1013.25,
+    );
+    try std.testing.expect(@abs(low_convtp.weightAt(0, 1) - low_convtp.weightAt(1, 0)) > 1.0e-10);
     try std.testing.expect(@abs(high_pressure.line_mixing_coefficients[0]) > @abs(low_pressure.line_mixing_coefficients[0]));
     try std.testing.expect(high_pressure.half_width_cm1_at_t[0] > line_list.relaxation_matrix.?.weightAt(0, 0));
 }

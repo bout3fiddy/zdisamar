@@ -526,7 +526,6 @@ fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void 
             updateFloatSlice(hash, state.mod_sig_cm1);
             updateFloatSlice(hash, state.half_width_cm1_at_t);
             updateFloatSlice(hash, state.line_mixing_coefficients);
-            updateFloatSlice(hash, state.relaxation_weights);
         }
     }
 }

@@ -148,8 +148,6 @@ fn cloneStrongState(
     const half_width_cm1_at_t = try allocator.dupe(f64, source.half_width_cm1_at_t);
     errdefer allocator.free(half_width_cm1_at_t);
     const line_mixing_coefficients = try allocator.dupe(f64, source.line_mixing_coefficients);
-    errdefer allocator.free(line_mixing_coefficients);
-    const relaxation_weights = try allocator.dupe(f64, source.relaxation_weights);
     return .{
         .line_count = source.line_count,
         .sig_moy_cm1 = source.sig_moy_cm1,
@@ -158,7 +156,6 @@ fn cloneStrongState(
         .mod_sig_cm1 = mod_sig_cm1,
         .half_width_cm1_at_t = half_width_cm1_at_t,
         .line_mixing_coefficients = line_mixing_coefficients,
-        .relaxation_weights = relaxation_weights,
     };
 }
 

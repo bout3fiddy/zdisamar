@@ -136,6 +136,66 @@ Conclusion:
 - this is an acceptable memory-traffic reduction and a better target than
   removing phase-coefficient memoization without a proven latency win
 
+### Experiment 3: remove retained strong-line relaxation weights
+
+Changed:
+- `StrongLinePreparedState` no longer stores `relaxation_weights`
+- strong-line preparation uses per-worker relaxation-matrix scratch, then
+  retains only the arrays read by `strongLineContributionPrepared`
+- profile-state cache cloning and prepared-state hashing now skip the removed
+  intermediate matrix
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StrongLinePreparedState` header | 112 B | 96 B | -16 B |
+| retained relaxation weights per 70-line state | 39,200 B | 0 B | -100.00% |
+| 47-node O2 A spectroscopy profile | 1,843,152 B | 0 B | -100.00% |
+| cached clone of 47-node profile states | 1,843,152 B | 0 B | -100.00% |
+| preparation scratch at 2 workers | 0 B | 78,400 B | transient |
+
+Interpretation:
+- the relaxation matrix is needed while deriving line-mixing coefficients
+- after preparation, the hot evaluation path reads `population_t`, `dipole_t`,
+  `mod_sig_cm1`, `half_width_cm1_at_t`, `line_mixing_coefficients`, and
+  `sig_moy_cm1`
+- storing the matrix in every prepared profile node memoized an intermediate
+  value that was no longer consumed by the steady-state forward loop
+- with the current O2 A assets, this removes about 1.76 MiB from the retained
+  prepared profile and another 1.76 MiB from the cached clone, while adding
+  only 76.6 KiB of temporary scratch under the benchmark's 2-worker cap
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  fast-mode spectra worst `4.963e-04` (`1.600x` noise); OE session AOD diff
+  `8.699e-08`; fast-vs-session sweep max AOD delta `3.766e-03`, pressure delta
+  `5.085e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.079016 s | 1.073135 s | 0.9945 |
+| forward session cached median | 0.344589 s | 0.347627 s | 1.0088 |
+| forward fast four-scene median | 5.098077 s | 5.078984 s | 0.9963 |
+| OE session retrieval median | 1.444513 s | 1.441095 s | 0.9976 |
+| OE fast retrieval median | 1.128454 s | 1.126522 s | 0.9983 |
+| OE sweep session total wall | 21.761115 s | 21.796648 s | 1.0016 |
+| OE sweep fast total wall | 12.036307 s | 12.004280 s | 0.9973 |
+
+Conclusion:
+- the retained strong-line prepared-state footprint drops materially without
+  changing benchmark residuals
+- the timing movement is within the benchmark noise band and not a regression
+  on the intended OE boundary
+- this follows the lazy/intermediate-data rule: keep derived coefficients that
+  the hot loop reads, but do not retain the preparation-only relaxation matrix
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

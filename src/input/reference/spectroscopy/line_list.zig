@@ -170,6 +170,26 @@ pub const SpectroscopyLineList = struct {
         return @import("line_list_ops.zig").prepareStrongLineStateInto(self, prepared, temperature_k, pressure_hpa);
     }
 
+    pub fn prepareStrongLineStateIntoWithScratch(
+        self: SpectroscopyLineList,
+        prepared: *Types.StrongLinePreparedState,
+        relaxation_weights: []f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) void {
+        return @import("line_list_ops.zig").prepareStrongLineStateIntoWithScratch(
+            self,
+            prepared,
+            relaxation_weights,
+            temperature_k,
+            pressure_hpa,
+        );
+    }
+
+    pub fn strongLinePreparedWeightCount(self: SpectroscopyLineList) usize {
+        return @import("line_list_ops.zig").strongLinePreparedWeightCount(self);
+    }
+
     pub fn prepareWeakLineState(
         self: SpectroscopyLineList,
         allocator: Types.Allocator,

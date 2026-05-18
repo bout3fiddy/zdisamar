@@ -120,7 +120,10 @@ pub fn prepareStrongLineState(
     if (!self.hasStrongLineSidecars()) return null;
     var prepared = (try allocStrongLinePreparedState(self, allocator)).?;
     errdefer prepared.deinit(allocator);
-    prepareStrongLineStateInto(self, &prepared, temperature_k, pressure_hpa);
+    const weight_count = strongLinePreparedWeightCount(self);
+    const relaxation_weights = try allocator.alloc(f64, weight_count);
+    defer allocator.free(relaxation_weights);
+    prepareStrongLineStateIntoWithScratch(self, &prepared, relaxation_weights, temperature_k, pressure_hpa);
     return prepared;
 }
 
@@ -139,8 +142,6 @@ pub fn allocStrongLinePreparedState(
     const half_width_cm1_at_t = try allocator.alloc(f64, line_count);
     errdefer allocator.free(half_width_cm1_at_t);
     const line_mixing_coefficients = try allocator.alloc(f64, line_count);
-    errdefer allocator.free(line_mixing_coefficients);
-    const relaxation_weights = try allocator.alloc(f64, line_count * line_count);
     return .{
         .line_count = line_count,
         .sig_moy_cm1 = 0.0,
@@ -149,7 +150,6 @@ pub fn allocStrongLinePreparedState(
         .mod_sig_cm1 = mod_sig_cm1,
         .half_width_cm1_at_t = half_width_cm1_at_t,
         .line_mixing_coefficients = line_mixing_coefficients,
-        .relaxation_weights = relaxation_weights,
     };
 }
 
@@ -164,6 +164,23 @@ pub fn prepareStrongLineStateInto(
     temperature_k: f64,
     pressure_hpa: f64,
 ) void {
+    var relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 = undefined;
+    prepareStrongLineStateIntoWithScratch(
+        self,
+        prepared,
+        relaxation_weights[0..strongLinePreparedWeightCount(self)],
+        temperature_k,
+        pressure_hpa,
+    );
+}
+
+pub fn prepareStrongLineStateIntoWithScratch(
+    self: SpectroscopyLineList,
+    prepared: *Types.StrongLinePreparedState,
+    relaxation_weights: []f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) void {
     std.debug.assert(self.hasStrongLineSidecars());
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
     Physics.prepareStrongLinePreparedStateInto(
@@ -171,6 +188,7 @@ pub fn prepareStrongLineStateInto(
         self.relaxation_matrix.?,
         @max(temperature_k, 150.0),
         pressure_scale,
+        relaxation_weights,
         prepared,
     );
 }
@@ -218,6 +236,11 @@ pub fn prepareWeakLineStateInto(
         );
     }
     prepared.line_count = self.lines.len;
+}
+
+pub fn strongLinePreparedWeightCount(self: SpectroscopyLineList) usize {
+    const line_count = strongLinePreparedLineCount(self);
+    return line_count * line_count;
 }
 
 fn strongLinePreparedLineCount(self: SpectroscopyLineList) usize {
