@@ -29,6 +29,11 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma((start_nm + end_nm) * 0.5);
     }
 
+    // hot path:
+    //   when: carrier evaluation samples table-backed cross sections at a wavelength
+    //   work: brackets wavelength and linearly interpolates sigma
+    //   data: cross-section points, wavelength, bracket indexes
+    //   follow: bracketForWavelength and point array ordering
     pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
         if (self.points.len == 0) return 0.0;
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
@@ -82,6 +87,11 @@ pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     return numerator / @max(denominator, 1.0e-12);
 }
 
+// hot path:
+//   when: effective cross-section or CIA output builds a differential spectrum
+//   work: assembles and solves a small weighted polynomial fit, then subtracts the fitted baseline
+//   data: wavelength/value/weight arrays, dense normal matrix, Cholesky factor storage
+//   follow: cholesky.factorInPlace and dense.index layout
 pub fn differentialVector(
     allocator: Allocator,
     wavelengths_nm: []const f64,

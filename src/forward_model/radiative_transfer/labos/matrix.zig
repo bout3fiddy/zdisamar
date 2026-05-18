@@ -5,6 +5,11 @@ const Vec = types.Vec;
 
 const threshold_q: f64 = 1.0e-3;
 
+// hot path:
+//   when: dynamic LABOS matrix products are selected by stream count or route shape
+//   work: multiplies small dense RT matrices with thresholded nonzero handling
+//   data: Mat cell arrays, n/n_gauss dimensions, product threshold
+//   follow: smulInto variants and dynamic q-series callers
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
@@ -139,6 +144,11 @@ inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
+// hot path:
+//   when: fixed 12x10 LABOS layer-doubling path multiplies RT matrices
+//   work: writes matrix products directly into caller-owned storage
+//   data: fixed Mat cells, left/right matrix operands, noalias result storage
+//   follow: doDouble12x10Step and fixed-shape product composition
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -979,6 +989,11 @@ pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat
     return qseriesFromProduct(n, n_gauss, &ab);
 }
 
+// hot path:
+//   when: LABOS layer doubling computes q-series from a known-nonzero product
+//   work: forms and factorizes the q-series matrix for reflection/transmission updates
+//   data: input product matrices, q-series output, stream dimensions, known-nonzero shape
+//   follow: dynamic doDouble and qseriesFromProductInto
 pub inline fn qseriesKnownNonzeroProductInto(noalias out: *Mat, n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) void {
     @setEvalBranchQuota(20_000);
     var ab: Mat = undefined;
@@ -1140,6 +1155,11 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
     return result;
 }
 
+// hot path:
+//   when: fixed 12x10 LABOS layer doubling computes the q-series matrix
+//   work: factorizes the fixed-shape product used by doubling reflection/transmission updates
+//   data: fixed Mat product, q-series result matrix, known fixed stream dimensions
+//   follow: qseriesFromProduct12x10Into callers inside doDouble12x10Step
 fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     var trab = ab.data[0];

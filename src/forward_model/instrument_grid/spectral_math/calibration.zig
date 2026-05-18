@@ -9,6 +9,11 @@ pub const Calibration = struct {
     stray_light: f64 = 0.0,
 };
 
+// hot path:
+//   when: every radiance/irradiance channel applies basic calibration
+//   work: computes channel mean for stray-light mixing and applies gain/offset per sample
+//   data: signal array, output array, calibration scalar fields
+//   follow: postprocess.applyChannelCorrections and applySignalDerivative
 pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64) !void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (signal.len == 0) return;
@@ -54,6 +59,11 @@ pub fn applySimpleOffsetDerivatives(offsets: Instrument.SimpleOffsets, signal: [
     try applySimpleOffsets(offsets, signal);
 }
 
+// hot path:
+//   when: channel controls request sinusoidal spectral features
+//   work: applies additive and multiplicative sinusoidal terms across wavelengths
+//   data: wavelength array, signal array, feature amplitudes/periods/phases
+//   follow: derivative mirror path and channel postprocess ordering
 pub fn applySpectralFeatures(
     features: Instrument.SinusoidalFeatures,
     wavelengths_nm: []const f64,
@@ -103,6 +113,11 @@ pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
     @memcpy(signal, scratch);
 }
 
+// hot path:
+//   when: nodal multiplicative calibration is enabled for a channel
+//   work: samples node corrections and writes adjusted signal through scratch
+//   data: wavelength array, signal array, correction nodes, scratch array
+//   follow: sampleCorrection/sampleLinear access pattern
 pub fn applyMultiplicativeNodes(
     correction: Instrument.NodalCorrection,
     wavelengths_nm: []const f64,
@@ -119,6 +134,11 @@ pub fn applyMultiplicativeNodes(
     @memcpy(signal, scratch);
 }
 
+// hot path:
+//   when: nodal stray-light calibration is enabled for a channel
+//   work: samples source signal at correction nodes and adds interpolated stray-light contribution
+//   data: wavelength array, source signal, signal array, node values, scratch array
+//   follow: sampleLinear and sampleCorrection interpolation loops
 pub fn applyStrayLightNodes(
     correction: Instrument.NodalCorrection,
     wavelengths_nm: []const f64,
@@ -146,6 +166,11 @@ pub fn applyStrayLightNodes(
     @memcpy(signal, scratch);
 }
 
+// hot path:
+//   when: ring correction is enabled after radiance/irradiance postprocess
+//   work: synthesizes or reads ring basis values and updates radiance per wavelength
+//   data: wavelength array, irradiance array, radiance array, ring controls, scratch array
+//   follow: synthesizedDifferentialRing and synthesizedFullRing paths
 pub fn applyRingSpectrum(
     ring: Instrument.RingControls,
     wavelengths_nm: []const f64,
@@ -198,6 +223,11 @@ pub fn applyPolarizationScramblerBias(
     }
 }
 
+// hot path:
+//   when: reflectance noise sigma includes calibration-error terms
+//   work: samples multiplicative/additive calibration nodes and combines variance into sigma
+//   data: wavelength array, reflectance array, sigma array, node values, scratch array
+//   follow: materializeNoiseSamples and sampleCorrection interpolation
 pub fn applyReflectanceCalibrationErrorSigma(
     calibration_error: Instrument.ReflectanceCalibration,
     wavelengths_nm: []const f64,

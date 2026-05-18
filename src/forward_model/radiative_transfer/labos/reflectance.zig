@@ -157,6 +157,11 @@ pub fn calcIntegratedReflectance(
     );
 }
 
+// hot path:
+//   when: after each LABOS Fourier/order solve contributes to top-of-atmosphere reflectance
+//   work: integrates reflectance over levels, phase rows, and Gauss stream reductions
+//   data: layer inputs, order contribution arrays, phase rows, attenuation arrays
+//   follow: buildPhaseRowCache and scattering-source weighting callers
 pub fn calcIntegratedReflectanceWithBasis(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -288,6 +293,11 @@ pub fn calcIntegratedReflectanceWithBasis(
     return reflectance;
 }
 
+// hot path:
+//   when: aerosol/cloud optical-depth Jacobians include absorption-interface weighting
+//   work: reduces Gauss source terms and pseudo-spherical direct attenuation into one weighting value
+//   data: order fields, layer inputs, attenuation arrays, geometry, layer index
+//   follow: calcAerosolOpticalDepthWeightingWithBasis and active derivative rows
 fn absorptionInterfaceWeighting(
     ud: []const basis.UDField,
     ud_sum_local: []const basis.UDLocal,
@@ -378,6 +388,11 @@ inline fn scatteringSourceRowSums(
     return sums;
 }
 
+// hot path:
+//   when: active aerosol/cloud scattering-source weighting columns are assembled
+//   work: reduces scaled phase rows into Jacobian source weighting terms
+//   data: phase row cache, source row sums, Gauss weights, derivative output row
+//   follow: scatteringSourceWeightingFromPhaseRows and buildPhaseRowCache
 fn scatteringSourceWeightingFromScaledPhase(
     scaled_phase_coefficients: [basis.max_phase_coef]f64,
     max_phase_index: usize,
@@ -527,6 +542,11 @@ fn commonActiveAerosolUnitPhase(
     return result;
 }
 
+// hot path:
+//   when: reflectance or Jacobian weighting reuses phase rows for one layer/Fourier term
+//   work: materializes Z+/Z- phase rows and row sums into a compact cache
+//   data: phase coefficients, phase basis, geometry, phase row cache output
+//   follow: scatteringSourceWeightingFromPhaseRows and calcIntegratedReflectanceWithBasis
 fn buildPhaseRowCache(
     phase_coefficients: [basis.max_phase_coef]f64,
     max_phase_index: usize,
@@ -648,6 +668,11 @@ fn aerosolTotalExtinctionInterfaceWeighting(
     return aerosol_ssa * scattering_weighting + (1.0 - aerosol_ssa) * absorption_weighting;
 }
 
+// hot path:
+//   when: Jacobian weighting can reuse precomputed phase rows
+//   work: combines phase rows, order fields, and direct source terms into scattering-source weighting
+//   data: phase row cache, order fields, layer/source geometry, derivative target level
+//   follow: calcAerosolOpticalDepthWeightingWithBasis and pressure-shift weighting
 fn scatteringSourceWeightingFromPhaseRows(
     phase_rows: *const PhaseRowCache,
     ud: []const basis.UDField,
@@ -687,6 +712,11 @@ fn scatteringSourceWeightingFromPhaseRows(
     return sum;
 }
 
+// hot path:
+//   when: aerosol optical-depth derivative columns are requested
+//   work: assembles per-level reflectance weighting from attenuation, orders, and phase rows
+//   data: active levels, layer inputs, attenuation arrays, phase basis, Jacobian output
+//   follow: absorptionInterfaceWeighting and scatteringSourceWeightingFromPhaseRows
 pub fn calcAerosolOpticalDepthWeightingWithBasis(
     layers: []const common.LayerInput,
     rtm_quadrature: common.RtmQuadratureGrid,
@@ -830,6 +860,11 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
     return weighting;
 }
 
+// hot path:
+//   when: aerosol layer-pressure derivative columns are requested
+//   work: assembles pressure-shift reflectance weighting from order and phase data
+//   data: active layer levels, pressure-shift factors, phase rows, Jacobian output
+//   follow: active derivative mask routing and shared phase row construction
 pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
     layers: []const common.LayerInput,
     rtm_quadrature: common.RtmQuadratureGrid,
@@ -931,6 +966,11 @@ pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
     return max_index;
 }
 
+// hot path:
+//   when: LABOS sets Fourier loop bounds for a high-resolution forward sample
+//   work: resolves the maximum Fourier term from phase coefficient support and route controls
+//   data: forward input phase coefficients, control limits, resolved phase maximum
+//   follow: layerResolvedLabosWithWorkspace Fourier loop
 pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RadiativeTransferControls) usize {
     if (input.layers.len == 0) return 0;
     // PARITY:

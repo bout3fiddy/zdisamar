@@ -133,6 +133,11 @@ pub fn endpointSecantSecondDerivatives(
     second[x.len - 1] = -0.5 * c3[x.len - 2];
 }
 
+// hot path:
+//   when: profile spectroscopy cache prepares five profile series for a forward miss
+//   work: computes endpoint-secant spline second derivatives for pressure, temperature, density, and VMR series
+//   data: shared x grid, five y-series inputs, five second-derivative outputs
+//   follow: ProfileSpectroscopyCache.init and sampleWithSecondDerivatives
 pub fn endpointSecantSecondDerivatives5(
     x: []const f64,
     y0: []const f64,
@@ -217,6 +222,11 @@ pub fn endpointSecantSecondDerivatives5(
     }
 }
 
+// hot path:
+//   when: support-row spectroscopy samples cached profile series at altitude
+//   work: brackets x, blends cubic spline coefficients, and returns one interpolated value
+//   data: x grid, y values, second derivatives, target coordinate
+//   follow: layer_spectroscopy.evaluationAtAltitude and profile-cache field order
 pub fn sampleWithSecondDerivatives(
     x: []const f64,
     y: []const f64,

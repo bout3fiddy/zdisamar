@@ -62,6 +62,11 @@ pub const AtmosphericBudgetRow = struct {
     single_scatter_albedo: f64,
 };
 
+// hot path:
+//   when: atmospheric-budget diagnostics are requested over wavelength by vertical row
+//   work: evaluates prepared optical state per wavelength/sublayer and materializes diagnostic rows
+//   data: wavelength array, prepared layers/sublayers, profile spectroscopy cache, output rows
+//   follow: sublayerRow and PreparedOpticalState.evaluateLayerAtWavelengthWithSpectroscopyCache
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,

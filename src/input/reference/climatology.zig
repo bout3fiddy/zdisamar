@@ -20,6 +20,11 @@ pub const ClimatologyProfile = struct {
         self.* = undefined;
     }
 
+    // hot path:
+    //   when: input preparation densifies the climatology profile for O2 A support rows
+    //   work: inserts vendor pressure-grid levels and interpolates altitude, temperature, and density arrays
+    //   data: source profile arrays, pressure grid, densified profile storage
+    //   follow: interpolation helpers used by optical-state vertical grid preparation
     pub fn densifyVendorPressureGrid(
         self: ClimatologyProfile,
         allocator: Allocator,
@@ -243,6 +248,11 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].temperature_k;
     }
 
+    // hot path:
+    //   when: profile densification or vertical-grid preparation samples temperature by pressure
+    //   work: brackets log-pressure coordinates and samples endpoint-secant spline temperature
+    //   data: pressure grid, temperature profile, target pressure
+    //   follow: densifyVendorPressureGrid and spline.sampleEndpointSecant
     pub fn interpolateTemperatureForPressureSpline(self: ClimatologyProfile, pressure_hpa: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {

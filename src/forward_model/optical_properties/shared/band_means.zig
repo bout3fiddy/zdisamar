@@ -10,6 +10,11 @@ pub const LineBandMeans = struct {
     line_mixing_mean_cross_section_cm2_per_molecule: f64 = 0.0,
 };
 
+// hot path:
+//   when: absorber preparation computes band-mean spectroscopy support values
+//   work: scans active line absorbers and accumulates weighted band means
+//   data: line absorber arrays, wavelength windows, weights, output means
+//   follow: prepared absorber state and band-mean consumers in layer accumulation
 pub fn computeBandLineMeans(
     allocator: std.mem.Allocator,
     scene: *const Scene,

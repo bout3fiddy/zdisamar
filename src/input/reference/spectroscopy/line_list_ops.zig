@@ -52,6 +52,11 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     self.strong_line_match_by_line = matches;
 }
 
+// hot path:
+//   when: spectroscopy line lists are prepared for a scene/session
+//   work: filters and partitions lines according to runtime controls
+//   data: source lines, control thresholds, strong-line sidecars, filtered line storage
+//   follow: line-list shape consumed by relevantLineWindowForWavelength
 pub fn applyRuntimeControls(
     self: *SpectroscopyLineList,
     allocator: Types.Allocator,
@@ -148,6 +153,11 @@ pub fn allocStrongLinePreparedState(
     };
 }
 
+// hot path:
+//   when: preparing strong-line spectroscopy state for profile nodes or effective state
+//   work: fills pressure/temperature-dependent strong-line relaxation state
+//   data: strong-line sidecars, relaxation matrix, pressure/temperature inputs, state output
+//   follow: strongLineContributionPrepared and prepared sidecar ordering
 pub fn prepareStrongLineStateInto(
     self: SpectroscopyLineList,
     prepared: *Types.StrongLinePreparedState,
@@ -206,6 +216,11 @@ pub fn allocWeakLinePreparedState(
     };
 }
 
+// hot path:
+//   when: preparing weak-line spectroscopy state for profile nodes or effective state
+//   work: fills thermodynamic weak-line state for repeated wavelength evaluation
+//   data: weak-line array, pressure/temperature inputs, prepared weak-line state output
+//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and cutoff helpers
 pub fn prepareWeakLineStateInto(
     self: SpectroscopyLineList,
     prepared: *Types.WeakLinePreparedState,
@@ -252,6 +267,11 @@ pub const RelevantLineWindow = struct {
     start_index: usize,
 };
 
+// hot path:
+//   when: every wavelength/support-row line-list evaluation selects weak lines
+//   work: maps wavelength to a compact relevant-line window
+//   data: sorted line centers, vendor cutoff bounds, line-list window metadata
+//   follow: totalSigma* loops that iterate the returned window
 pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm: f64) RelevantLineWindow {
     if (!self.lines_sorted_ascending) {
         return .{
@@ -279,6 +299,11 @@ pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm
     };
 }
 
+// hot path:
+//   when: line-mixing evaluation prepares weak-to-strong anchor matches
+//   work: selects nearby strong-line anchors for the current weak-line window
+//   data: strong-line match index, relevant weak lines, window start index, anchor array
+//   follow: weakLineRow/totalSigmaWithStrongLineSidecars anchor lookups
 pub fn selectStrongLineAnchors(
     self: SpectroscopyLineList,
     relevant_lines: []const Types.SpectroscopyLine,
@@ -323,6 +348,11 @@ pub fn matchedStrongIndexForRelevantLine(
     return findStrongLineMatch(self, line.center_wavelength_nm);
 }
 
+// hot path:
+//   when: weak-line sigma loops decide whether a line is covered by a strong sidecar
+//   work: checks vendor partition rules and strong-line anchor matches for one relevant weak line
+//   data: relevant-window start index, line metadata, strong-line anchor array, match index
+//   follow: totalSigmaWithStrongLineSidecars and diagnostic weak-line row expansion
 pub fn shouldExcludeWeakLine(
     self: SpectroscopyLineList,
     start_index: usize,

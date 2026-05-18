@@ -71,6 +71,11 @@ pub fn strongLineContribution(
     };
 }
 
+// hot path:
+//   when: each strong-line sidecar contributes to sigma at a wavelength
+//   work: evaluates prepared line-mixing contribution using CPF terms
+//   data: strong-line sidecar, prepared ConvTP state, wavelength, temperature scale
+//   follow: complexProbabilityFunction and relaxation-state layout
 pub fn strongLineContributionPrepared(
     wavelength_nm: f64,
     strong_lines: []const Types.SpectroscopyStrongLine,
@@ -121,6 +126,11 @@ fn o2StrongLineMolecularWeight() f64 {
     return 31.989830;
 }
 
+// hot path:
+//   when: strong-line sidecars are prepared for a thermodynamic state
+//   work: computes ConvTP relaxation terms for all active strong lines
+//   data: strong-line sidecar array, relaxation matrix, pressure scale, temperature
+//   follow: strongLineContributionPrepared and state.line_count ordering
 pub fn prepareStrongLineConvTPState(
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,

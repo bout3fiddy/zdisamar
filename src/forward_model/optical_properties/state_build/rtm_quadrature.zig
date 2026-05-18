@@ -122,6 +122,11 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
     );
 }
 
+// hot path:
+//   when: integrated source-function routes fill RTM quadrature without a wavelength carrier cache
+//   work: evaluates boundary carriers, phase data, and aerosol source Jacobian rows at RTM levels
+//   data: layer input array, shared RTM levels, profile spectroscopy cache, quadrature output
+//   follow: sharedBoundaryCarrierAtLevelWithSpectroscopyCache and fillAerosolSourceJacobian
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -290,6 +295,11 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     return has_active_quadrature;
 }
 
+// hot path:
+//   when: integrated source-function routes fill RTM quadrature for a cached wavelength solve
+//   work: evaluates boundary carriers through WavelengthCarrierCache and writes RTM level rows
+//   data: layer input array, shared RTM levels, carrier cache, quadrature output
+//   follow: sharedBoundaryCarrierAtLevelWithCarrierCache and aerosol source Jacobian fields
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,

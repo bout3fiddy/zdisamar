@@ -178,6 +178,11 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     );
 }
 
+// hot path:
+//   when: forward input construction reduces support rows into a transport layer
+//   work: samples carrier cache rows and accumulates layer optical properties
+//   data: support-row descriptors, cached optical carriers, layer output fields
+//   follow: WavelengthCarrierCache access order and SharedOpticalCarrier field reads
 pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -268,6 +273,11 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
     return sample_index;
 }
 
+// hot path:
+//   when: pseudo-spherical grids expand shared support rows for a cached wavelength solve
+//   work: writes attenuation samples from support-row carrier optical depth per kilometer
+//   data: support sublayers, strong-line states, carrier cache, attenuation sample outputs
+//   follow: fillPseudoSphericalGridAtWavelengthWithCarrierCache and carrier cache reuse
 pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -332,6 +342,11 @@ pub fn evaluateSharedLayerOnSubgrid(
     );
 }
 
+// hot path:
+//   when: integrated source-function routes evaluate RTM subgrid levels
+//   work: evaluates shared optical carriers on Gauss subgrid points for quadrature
+//   data: subgrid support rows, profile spectroscopy cache, layer input outputs
+//   follow: resolveSharedRtmSubgrid and fillSharedPseudoSphericalSamplesOnSubgrid
 pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,

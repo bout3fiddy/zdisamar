@@ -36,6 +36,11 @@ pub const RadiativeTransferDiagnosticRow = struct {
     final_radiance: f64,
 };
 
+// hot path:
+//   when: radiative-transfer diagnostics are requested after a forward run
+//   work: builds atmospheric budget rows and derives per-wavelength transmission/source proxies
+//   data: budget rows, route controls, optional spectrum view, diagnostic rows
+//   follow: atmospheric_budget.build and fillWavelengthRows
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -69,6 +74,11 @@ pub fn build(
     return rows;
 }
 
+// hot path:
+//   when: radiative-transfer diagnostics process one wavelength group
+//   work: walks vertical rows, accumulates optical depth, and writes derived proxy fields
+//   data: wavelength budget slice, cumulative optical depth, route controls, output rows
+//   follow: interpolateSpectrum calls for final radiance/reflectance columns
 fn fillWavelengthRows(
     budget: []const atmospheric_budget.AtmosphericBudgetRow,
     rows: []RadiativeTransferDiagnosticRow,

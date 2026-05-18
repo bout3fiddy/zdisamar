@@ -109,6 +109,11 @@ pub fn upperBoundLineIndex(lines: []const Types.SpectroscopyLine, wavelength_nm:
     return low;
 }
 
+// hot path:
+//   when: weak-line Voigt or strong-line line-mixing contribution evaluates CPF terms
+//   work: computes the complex probability function approximation
+//   data: x/y line-shape parameters and fixed approximation coefficients
+//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn complexProbabilityFunction(x: f64, y: f64) ComplexProbability {
     const t = [_]f64{ 0.314240376, 0.947788391, 1.59768264, 2.27950708, 3.02063703, 3.8897249 };
     const u = [_]f64{ 1.01172805, -0.75197147, 1.2557727e-2, 1.00220082e-2, -2.42068135e-4, 5.00848061e-7 };
@@ -176,6 +181,11 @@ pub fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight
         wavenumber_cm1;
 }
 
+// hot path:
+//   when: weak-line state is prepared for a thermodynamic profile node
+//   work: computes pressure/temperature-dependent Voigt state for one line
+//   data: line coefficients, temperature, pressure scale, partition-function ratio
+//   follow: prepareWeakLinePreparedLineState and prepared weak-line arrays
 pub fn prepareWeakLineVoigtState(
     wavelength_nm: f64,
     line: Types.SpectroscopyLine,
@@ -248,6 +258,11 @@ pub fn prepareWeakLineVoigtState(
     };
 }
 
+// hot path:
+//   when: weak-line prepared state is filled during absorber/profile setup
+//   work: stores compact line-shape and strength terms for repeated wavelength evaluation
+//   data: spectroscopy line, gas/isotope mass, thermodynamic state, prepared-line output
+//   follow: preparedWeakLineInsideVendorCutoff and weakLineSigmaPreparedWithStimulatedEmissionScale
 pub fn prepareWeakLinePreparedLineState(
     line: Types.SpectroscopyLine,
     temperature_k: f64,
@@ -450,6 +465,11 @@ pub fn weakLinePreparedStimulatedEmissionScale(
         (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
 }
 
+// hot path:
+//   when: each prepared weak line in the relevant window contributes to sigma
+//   work: evaluates cutoff, line-shape, and stimulated-emission-scaled sigma
+//   data: prepared weak-line state, wavelength state, stimulated emission scale
+//   follow: complexProbabilityFunction and relevant weak-line window ordering
 pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,

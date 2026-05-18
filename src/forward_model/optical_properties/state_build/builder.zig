@@ -11,6 +11,11 @@ const Allocator = std.mem.Allocator;
 
 pub const PreparationInputs = Context.PreparationInputs;
 
+// hot path:
+//   when: once per prepared scene/session before repeated forward solves
+//   work: builds absorbers, accumulated layers, finalized optical state, and shared RTM geometry
+//   data: scene/reference inputs, absorber state, layer accumulation buffers, prepared optical state
+//   follow: absorbers.build, accumulation.populate, finalize.buildPreparedOpticalState, shared geometry
 pub fn prepare(
     allocator: Allocator,
     scene: *const Scene,

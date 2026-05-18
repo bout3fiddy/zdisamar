@@ -32,6 +32,11 @@ fn irradianceAtWavelength(
     return solar_compat.irradianceAtWavelength(scene, wavelength_nm);
 }
 
+// hot path:
+//   when: once per nominal radiance wavelength, with one or more integration samples
+//   work: accumulates weighted cached forward samples into radiance and Jacobian totals
+//   data: integration offsets, weights, spectral forward cache, jacobian vector accumulator
+//   follow: cachedForwardAtWavelength and the active instrument integration payload
 pub fn integrateForwardAtNominal(
     allocator: Allocator,
     scene: *const Scene,
@@ -106,6 +111,11 @@ pub fn integrateForwardAtNominal(
     };
 }
 
+// hot path:
+//   when: once per nominal irradiance wavelength, with one or more integration samples
+//   work: accumulates weighted cached solar irradiance samples
+//   data: integration offsets, weights, irradiance cache, solar support tables
+//   follow: cachedIrradianceAtWavelength and operational solar interpolation
 pub fn integrateIrradianceAtNominal(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -136,6 +146,11 @@ pub fn integrateIrradianceAtNominal(
     return irradiance_sum;
 }
 
+// hot path:
+//   when: once per simulation plan before nominal wavelength integration
+//   work: reserves cache capacity, computes all forward misses, and inserts dense results by key
+//   data: forward miss array, profile spectroscopy caches, temporary result array, spectral cache map
+//   follow: spectral_forward.prefetchForwardSamples and cache.forward.put
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -172,6 +187,11 @@ pub fn prefetchForwardSamples(
     }
 }
 
+// hot path:
+//   when: on each high-resolution forward cache miss
+//   work: computes a wavelength-specific forward sample when the quantized key is absent
+//   data: layer/source/quadrature scratch arrays, pseudo-spherical arrays, spectral cache
+//   follow: spectral_forward.computeForwardSampleAtWavelength and cache key reuse
 pub fn cachedForwardAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -212,6 +232,11 @@ pub fn cachedForwardAtWavelength(
     return sample;
 }
 
+// hot path:
+//   when: on each high-resolution irradiance cache miss
+//   work: resolves solar irradiance from operational support or reference interpolation
+//   data: quantized wavelength key, irradiance cache, solar spectrum support
+//   follow: operational_solar_spectrum.interpolateIrradianceWithinBounds and cache insertion
 fn cachedIrradianceAtWavelength(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

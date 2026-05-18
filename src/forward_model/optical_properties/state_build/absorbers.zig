@@ -81,6 +81,11 @@ pub const AbsorberBuildState = struct {
     }
 };
 
+// hot path:
+//   when: once per optical-state preparation
+//   work: builds active cross-section and line absorbers for repeated wavelength evaluation
+//   data: reference absorber tables, spectroscopy line lists, profile line-state storage
+//   follow: buildCrossSectionAbsorbers, buildLineAbsorbers, and prepareProfileLineStates
 pub fn build(
     allocator: Allocator,
     context: *Context,
@@ -223,6 +228,11 @@ pub fn build(
     return state;
 }
 
+// hot path:
+//   when: during spectroscopy absorber preparation for profile-resolved scenes
+//   work: allocates prepared weak and strong line-state arrays for all profile nodes
+//   data: spectroscopy profile nodes, weak-line state slices, strong-line state slices
+//   follow: fillProfileLineStates and profile-node indexing into prepared state arrays
 fn prepareProfileLineStates(
     allocator: Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -270,6 +280,11 @@ fn prepareProfileLineStates(
     );
 }
 
+// hot path:
+//   when: during profile spectroscopy preparation, often across worker chunks
+//   work: fills prepared weak and strong line states per thermodynamic profile node
+//   data: profile pressure/temperature arrays, line absorber arrays, prepared state arrays
+//   follow: profileLineStateWorkerMain and fillProfileLineStateRange
 fn fillProfileLineStates(
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
@@ -388,6 +403,11 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
     return work_partition.preferredWorkerCount(profile_count, min_parallel_profile_line_state_count);
 }
 
+// hot path:
+//   when: once while preparing cross-section absorbers
+//   work: collects LUT/table-backed absorbers used by wavelength carrier evaluation
+//   data: absorber configs, cross-section tables, operational LUT handles
+//   follow: carrier_eval cross-section loops that consume the resulting active set
 fn buildCrossSectionAbsorbers(
     allocator: Allocator,
     context: *Context,
@@ -447,6 +467,11 @@ fn buildCrossSectionAbsorbers(
     }
 }
 
+// hot path:
+//   when: once while preparing spectroscopy line absorbers
+//   work: applies line controls, partitions strong/weak lines, and prepares match indexes
+//   data: line lists, strong-line sidecars, runtime controls, prepared line-state slices
+//   follow: layer_spectroscopy and line_list_eval relevant-window loops
 fn buildLineAbsorbers(
     allocator: Allocator,
     context: *Context,

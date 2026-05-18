@@ -144,6 +144,11 @@ pub fn fillForwardLayersAtWavelength(
     );
 }
 
+// hot path:
+//   when: forward input construction fills transport layers without a wavelength carrier cache
+//   work: reduces prepared layers or support rows into layer input optical-depth fields
+//   data: prepared layers/sublayers, profile spectroscopy cache, layer input array
+//   follow: shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -326,6 +331,11 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     return totals;
 }
 
+// hot path:
+//   when: forward input construction fills transport layers for a cached wavelength solve
+//   work: reduces shared support rows through WavelengthCarrierCache and writes layer inputs
+//   data: shared RTM geometry, support sublayers, carrier cache, layer input array
+//   follow: shared_carrier.evaluateReducedLayerFromSupportRowsWithCarrierCache
 pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,

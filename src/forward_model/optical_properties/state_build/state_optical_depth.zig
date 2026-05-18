@@ -13,6 +13,11 @@ const PreparedSublayer = Types.PreparedSublayer;
 const OpticalDepthBreakdown = Types.OpticalDepthBreakdown;
 const EvaluatedLayer = Types.EvaluatedLayer;
 
+// hot path:
+//   when: diagnostics or layer-free routes need total optical-depth breakdown at one wavelength
+//   work: accumulates gas, CIA, aerosol, cloud, and scattering optical depths
+//   data: prepared layers/sublayers, spectroscopy cache, cross-section tables, particle controls
+//   follow: evaluateLayerAtWavelengthWithSpectroscopyCache and particleOpticalDepthAtWavelength
 pub fn opticalDepthBreakdownAtWavelength(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -107,6 +112,11 @@ pub fn evaluateLayerAtWavelength(
     );
 }
 
+// hot path:
+//   when: atmospheric budget or non-shared layer routes evaluate one layer at a wavelength
+//   work: accumulates sublayer absorption, scattering, CIA, particles, and phase numerator fields
+//   data: sublayer slice, strong-line states, profile spectroscopy cache, continuum/cross-section data
+//   follow: state_scalar density helpers and state_spectroscopy sigma evaluation
 pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: ?*const Scene,

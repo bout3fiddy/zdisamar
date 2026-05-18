@@ -27,6 +27,11 @@ const ProfileCacheValueWorker = struct {
     worker_index: usize,
 };
 
+// hot path:
+//   when: once per high-resolution forward miss when profile spectroscopy is active
+//   work: caches spline-derived profile values and per-node spectroscopy evaluations
+//   data: pressure, temperature, density, VMR, prepared profile line-state arrays
+//   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
@@ -401,6 +406,11 @@ pub fn resolveCachedSingleLineEvaluation(
     };
 }
 
+// hot path:
+//   when: inside support-row carrier evaluation for active line absorbers
+//   work: resolves spectroscopy through profile cache, prepared states, or direct evaluation
+//   data: line absorber metadata, altitude, wavelength, profile spectroscopy cache
+//   follow: resolvePreparedLineEvaluation and evaluatePreparedLineAbsorber
 pub fn resolveSpectroscopyEvaluation(
     allocator: Allocator,
     context: *Context,
@@ -536,6 +546,11 @@ fn resolvePreparedLineEvaluation(
     return weighted;
 }
 
+// hot path:
+//   when: direct prepared-line evaluation is used for an active absorber/support row
+//   work: evaluates base sigma and finite-temperature derivative terms
+//   data: prepared weak/strong line state, absorber VMR, pressure, temperature, wavelength
+//   follow: line_list_eval.evaluateAtPrepared and temperature-derivative sampling
 fn evaluatePreparedLineAbsorber(
     allocator: Allocator,
     line_absorber: *State.PreparedLineAbsorber,

@@ -32,6 +32,11 @@ const AdaptiveSupportRange = struct {
     end_index: usize,
 };
 
+// hot path:
+//   when: integrated instrument sampling builds a kernel for one nominal wavelength
+//   work: constructs an adaptive interval plan, emits candidate samples, and finalizes weights
+//   data: strong-line centers, response support window, sample wavelength/weight arrays
+//   follow: buildAdaptiveIntervalPlan, appendAdaptiveSamplesFromPlan, and finalizeAdaptiveKernel
 pub fn buildAdaptiveIntegrationKernel(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -199,6 +204,11 @@ pub fn adaptiveKernelSupportWindow(
     };
 }
 
+// hot path:
+//   when: adaptive sampling prepares support intervals for a channel response
+//   work: partitions the global support window around strong-line centers and assigns division counts
+//   data: strong-line center array, interval descriptors, adaptive grid controls
+//   follow: collectAdaptiveStrongLineCenters and adaptiveIntervalDivisionCount
 pub fn buildAdaptiveIntervalPlan(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -258,6 +268,11 @@ pub fn buildAdaptiveIntervalPlan(
     return true;
 }
 
+// hot path:
+//   when: an adaptive integration kernel emits samples for one nominal wavelength
+//   work: visits interval Gauss nodes, computes response weights, sorts candidates, and selects support range
+//   data: interval plan, candidate sample arrays, response weights, support-range indexes
+//   follow: fillAdaptiveUnitGauss, insertionSortSamples, and selectVendorSupportRange
 pub fn appendAdaptiveSamplesFromPlan(
     plan: *const AdaptiveIntervalPlan,
     response: InstrumentModel.SpectralResponse,
@@ -339,6 +354,11 @@ pub fn appendAdaptiveSamplesFromPlan(
     return sample_count.* != 0;
 }
 
+// hot path:
+//   when: adaptive or DISAMAR-realized candidate samples become an integration kernel
+//   work: sorts, merges duplicate wavelengths, normalizes weights, and writes offsets
+//   data: sample wavelength array, raw weights array, kernel offsets/weights
+//   follow: merged sample ordering consumed by spectral_eval integration loops
 pub fn finalizeAdaptiveKernel(
     kernel: *types.IntegrationKernel,
     nominal_wavelength_nm: f64,
@@ -375,6 +395,11 @@ pub fn finalizeAdaptiveKernel(
     return true;
 }
 
+// hot path:
+//   when: adaptive interval planning needs line-aware support boundaries
+//   work: collects, sorts, and deduplicates strong line centers from all active line lists
+//   data: prepared spectroscopy line lists, center array, global support bounds
+//   follow: collectAdaptiveStrongLineCentersFromList and interval split order
 fn collectAdaptiveStrongLineCenters(
     prepared: *const PreparedOpticalState,
     global_start_nm: f64,

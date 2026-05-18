@@ -12,6 +12,11 @@ const bundled_o2a_solar_irradiance = [_]f64{
     4.759839792e14,
 };
 
+// hot path:
+//   when: irradiance cache misses resolve solar irradiance for nominal or integration samples
+//   work: selects operational solar support, bundled O2 A support, or default continuum value
+//   data: observation-model solar support, wavelength, bundled support arrays
+//   follow: OperationalSolarSpectrum interpolation and spectral_eval.cachedIrradianceAtWavelength
 pub fn irradianceAtWavelength(scene: *const Scene, wavelength_nm: f64) f64 {
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const source_irradiance = if (operational_band_support.operational_solar_spectrum.enabled())

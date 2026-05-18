@@ -46,6 +46,11 @@ const WavelengthSamplingWorker = struct {
     worker_index: usize,
 };
 
+// hot path:
+//   when: once per simulation plan, often reused across OE iterations
+//   work: expands output wavelengths into radiance and irradiance integration plans
+//   data: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
+//   follow: fillWavelengthSamplingPlans and collectUniqueForwardMisses
 pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
@@ -99,6 +104,11 @@ pub fn buildWavelengthSampling(
     return plans;
 }
 
+// hot path:
+//   when: wavelength sampling expands all output grid points into integration plans
+//   work: chooses single-thread or chunked worker execution for plan rows
+//   data: output plan array, resolved axis, channel calibrations, adaptive caches
+//   follow: wavelengthSamplingWorkerMain and fillWavelengthSamplingPlanRange
 fn fillWavelengthSamplingPlans(
     allocator: Allocator,
     scene: *const Scene,
@@ -169,6 +179,11 @@ fn fillWavelengthSamplingPlans(
     if (error_state.err) |err| return err;
 }
 
+// hot path:
+//   when: wavelength sampling runs in parallel over output-grid chunks
+//   work: pulls chunks and fills integration-plan rows for each assigned output wavelength
+//   data: chunk queue, plan array, adaptive caches, worker error state
+//   follow: fillWavelengthSamplingPlanRange and work_partition.ChunkQueue
 fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
     var thread_name_buffer: [64]u8 = undefined;
     const thread_name = std.fmt.bufPrintZ(
@@ -208,6 +223,11 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
     }
 }
 
+// hot path:
+//   when: a sampling worker fills a contiguous range of output wavelengths
+//   work: writes one WavelengthSampling row per output index
+//   data: plan array slice, resolved spectral axis, channel integration caches
+//   follow: buildWavelengthSamplingPlan and instrument integration kernel construction
 fn fillWavelengthSamplingPlanRange(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -236,6 +256,11 @@ fn fillWavelengthSamplingPlanRange(
     }
 }
 
+// hot path:
+//   when: each output wavelength is converted into radiance and irradiance sampling plans
+//   work: resolves nominal wavelength, builds channel integration kernels, and applies calibration shifts
+//   data: resolved axis, radiance/irradiance adaptive caches, integration kernel outputs
+//   follow: integrationForWavelengthWithAdaptiveCacheChecked and calibration.shiftedWavelength
 fn buildWavelengthSamplingPlan(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -313,6 +338,11 @@ fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
     return work_partition.preferredWorkerCount(sample_count, min_parallel_wavelength_sample_count);
 }
 
+// hot path:
+//   when: once per wavelength plan before forward prefetch
+//   work: deduplicates high-resolution radiance integration wavelengths into cache misses
+//   data: radiance integration offsets, quantized cache keys, forward miss array
+//   follow: miss ordering consumed by SpectralEval.prefetchForwardSamples
 pub fn collectUniqueForwardMisses(
     allocator: Allocator,
     plans: []const WavelengthSampling,

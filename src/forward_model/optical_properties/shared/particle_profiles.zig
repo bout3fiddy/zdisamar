@@ -28,6 +28,11 @@ pub fn scaleOpticalDepth(
     return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
+// hot path:
+//   when: optical-state preparation distributes aerosol optical depth over sublayers
+//   work: chooses placement semantics and builds per-sublayer aerosol weights
+//   data: scene aerosol placement, prepared vertical grid, output weight array
+//   follow: finite-layer, interval-matched, and Gaussian distribution builders
 pub fn buildAerosolSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
@@ -66,6 +71,11 @@ pub fn buildAerosolSublayerDistribution(
     );
 }
 
+// hot path:
+//   when: optical-state preparation distributes cloud optical depth over sublayers
+//   work: chooses placement semantics and builds per-sublayer cloud weights
+//   data: scene cloud placement, prepared vertical grid, output weight array
+//   follow: finite-layer and interval-matched distribution builders
 pub fn buildCloudSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
@@ -123,6 +133,11 @@ pub fn buildPlacementBoundDistribution(
     );
 }
 
+// hot path:
+//   when: explicit interval placement distributes particle optical depth
+//   work: accumulates support-weighted sublayers for one interval and normalizes optical depth
+//   data: sublayer interval indexes, support weights, output distribution
+//   follow: layer_accumulation particle optical-depth reads
 pub fn buildIntervalMatchedDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
@@ -156,6 +171,11 @@ pub fn buildIntervalMatchedDistribution(
     return weights;
 }
 
+// hot path:
+//   when: finite altitude placement distributes aerosol or cloud optical depth
+//   work: computes vertical overlap weights for every sublayer and normalizes optical depth
+//   data: sublayer top/bottom altitudes, support weights, placement bounds, output weights
+//   follow: layer_accumulation particle distribution use
 pub fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
@@ -215,6 +235,11 @@ pub fn buildFiniteLayerSublayerDistribution(
     return weights;
 }
 
+// hot path:
+//   when: Gaussian aerosol placement distributes optical depth over sublayers
+//   work: computes Gaussian altitude weights and normalizes optical depth
+//   data: sublayer mid-altitudes, support weights, center/width parameters, output weights
+//   follow: layer_accumulation particle distribution use
 pub fn buildGaussianSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,

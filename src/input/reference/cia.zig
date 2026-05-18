@@ -28,6 +28,11 @@ pub const CollisionInducedAbsorptionTable = struct {
         };
     }
 
+    // hot path:
+    //   when: support-row carrier evaluation includes O2-O2 CIA absorption
+    //   work: interpolates CIA coefficients and evaluates temperature polynomial sigma
+    //   data: CIA coefficient points, wavelength, temperature, scale factor
+    //   follow: interpolateCoefficients and collisionComplexPairDensityCm6
     pub fn sigmaAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
@@ -66,6 +71,11 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.sigmaAt((start_nm + end_nm) * 0.5, temperature_k);
     }
 
+    // hot path:
+    //   when: CIA sigma or dSigmaDTemperature samples the table for a wavelength
+    //   work: brackets CIA points and interpolates coefficient triplets
+    //   data: CIA wavelength points, spline window, coefficient fields a0/a1/a2
+    //   follow: sampleCoefficientSpline and lowerBoundPointIndex
     pub fn interpolateCoefficients(self: CollisionInducedAbsorptionTable, wavelength_nm: f64) CollisionInducedAbsorptionPoint {
         if (self.points.len == 0) {
             return .{
@@ -110,6 +120,11 @@ fn splineWindow(point_count: usize, right_index: usize) SplineWindow {
     return .{ .start = start, .count = count };
 }
 
+// hot path:
+//   when: CIA interpolation uses the local spline window for coefficient smoothing
+//   work: copies point coordinates into stack arrays and samples endpoint-secant spline
+//   data: CIA spline window points, coefficient selector, stack x/y arrays
+//   follow: spline.sampleEndpointSecant and window size
 fn sampleCoefficientSpline(
     points: []const CollisionInducedAbsorptionPoint,
     wavelength_nm: f64,
@@ -158,6 +173,11 @@ fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelen
     return low;
 }
 
+// hot path:
+//   when: output or preprocessing builds effective CIA sigma over instrument samples
+//   work: evaluates sigma at sample wavelengths and removes weighted polynomial baseline
+//   data: wavelength sample array, weights, sigma scratch array, polynomial order
+//   follow: cross_sections.differentialVector and weighted sampling order
 pub fn effectiveSigmaAtSamples(
     allocator: Allocator,
     table: CollisionInducedAbsorptionTable,

@@ -29,6 +29,11 @@ pub const MiePhaseTable = struct {
         self.* = undefined;
     }
 
+    // hot path:
+    //   when: optical-state preparation samples aerosol/cloud Mie phase support at band midpoint
+    //   work: brackets wavelength and interpolates extinction, SSA, and compact phase coefficients
+    //   data: Mie phase point array, wavelength, coefficient output
+    //   follow: layer_accumulation midpoint Mie support and finalize particle SSA
     pub fn interpolate(self: MiePhaseTable, wavelength_nm: f64) MiePhasePoint {
         if (self.points.len == 0) {
             return .{
@@ -72,6 +77,11 @@ pub const AirmassFactorLut = struct {
         self.* = undefined;
     }
 
+    // hot path:
+    //   when: absorber preparation resolves the reference airmass factor for spectroscopy state
+    //   work: scans LUT points and returns the nearest angular support value
+    //   data: solar/view/relative azimuth angles and LUT point array
+    //   follow: absorbers.build profile state preparation
     pub fn nearest(self: AirmassFactorLut, solar_zenith_deg: f64, view_zenith_deg: f64, relative_azimuth_deg: f64) f64 {
         if (self.points.len == 0) return 1.0;
 
@@ -95,6 +105,11 @@ pub const AirmassFactorLut = struct {
     }
 };
 
+// hot path:
+//   when: reference support builds an airmass-like spectral profile from optical-depth proxies
+//   work: normalizes proxy samples, applies wavelength tilt, and restores requested mean
+//   data: wavelength array, optical-depth proxy array, output profile
+//   follow: callers that materialize reference-band support profiles
 pub fn spectralProfileFromOpticalDepth(
     allocator: Allocator,
     wavelengths_nm: []const f64,

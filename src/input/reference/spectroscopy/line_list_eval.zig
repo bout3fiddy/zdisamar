@@ -15,6 +15,11 @@ pub const StrongLineWavelengthWindow = struct {
     anchors: [Types.max_strong_line_sidecars]?usize,
 };
 
+// hot path:
+//   when: support-row spectroscopy evaluates an active line absorber
+//   work: computes base sigma and finite-temperature derivative sigma samples
+//   data: line list, wavelength, pressure/temperature state, optional prepared line state
+//   follow: totalSigma* variants and prepared strong-line windows
 pub fn evaluateAt(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -47,6 +52,11 @@ pub fn totalSigmaAt(
     return totalSigmaFromLineListOnly(self, wavelength_nm, temperature_k, pressure_hpa);
 }
 
+// hot path:
+//   when: a non-strong line list evaluates sigma for a wavelength/support row
+//   work: scans the relevant weak-line window and sums weak-line contributions
+//   data: line window, line thermodynamic state, wavelength state, sigma accumulator
+//   follow: relevantLineWindowForWavelength and weakLineContributionWithWavelengthState
 pub fn totalSigmaFromLineListOnly(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -80,6 +90,11 @@ pub fn totalSigmaFromLineListOnly(
     };
 }
 
+// hot path:
+//   when: line-mixing sidecars are enabled for a wavelength/support row
+//   work: sums weak-line contributions plus strong-line sidecar contributions
+//   data: relevant weak lines, strong-line sidecars, relaxation matrix, anchor matches
+//   follow: selectStrongLineAnchors and strongLineContributionPrepared
 pub fn totalSigmaWithStrongLineSidecars(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -176,6 +191,11 @@ pub fn prepareStrongLineWavelengthWindow(
     };
 }
 
+// hot path:
+//   when: prepared spectroscopy state is available for a wavelength/support row
+//   work: sums prepared weak-line and prepared strong-line sigma contributions
+//   data: prepared weak-line state, prepared strong-line state, relevant window, wavelength state
+//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     self: SpectroscopyLineList,
     wavelength_nm: f64,

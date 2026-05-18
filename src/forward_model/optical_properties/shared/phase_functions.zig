@@ -75,6 +75,11 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
     return hgPhaseCoefficientsWithThreshold(asymmetry_factor, vendor_hg_truncation_threshold);
 }
 
+// hot path:
+//   when: optical-state preparation builds particle phase coefficients
+//   work: fills Henyey-Greenstein coefficient tail until the truncation threshold
+//   data: asymmetry factor, truncation threshold, coefficient array
+//   follow: combinePhaseCoefficientsWithRayleigh2 and LABOS phase-basis builders
 pub fn hgPhaseCoefficientsWithThreshold(
     asymmetry_factor: f64,
     truncation_threshold: f64,
@@ -114,6 +119,11 @@ pub fn combinePhaseCoefficients(
     );
 }
 
+// hot path:
+//   when: layer/sublayer carrier evaluation combines gas, aerosol, and cloud scattering
+//   work: blends Rayleigh, aerosol, and cloud phase coefficients by scattering optical depth
+//   data: scattering optical depths, Rayleigh coefficient, particle coefficient arrays
+//   follow: layer_accumulation phase writes and LABOS phase matrix construction
 pub fn combinePhaseCoefficientsWithRayleigh2(
     rayleigh_coef2: f64,
     gas_scattering_optical_depth: f64,

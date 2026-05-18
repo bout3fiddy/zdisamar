@@ -223,6 +223,11 @@ const SublayerLayerTerms = struct {
     cloud_base_optical_depth: f64,
 };
 
+// hot path:
+//   when: once per optical-state preparation before repeated wavelength solves
+//   work: accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM data
+//   data: scene atmosphere, absorber sets, particle profiles, support-row storage
+//   follow: populateParitySupportRowsParallel, populateLayer, and shared carrier reduction
 pub fn populate(
     allocator: Allocator,
     context: *Context,
@@ -410,6 +415,11 @@ fn populateParitySupportRows(
     }
 }
 
+// hot path:
+//   when: during parity-route support-row preparation across worker chunks
+//   work: fills independent support rows for later wavelength carrier caching
+//   data: support-row arrays, layer/sublayer descriptors, active absorber state
+//   follow: paritySupportRowWorkerMain and reduceParityLayer
 fn populateParitySupportRowsParallel(
     allocator: Allocator,
     context: *Context,
@@ -727,6 +737,11 @@ fn reduceParityLayer(
     };
 }
 
+// hot path:
+//   when: for each physical transport layer during optical-state accumulation
+//   work: iterates sublayers and accumulates optical depth, scattering, particle, and phase terms
+//   data: layer descriptors, sublayer rows, absorber/cross-section state, particle distributions
+//   follow: populateSublayer and layer output storage consumed by forward input construction
 fn populateLayer(
     allocator: Allocator,
     context: *Context,
@@ -843,6 +858,11 @@ fn populateLayer(
     };
 }
 
+// hot path:
+//   when: for each sublayer or support row during optical-state accumulation
+//   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, particles, and phase writes
+//   data: sublayer thermodynamics, active absorber sets, phase coefficients, optical-depth outputs
+//   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
 fn populateSublayer(
     allocator: Allocator,
     context: *Context,

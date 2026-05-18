@@ -5,6 +5,11 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Trace = @import("../../performance_trace.zig");
 const common = @import("../../radiative_transfer/root.zig");
 
+// hot path:
+//   when: once per high-resolution wavelength before LABOS transport
+//   work: fills optical depth layers, source interfaces, RTM quadrature, and pseudo-spherical samples
+//   data: wavelength carrier cache, layer input arrays, quadrature/source-interface buffers
+//   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
 pub fn configuredForwardInput(
     scene: *const Scene,
     route: common.Route,

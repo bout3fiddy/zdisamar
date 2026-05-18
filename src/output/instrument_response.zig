@@ -29,6 +29,11 @@ pub const InstrumentResponseRow = struct {
     response_enabled: u8,
 };
 
+// hot path:
+//   when: instrument-response diagnostics are requested for wavelengths and channels
+//   work: expands each nominal wavelength/channel into integration response rows
+//   data: nominal wavelengths, channel mask, integration kernels, output rows
+//   follow: appendResponseRows and Integration.integrationForWavelengthChecked
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,

@@ -2,6 +2,11 @@ pub const Error = error{
     KernelShapeMismatch,
 };
 
+// hot path:
+//   when: radiance, irradiance, or active Jacobian columns use slit convolution
+//   work: applies a small kernel across every output spectral sample
+//   data: signal array, kernel weights, output array
+//   follow: simulate radiance/irradiance convolution and processJacobianSamples
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
 

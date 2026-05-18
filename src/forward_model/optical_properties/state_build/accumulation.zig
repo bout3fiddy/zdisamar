@@ -33,6 +33,11 @@ pub const AccumulationResult = struct {
     means: PreparedMeans = .{},
 };
 
+// hot path:
+//   when: optical-state preparation accumulates layers and prepared mean values
+//   work: builds layer totals, particle/phase/spectroscopy support, and band/effective means
+//   data: preparation context, absorber build state, layer accumulation result
+//   follow: LayerAccumulation.populate and computePreparedMeans
 pub fn accumulate(
     allocator: Allocator,
     context: *Context,
@@ -48,6 +53,11 @@ pub fn accumulate(
     return .{ .means = means };
 }
 
+// hot path:
+//   when: optical-state preparation derives scalar means after layer accumulation
+//   work: computes cross-section, line, CIA, airmass, SSA, pressure, and optical-depth means
+//   data: accumulated layer totals, absorber state, reference band support, scene context
+//   follow: BandMeans.computeBandLineMeans and final prepared-state fields
 fn computePreparedMeans(
     allocator: Allocator,
     context: *Context,

@@ -10,6 +10,11 @@ pub fn sampleLinearClamped(x: []const f64, y: []const f64, target_x: f64) Error!
     return sampleLinearClampedAssumeValid(x, y, target_x);
 }
 
+// hot path:
+//   when: noise and calibration sample small monotonic support curves per wavelength
+//   work: brackets a target x and linearly interpolates the y value
+//   data: support x/y arrays and target coordinate
+//   follow: callers that repeatedly sample one curve across the spectral grid
 pub fn sampleLinearClampedAssumeValid(x: []const f64, y: []const f64, target_x: f64) f64 {
     std.debug.assert(x.len == y.len);
     std.debug.assert(x.len != 0);

@@ -168,6 +168,11 @@ pub const OperationalSolarSpectrum = struct {
             upper_wavelength_nm <= self.wavelengths_nm[self.wavelengths_nm.len - 1];
     }
 
+    // hot path:
+    //   when: irradiance sampling uses an operational solar spectrum inside its support range
+    //   work: chooses prepared spline interpolation or linear interpolation for one wavelength
+    //   data: solar wavelength grid, irradiance values, optional spline second derivatives
+    //   follow: interpolatePreparedSplineWithinBounds and interpolateIrradianceLinearWithinBounds
     pub fn interpolateIrradianceWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
@@ -202,6 +207,11 @@ pub const OperationalSolarSpectrum = struct {
         return null;
     }
 
+    // hot path:
+    //   when: operational solar support is materialized onto another wavelength grid
+    //   work: interpolates irradiance for each target wavelength
+    //   data: target wavelength array, source solar grid, output irradiance array
+    //   follow: interpolateIrradiance and callers that correct measured spectra
     pub fn interpolateOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,
@@ -254,6 +264,11 @@ pub const OperationalSolarSpectrum = struct {
         self.owns_spline_state = false;
     }
 
+    // hot path:
+    //   when: operational solar interpolation uses prepared spline state
+    //   work: brackets wavelength and evaluates prepared cubic spline in DISAMAR-compatible form
+    //   data: solar wavelength grid, irradiance values, spline second derivatives
+    //   follow: cachedIrradianceAtWavelength and operational solar cache support
     fn interpolatePreparedSplineWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,

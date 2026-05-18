@@ -19,6 +19,11 @@ pub fn materializeChannelSigma(
     }
 }
 
+// hot path:
+//   when: radiance and irradiance channels are postprocessed after convolution
+//   work: applies calibration gain/offset, spectral features, smear, nodal corrections, stray light, and polarization bias
+//   data: wavelength array, signal array, scratch array, resolved channel controls
+//   follow: spectral_math.calibration per-sample passes
 pub fn applyChannelCorrections(
     scene: *const Scene,
     channel: SpectralChannel,
@@ -51,6 +56,11 @@ pub fn applyChannelCorrections(
     }
 }
 
+// hot path:
+//   when: active Jacobian columns are postprocessed after radiance integration
+//   work: applies derivative-compatible channel calibration and nodal corrections column by column
+//   data: wavelength array, one Jacobian column, scratch array, channel controls
+//   follow: simulate.processJacobianSamples and calibration derivative helpers
 pub fn applyChannelJacobianCorrections(
     scene: *const Scene,
     channel: SpectralChannel,

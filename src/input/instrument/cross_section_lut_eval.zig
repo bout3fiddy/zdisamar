@@ -5,6 +5,11 @@ pub const Evaluation = struct {
     d_sigma_d_temperature: f64,
 };
 
+// hot path:
+//   when: support-row carrier evaluation samples an operational cross-section LUT
+//   work: evaluates temperature/pressure Legendre basis, brackets wavelength, and interpolates sigma plus dT
+//   data: LUT coefficients, wavelength grid, temperature/pressure basis arrays
+//   follow: evaluateAtIndex and wavelengthBracket
 pub fn evaluate(
     comptime LutType: type,
     self: *const LutType,
@@ -90,6 +95,11 @@ pub fn evaluate(
     };
 }
 
+// hot path:
+//   when: LUT evaluation samples the left and right wavelength brackets
+//   work: reduces pressure and temperature coefficient products into one sigma value
+//   data: flattened coefficient grid, Legendre pressure values, Legendre temperature values
+//   follow: coefficientAt offset order and LutType coefficient strides
 fn evaluateAtIndex(
     comptime LutType: type,
     self: *const LutType,
@@ -144,6 +154,11 @@ fn scaledLogCoordinate(
     return -((ln_max + ln_min) / scale) + (2.0 * @log(safe_value) / scale);
 }
 
+// hot path:
+//   when: each LUT evaluation maps wavelength to adjacent coefficient planes
+//   work: finds the bracketing LUT wavelengths and interpolation weight
+//   data: wavelength grid, target wavelength, bracket indexes
+//   follow: caller access order across repeated support-row wavelengths
 fn wavelengthBracket(
     comptime LutType: type,
     self: *const LutType,

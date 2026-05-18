@@ -21,6 +21,11 @@ const Entry = struct {
 var mutex = std.Thread.Mutex{};
 var cached_entry: ?Entry = null;
 
+// hot path:
+//   when: spectroscopy profile prepared states can be reused across preparation runs
+//   work: checks cache key and clones prepared weak/strong line states into caller storage
+//   data: line list, temperature/pressure profile arrays, cached prepared states
+//   follow: absorbers.prepareProfileLineStates and profile-state cache key shape
 pub fn load(
     allocator: Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -59,6 +64,11 @@ pub fn load(
     return true;
 }
 
+// hot path:
+//   when: spectroscopy profile prepared states are saved after preparation
+//   work: clones weak/strong prepared line states into the process cache
+//   data: line list, temperature/pressure profile arrays, prepared weak/strong states
+//   follow: future profile_state_cache.load calls and cache key computation
 pub fn store(
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,

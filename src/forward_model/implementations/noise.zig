@@ -55,6 +55,11 @@ fn sceneNoiseEnabled(scene: *const Scene, channel: SpectralChannel) bool {
     return scene.observation_model.resolvedChannelControls(channel).noise.enabled;
 }
 
+// hot path:
+//   when: channel sigma materialization uses scene-configured noise controls
+//   work: selects SNR, shot, S5P, LAB, ingested, or zero sigma model
+//   data: channel noise controls, wavelength array, signal array, output sigma
+//   follow: spectral_math.noise model kernels
 fn sceneNoiseSigma(
     scene: *const Scene,
     channel: SpectralChannel,
@@ -98,6 +103,11 @@ fn shotNoiseSigma(
 }
 
 // PUB FOR TEST: re-exported via Noise module surface for tests in tests/unit/.
+// hot path:
+//   when: S5P operational noise model materializes channel sigma
+//   work: scales reference sigma when present or evaluates operational coefficients per wavelength
+//   data: reference signal/sigma arrays, wavelength array, current signal, output sigma
+//   follow: noise.scaleSigmaFromReference and noise.sigmaFromS5Operational
 pub fn s5pOperationalSigma(
     scene: *const Scene,
     channel: SpectralChannel,
@@ -120,6 +130,11 @@ pub fn s5pOperationalSigma(
 }
 
 // PUB FOR TEST: re-exported via Noise module surface for tests in tests/unit/.
+// hot path:
+//   when: LAB operational noise model materializes channel sigma
+//   work: evaluates parametric LAB sigma over the signal array
+//   data: channel LAB coefficients, signal array, output sigma
+//   follow: noise.sigmaFromLabOperational
 pub fn labOperationalSigma(
     scene: *const Scene,
     channel: SpectralChannel,

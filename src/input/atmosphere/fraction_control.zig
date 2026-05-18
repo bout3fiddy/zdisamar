@@ -56,6 +56,11 @@ pub const FractionControl = struct {
         if (self.threshold_variance < 0.0) return errors.Error.InvalidRequest;
     }
 
+    // hot path:
+    //   when: particle optical depth is scaled by wavelength-dependent fraction controls
+    //   work: samples or clamps the fraction value for one wavelength
+    //   data: fraction wavelength/value arrays, target wavelength, fraction kind
+    //   follow: state_scalar.particleOpticalDepthAtWavelength
     pub fn valueAtWavelength(self: FractionControl, wavelength_nm: f64) f64 {
         if (!self.enabled or self.values.len == 0) return 0.0;
         if (self.kind != .wavel_dependent or self.wavelengths_nm.len == 0) {

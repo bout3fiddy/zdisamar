@@ -124,6 +124,11 @@ pub fn sharedSupportSlices(
     };
 }
 
+// hot path:
+//   when: once per prepared scene/session for RTM shared-grid routes
+//   work: builds Gauss divisions, support slices, and reusable RTM geometry arrays
+//   data: layer/sublayer geometry, Gauss rules, shared RTM support storage
+//   follow: resolveGaussRule and subgrid slices consumed by shared_carrier
 pub fn buildSharedRtmGeometry(
     allocator: std.mem.Allocator,
     self: *const PreparedOpticalState,

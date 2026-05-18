@@ -94,6 +94,11 @@ pub const InstrumentLineShape = struct {
         self.* = .{};
     }
 
+    // hot path:
+    //   when: instrument integration uses an explicit line-shape kernel
+    //   work: copies offsets/weights and normalizes weights for one nominal channel sample
+    //   data: line-shape offsets, line-shape weights, kernel output slices
+    //   follow: integrationForWavelengthWithAdaptiveCacheChecked
     pub fn writeNormalizedKernel(
         self: *const InstrumentLineShape,
         offsets_out: []f64,
@@ -207,6 +212,11 @@ pub const InstrumentLineShapeTable = struct {
         @constCast(self.weights)[nominal_index * @as(usize, self.sample_count) + sample_index] = value;
     }
 
+    // hot path:
+    //   when: table-backed line-shape integration selects the nearest nominal kernel row
+    //   work: scans nominal wavelengths and returns the closest row index
+    //   data: nominal wavelength array and target wavelength
+    //   follow: writeNormalizedKernelForNominal
     pub fn nearestNominalIndex(self: *const InstrumentLineShapeTable, wavelength_nm: f64) ?usize {
         if (self.nominal_count == 0) return null;
 
@@ -222,6 +232,11 @@ pub const InstrumentLineShapeTable = struct {
         return best_index;
     }
 
+    // hot path:
+    //   when: instrument integration uses a table-backed line-shape kernel
+    //   work: selects the nearest nominal row, copies offsets/weights, and normalizes weights
+    //   data: nominal wavelength table, per-nominal weights, kernel output slices
+    //   follow: spectral_eval integration loops consuming kernel offsets/weights
     pub fn writeNormalizedKernelForNominal(
         self: *const InstrumentLineShapeTable,
         nominal_wavelength_nm: f64,

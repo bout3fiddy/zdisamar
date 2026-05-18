@@ -39,6 +39,11 @@ pub const SharedOpticalCarrier = struct {
     }
 };
 
+// hot path:
+//   when: once per high-resolution wavelength and reused across layer/source passes
+//   work: memoizes support-row optical carriers for the current wavelength
+//   data: valid-bit slice, carrier slice, prepared state, profile spectroscopy cache
+//   follow: cachedSupportRowRef and fills from shared support-row carrier functions
 pub const WavelengthCarrierCache = struct {
     profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     support_row_valid: []bool,
@@ -338,6 +343,11 @@ pub fn sharedBoundaryCarrierAtLevel(
     );
 }
 
+// hot path:
+//   when: RTM levels or source interfaces need boundary carriers without a wavelength carrier cache
+//   work: evaluates boundary gas and particle carriers from support-row and level geometry
+//   data: support sublayers, strong-line states, shared RTM level geometry, profile spectroscopy cache
+//   follow: source_interfaces and rtm_quadrature spectroscopy-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -403,6 +413,11 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     };
 }
 
+// hot path:
+//   when: RTM levels or source interfaces need boundary carriers for a cached wavelength solve
+//   work: reads gas carrier through WavelengthCarrierCache and composes boundary particle fields
+//   data: support sublayers, strong-line states, shared RTM level geometry, carrier cache
+//   follow: source_interfaces and rtm_quadrature carrier-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -484,6 +499,11 @@ pub fn sharedActiveCarrierAtLevel(
     );
 }
 
+// hot path:
+//   when: arbitrary RTM or pseudo-spherical levels require interpolated active carriers
+//   work: blends below/above support-row carriers with particle interpolation for one altitude
+//   data: support sublayers, strong-line states, level geometry, profile spectroscopy cache
+//   follow: composeSharedActiveCarrier and altitude-level consumers
 pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -542,6 +562,11 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     return composeSharedActiveCarrier(wavelength_nm, gas_carrier, particle_below, particle_above, fraction);
 }
 
+// hot path:
+//   when: shared active carriers interpolate particle state across a support interval
+//   work: blends gas, aerosol, cloud, Rayleigh, and phase coefficient fields
+//   data: gas carrier, below/above particle carriers, interpolation fraction, wavelength
+//   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and phase coefficient layout
 fn composeSharedActiveCarrier(
     wavelength_nm: f64,
     gas_carrier: SharedOpticalCarrier,
@@ -773,6 +798,11 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     };
 }
 
+// hot path:
+//   when: while filling a support-row carrier for an active wavelength
+//   work: evaluates and weights active line absorbers into shared carrier spectroscopy fields
+//   data: line absorber array, density weighting, profile spectroscopy cache, wavelength
+//   follow: layer_spectroscopy.resolveSpectroscopyEvaluation and absorber field layout
 fn weightedSpectroscopyEvaluationAtSupportRow(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -862,6 +892,11 @@ pub fn sharedOpticalCarrierAtSupportRow(
     );
 }
 
+// hot path:
+//   when: support-row carrier evaluation runs without WavelengthCarrierCache
+//   work: fills one shared optical carrier from sublayer scalar fields and spectroscopy cache
+//   data: support sublayer, strong-line state, wavelength, profile spectroscopy cache
+//   follow: fillSharedOpticalCarrierAtSupportRowWithScalarCache
 pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -921,6 +956,11 @@ fn sharedOpticalCarrierAtSupportRowWithScalarCache(
     return carrier;
 }
 
+// hot path:
+//   when: on a support-row carrier cache miss for the current wavelength
+//   work: combines cross-section LUTs, line spectroscopy, CIA/Rayleigh, particles, and phase terms
+//   data: scalar support row, active absorbers, cross-section LUTs, carrier output fields
+//   follow: weightedSpectroscopyEvaluationAtSupportRow and interpolatePhaseCoefficientsByScattering
 fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
     out: *SharedOpticalCarrier,
     self: *const State.PreparedOpticalState,
@@ -1033,6 +1073,11 @@ fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
     };
 }
 
+// hot path:
+//   when: support-row carrier evaluation runs through WavelengthCarrierCache
+//   work: returns or fills one cached shared optical carrier for a support row
+//   data: support sublayer, global sublayer index, strong-line state, carrier cache
+//   follow: WavelengthCarrierCache.cachedSupportRow and cachedSupportRowRef
 pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1067,6 +1112,11 @@ pub fn sharedOpticalCarrierAtAltitude(
     );
 }
 
+// hot path:
+//   when: source-interface or pseudo-spherical paths request carriers at arbitrary altitude
+//   work: interpolates neighboring support rows and evaluates active absorbers at the target altitude
+//   data: support-row slices, profile spectroscopy cache, active absorber state, interpolation weights
+//   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and altitude bracket lookup
 pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,

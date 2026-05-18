@@ -25,6 +25,11 @@ pub fn fillSourceInterfacesAtWavelengthWithLayers(
     );
 }
 
+// hot path:
+//   when: forward input construction fills source interfaces without a wavelength carrier cache
+//   work: evaluates boundary carriers or derives interfaces from adjacent layer inputs
+//   data: layer input array, shared RTM level geometry, profile spectroscopy cache, source-interface output
+//   follow: carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -112,6 +117,11 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     }
 }
 
+// hot path:
+//   when: forward input construction fills source interfaces for a cached wavelength solve
+//   work: evaluates boundary carriers through WavelengthCarrierCache and writes source-interface rows
+//   data: layer input array, shared RTM level geometry, carrier cache, source-interface output
+//   follow: carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,

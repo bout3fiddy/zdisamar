@@ -59,6 +59,11 @@ pub const OwnedVerticalGrid = struct {
     }
 };
 
+// hot path:
+//   when: optical-state preparation builds the vertical grid before layer accumulation
+//   work: selects explicit interval or legacy grid construction
+//   data: scene atmosphere controls, climatology profile, owned vertical-grid storage
+//   follow: buildExplicit, buildExplicitDisamarParity, and buildLegacy
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -70,6 +75,11 @@ pub fn build(
     return buildLegacy(allocator, scene, profile);
 }
 
+// hot path:
+//   when: explicit interval grids define layer and sublayer geometry
+//   work: allocates grid arrays and fills layer/sublayer altitude, pressure, interval, and label fields
+//   data: interval definitions, climatology profile interpolation, grid output arrays
+//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildExplicit(
     allocator: Allocator,
     scene: *const Scene,
@@ -171,6 +181,11 @@ fn buildExplicit(
     return grid;
 }
 
+// hot path:
+//   when: explicit interval grids use DISAMAR parity support geometry
+//   work: builds RTM support nodes and sublayer support weights from quadrature division points
+//   data: interval bounds, Gauss nodes/weights, climatology interpolation, grid output arrays
+//   follow: shared_geometry.buildSharedRtmGeometry and parity support-row accumulation
 fn buildExplicitDisamarParity(
     allocator: Allocator,
     scene: *const Scene,
@@ -298,6 +313,11 @@ fn buildExplicitDisamarParity(
     return grid.*;
 }
 
+// hot path:
+//   when: legacy atmosphere controls define evenly divided vertical layers
+//   work: fills layer and sublayer altitude/pressure/weight arrays
+//   data: layer count, sublayer divisions, climatology profile, grid output arrays
+//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildLegacy(
     allocator: Allocator,
     scene: *const Scene,

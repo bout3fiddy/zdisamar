@@ -34,6 +34,11 @@ pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     };
 }
 
+// hot path:
+//   when: small fixed-size scientific fits need a direct 3x3 solve
+//   work: applies pivoted Gaussian elimination on stack-resident arrays
+//   data: 3x3 matrix cells and 3-vector rhs
+//   follow: fixed dense solve callers and heap-backed factorization boundaries
 pub fn solve3x3(matrix: [3][3]f64, rhs: [3]f64) Error![3]f64 {
     var a = matrix;
     var b = rhs;

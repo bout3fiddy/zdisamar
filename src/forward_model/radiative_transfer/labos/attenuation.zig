@@ -55,6 +55,11 @@ pub const DynamicAttenArray = struct {
     }
 };
 
+// hot path:
+//   when: LABOS transport and pseudo-spherical paths request level-to-level attenuation
+//   work: serves cached adjacent and top-to-level transmittance values
+//   data: layer transmittance arrays, top-to-level arrays, runtime geometry dimensions
+//   follow: RuntimeAttenArray.get and transportToOtherLevels callers
 pub const RuntimeAttenArray = struct {
     layer_transmittance: []const f64,
     top_to_level: []const f64,
@@ -87,6 +92,11 @@ fn layerTransmittanceIndex(nlayer: usize, imu: usize, layer_index: usize) usize 
     return imu * nlayer + layer_index;
 }
 
+// hot path:
+//   when: before LABOS order transport builds dynamic/runtime attenuation caches
+//   work: converts layer optical depths into per-stream transmittance rows
+//   data: layer optical depths, geometry stream cosines, layer transmittance output
+//   follow: fillRuntimeTopToLevelFromLayerCache and fillDynamicAttenuationFromLayerCache
 fn fillLayerTransmittance(
     layer_transmittance: []f64,
     layers: []const common.LayerInput,
@@ -305,6 +315,11 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
 
 const max_pseudo_spherical_fast_samples: usize = 512;
 
+// hot path:
+//   when: pseudo-spherical runtime attenuation uses a prepared support grid
+//   work: applies top-to-level attenuation from prepared samples across streams and levels
+//   data: prepared pseudo-spherical samples, runtime attenuation cache, layer grid levels
+//   follow: sample order from forward_input pseudo-spherical buffers
 fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
     top_to_level: []f64,
     pseudo_spherical_grid: common.PseudoSphericalGrid,
@@ -346,6 +361,11 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
     }
 }
 
+// hot path:
+//   when: pseudo-spherical dynamic attenuation uses a prepared support grid
+//   work: writes top-level attenuation samples across streams and levels
+//   data: prepared pseudo-spherical samples, attenuation table, geometry stream count
+//   follow: applyPseudoSphericalTopLevelAttenuationDynamicWithGrid callers
 fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
     atten: *DynamicAttenArray,
     pseudo_spherical_grid: common.PseudoSphericalGrid,
@@ -469,6 +489,11 @@ pub fn fillAttenuationDynamicWithGrid(
     );
 }
 
+// hot path:
+//   when: LABOS tangent routes request derivative attenuation
+//   work: fills dynamic attenuation derivatives for layer optical-depth perturbations
+//   data: base layers, derivative layers, geometry streams, attenuation tangent buffer
+//   follow: nonIntegratedReflectanceTangent and ordersScatTangent
 pub fn fillAttenuationTangentDynamic(
     allocator: Allocator,
     layers: []const common.LayerInput,
@@ -569,6 +594,11 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     );
 }
 
+// hot path:
+//   when: layer-resolved LABOS builds attenuation for dynamic geometry
+//   work: fills layer transmittance and expands it into level-pair attenuation tables
+//   data: layer transmittance cache, attenuation table, geometry levels and streams
+//   follow: fillDynamicAttenuationFromLayerCache and pseudo-spherical overlays
 pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
     allocator: Allocator,
     data: []f64,
@@ -635,6 +665,11 @@ pub fn fillRuntimeAttenuationWithGridInBuffers(
     };
 }
 
+// hot path:
+//   when: dynamic attenuation expands adjacent layer transmittance into all level pairs
+//   work: accumulates transmittance products between source and target optical levels
+//   data: layer transmittance cache, attenuation table, source/target level indexes
+//   follow: attenuation index layout consumed by ordersScatInternal
 fn fillDynamicAttenuationFromLayerCache(
     atten: *DynamicAttenArray,
     layer_transmittance: []const f64,

@@ -25,6 +25,11 @@ pub const O2O2CIARow = struct {
     cia_share_of_total_optical_depth: f64,
 };
 
+// hot path:
+//   when: O2-O2 CIA diagnostics are requested over wavelength by vertical row
+//   work: reuses atmospheric budget rows and materializes CIA share/cross-section fields
+//   data: budget rows, CIA optical depth fields, output CIA rows
+//   follow: atmospheric_budget.build and rowFromBudget
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,

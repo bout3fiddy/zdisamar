@@ -72,6 +72,11 @@ pub const O2LineContributionTable = struct {
     }
 };
 
+// hot path:
+//   when: O2 line-contribution diagnostics are requested over wavelengths and profile nodes
+//   work: iterates wavelengths/profile nodes and appends weak/strong line contribution rows
+//   data: prepared spectroscopy state, primary O2 line list, row list, max-row limit
+//   follow: appendRowsForWavelength and line-list relevant-window selection
 pub fn build(
     allocator: Allocator,
     prepared: *const PreparedOpticalState,
@@ -152,6 +157,11 @@ fn strongLineCount(line_list: SpectroscopyLineList) usize {
     return @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars);
 }
 
+// hot path:
+//   when: O2 line diagnostics expand one wavelength/profile-node pair
+//   work: appends relevant weak-line rows and active strong-line sidecar rows
+//   data: relevant line window, strong-line anchors, thermodynamic state, output row list
+//   follow: weakLineRow, strongLineRow, and strong-line ConvTP state preparation
 fn appendRowsForWavelength(
     allocator: Allocator,
     rows: *std.ArrayList(O2LineContributionRow),

@@ -20,6 +20,11 @@ pub const PhaseKernelRow = struct {
     n: usize,
 };
 
+// hot path:
+//   when: once per Fourier term before phase matrices and reflectance rows are built
+//   work: stores associated Legendre basis values for stream and solar/view geometries
+//   data: PLM basis arrays, Gaussian stream geometry, Fourier index
+//   follow: fillZplusZminFromBasisLimited and reflectance phase-row builders
 pub const FourierPlmBasis = struct {
     i_fourier: usize,
     max_phase_index: usize,
@@ -192,6 +197,11 @@ pub fn fillZplusZminFromBasis(
     );
 }
 
+// hot path:
+//   when: for each layer/Fourier term during RT layer construction
+//   work: builds dense Z+ and Z- phase matrices from coefficients and PLM basis
+//   data: phase coefficients, Fourier PLM basis, stream dimensions, Z matrix outputs
+//   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
 pub fn fillZplusZminFromBasisLimited(
     i_fourier: usize,
     phase_coefs: [types.max_phase_coef]f64,
@@ -273,6 +283,11 @@ pub fn fillZplusZminFromBasisLimited(
     return .{ .Zplus = zplus, .Zmin = zmin };
 }
 
+// hot path:
+//   when: reflectance and Jacobian weighting need phase rows rather than full matrices
+//   work: builds one Z+/Z- row from phase coefficients and PLM basis
+//   data: phase coefficients, row index, PLM basis, Z row outputs
+//   follow: reflectance buildPhaseRowCache and scattering-source weighting
 pub fn fillZplusZminRowFromBasisLimited(
     i_fourier: usize,
     phase_coefs: [types.max_phase_coef]f64,

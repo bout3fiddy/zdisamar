@@ -28,6 +28,11 @@ pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
 const forward_prefetch_chunk_size: usize = 8;
 const forward_prefetch_pooled_chunk_size: usize = 16;
 
+// hot path:
+//   when: allocated once per forward prefetch worker
+//   work: owns reusable layer, source, quadrature, carrier, pseudo-spherical, and LABOS buffers
+//   data: per-worker scratch slices and labos.Workspace
+//   follow: reuse inside prefetchForwardWorkerMain across forward misses
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
@@ -193,6 +198,11 @@ fn integratedSampleFromForward(
     };
 }
 
+// hot path:
+//   when: fallback path for a single uncached high-resolution wavelength
+//   work: allocates temporary carrier and LABOS scratch, then delegates to the scratch-based solver
+//   data: support carrier valid bits, support carriers, labos workspace
+//   follow: callers that bypass batch prefetch and reach this per wavelength
 pub fn computeForwardSampleAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -238,6 +248,11 @@ pub fn computeForwardSampleAtWavelength(
     );
 }
 
+// hot path:
+//   when: once per high-resolution wavelength cache miss in forward/retrieval runs
+//   work: builds wavelength-specific forward input and executes LABOS transport
+//   data: layer inputs, carrier cache arrays, pseudo-spherical buffers, labos workspace
+//   follow: ForwardInput.configuredForwardInput and executePreparedWithLabosWorkspace
 fn computeForwardSampleAtWavelengthWithScratch(
     allocator: Allocator,
     scene: *const Scene,
@@ -295,6 +310,11 @@ fn computeForwardSampleAtWavelengthWithScratch(
     return integratedSampleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
 }
 
+// hot path:
+//   when: on each forward prefetch worker across assigned miss chunks
+//   work: computes one dense result per miss using the worker scratch
+//   data: miss array, result array, profile spectroscopy cache slice, worker scratch
+//   follow: nextForwardPrefetchChunk and computeForwardSampleAtWavelengthWithScratch
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     var thread_name_buffer: [64]u8 = undefined;
     const thread_name = std.fmt.bufPrintZ(
@@ -374,6 +394,11 @@ fn nextForwardPrefetchChunk(worker: *ForwardPrefetchWorker) ?work_partition.Rang
     return chunk;
 }
 
+// hot path:
+//   when: once per forward miss batch before nominal wavelength integration
+//   work: schedules miss chunks across one worker, spawned threads, or a thread pool
+//   data: miss array, profile cache array, result array, worker descriptors
+//   follow: preferredForwardWorkerCount and ForwardSampleScratch allocation boundaries
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,

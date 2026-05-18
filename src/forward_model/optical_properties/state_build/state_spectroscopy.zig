@@ -10,6 +10,11 @@ const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
 const max_spectroscopy_profile_nodes: usize = 256;
 
+// hot path:
+//   when: a high-resolution wavelength needs profile-node O2 spectroscopy reuse
+//   work: evaluates sigma at profile nodes and builds spline second derivatives for altitude sampling
+//   data: spectroscopy profile arrays, prepared weak/strong states, total sigma cache
+//   follow: spectroscopyEvaluationAtAltitudeWithCache and support-row carrier evaluation
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
@@ -71,6 +76,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
         return cache;
     }
 
+    // hot path:
+    //   when: support-row carrier evaluation samples cached profile spectroscopy at altitude
+    //   work: brackets altitude and samples cached endpoint-secant spline sigma
+    //   data: altitude grid, cached total sigma values, cached second derivatives
+    //   follow: spectroscopyEvaluationAtAltitudeWithCache and carrier_eval support-row fills
     pub fn totalSigmaAtAltitude(
         self: *const ProfileNodeSpectroscopyCache,
         altitudes_km: []const f64,
@@ -284,6 +294,11 @@ pub fn spectroscopyEvaluationAtAltitude(
     );
 }
 
+// hot path:
+//   when: support-row carrier evaluation needs spectroscopy at altitude
+//   work: resolves cached profile sigma or falls back to profile/direct spectroscopy evaluation
+//   data: wavelength, temperature, pressure, altitude, prepared strong-line state, profile cache
+//   follow: ProfileNodeSpectroscopyCache.evaluationAtAltitude and spectroscopyEvaluationAtWavelength
 pub fn spectroscopyEvaluationAtAltitudeWithCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -319,6 +334,11 @@ pub fn spectroscopySigmaAtAltitude(
     ).total_sigma_cm2_per_molecule;
 }
 
+// hot path:
+//   when: pseudo-spherical or diagnostic paths need only sigma at altitude
+//   work: samples cached profile sigma or delegates to full altitude spectroscopy evaluation
+//   data: wavelength, thermodynamic state, altitude, prepared strong-line state, profile cache
+//   follow: ProfileNodeSpectroscopyCache.totalSigmaAtAltitude and spectroscopyEvaluationAtAltitudeWithCache
 pub fn spectroscopySigmaAtAltitudeWithCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,

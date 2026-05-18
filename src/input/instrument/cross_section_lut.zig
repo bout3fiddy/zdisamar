@@ -114,6 +114,11 @@ pub const OperationalCrossSectionLut = struct {
         self.* = .{};
     }
 
+    // hot path:
+    //   when: operational cross-section LUT consumers need sigma at a support row
+    //   work: delegates to the shared LUT evaluator and returns sigma
+    //   data: LUT coefficient storage, wavelength, temperature, pressure
+    //   follow: cross_section_lut_eval.evaluate
     pub fn sigmaAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -123,6 +128,11 @@ pub const OperationalCrossSectionLut = struct {
         return eval_helpers.evaluate(@This(), self, wavelength_nm, temperature_k, pressure_hpa).sigma;
     }
 
+    // hot path:
+    //   when: operational cross-section LUT consumers need temperature derivative at a support row
+    //   work: delegates to the shared LUT evaluator and returns dSigma/dT
+    //   data: LUT coefficient storage, wavelength, temperature, pressure
+    //   follow: cross_section_lut_eval.evaluate
     pub fn dSigmaDTemperatureAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,

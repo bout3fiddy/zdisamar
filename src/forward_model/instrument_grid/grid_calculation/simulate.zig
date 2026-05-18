@@ -280,6 +280,11 @@ fn buildProfileSpectroscopyCaches(
     return caches;
 }
 
+// hot path:
+//   when: once per product simulation in forward and retrieval runs
+//   work: sequences wavelength planning, forward-cache fill, convolution, noise, and Jacobian processing
+//   data: instrument buffers, spectral evaluation cache, wavelength plan storage, active derivative mask
+//   follow: downstream calls into fillRadianceSamples, fillIrradianceSamples, and processJacobianSamples
 pub fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
@@ -408,6 +413,11 @@ fn buildSimulationSetup(
     };
 }
 
+// hot path:
+//   when: once per simulation, with cached storage reused across OE iterations
+//   work: resolves wavelength sampling, unique forward misses, and profile spectroscopy caches
+//   data: wavelength sampling rows, forward miss keys, profile-node spectroscopy cache array
+//   follow: plan storage reuse and cache invalidation before prefetchSimulationPlan
 fn resolveSimulationPlan(
     allocator: Allocator,
     scene: *const Scene,
@@ -535,6 +545,11 @@ fn validateTransportBuffers(
     return transport_layer_count;
 }
 
+// hot path:
+//   when: once per output wavelength after forward misses have been prefetched
+//   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
+//   data: wavelength sampling rows, layer/source/quadrature buffers, spectral cache, jacobian buffer
+//   follow: SpectralEval.integrateForwardAtNominal and convolution/postprocess passes
 fn fillRadianceSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -601,6 +616,11 @@ fn fillRadianceSamples(
     }
 }
 
+// hot path:
+//   when: once per output wavelength for irradiance sampling
+//   work: integrates irradiance samples and applies convolution plus channel postprocess
+//   data: irradiance integration plans, irradiance cache, scratch buffer, output irradiance buffer
+//   follow: SpectralEval.integrateIrradianceAtNominal and calibration-only channel corrections
 fn fillIrradianceSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -657,6 +677,11 @@ fn irradianceCacheCapacity(wavelength_sampling: []const WavelengthSampling.Wavel
     return count;
 }
 
+// hot path:
+//   when: once per simulation when ring correction controls are active
+//   work: applies the irradiance-derived ring spectrum across radiance samples
+//   data: wavelength, irradiance, radiance, and scratch arrays
+//   follow: calibration.applyRingSpectrum and the resolved ring-control payload
 fn applyRingCorrection(scene: *const Scene, buffers: Storage.Buffers) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.ring_correction");
@@ -671,6 +696,11 @@ fn applyRingCorrection(scene: *const Scene, buffers: Storage.Buffers) Storage.Er
     }
 }
 
+// hot path:
+//   when: once per output wavelength after radiance and irradiance channels are materialized
+//   work: computes reflectance and accumulates summary statistics
+//   data: radiance, irradiance, reflectance, and running summary fields
+//   follow: contiguous output buffers and the summary accumulator write pattern
 fn assembleReflectance(
     scene: *const Scene,
     sample_count: usize,
@@ -693,6 +723,11 @@ fn assembleReflectance(
     }
 }
 
+// hot path:
+//   when: once per simulation when noise or reflectance sigma outputs are requested
+//   work: materializes channel sigma arrays and combines radiance/irradiance noise into reflectance noise
+//   data: radiance, irradiance, reflectance, sigma buffers, scratch buffers
+//   follow: Postprocess.materializeChannelSigma and reflectance calibration error sigma
 fn materializeNoiseSamples(
     scene: *const Scene,
     implementations: Types.Implementations,
@@ -761,6 +796,11 @@ fn materializeNoiseSamples(
     };
 }
 
+// hot path:
+//   when: once per simulation when a Jacobian buffer is requested
+//   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
+//   data: derivative state mask, column-major scratch views, jacobian buffer, wavelength array
+//   follow: copyJacobianColumnToScratch and Postprocess.applyChannelJacobianCorrections
 fn processJacobianSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

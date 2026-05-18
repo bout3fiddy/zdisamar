@@ -4,6 +4,11 @@ pub const Rule = struct {
     weights: [10]f64,
 };
 
+// hot path:
+//   when: dynamic Gauss quadrature is built for integration or RTM subgrids
+//   work: solves Legendre roots and weights for the requested order
+//   data: output node/weight slices, Legendre polynomial recurrence state
+//   follow: fixed-rule callers and dynamic node rebuild boundaries
 pub fn fillNodesAndWeights(
     order: u32,
     nodes_out: []f64,
@@ -44,6 +49,11 @@ pub fn fillNodesAndWeights(
 
 const max_disamar_division_points: usize = 256;
 
+// hot path:
+//   when: adaptive instrument sampling needs DISAMAR-style unit interval division points
+//   work: computes quadrature nodes and squared first-row weights via the DISAMAR eigen routine
+//   data: diagonal/off-diagonal work arrays, first-row weights, output node/weight slices
+//   follow: adaptive_plan.fillAdaptiveUnitGauss and interval sample generation
 pub fn fillDisamarDivPoints01(
     order: u32,
     nodes_out: []f64,
@@ -86,6 +96,11 @@ pub fn fillDisamarDivPoints01(
     }
 }
 
+// hot path:
+//   when: RTM shared geometry or adaptive sampling builds interval quadrature points
+//   work: computes DISAMAR division points and scales them to a target interval
+//   data: diagonal/off-diagonal work arrays, interval bounds, output node/weight slices
+//   follow: shared_geometry.resolveGaussRule and adaptive interval consumers
 pub fn fillDisamarDivPointsInterval(
     order: u32,
     a0: f64,
@@ -131,6 +146,11 @@ pub fn fillDisamarDivPointsInterval(
     }
 }
 
+// hot path:
+//   when: DISAMAR-style division points are computed for dynamic quadrature
+//   work: diagonalizes the tridiagonal quadrature system and sorts eigenvalues
+//   data: diagonal, off-diagonal, and first-row work arrays
+//   follow: fillDisamarDivPoints01 and fillDisamarDivPointsInterval
 fn gausq2Disamar(
     diagonal: []f64,
     off_diagonal: []f64,

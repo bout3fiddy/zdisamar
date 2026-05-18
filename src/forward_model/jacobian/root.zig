@@ -44,10 +44,20 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
     vector[stateIndex(state)] = value;
 }
 
+// hot path:
+//   when: integrated forward samples accumulate active Jacobian vectors
+//   work: adds a scaled fixed-size derivative vector into an accumulator
+//   data: jacobian vector cells, accumulator cells, scalar factor
+//   follow: spectral_eval.integrateForwardAtNominal and reflectance assembly
 pub fn addScaled(accumulator: *Vector, vector: Vector, factor: f64) void {
     for (0..state_count) |index| accumulator[index] += factor * vector[index];
 }
 
+// hot path:
+//   when: simulation summaries compute mean Jacobian vectors
+//   work: multiplies the fixed-size derivative vector by one scalar
+//   data: jacobian vector cells and scalar factor
+//   follow: simulate.processJacobianSamples summary return path
 pub fn scale(vector: Vector, factor: f64) Vector {
     var result = vector;
     for (&result) |*value| value.* *= factor;

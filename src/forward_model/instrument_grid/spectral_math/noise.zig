@@ -12,6 +12,11 @@ pub const Error = error{
     UnsupportedS5OperationalRange,
 };
 
+// hot path:
+//   when: shot-noise sigma is materialized for an output channel
+//   work: converts signal counts to electron noise and writes sigma per sample
+//   data: signal array, electrons-per-count scale, output sigma array
+//   follow: Postprocess.materializeChannelSigma callers
 pub fn shotNoiseStd(signal: []const f64, electrons_per_count: f64, output: []f64) Error!void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (!std.math.isFinite(electrons_per_count) or electrons_per_count <= 0.0) {
@@ -23,6 +28,11 @@ pub fn shotNoiseStd(signal: []const f64, electrons_per_count: f64, output: []f64
     }
 }
 
+// hot path:
+//   when: retrieval cost evaluation whitens residual vectors
+//   work: divides residual samples by validated sigma weights
+//   data: residual array, sigma array, whitened output array
+//   follow: OE residual assembly callers and sigma materialization
 pub fn whitenResiduals(residual: []const f64, sigma: []const f64, output: []f64) Error!void {
     if (residual.len != sigma.len or residual.len != output.len) return error.ShapeMismatch;
     for (residual, sigma, output) |value, sigma_value, *slot| {
@@ -44,6 +54,11 @@ pub fn copyInputSigma(input_sigma: []const f64, output: []f64) Error!void {
     }
 }
 
+// hot path:
+//   when: noise models scale reference sigma to the current simulated signal
+//   work: applies signal-ratio and bin-width scaling per spectral sample
+//   data: reference signal, reference sigma, current signal, output sigma
+//   follow: channel noise materialization and reflectance sigma combination
 pub fn scaleSigmaFromReference(
     reference_signal: []const f64,
     reference_sigma: []const f64,
@@ -77,6 +92,11 @@ pub fn scaleSigmaFromReference(
     }
 }
 
+// hot path:
+//   when: signal-to-noise curves materialize channel sigma
+//   work: samples SNR by wavelength and divides signal into sigma per sample
+//   data: wavelength array, SNR wavelength/value arrays, signal array, output sigma
+//   follow: sampling.sampleLinearClampedAssumeValid and channel postprocess order
 pub fn sigmaFromInterpolatedSignalToNoise(
     wavelengths_nm: []const f64,
     snr_wavelengths_nm: []const f64,
@@ -103,6 +123,11 @@ pub fn sigmaFromInterpolatedSignalToNoise(
     }
 }
 
+// hot path:
+//   when: LAB-style operational noise is requested for a channel
+//   work: evaluates parametric sigma from signal and noise coefficients per sample
+//   data: signal array, a/b coefficients, output sigma array
+//   follow: noise materialization path selected by implementations.noise
 pub fn sigmaFromLabOperational(signal: []const f64, a: f64, b: f64, output: []f64) Error!void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (!std.math.isFinite(a) or a <= 0.0 or !std.math.isFinite(b) or b < 0.0) {
@@ -114,6 +139,11 @@ pub fn sigmaFromLabOperational(signal: []const f64, a: f64, b: f64, output: []f6
     }
 }
 
+// hot path:
+//   when: S5 operational noise is requested for a channel
+//   work: selects wavelength-dependent coefficients and writes sigma per sample
+//   data: wavelength array, signal array, output sigma array
+//   follow: s5OperationalCoefficients branch shape across the spectral band
 pub fn sigmaFromS5Operational(
     wavelengths_nm: []const f64,
     signal: []const f64,

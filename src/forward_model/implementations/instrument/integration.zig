@@ -89,6 +89,11 @@ pub fn integrationForWavelengthWithAdaptiveCache(
     };
 }
 
+// hot path:
+//   when: wavelength sampling builds radiance/irradiance integration kernels per nominal wavelength
+//   work: chooses table, fixed line-shape, adaptive, or default integration samples
+//   data: channel response controls, adaptive cache, offsets/weights kernel storage
+//   follow: adaptive_plan builders and response_support.spectralResponseWeight
 pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     scene: *const Scene,
     prepared: ?*const PreparedOpticalState,
@@ -266,6 +271,11 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     kernel.sample_count = default_integration_sample_count;
 }
 
+// hot path:
+//   when: wavelength sampling can reuse adaptive instrument grids across nominal wavelengths
+//   work: prepares strong-line-aware support data for adaptive kernel construction
+//   data: scene response controls, prepared spectroscopy state, adaptive cache storage
+//   follow: adaptive_cache.prepareAdaptiveKernelCache and adaptive_plan interval construction
 pub fn prepareAdaptiveKernelCache(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,

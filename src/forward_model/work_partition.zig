@@ -93,6 +93,11 @@ pub const ChunkQueue = struct {
         };
     }
 
+    // hot path:
+    //   when: variable-cost workers claim chunks for wavelength sampling or support-row setup
+    //   work: hands out the next contiguous item range under a short mutex
+    //   data: next index, item count, chunk size, returned range
+    //   follow: wavelengthSamplingWorkerMain and profile/support-row worker loops
     pub fn next(self: *ChunkQueue) ?Range {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -105,6 +110,11 @@ pub const ChunkQueue = struct {
     }
 };
 
+// hot path:
+//   when: forward prefetch assigns known expensive misses to workers
+//   work: computes deterministic ownership range for one worker
+//   data: item count, worker count, worker index
+//   follow: spectral_forward.prefetchForwardSamples worker setup
 pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) Range {
     std.debug.assert(worker_count != 0);
     std.debug.assert(worker_index < worker_count);
@@ -136,6 +146,11 @@ pub fn rangesAreBalanced(item_count: usize, worker_count: usize) bool {
     return max_count - min_count <= 1;
 }
 
+// hot path:
+//   when: sampling and forward-prefetch schedulers choose worker count for a batch
+//   work: resolves CPU count and configured worker limit into an item-count-based worker count
+//   data: item count, minimum items per worker, CPU count, worker-limit environment value
+//   follow: preferredWorkerCountForCpuCount and caller chunk/range ownership
 pub fn preferredWorkerCount(item_count: usize, min_items_per_worker: usize) usize {
     const cpu_count = std.Thread.getCpuCount() catch 1;
     return preferredWorkerCountForCpuCount(

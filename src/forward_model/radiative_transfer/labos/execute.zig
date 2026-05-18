@@ -120,6 +120,11 @@ pub fn execute(
     return executeWithWorkspace(allocator, route, input, null);
 }
 
+// hot path:
+//   when: once per high-resolution forward sample after input construction
+//   work: dispatches direct, single-layer, or layer-resolved LABOS transport
+//   data: route controls, forward input layers, derivative mask, labos workspace
+//   follow: layerResolvedLabosWithWorkspace, singleLayerLabos, and directSurfaceOnlyResolvedWithWorkspace
 pub fn executeWithWorkspace(
     allocator: std.mem.Allocator,
     route: common.Route,
@@ -166,6 +171,11 @@ pub fn executeWithWorkspace(
     };
 }
 
+// hot path:
+//   when: for each high-resolution wavelength using layer-resolved LABOS transport
+//   work: loops Fourier terms through phase basis, RT layer build, scattering orders, reflectance, and Jacobians
+//   data: layer inputs, attenuation arrays, RT matrices, order workspace, reflectance/Jacobian buffers
+//   follow: labos.fourier_loop trace zones and calcRTlayers/ordersScat/calcIntegratedReflectance calls
 fn layerResolvedLabosWithWorkspace(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -512,6 +522,11 @@ fn layerResolvedLabosWithWorkspace(
     };
 }
 
+// hot path:
+//   when: derivative routes request non-integrated reflectance tangents
+//   work: builds derivative attenuation, RT layers, scattering orders, and reflectance outputs
+//   data: tangent work arrays, base layers, derivative layers, attenuation tangent storage
+//   follow: calcRTlayersTangentIntoWithBasis and ordersScatTangent
 fn nonIntegratedReflectanceTangent(
     allocator: std.mem.Allocator,
     layers: []const common.LayerInput,
@@ -560,6 +575,11 @@ fn nonIntegratedReflectanceTangent(
     return reflectance_mod.calcReflectanceTangent(tangent_orders.ud, layers.len, geo);
 }
 
+// hot path:
+//   when: single-layer route is selected for a high-resolution wavelength
+//   work: runs Fourier phase setup, single-layer scattering orders, and reflectance integration
+//   data: one-layer input, phase basis workspace, order buffers, reflectance result
+//   follow: phase_basis row/matrix builders and ordersScat single-layer path
 fn singleLayerLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,

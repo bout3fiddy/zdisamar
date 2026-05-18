@@ -63,6 +63,11 @@ pub const OrdersWorkspace = struct {
     }
 };
 
+// hot path:
+//   when: inside multiple-scattering order propagation across levels
+//   work: transports up/down source terms between optical levels
+//   data: attenuation cache, level-indexed U/D source arrays, Gauss stream weights
+//   follow: dynamic, runtime12, and fixed12 transport variants selected by route shape
 fn transportToOtherLevels(
     start_level: usize,
     end_level: usize,
@@ -339,6 +344,11 @@ const DotPair = struct {
     col1: f64,
 };
 
+// hot path:
+//   when: inside scattering-order accumulation reductions
+//   work: reduces paired Gauss stream vectors with quadrature weights
+//   data: stream vectors, Gaussian weights, n_gauss loop count
+//   follow: dotGaussPair10 and accumulation callers in ordersScatInternal
 inline fn dotGaussPair(
     mat: *const basis.Mat,
     row: usize,
@@ -363,6 +373,11 @@ inline fn dotGaussPair(
     return .{ .col0 = s0, .col1 = s1 };
 }
 
+// hot path:
+//   when: fixed 10-stream route evaluates scattering-order reductions
+//   work: reduces paired Gauss stream vectors with unrolled fixed-stream access
+//   data: 10-stream vectors and quadrature weights
+//   follow: fixed-route order accumulation and vector element order
 inline fn dotGaussPair10(
     data: []const f64,
     vec0: *const [basis.max_nmutot]f64,
@@ -435,6 +450,11 @@ fn maxOutgoingUpward(
     return max_value;
 }
 
+// hot path:
+//   when: each LABOS scattering-order solve resets per-level order buffers
+//   work: zeroes U/D fields, local sums, current-order fields, and active flags
+//   data: UD field arrays, local sum arrays, active-layer flags, stream count
+//   follow: ordersScatInternal buffer layout and workspace reuse
 fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -470,6 +490,11 @@ fn initVec2Metadata(vec2: *basis.Vec2, nmutot: usize) void {
     vec2.col[1].n = nmutot;
 }
 
+// hot path:
+//   when: each scattering order contributes local source terms to accumulated order fields
+//   work: adds local U/D fields into per-level sums and current-order buffers
+//   data: ud, ud_sum_local, ud_local arrays, level range, stream count
+//   follow: fixed 12-stream accumulate variant and reflectance integration inputs
 fn accumulateOrderContribution(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -556,6 +581,11 @@ fn accumulateOrderContribution12(
     }
 }
 
+// hot path:
+//   when: for each LABOS Fourier term after RT layers and attenuation are ready
+//   work: initializes sources, propagates scattering orders, transports levels, and accumulates reflectance terms
+//   data: order U/D buffers, RT matrices, attenuation arrays, Gauss weights, contribution arrays
+//   follow: labos.orders trace zones and transportToOtherLevels variants
 fn ordersScatInternal(
     comptime track_sum_local: bool,
     comptime rt_active_ready: bool,
@@ -999,6 +1029,11 @@ pub fn ordersScat(
     return result;
 }
 
+// hot path:
+//   when: derivative routes request tangent scattering-order propagation
+//   work: propagates base and derivative order payloads through the scattering-order loop
+//   data: tangent U/D buffers, base order buffers, derivative RT layers, attenuation tangent arrays
+//   follow: tangent transport helpers and derivative accumulation writes
 pub fn ordersScatTangent(
     allocator: Allocator,
     start_level: usize,

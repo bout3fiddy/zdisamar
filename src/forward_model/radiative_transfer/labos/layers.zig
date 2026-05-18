@@ -43,6 +43,11 @@ pub fn zeroFourierIntegral(
 }
 
 // PUB FOR TEST: re-exported via labos/internal.zig.
+// hot path:
+//   when: during zero-Fourier phase preparation before RT layer construction
+//   work: normalizes phase coefficients across layers and scattering streams
+//   data: layer phase coefficients, Gaussian stream geometry, normalization factors
+//   follow: phase coefficient order consumed by fillZplusZmin and layer-doubling
 pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
@@ -117,6 +122,11 @@ pub fn renormalizeZeroFourierPhaseKernel(
 }
 
 // Rsingle: single-scattering reflection for a homogeneous layer.
+// hot path:
+//   when: RT layer construction builds single-scatter reflection matrices
+//   work: fills R matrix entries from attenuation, Z- phase matrix, and scattering albedo
+//   data: output matrix, E attenuation vector, Zmin phase matrix, stream geometry
+//   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
 fn fillSingleScatterR(
     out: *basis.Mat,
     a: f64,
@@ -161,6 +171,11 @@ fn fillSingleScatterR12(
 }
 
 // Tsingle: single-scattering transmission for a homogeneous layer.
+// hot path:
+//   when: RT layer construction builds single-scatter transmission matrices
+//   work: fills T matrix entries from attenuation, Z+ phase matrix, optical depth, and scattering albedo
+//   data: output matrix, E attenuation vector, Zplus phase matrix, stream geometry
+//   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
 fn fillSingleScatterT(
     out: *basis.Mat,
     a: f64,
@@ -252,6 +267,11 @@ inline fn squareAttenuation12(E: *basis.Vec) void {
 }
 
 // Perform ndouble doubling steps on R, T, E for a layer.
+// hot path:
+//   when: dynamic-shape LABOS layer doubling is used for a layer/Fourier term
+//   work: updates reflection/transmission matrices through q-series products
+//   data: R/T matrices, q-series temporaries, stream counts, thresholded matrix products
+//   follow: qseriesKnownNonzeroProductInto and smul matrix helpers
 fn doDouble(
     ndouble: usize,
     n: usize,
@@ -360,6 +380,11 @@ fn doDouble(
     }
 }
 
+// hot path:
+//   when: fixed 12x10 LABOS layer doubling is used for the O2 A route
+//   work: updates reflection/transmission matrices through fixed-shape q-series products
+//   data: fixed matrix cells, q-series temporaries, precomputed stream geometry
+//   follow: doDouble12x10Step and qseriesFromProduct12x10Into
 fn doDouble12x10(
     ndouble: usize,
     threshold_mul: f64,
@@ -480,6 +505,11 @@ fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     return max_index;
 }
 
+// hot path:
+//   when: LABOS workspace precomputes per-layer phase coefficient limits
+//   work: scans phase coefficient arrays and records the highest active coefficient per layer
+//   data: layer phase coefficient arrays and phase-max-index output
+//   follow: calcRTlayersIntoWithBasis Fourier-term skip decisions
 pub fn fillLayerPhaseMaxIndices(
     layer_phase_max_indices: []usize,
     layers: []const common.LayerInput,
@@ -490,6 +520,11 @@ pub fn fillLayerPhaseMaxIndices(
     }
 }
 
+// hot path:
+//   when: LABOS workspace precomputes effective scattering suffixes by layer
+//   work: scans phase coefficients in reverse order and writes suffix maxima
+//   data: layer phase coefficient arrays, phase max indexes, suffix output array
+//   follow: calcRTlayersIntoWithBasis effective-scattering lookup
 pub fn fillLayerEffectiveScatteringSuffixes(
     suffixes: []f64,
     layers: []const common.LayerInput,
@@ -511,6 +546,11 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     }
 }
 
+// hot path:
+//   when: for each layer inside each LABOS Fourier term
+//   work: builds phase matrices, effective scattering suffixes, exponentials, single scatter, and doubled RT layers
+//   data: layer optical properties, phase basis, RT layer outputs, doubling workspace
+//   follow: labos.rt_layer trace zones and fixed 12x10 versus dynamic doubling branches
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -661,6 +701,11 @@ pub fn calcRTlayersIntoWithBasis(
     }
 }
 
+// hot path:
+//   when: tangent transport derivatives are requested for LABOS layers
+//   work: builds derivative RT layers alongside the base layer matrix path
+//   data: base layer inputs, derivative layer inputs, tangent RT outputs, phase basis
+//   follow: calcRTlayersIntoWithBasis and derivative workspace consumers
 pub fn calcRTlayersTangentIntoWithBasis(
     rt_tangent: []LayerRT,
     layers: []const common.LayerInput,
