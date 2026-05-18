@@ -731,6 +731,73 @@ Conclusion:
   descriptor payload and duplicate candidate buffers without changing the
   integration samples
 
+### Experiment 13: share prepared particle phase payloads
+
+Changed:
+- `PreparedSublayer` no longer stores aerosol, cloud, and combined phase
+  coefficient arrays per support row
+- prepared aerosol/cloud phase coefficients are stored once on the request-level
+  `PreparationContext` and retained `PreparedOpticalState`
+- carrier evaluation and RTM quadrature paths now combine phase coefficients
+  from the prepared state instead of copying them through sublayer, boundary,
+  and interpolation helper payloads
+- the unused prepared combined phase array was removed rather than recomputed or
+  moved elsewhere
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `PreparedSublayer` | 3,896 B | 272 B | -93.02% |
+| per support-row phase payload | 3,624 B | 0 B | -100.00% |
+| `PreparedOpticalState` | 1,056 B | 3,472 B | +2,416 B once |
+| `PreparationContext` | 976 B | 3,392 B | +2,416 B temporary once |
+| `ParticleBoundaryCarrier` | 2,448 B | 32 B | -98.69% |
+| `InterpolatedQuadratureState` | 2,496 B | 80 B | -96.79% |
+| `ParitySupportRowWorker` | 2,720 B | 304 B | -88.82% |
+| `LevelCarrier` | 2,432 B | 1,224 B | -49.67% |
+
+Interpretation:
+- particle phase coefficients are wavelength/request-level data in the prepared
+  path; the old layout copied the same two `[151]f64` arrays into every support
+  row
+- combined phase coefficients are derived from gas/aerosol/cloud scattering and
+  were already recomputed by the wavelength carrier paths that consume them
+- this moves a repeated max-capacity payload out of the hot support-row array and
+  replaces it with one retained copy per prepared state
+- temporary carrier structs now carry scalar particle depth fields and read the
+  shared phase arrays only when constructing the final combined rows
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; OE session AOD diff
+  `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.051584 s | 1.004895 s | 0.9556 |
+| forward session cached median | 0.339848 s | 0.305400 s | 0.8986 |
+| forward fast four-scene median | 4.956055 s | 4.851848 s | 0.9790 |
+| OE session retrieval median | 1.407150 s | 1.279187 s | 0.9091 |
+| OE fast retrieval median | 1.098145 s | 0.996457 s | 0.9074 |
+| OE sweep session total wall | 21.562965 s | 21.150677 s | 0.9809 |
+| OE sweep fast total wall | 11.783081 s | 11.470317 s | 0.9735 |
+
+Conclusion:
+- this is a multi-megabyte retained-layout win for any prepared state with many
+  support rows: the repeated support-row payload drops by 3,624 B per row, paid
+  back by one 2,416 B retained prepared-state copy
+- benchmark residuals stayed unchanged and all retained median/tally timings
+  improved in the five-case `run_benchmark.py` gate
+- this experiment is worth keeping because it removes repeated memoized phase
+  data while also reducing temporary carrier copy traffic
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

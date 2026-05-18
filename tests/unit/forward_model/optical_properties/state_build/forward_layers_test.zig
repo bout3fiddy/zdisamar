@@ -102,9 +102,6 @@ test "shared forward layers reduce prepared support rows" {
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -132,9 +129,6 @@ test "shared forward layers reduce prepared support rows" {
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
-            .combined_phase_coefficients = aerosol_phase,
             .support_row_kind = .parity_active,
         },
         .{
@@ -162,9 +156,6 @@ test "shared forward layers reduce prepared support rows" {
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -192,9 +183,6 @@ test "shared forward layers reduce prepared support rows" {
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
-            .combined_phase_coefficients = aerosol_phase,
             .support_row_kind = .parity_active,
         },
         .{
@@ -222,9 +210,6 @@ test "shared forward layers reduce prepared support rows" {
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
     };
@@ -239,6 +224,8 @@ test "shared forward layers reduce prepared support rows" {
         .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
+        .aerosol_phase_coefficients = aerosol_phase,
+        .cloud_phase_coefficients = zero_phase,
         .effective_temperature_k = 270.0,
         .effective_pressure_hpa = 800.0,
         .column_density_factor = 0.0,

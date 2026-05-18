@@ -212,13 +212,12 @@ pub const PreparedSupportRowKind = enum {
 
 // Prepared sublayer state on the fine radiative transfer grid.
 // layout(64-bit):
-//   size: 3896 B, align: 8 B
-//   field storage: 3890 B across 40 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, combined_phase_coefficients=1208 B; padding: 6 B (48 bits)
+//   size: 272 B, align: 8 B
+//   field storage: 266 B across 37 fields; largest: altitude_km=8 B, pressure_hpa=8 B, temperature_k=8 B; padding: 6 B (48 bits)
 //   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B, combined_phase_coefficients:[151]f64=1208 B
-//   cache span: 61 cache line(s) at 64 B per line
+//   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3896 B (3.805 KiB); total = per instance * live instance count
+//   footprint: per instance = 272 B (0.266 KiB); total = per instance * live instance count
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
@@ -248,9 +247,6 @@ pub const PreparedSublayer = struct {
     cloud_base_optical_depth: f64 = 0.0,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
-    aerosol_phase_coefficients: [phase_coefficient_count]f64,
-    cloud_phase_coefficients: [phase_coefficient_count]f64,
-    combined_phase_coefficients: [phase_coefficient_count]f64,
     top_altitude_km: f64 = 0.0,
     bottom_altitude_km: f64 = 0.0,
     top_pressure_hpa: f64 = 0.0,

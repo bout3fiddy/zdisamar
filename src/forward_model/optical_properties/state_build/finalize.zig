@@ -60,6 +60,8 @@ pub fn assemble(
             table.interpolate(context.midpoint_nm).single_scatter_albedo
         else
             scene.cloud.single_scatter_albedo,
+        .aerosol_phase_coefficients = context.aerosol_phase_coefficients,
+        .cloud_phase_coefficients = context.cloud_phase_coefficients,
         .effective_temperature_k = means.effective_temperature_k,
         .effective_pressure_hpa = means.effective_pressure_hpa,
         .air_column_density_factor = means.air_column_density_factor,

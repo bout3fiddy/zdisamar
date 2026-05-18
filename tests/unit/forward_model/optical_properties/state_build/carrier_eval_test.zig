@@ -16,7 +16,6 @@ const buildSharedRtmGeometry = shared_geometry.buildSharedRtmGeometry;
 test "shared RTM active levels retain particle scattering from adjacent parity support rows" {
     const allocator = std.testing.allocator;
     const wavelength_nm = 760.0;
-    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
     const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
     const cloud_phase = PhaseFunctions.hgPhaseCoefficients(0.25);
 
@@ -98,9 +97,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -128,9 +124,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = aerosol_phase,
             .support_row_kind = .parity_active,
         },
         .{
@@ -158,9 +151,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -188,9 +178,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = aerosol_phase,
             .support_row_kind = .parity_active,
         },
         .{
@@ -218,9 +205,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
             .support_row_kind = .parity_boundary,
         },
     };
@@ -234,6 +218,8 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
         .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
+        .aerosol_phase_coefficients = aerosol_phase,
+        .cloud_phase_coefficients = cloud_phase,
         .effective_temperature_k = 270.0,
         .effective_pressure_hpa = 800.0,
         .column_density_factor = 0.0,
@@ -271,8 +257,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
 }
 
 test "quadrature-state interpolation clamps scalar state at the support-row ends" {
-    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
-    const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
     const sublayers = [_]PreparedSublayer{
         .{
             .altitude_km = 1.0,
@@ -286,8 +270,6 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
             .continuum_cross_section_cm2_per_molecule = 0.0,
             .line_cross_section_cm2_per_molecule = 0.0,
             .line_mixing_cross_section_cm2_per_molecule = 0.0,
@@ -299,7 +281,6 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .gas_extinction_optical_depth = 0.0,
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
-            .combined_phase_coefficients = zero_phase,
             .parent_layer_index = 0,
             .sublayer_index = 0,
         },
@@ -315,8 +296,6 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = zero_phase,
             .continuum_cross_section_cm2_per_molecule = 0.0,
             .line_cross_section_cm2_per_molecule = 0.0,
             .line_mixing_cross_section_cm2_per_molecule = 0.0,
@@ -328,7 +307,6 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .gas_extinction_optical_depth = 0.0,
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
-            .combined_phase_coefficients = zero_phase,
             .parent_layer_index = 0,
             .sublayer_index = 0,
         },

@@ -130,6 +130,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     var breakdown: OpticalDepthBreakdown = .{};
     var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     const gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
+    const aerosol_phase_coefficients = self.aerosol_phase_coefficients;
+    const cloud_phase_coefficients = self.cloud_phase_coefficients;
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
 
     for (sublayers, 0..) |sublayer, sublayer_index| {
@@ -249,8 +251,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         for (0..phase_coefficient_count) |index| {
             phase_numerator[index] +=
                 gas_scattering_optical_depth * gas_phase_coefficients[index] +
-                aerosol_scattering_optical_depth * sublayer.aerosol_phase_coefficients[index] +
-                cloud_scattering_optical_depth * sublayer.cloud_phase_coefficients[index];
+                aerosol_scattering_optical_depth * aerosol_phase_coefficients[index] +
+                cloud_scattering_optical_depth * cloud_phase_coefficients[index];
         }
     }
 

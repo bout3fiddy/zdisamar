@@ -7,18 +7,20 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const particle_compat = @import("../particle_support.zig");
+const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Types = @import("state_types.zig");
 
 const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
-//   size: 1056 B, align: 8 B
-//   field storage: 1054 B across 59 fields; largest: spectroscopy_lines=216 B, cloud_fraction_control=88 B, aerosol_fraction_control=88 B; padding: 2 B (16 bits)
+//   size: 3472 B, align: 8 B
+//   field storage: 3470 B across 61 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 2 B (16 bits)
 //   unused bits: 16 padding + 35 bool-storage slack = 51 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 17 cache line(s) at 64 B per line
+//   cache span: 55 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1056 B (1.031 KiB); total also includes referenced storage above
+//   footprint: per instance = 3472 B (3.391 KiB); total also includes referenced storage above
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -49,6 +51,8 @@ pub const PreparedOpticalState = struct {
     effective_single_scatter_albedo: f64,
     aerosol_single_scatter_albedo: f64 = -1.0,
     cloud_single_scatter_albedo: f64 = -1.0,
+    aerosol_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    cloud_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
     air_column_density_factor: f64 = 0.0,

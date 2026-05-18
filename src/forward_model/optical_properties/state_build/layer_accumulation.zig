@@ -44,14 +44,13 @@ const ParitySupportRowErrorState = struct {
 };
 
 // layout(64-bit):
-//   size: 2720 B, align: 8 B
-//   field storage: 2720 B across 18 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, totals=160 B; padding: 0 B (0 bits)
+//   size: 304 B, align: 8 B
+//   field storage: 304 B across 16 fields; largest: totals=160 B, allocator=16 B, aerosol_sublayer_distribution=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: context, absorbers, profile_spectroscopy_cache, aerosol_sublayer_distribution, cloud_sublayer_distribution, +2 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 43 cache line(s) at 64 B per line
+//   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2720 B (2.656 KiB); total also includes referenced storage above
+//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
@@ -59,8 +58,6 @@ const ParitySupportRowWorker = struct {
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -334,6 +331,8 @@ pub fn populate(
         @as(f64, 1.0)
     else
         @as(f64, 0.0);
+    context.aerosol_phase_coefficients = aerosol_phase_coefficients;
+    context.cloud_phase_coefficients = cloud_phase_coefficients;
     var profile_spectroscopy_cache = LayerSpectroscopy.ProfileSpectroscopyCache.init(
         context,
         absorbers,
@@ -354,8 +353,6 @@ pub fn populate(
                 &totals,
                 aerosol_sublayer_distribution,
                 cloud_sublayer_distribution,
-                aerosol_phase_coefficients,
-                cloud_phase_coefficients,
                 totals.aerosol_single_scatter_albedo,
                 totals.cloud_single_scatter_albedo,
                 aerosol_extinction_scale,
@@ -372,8 +369,6 @@ pub fn populate(
                 &totals,
                 aerosol_sublayer_distribution,
                 cloud_sublayer_distribution,
-                aerosol_phase_coefficients,
-                cloud_phase_coefficients,
                 totals.aerosol_single_scatter_albedo,
                 totals.cloud_single_scatter_albedo,
                 aerosol_extinction_scale,
@@ -403,8 +398,6 @@ pub fn populate(
             &totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
             totals.aerosol_single_scatter_albedo,
             totals.cloud_single_scatter_albedo,
             aerosol_extinction_scale,
@@ -427,8 +420,6 @@ fn populateParitySupportRows(
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -445,8 +436,6 @@ fn populateParitySupportRows(
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
             aerosol_single_scatter_albedo,
             cloud_single_scatter_albedo,
             aerosol_extinction_scale,
@@ -471,8 +460,6 @@ fn populateParitySupportRowsParallel(
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -490,8 +477,6 @@ fn populateParitySupportRowsParallel(
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
             aerosol_single_scatter_albedo,
             cloud_single_scatter_albedo,
             aerosol_extinction_scale,
@@ -517,8 +502,6 @@ fn populateParitySupportRowsParallel(
             .profile_spectroscopy_cache = profile_spectroscopy_cache,
             .aerosol_sublayer_distribution = aerosol_sublayer_distribution,
             .cloud_sublayer_distribution = cloud_sublayer_distribution,
-            .aerosol_phase_coefficients = aerosol_phase_coefficients,
-            .cloud_phase_coefficients = cloud_phase_coefficients,
             .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
             .cloud_single_scatter_albedo = cloud_single_scatter_albedo,
             .aerosol_extinction_scale = aerosol_extinction_scale,
@@ -579,8 +562,6 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                     &worker.totals,
                     worker.aerosol_sublayer_distribution,
                     worker.cloud_sublayer_distribution,
-                    worker.aerosol_phase_coefficients,
-                    worker.cloud_phase_coefficients,
                     worker.aerosol_single_scatter_albedo,
                     worker.cloud_single_scatter_albedo,
                     worker.aerosol_extinction_scale,
@@ -605,8 +586,6 @@ fn populateParitySupportRow(
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -631,8 +610,6 @@ fn populateParitySupportRow(
         totals,
         aerosol_sublayer_distribution,
         cloud_sublayer_distribution,
-        aerosol_phase_coefficients,
-        cloud_phase_coefficients,
         aerosol_single_scatter_albedo,
         cloud_single_scatter_albedo,
         aerosol_extinction_scale,
@@ -793,8 +770,6 @@ fn populateLayer(
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -817,8 +792,6 @@ fn populateLayer(
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
             aerosol_single_scatter_albedo,
             cloud_single_scatter_albedo,
             aerosol_extinction_scale,
@@ -903,8 +876,8 @@ fn populateLayer(
 
 // hot path:
 //   when: for each sublayer or support row during optical-state accumulation
-//   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, particles, and phase writes
-//   data: sublayer thermodynamics, active absorber sets, phase coefficients, optical-depth outputs
+//   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles
+//   data: sublayer thermodynamics, active absorber sets, optical-depth outputs
 //   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
 fn populateSublayer(
     allocator: Allocator,
@@ -914,8 +887,6 @@ fn populateSublayer(
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
-    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_extinction_scale: f64,
@@ -1081,16 +1052,6 @@ fn populateSublayer(
     const cloud_base_optical_depth = cloud_sublayer_distribution[write_index] * cloud_extinction_scale;
     const aerosol_optical_depth = aerosol_base_optical_depth * aerosol_fraction;
     const cloud_optical_depth = cloud_base_optical_depth * cloud_fraction;
-    const aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo;
-    const cloud_scattering_optical_depth = cloud_optical_depth * cloud_single_scatter_albedo;
-    const combined_phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
-        context.midpoint_nm,
-        gas_scattering_optical_depth,
-        aerosol_scattering_optical_depth,
-        cloud_scattering_optical_depth,
-        aerosol_phase_coefficients,
-        cloud_phase_coefficients,
-    );
 
     context.sublayers[write_index] = .{
         .parent_layer_index = @intCast(parent_layer_index),
@@ -1124,9 +1085,6 @@ fn populateSublayer(
         .cloud_base_optical_depth = cloud_base_optical_depth,
         .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
         .cloud_single_scatter_albedo = cloud_single_scatter_albedo,
-        .aerosol_phase_coefficients = aerosol_phase_coefficients,
-        .cloud_phase_coefficients = cloud_phase_coefficients,
-        .combined_phase_coefficients = combined_phase_coefficients,
         .top_altitude_km = top_altitude_km,
         .bottom_altitude_km = bottom_altitude_km,
         .top_pressure_hpa = top_pressure_hpa,
