@@ -381,6 +381,67 @@ Conclusion:
 - it is worth keeping because it removes replicated worker-control payload
   without adding recomputation, extra branches, or lifetime ambiguity
 
+### Experiment 7: encode strong-line anchors with sentinel indexes
+
+Changed:
+- `StrongLineWavelengthWindow.anchors` now stores `usize` indexes with a
+  sentinel for missing anchors instead of `?usize`
+- the index range is unchanged; this only removes the optional tag storage from
+  each anchor slot
+- weak-line exclusion, diagnostic line-contribution output, and support helpers
+  now test the sentinel explicitly
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StrongLineWavelengthWindow` | 2,072 B | 1,048 B | -49.42% |
+| anchor array inside each window | 2,048 B | 1,024 B | -50.00% |
+
+Interpretation:
+- there are at most 128 strong-line sidecars, and every anchor slot either
+  names the relevant weak-line index or stores the missing sentinel
+- using a sentinel keeps the full `usize` index range while avoiding the 16 B
+  per-slot cost of `?usize` on 64-bit targets
+- this reduces stack payload in direct prepared strong-line evaluation,
+  profile-cache initialization, band-mean calculation, and line-contribution
+  diagnostics
+- the profile-cache worker records already reference one shared window after
+  Experiment 6, so this experiment reduces the shared window payload itself
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture reflectance max_abs `5.393e-14`;
+  session-vs-no-session residuals all `0.0`; fast-mode spectra worst
+  `4.963e-04` (`1.600x` noise); OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `3.778e-03`, pressure delta
+  `5.099e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.056962 s | 1.058444 s | 1.0014 |
+| forward session setup | 0.711963 s | 0.711574 s | 0.9995 |
+| forward session cached median | 0.345946 s | 0.346334 s | 1.0011 |
+| forward fast four-scene median | 5.012337 s | 5.002590 s | 0.9981 |
+| OE session setup median | 0.714524 s | 0.716066 s | 1.0022 |
+| OE session retrieval median | 1.436470 s | 1.434888 s | 0.9989 |
+| OE fast retrieval median | 1.121925 s | 1.122163 s | 1.0002 |
+| OE sweep session total wall | 21.636607 s | 21.625501 s | 0.9995 |
+| OE sweep fast total wall | 11.905910 s | 11.912201 s | 1.0005 |
+
+Conclusion:
+- this is a narrow encoding improvement: same logical anchor data, half the
+  anchor payload
+- benchmark timing is flat on the retained boundary, and residuals are
+  unchanged
+- this is worth keeping because it removes optional-tag storage from a repeated
+  strong-line setup object without adding range limits or extra lookup work
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -547,7 +608,7 @@ Relevant layout facts:
 | `ProfileSpectroscopyCache` | 5,144 B | ten `[64]f64` arrays | 0 |
 | `ProfileNodeSpectroscopyCache` | 1,032 B | total values + second derivatives | 0 |
 | `ProfileCacheValueWorker` | 288 B | `SpectroscopyLineList` descriptor | 0 |
-| `StrongLineWavelengthWindow` | 2,072 B | fixed anchor payload | 0 |
+| `StrongLineWavelengthWindow` | 1,048 B | fixed anchor payload | 0 |
 
 Memory access shape:
 - the full profile cache stores weak, strong, line, line-mixing, total, and all

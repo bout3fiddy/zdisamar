@@ -4,6 +4,7 @@ const std = @import("std");
 
 pub const Allocator = std.mem.Allocator;
 pub const max_strong_line_sidecars: usize = 128;
+pub const missing_strong_line_anchor_index = std.math.maxInt(usize);
 pub const hitran_reference_temperature_k = 296.0;
 pub const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;

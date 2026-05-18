@@ -264,7 +264,7 @@ fn weakLineRow(
     start_index: usize,
     line: SpectroscopyLine,
     line_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]usize,
 ) O2LineContributionRow {
     const matched_strong_index = LineListOps.matchedStrongIndexForRelevantLine(
         line_list,
@@ -334,7 +334,7 @@ fn strongLineRow(
     strong_lines: []const SpectroscopyStrongLine,
     strong_line: SpectroscopyStrongLine,
     strong_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]usize,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_state: *const Physics.StrongLineConvTPState,
@@ -393,7 +393,7 @@ fn strongLineRow(
 }
 
 fn strongAnchorLine(
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]usize,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_index: usize,
@@ -405,7 +405,8 @@ fn strongAnchorLine(
     line_index: u32,
 } {
     if (strong_index >= strong_line_anchors.len) return null;
-    const relevant_index = strong_line_anchors[strong_index] orelse return null;
+    const relevant_index = strong_line_anchors[strong_index];
+    if (relevant_index == SpectroscopyTypes.missing_strong_line_anchor_index) return null;
     if (relevant_index >= relevant_lines.len) return null;
     return .{
         .line = relevant_lines[relevant_index],
