@@ -30,11 +30,9 @@ fn fillAerosolSourceJacobian(
     aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
 ) void {
     if (self.aerosol_optical_depth <= 0.0 or aerosol_scattering_optical_depth_per_km <= 0.0) return;
-    const state_index = transport_common.Jacobian.stateIndex(.aerosol_optical_depth);
     const derivative_scale = aerosol_scattering_optical_depth_per_km / self.aerosol_optical_depth;
     for (0..PhaseFunctions.phase_coefficient_count) |index| {
-        rtm_level.ksca_phase_coefficient_jacobian[state_index][index] =
-            derivative_scale * aerosol_phase_coefficients[index];
+        rtm_level.aerosol_ksca_phase_jacobian[index] = derivative_scale * aerosol_phase_coefficients[index];
     }
 }
 
@@ -55,7 +53,6 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     layer_inputs: []const transport_common.LayerInput,
     rtm_levels: []transport_common.RtmQuadratureLevel,
 ) void {
-    const state_index = transport_common.Jacobian.stateIndex(.aerosol_optical_depth);
     var total_weight: f64 = 0.0;
     var total_scattering_derivative: f64 = 0.0;
     const phase_coefficients = blk: {
@@ -108,8 +105,7 @@ fn fillSharedAerosolSourceJacobianFromLayers(
             ) > 0.0;
         if (!below_active and !above_active) continue;
         for (0..PhaseFunctions.phase_coefficient_count) |index| {
-            level.ksca_phase_coefficient_jacobian[state_index][index] =
-                derivative_per_km * phase_coefficients[index];
+            level.aerosol_ksca_phase_jacobian[index] = derivative_per_km * phase_coefficients[index];
         }
     }
 }
@@ -287,9 +283,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 rtm_levels[level].ksca *= scale;
                 for (&rtm_levels[level].aerosol_ksca_phase_above_per_km) |*value| value.* *= scale;
                 for (&rtm_levels[level].aerosol_ksca_phase_below_per_km) |*value| value.* *= scale;
-                for (&rtm_levels[level].ksca_phase_coefficient_jacobian) |*state_row| {
-                    for (state_row) |*value| value.* *= scale;
-                }
+                for (&rtm_levels[level].aerosol_ksca_phase_jacobian) |*value| value.* *= scale;
             }
             has_active_quadrature = true;
         } else {

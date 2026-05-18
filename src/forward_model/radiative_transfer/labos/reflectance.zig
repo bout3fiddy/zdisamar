@@ -501,11 +501,10 @@ fn activeAerosolInteriorBounds(
     rtm_quadrature: common.RtmQuadratureGrid,
     end_level: usize,
 ) ?AerosolIntervalBounds {
-    const state_index = common.Jacobian.stateIndex(.aerosol_optical_depth);
     var first_active: ?usize = null;
     var last_active: ?usize = null;
     for (0..end_level + 1) |ilevel| {
-        if (rtm_quadrature.levels[ilevel].ksca_phase_coefficient_jacobian[state_index][0] <= 0.0) continue;
+        if (rtm_quadrature.levels[ilevel].aerosol_ksca_phase_jacobian[0] <= 0.0) continue;
         if (first_active == null) first_active = ilevel;
         last_active = ilevel;
     }
@@ -864,12 +863,11 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
         return integral / denominator;
     }
 
-    const state_index = common.Jacobian.stateIndex(.aerosol_optical_depth);
     var weighting: f64 = 0.0;
     for (0..end_level + 1) |ilevel| {
         const level = rtm_quadrature.levels[ilevel];
         if (level.weight <= 0.0) continue;
-        const scaled_phase_coefficients = level.ksca_phase_coefficient_jacobian[state_index];
+        const scaled_phase_coefficients = level.aerosol_ksca_phase_jacobian;
         const d_sca_d_tau = scaled_phase_coefficients[0];
         if (d_sca_d_tau == 0.0) continue;
         const source_max_phase_index = maxPhaseCoefficientIndex(scaled_phase_coefficients);

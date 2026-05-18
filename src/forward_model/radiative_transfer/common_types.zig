@@ -268,13 +268,13 @@ pub const SourceInterfaceInput = struct {
 };
 
 // layout(64-bit):
-//   size: 7272 B, align: 8 B
-//   field storage: 7272 B across 7 fields; largest: ksca_phase_coefficient_jacobian=3624 B, phase_coefficients=1208 B, aerosol_ksca_phase_above_per_km=1208 B; padding: 0 B (0 bits)
+//   size: 4856 B, align: 8 B
+//   field storage: 4856 B across 7 fields; largest: phase_coefficients=1208 B, aerosol_ksca_phase_above_per_km=1208 B, aerosol_ksca_phase_below_per_km=1208 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 4 fields reserve 7248 B inside each instance
-//   cache span: 114 cache line(s) at 64 B per line
+//   inline arrays: 4 fields reserve 4832 B inside each instance
+//   cache span: 76 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 7272 B (7.102 KiB); total = per instance * live instance count
+//   footprint: per instance = 4856 B (4.742 KiB); total = per instance * live instance count
 pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
@@ -282,8 +282,7 @@ pub const RtmQuadratureLevel = struct {
     phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
     aerosol_ksca_phase_above_per_km: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
     aerosol_ksca_phase_below_per_km: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
-    ksca_phase_coefficient_jacobian: [jacobian.state_count][phase_coefficient_count]f64 =
-        .{.{0.0} ** phase_coefficient_count} ** jacobian.state_count,
+    aerosol_ksca_phase_jacobian: [phase_coefficient_count]f64 = .{0.0} ** phase_coefficient_count,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
         return self.weight * self.ksca;
