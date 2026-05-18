@@ -234,29 +234,29 @@ pub const StrongLinePreparedState = struct {
 };
 
 // layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: 48 B across 6 fields; largest: shifted_center_wavenumber_cm1=8 B, cte=8 B, line_shape_y=8 B; padding: 0 B (0 bits)
+//   size: 32 B, align: 8 B
+//   field storage: 32 B across 4 fields; largest: shifted_center_wavenumber_cm1=8 B, cte=8 B, line_shape_y=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const WeakLinePreparedLineState = struct {
     shifted_center_wavenumber_cm1: f64,
     cte: f64,
     line_shape_y: f64,
     prefactor_base: f64,
-    safe_temperature: f64,
-    safe_pressure: f64,
 };
 
 // layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: line_count=8 B, lines=16 B; padding: 0 B (0 bits)
+//   size: 40 B, align: 8 B
+//   field storage: 40 B across 4 fields; largest: lines=16 B, line_count=8 B, safe_temperature=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: lines carry references/descriptors; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const WeakLinePreparedState = struct {
     line_count: usize,
+    safe_temperature: f64 = 0.0,
+    safe_pressure: f64 = 0.0,
     lines: []WeakLinePreparedLineState,
 
     pub fn deinit(self: *WeakLinePreparedState, allocator: Allocator) void {

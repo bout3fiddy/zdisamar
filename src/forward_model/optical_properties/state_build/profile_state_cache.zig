@@ -165,6 +165,8 @@ fn cloneWeakState(
 ) !ReferenceData.WeakLinePreparedState {
     return .{
         .line_count = source.line_count,
+        .safe_temperature = source.safe_temperature,
+        .safe_pressure = source.safe_pressure,
         .lines = try allocator.dupe(SpectroscopyTypes.WeakLinePreparedLineState, source.lines),
     };
 }

@@ -227,10 +227,13 @@ pub fn prepareWeakLineStateInto(
 ) void {
     std.debug.assert(prepared.lines.len >= self.lines.len);
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
+    const safe_temperature = @max(temperature_k, 150.0);
+    prepared.safe_temperature = safe_temperature;
+    prepared.safe_pressure = pressure_scale;
     for (self.lines, prepared.lines[0..self.lines.len]) |line, *slot| {
-        slot.* = Physics.prepareWeakLinePreparedLineState(
+        slot.* = Physics.prepareWeakLinePreparedLineStateFromSafe(
             line,
-            temperature_k,
+            safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
         );

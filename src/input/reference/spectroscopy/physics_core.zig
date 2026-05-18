@@ -282,10 +282,24 @@ pub fn prepareWeakLinePreparedLineState(
     pressure_atm: f64,
     reference_temperature_k: f64,
 ) Types.WeakLinePreparedLineState {
-    const Strong = @import("strong_lines.zig");
-
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
+    return prepareWeakLinePreparedLineStateFromSafe(
+        line,
+        safe_temperature,
+        safe_pressure,
+        reference_temperature_k,
+    );
+}
+
+pub fn prepareWeakLinePreparedLineStateFromSafe(
+    line: Types.SpectroscopyLine,
+    safe_temperature: f64,
+    safe_pressure: f64,
+    reference_temperature_k: f64,
+) Types.WeakLinePreparedLineState {
+    const Strong = @import("strong_lines.zig");
+
     const center_wavenumber_cm1 = lineCenterWavenumberCm1(line);
     const temperature_ratio = reference_temperature_k / safe_temperature;
     const pressure_shift_cm1 = linePressureShiftCm1(line);
@@ -332,8 +346,6 @@ pub fn prepareWeakLinePreparedLineState(
             @sqrt(Types.hitran_pi) *
             safe_pressure *
             converted_strength,
-        .safe_temperature = safe_temperature,
-        .safe_pressure = safe_pressure,
     };
 }
 
@@ -435,6 +447,8 @@ pub fn weakLineContributionWithWavelengthState(
 pub fn weakLineContributionPrepared(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,
+    safe_temperature: f64,
+    safe_pressure: f64,
     runtime_controls: Types.SpectroscopyRuntimeControls,
 ) Types.SpectroscopyEvaluation {
     if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) {
@@ -452,12 +466,12 @@ pub fn weakLineContributionPrepared(
         prepared_line.line_shape_y,
     );
     const stimulated_emission_scale = wavelength_state.evaluation_wavenumber_cm1 *
-        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
+        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / safe_temperature));
     const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
-        prepared_line.safe_temperature *
+        safe_temperature *
         Types.hitran_boltzmann_constant_cm3_hpa_per_k /
-        prepared_line.safe_pressure /
+        safe_pressure /
         1013.25;
     const line_sigma = @max(prefactor * cpf.wr, 0.0);
     return .{
@@ -472,22 +486,30 @@ pub fn weakLineContributionPrepared(
 
 pub fn weakLinePreparedStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
-    prepared_line: Types.WeakLinePreparedLineState,
+    safe_temperature: f64,
 ) f64 {
     return wavelength_state.evaluation_wavenumber_cm1 *
-        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
+        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / safe_temperature));
+}
+
+pub fn weakLinePreparedThermodynamicScale(safe_temperature: f64, safe_pressure: f64) f64 {
+    return safe_temperature *
+        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
+        safe_pressure /
+        1013.25;
 }
 
 // hot path:
 //   when: each prepared weak line in the relevant window contributes to sigma
 //   work: evaluates cutoff, line-shape, and stimulated-emission-scaled sigma
-//   data: prepared weak-line state, wavelength state, stimulated emission scale
+//   data: prepared weak-line state, wavelength state, thermodynamic scale
 //   follow: complexProbabilityFunction and relevant weak-line window ordering
 pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,
     runtime_controls: Types.SpectroscopyRuntimeControls,
     stimulated_emission_scale: f64,
+    thermodynamic_scale: f64,
 ) f64 {
     if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) return 0.0;
     const cpf = complexProbabilityFunction(
@@ -496,10 +518,7 @@ pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     );
     const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
-        prepared_line.safe_temperature *
-        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
-        prepared_line.safe_pressure /
-        1013.25;
+        thermodynamic_scale;
     return @max(prefactor * cpf.wr, 0.0);
 }
 

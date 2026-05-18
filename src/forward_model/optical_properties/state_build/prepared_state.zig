@@ -536,14 +536,14 @@ fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
         updateInt(hash, resolved.len);
         for (resolved) |state| {
             updateInt(hash, state.line_count);
+            updateFloat(hash, state.safe_temperature);
+            updateFloat(hash, state.safe_pressure);
             updateInt(hash, state.lines.len);
             for (state.lines) |line| {
                 updateFloat(hash, line.shifted_center_wavenumber_cm1);
                 updateFloat(hash, line.cte);
                 updateFloat(hash, line.line_shape_y);
                 updateFloat(hash, line.prefactor_base);
-                updateFloat(hash, line.safe_temperature);
-                updateFloat(hash, line.safe_pressure);
             }
         }
     }

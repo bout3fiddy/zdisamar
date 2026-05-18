@@ -225,14 +225,19 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     var line_mixing_sigma: f64 = 0.0;
     const weak_line_wavelength_state = Physics.prepareWeakLineWavelengthState(wavelength_nm, self.runtime_controls);
 
-    const weak_line_states = if (prepared_weak_state) |state|
-        if (state.line_count == self.lines.len) state.lines else null
+    const weak_line_state = if (prepared_weak_state) |state|
+        if (state.line_count == self.lines.len) state else null
     else
         null;
-    const weak_line_stimulated_emission_scale = if (weak_line_states) |states|
-        if (states.len > 0) Physics.weakLinePreparedStimulatedEmissionScale(weak_line_wavelength_state, states[0]) else null
+    const weak_line_states = if (weak_line_state) |state| state.lines else null;
+    const weak_line_stimulated_emission_scale = if (weak_line_state) |state|
+        Physics.weakLinePreparedStimulatedEmissionScale(weak_line_wavelength_state, state.safe_temperature)
     else
-        null;
+        0.0;
+    const weak_line_thermodynamic_scale = if (weak_line_state) |state|
+        Physics.weakLinePreparedThermodynamicScale(state.safe_temperature, state.safe_pressure)
+    else
+        0.0;
     const vendor_weak_exclusions = if (Ops.usesVendorStrongLinePartition(self) and !self.preserve_anchor_weak_lines)
         self.strong_line_match_by_line
     else
@@ -248,7 +253,8 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
                 weak_line_wavelength_state,
                 states[window.start_index + line_index],
                 self.runtime_controls,
-                weak_line_stimulated_emission_scale.?,
+                weak_line_stimulated_emission_scale,
+                weak_line_thermodynamic_scale,
             );
         } else {
             const contribution = Physics.weakLineContributionWithWavelengthState(

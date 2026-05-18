@@ -196,6 +196,66 @@ Conclusion:
 - this follows the lazy/intermediate-data rule: keep derived coefficients that
   the hot loop reads, but do not retain the preparation-only relaxation matrix
 
+### Experiment 4: move weak-line thermodynamic scalars out of each line
+
+Changed:
+- `WeakLinePreparedLineState` no longer stores `safe_temperature` and
+  `safe_pressure` per line
+- those two scalars now live once on `WeakLinePreparedState`
+- prepared weak-line evaluation computes the thermodynamic scale once per
+  profile node and reuses it across relevant weak-line contributions
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `WeakLinePreparedLineState` | 48 B | 32 B | -33.33% |
+| `WeakLinePreparedState` header | 24 B | 40 B | +16 B |
+| one 1,314-line prepared weak state | 63,096 B | 42,088 B | -33.29% |
+| 47-node O2 A spectroscopy profile | 2,965,512 B | 1,978,136 B | -987,376 B |
+| cached clone of 47-node profile states | 2,965,512 B | 1,978,136 B | -987,376 B |
+
+Interpretation:
+- temperature and pressure are properties of the thermodynamic profile node,
+  not properties of each weak line
+- moving them out of each line removes 16 B from every prepared weak-line row
+  and adds only 16 B once per prepared profile node
+- with the current O2 A line list and profile, the retained prepared profile
+  drops by about 0.94 MiB and the process cache clone drops by another 0.94 MiB
+- the hot weak-line loop also reads fewer bytes per relevant line
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  fast-mode spectra worst `4.963e-04` (`1.600x` noise); OE session AOD diff
+  `8.699e-08`; fast-vs-session sweep max AOD delta `3.766e-03`, pressure delta
+  `5.085e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.073135 s | 1.054551 s | 0.9827 |
+| forward session setup | 0.731015 s | 0.710656 s | 0.9721 |
+| forward session cached median | 0.347627 s | 0.345292 s | 0.9933 |
+| forward fast four-scene median | 5.078984 s | 5.018039 s | 0.9880 |
+| OE session setup median | 0.736181 s | 0.717431 s | 0.9745 |
+| OE session retrieval median | 1.441095 s | 1.436078 s | 0.9965 |
+| OE fast retrieval median | 1.126522 s | 1.124246 s | 0.9980 |
+| OE sweep session total wall | 21.796648 s | 21.647506 s | 0.9932 |
+| OE sweep fast total wall | 12.004280 s | 11.955781 s | 0.9960 |
+
+Conclusion:
+- this is both a retained-footprint reduction and a measured speedup on the
+  benchmark boundary
+- the change is data-layout-only: per-line thermodynamic duplicates moved to
+  the state that actually owns that thermodynamic context
+- this is a strong follow-up target because it improves memory footprint,
+  preparation setup time, forward time, and OE sweep time together
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
