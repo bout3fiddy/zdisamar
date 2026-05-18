@@ -16,13 +16,13 @@ const min_parallel_profile_cache_node_count: usize = 8;
 const profile_cache_node_chunk_size: usize = 2;
 
 // layout(64-bit):
-//   size: 2360 B, align: 8 B
-//   field storage: 2360 B across 9 fields; largest: wavelength_window=2080 B, line_list=208 B, prepared_states=16 B; padding: 0 B (0 bits)
+//   size: 288 B, align: 8 B
+//   field storage: 288 B across 9 fields; largest: line_list=208 B, prepared_states=16 B, prepared_weak_states=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: cache, context, queue carry references/descriptors; referenced storage is not included in size
-//   cache span: 37 cache line(s) at 64 B per line
+//   out-of-line: cache, context, wavelength_window, queue carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2360 B (2.305 KiB); total also includes referenced storage above
+//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
 const ProfileCacheValueWorker = struct {
     cache: *ProfileSpectroscopyCache,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -30,7 +30,7 @@ const ProfileCacheValueWorker = struct {
     wavelength_nm: f64,
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
-    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+    wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
@@ -97,10 +97,11 @@ pub const ProfileSpectroscopyCache = struct {
             .line_mixing_second = undefined,
             .total_second = undefined,
         };
-        const wavelength_window = if (prepared_states != null)
-            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
-        else
-            null;
+        var wavelength_window_storage: LineListEval.StrongLineWavelengthWindow = undefined;
+        const wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow = if (prepared_states != null) blk: {
+            wavelength_window_storage = LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm);
+            break :blk &wavelength_window_storage;
+        } else null;
         fillProfileSpectroscopyCacheValues(
             &cache,
             line_list,
@@ -202,7 +203,7 @@ fn fillProfileSpectroscopyCacheValues(
     wavelength_nm: f64,
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
-    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+    wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
 ) void {
     const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
     if (worker_count == 1) {
@@ -297,7 +298,7 @@ fn fillProfileSpectroscopyCacheValueRange(
     wavelength_nm: f64,
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
-    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+    wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
     start: usize,
     end: usize,
 ) void {
@@ -310,7 +311,7 @@ fn fillProfileSpectroscopyCacheValueRange(
                 context.spectroscopy_profile_pressures_hpa[index],
                 &states[index],
                 if (prepared_weak_states) |weak_states| &weak_states[index] else null,
-                &wavelength_window.?,
+                wavelength_window.?,
             )
         else
             LineListEval.totalSigmaAt(

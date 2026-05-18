@@ -320,6 +320,67 @@ Conclusion:
   splitting total-only spectroscopy data from breakdown arrays instead of only
   shrinking the fixed capacity
 
+### Experiment 6: share prepared strong-line window across profile-cache workers
+
+Changed:
+- `ProfileCacheValueWorker` now stores a pointer to the prepared strong-line
+  wavelength window instead of embedding the full window payload
+- `ProfileSpectroscopyCache.init` builds the wavelength window once and shares
+  it read-only across the worker records used for cache initialization
+- the spectroscopy calculation still receives the same window data; only the
+  worker-control layout changes
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `ProfileCacheValueWorker` | 2,360 B | 288 B | -87.80% |
+| `[64]ProfileCacheValueWorker` stack buffer | 151,040 B | 18,432 B | -132,608 B |
+| active worker records under 2-worker cap | 4,720 B | 576 B | -4,144 B |
+
+Interpretation:
+- the wavelength window is request-local and immutable during profile-cache
+  initialization, so worker records only need to reference it
+- the old layout replicated a 2,072 B window in each worker record even though
+  all workers read the same relevant-line window and anchor table
+- the fixed worker buffer reserves one slot for each `work_partition.max_workers`
+  entry, so the struct-size reduction matters even when the benchmark runs with
+  only two active native workers
+- this removes stack footprint and per-worker copy traffic without changing the
+  retained `ProfileSpectroscopyCache` arrays
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows: DISAMAR fixture reflectance max_abs `5.393e-14`;
+  session-vs-no-session residuals all `0.0`; fast-mode spectra worst
+  `4.963e-04` (`1.600x` noise); OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `3.778e-03`, pressure delta
+  `5.099e+00 hPa`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.056516 s | 1.056962 s | 1.0004 |
+| forward session setup | 0.709138 s | 0.711963 s | 1.0040 |
+| forward session cached median | 0.348221 s | 0.345946 s | 0.9935 |
+| forward fast four-scene median | 5.020846 s | 5.012337 s | 0.9983 |
+| OE session setup median | 0.715823 s | 0.714524 s | 0.9982 |
+| OE session retrieval median | 1.449589 s | 1.436470 s | 0.9909 |
+| OE fast retrieval median | 1.133547 s | 1.121925 s | 0.9897 |
+| OE sweep session total wall | 21.652913 s | 21.636607 s | 0.9992 |
+| OE sweep fast total wall | 11.963831 s | 11.905910 s | 0.9952 |
+
+Conclusion:
+- this is a small retained-memory change but a clear stack-layout improvement
+  in the profile-cache initialization hot path
+- benchmark timing is flat-to-slightly-faster on the retained evidence boundary
+- it is worth keeping because it removes replicated worker-control payload
+  without adding recomputation, extra branches, or lifetime ambiguity
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -483,10 +544,10 @@ Relevant layout facts:
 
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
-| `ProfileSpectroscopyCache` | 20,504 B | ten `[256]f64` arrays | 0 |
-| `ProfileNodeSpectroscopyCache` | 4,104 B | total values + second derivatives | 0 |
-| `ProfileCacheValueWorker` | 2,360 B | `StrongLineWavelengthWindow` | 0 |
-| `StrongLineWavelengthWindow` | 2,080 B | fixed line-window payload | 0 |
+| `ProfileSpectroscopyCache` | 5,144 B | ten `[64]f64` arrays | 0 |
+| `ProfileNodeSpectroscopyCache` | 1,032 B | total values + second derivatives | 0 |
+| `ProfileCacheValueWorker` | 288 B | `SpectroscopyLineList` descriptor | 0 |
+| `StrongLineWavelengthWindow` | 2,072 B | fixed anchor payload | 0 |
 
 Memory access shape:
 - the full profile cache stores weak, strong, line, line-mixing, total, and all
