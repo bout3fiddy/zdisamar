@@ -4,29 +4,7 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
-// layout(64-bit):
-//   size: 405616 B, align: 8 B
-//   field storage: data=405600 B, nmutot=8 B, nlayer=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: data:[12][65][65]f64=405600 B
-//   cache span: 6338 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 405616 B (396.1 KiB); total = per instance * live instance count
-pub const AttenArray = struct {
-    pub const max_levels: usize = 65;
-
-    data: [basis.max_nmutot][max_levels][max_levels]f64,
-    nmutot: usize,
-    nlayer: usize,
-
-    pub fn get(self: *const AttenArray, imu: usize, from: usize, to: usize) f64 {
-        return self.data[imu][from][to];
-    }
-
-    fn set(self: *AttenArray, imu: usize, from: usize, to: usize, val: f64) void {
-        self.data[imu][from][to] = val;
-    }
-};
+pub const max_levels: usize = 65;
 
 // layout(64-bit):
 //   size: 48 B, align: 8 B
@@ -145,25 +123,6 @@ fn pseudoSphericalDirectionCosine(
     return geo.u[imu];
 }
 
-fn applyPseudoSphericalTopLevelAttenuation(
-    atten: *AttenArray,
-    layers: []const common.LayerInput,
-    geo: *const basis.Geometry,
-) void {
-    const top_level = layers.len;
-    for (0..geo.nmutot) |imu| {
-        var cumulative: f64 = 1.0;
-        atten.set(imu, top_level, top_level, 1.0);
-        var level = top_level;
-        while (level > 0) {
-            level -= 1;
-            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
-            cumulative *= math.exp(-layers[level].optical_depth / u);
-            atten.set(imu, top_level, level, cumulative);
-        }
-    }
-}
-
 fn applyPseudoSphericalTopLevelAttenuationDynamic(
     atten: *DynamicAttenArray,
     layers: []const common.LayerInput,
@@ -259,7 +218,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     //   The Earth radius and altitude samples are in kilometers; attenuation
     //   remains dimensionless.
     const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
-    if (top_level + 1 <= AttenArray.max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
+    if (top_level + 1 <= max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
         applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
             atten,
             pseudo_spherical_grid,
@@ -299,7 +258,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
     geo: *const basis.Geometry,
 ) void {
     const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
-    if (top_level + 1 <= AttenArray.max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
+    if (top_level + 1 <= max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
         applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
             top_to_level,
             pseudo_spherical_grid,
@@ -350,7 +309,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
 ) void {
     const rearth_km = 6371.0;
     const nlevel = top_level + 1;
-    var level_radius_sq: [AttenArray.max_levels]f64 = undefined;
+    var level_radius_sq: [max_levels]f64 = undefined;
     var sample_radius_sq: [max_pseudo_spherical_fast_samples]f64 = undefined;
     var sample_weighted_radius: [max_pseudo_spherical_fast_samples]f64 = undefined;
 
@@ -397,7 +356,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
     const rearth_km = 6371.0;
     const nlevel = top_level + 1;
     const stream_stride = nlevel * nlevel;
-    var level_radius_sq: [AttenArray.max_levels]f64 = undefined;
+    var level_radius_sq: [max_levels]f64 = undefined;
     var sample_radius_sq: [max_pseudo_spherical_fast_samples]f64 = undefined;
     var sample_weighted_radius: [max_pseudo_spherical_fast_samples]f64 = undefined;
 
@@ -428,52 +387,6 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
             values[top_level * nlevel + level] = math.exp(-sumkext);
         }
     }
-}
-
-pub fn fillAttenuation(
-    layers: []const common.LayerInput,
-    geo: *const basis.Geometry,
-    use_spherical_correction: bool,
-) AttenArray {
-    const nlayer = layers.len;
-    var atten: AttenArray = undefined;
-    atten.nmutot = geo.nmutot;
-    atten.nlayer = nlayer;
-
-    for (0..geo.nmutot) |imu| {
-        for (0..nlayer + 1) |from| {
-            for (0..nlayer + 1) |to| {
-                atten.data[imu][from][to] = 1.0;
-            }
-        }
-    }
-
-    for (0..nlayer) |ilTo_0| {
-        const ilTo = ilTo_0 + 1;
-        var ilFrom_idx = ilTo;
-        while (ilFrom_idx >= 1) : (ilFrom_idx -= 1) {
-            const layer_idx = ilFrom_idx - 1;
-            for (0..geo.nmutot) |imu| {
-                const u = @max(geo.u[imu], 1.0e-6);
-                const atten_lay = math.exp(-layers[layer_idx].optical_depth / u);
-                atten.data[imu][ilFrom_idx - 1][ilTo] = atten.data[imu][ilFrom_idx][ilTo] * atten_lay;
-            }
-        }
-    }
-
-    for (0..nlayer + 1) |ilTo| {
-        for (ilTo..nlayer + 1) |ilFrom| {
-            for (0..geo.nmutot) |imu| {
-                atten.data[imu][ilFrom][ilTo] = atten.data[imu][ilTo][ilFrom];
-            }
-        }
-    }
-
-    if (use_spherical_correction) {
-        applyPseudoSphericalTopLevelAttenuation(&atten, layers, geo);
-    }
-
-    return atten;
 }
 
 pub fn fillAttenuationDynamic(
@@ -594,8 +507,8 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
 ) DynamicAttenArray {
-    if (layers.len <= AttenArray.max_levels) {
-        var layer_transmittance: [basis.max_nmutot * AttenArray.max_levels]f64 = undefined;
+    if (layers.len <= max_levels) {
+        var layer_transmittance: [basis.max_nmutot * max_levels]f64 = undefined;
         return fillAttenuationDynamicWithGridInBufferAndLayerCache(
             allocator,
             data,

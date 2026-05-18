@@ -823,8 +823,8 @@ pub fn calcRTlayers(
     i_fourier: usize,
     geo: *const basis.Geometry,
     controls: common.RadiativeTransferControls,
-) [attenuation.AttenArray.max_levels]LayerRT {
-    var rt: [attenuation.AttenArray.max_levels]LayerRT = undefined;
+) [attenuation.max_levels]LayerRT {
+    var rt: [attenuation.max_levels]LayerRT = undefined;
     calcRTlayersInto(rt[0 .. layers.len + 1], layers, i_fourier, geo, controls);
     return rt;
 }

@@ -13,7 +13,6 @@ const Trace = @import("../../performance_trace.zig");
 const math = std.math;
 const Geometry = basis.Geometry;
 const LayerRT = basis.LayerRT;
-const fillAttenuation = attenuation.fillAttenuation;
 const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 const fillAttenuationTangentDynamic = attenuation.fillAttenuationTangentDynamic;
 const fillSurface = layers_mod.fillSurface;
@@ -612,7 +611,16 @@ fn singleLayerLabos(
         .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     };
     const layers = [_]common.LayerInput{layer};
-    const atten = fillAttenuation(&layers, &geo, controls.use_spherical_correction);
+    var layer_transmittance: [basis.max_nmutot]f64 = undefined;
+    var top_to_level: [basis.max_nmutot * 2]f64 = undefined;
+    const atten = attenuation.fillRuntimeAttenuationWithGridInBuffers(
+        &layer_transmittance,
+        &top_to_level,
+        &layers,
+        .{},
+        &geo,
+        controls.use_spherical_correction,
+    );
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(layer.scattering_optical_depth));
     const fourier_max = resolvedFourierMax(input, controls);
     const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
