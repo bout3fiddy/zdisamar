@@ -2,11 +2,13 @@
 
 from pathlib import Path
 
-import altair as alt
+import numpy as np
 
-from .axes import axis_multiplier_text, finite_padded_scale, numeric_axis, scaled_y, wavelength_x
-from .charts import wavelength_line_chart
+from . import fields
+from .axes import axis_exponent
+from .data import as_float
 from .properties import PLOT, PlotAccessor
+from .svg import SvgFigure, SvgPanel, SvgSeries, axis_multiplier, line_panel
 
 STATE_LABELS = {
     "surface_albedo": "Surface albedo",
@@ -70,12 +72,10 @@ class OptimalEstimationPlot(PlotAccessor):
         return self._finish(_jacobian(self._target, columns=columns), save=save)
 
 
-def _state_history_frame(result):
+def _state_history_rows(result) -> list[dict[str, object]]:
     """Put each retrieved coordinate into a long table with physical labels."""
 
-    import pandas as pd
-
-    rows = []
+    rows: list[dict[str, object]] = []
 
     if result.initial_state is not None:
         for index, state_name in enumerate(result.state_names):
@@ -111,12 +111,10 @@ def _state_history_frame(result):
                 }
             )
 
-    return pd.DataFrame(rows)
+    return rows
 
 
-def _fit_frame(result):
-
-    import pandas as pd
+def _fit_rows(result) -> list[dict[str, float]]:
 
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
@@ -130,21 +128,25 @@ def _fit_frame(result):
         actual_name="final evaluation",
     )
 
-    return pd.DataFrame(
+    return [
         {
-            "wavelength_nm": wavelength_nm,
-            "measurement": measurement.reflectance,
-            "retrieved_model": evaluation.reflectance,
-            "residual": measurement.reflectance - evaluation.reflectance,
+            "wavelength_nm": float(wavelength),
+            "measurement": float(measured),
+            "retrieved_model": float(retrieved),
+            "residual": float(measured - retrieved),
         }
-    )
+        for wavelength, measured, retrieved in zip(
+            wavelength_nm,
+            measurement.reflectance,
+            evaluation.reflectance,
+            strict=True,
+        )
+    ]
 
 
-def jacobian_frame(result):
+def jacobian_frame(result) -> list[dict[str, object]]:
     """Put final reflectance Jacobians into one table for all states."""
 
-    import pandas as pd
-
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
     measurement = _require_measurement(result)
@@ -156,260 +158,162 @@ def jacobian_frame(result):
         expected_name="measurement",
         actual_name="final evaluation",
     )
-    columns = []
+    rows: list[dict[str, object]] = []
 
     for index, state_name in enumerate(result.state_names):
         values = evaluation.reflectance_jacobian[:, index]
-        columns.append(
-            pd.DataFrame(
+
+        for wavelength, value in zip(wavelength_nm, values, strict=True):
+            rows.append(
                 {
-                    "wavelength_nm": wavelength_nm,
+                    "wavelength_nm": float(wavelength),
                     "state": _state_label(state_name),
                     "state_name": state_name,
                     "state_order": index,
                     "unit": _state_unit(state_name),
                     "state_panel": _state_panel_title(state_name),
-                    "reflectance_jacobian": values,
+                    "reflectance_jacobian": float(value),
                 }
             )
-        )
 
-    return pd.concat(columns, ignore_index=True)
+    return rows
 
 
-def _convergence(result):
+def _convergence(result) -> SvgFigure:
 
-    data = _state_history_frame(result)
+    rows = _state_history_rows(result)
     columns = _state_columns(result)
-    charts = []
+    panels = []
 
     for index, state_name in enumerate(result.state_names):
-        panel_data = data[data["state_name"] == state_name].copy()
-        panel_data, _, y = scaled_y(
-            panel_data,
-            "value",
-            STATE_TRACE_Y_TITLE,
-            compact_axis=True,
+        panel_rows = [row for row in rows if row["state_name"] == state_name]
+        values = [as_float(row["value"]) for row in panel_rows]
+        panel = line_panel(
+            title=_state_panel_title(state_name),
+            x_title="Iteration",
+            y_title=STATE_TRACE_Y_TITLE,
+            x=[as_float(row["iteration"]) for row in panel_rows],
+            y=values,
+            name=_state_label(state_name),
+            color=_state_color_at(index),
+            width=_panel_width(columns),
+            height=STATE_TRACE_PANEL_HEIGHT,
+            marker_x=False,
         )
-        chart = (
-            alt.Chart(panel_data)
-            .mark_line(point=True, color=_state_color_at(index), strokeWidth=2.0)
-            .encode(
-                x=alt.X(
-                    "iteration:O",
-                    title="Iteration",
-                    axis=alt.Axis(
-                        grid=False,
-                        labelAlign="center",
-                        labelAngle=0,
-                        labelBaseline="top",
-                    ),
-                ),
-                y=y,
-                tooltip=[
-                    alt.Tooltip("iteration:O", title="Iteration"),
-                    alt.Tooltip("state:N", title="State"),
-                    alt.Tooltip("unit:N", title="State unit"),
-                    alt.Tooltip("value:Q", title="Value", format="~g"),
-                    alt.Tooltip(
-                        "state_vector_convergence:Q",
-                        title="State-vector convergence",
-                        format="~g",
-                    ),
-                    alt.Tooltip(
-                        "chi2_reflectance:Q",
-                        title="Reflectance chi-square",
-                        format="~g",
-                    ),
-                    alt.Tooltip(
-                        "chi2_state_vector:Q",
-                        title="State chi-square",
-                        format="~g",
-                    ),
-                ],
-            )
-            .properties(
-                title=PLOT.panel_title(_state_panel_title(state_name)),
-                width=_panel_width(columns),
-                height=STATE_TRACE_PANEL_HEIGHT,
-            )
-        )
-        charts.append(_with_axis_multiplier(chart, panel_data["value"]))
+        panels.append(panel)
 
-    return wrap_panel_charts(
-        charts,
-        columns=columns,
+    return SvgFigure(
         title="Retrieved state trajectory",
+        panels=tuple(panels),
+        columns=columns,
+        panel_spacing=112,
+        y_independent=True,
     )
 
 
-def _measurement_fit(result):
+def _measurement_fit(result) -> SvgFigure:
 
-    data = _fit_frame(result)
-    top = _measurement_fit_panel(data)
-    residual = _measurement_residual_panel(data)
-
-    return (
-        alt.vconcat(top, residual, spacing=44, bounds="flush")
-        .resolve_scale(x="shared")
-        .properties(title=PLOT.title("Measurement fit"))
-    )
-
-
-def _measurement_fit_panel(data):
-
-    reflectance_values = data[["measurement", "retrieved_model"]].to_numpy().ravel()
-    retrieved = (
-        alt.Chart(data)
-        .mark_line(color=PLOT.colors["orange"], strokeWidth=1.7)
-        .encode(
-            x=alt.X(
-                "wavelength_nm:Q",
-                title=None,
-                axis=alt.Axis(grid=False, labels=False, ticks=False),
-                scale=alt.Scale(zero=False),
+    rows = _fit_rows(result)
+    wavelength = [row["wavelength_nm"] for row in rows]
+    measurement = [row["measurement"] for row in rows]
+    retrieved = [row["retrieved_model"] for row in rows]
+    residual = [row["residual"] for row in rows]
+    reflectance_values = [*measurement, *retrieved]
+    fit_panel = SvgPanel(
+        title="Retrieved model with measurement samples",
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title="Reflectance",
+        series=(
+            SvgSeries.line(
+                "Retrieved model",
+                wavelength,
+                retrieved,
+                color=PLOT.colors["orange"],
+                stroke_width=1.7,
             ),
-            y=alt.Y(
-                "retrieved_model:Q",
-                title="Reflectance",
-                axis=numeric_axis(reflectance_values, tickCount=PLOT.y_axis_tick_count),
-                scale=finite_padded_scale(reflectance_values),
+            SvgSeries.points(
+                "Measurement",
+                wavelength,
+                measurement,
+                color=PLOT.colors["blue"],
+                point_size=PLOT.default_point_size * 0.55,
+                opacity=0.75,
             ),
-            tooltip=_measurement_fit_tooltips(),
-        )
-    )
-    measurement = (
-        alt.Chart(data)
-        .mark_point(
-            color=PLOT.colors["blue"],
-            filled=True,
-            opacity=0.75,
-            size=PLOT.default_point_size * 0.55,
-        )
-        .encode(
-            x="wavelength_nm:Q",
-            y="measurement:Q",
-            tooltip=_measurement_fit_tooltips(),
-        )
-    )
-
-    chart = (retrieved + measurement).properties(
-        title=PLOT.panel_title("Retrieved model with measurement samples"),
+        ),
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
+        y_axis_multiplier=axis_multiplier(reflectance_values),
     )
-
-    return _with_axis_multiplier(chart, reflectance_values)
-
-
-def _measurement_residual_panel(data):
-
-    plot_data, plot_field, y = scaled_y(data, "residual", "Residual", compact_axis=True)
-    zero_data = plot_data.iloc[[0]].copy()
-    zero_data[plot_field] = 0.0
-    residual = wavelength_line_chart(
-        plot_data,
-        y,
-        [
-            alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip("residual:Q", title="Residual", format=".8g"),
-        ],
+    residual_panel = line_panel(
+        title="Residual",
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title="Residual",
+        x=wavelength,
+        y=residual,
+        name="Residual",
         color=PLOT.colors["red"],
-    )
-    zero = (
-        alt.Chart(zero_data)
-        .mark_rule(
-            color=PLOT.colors["neutral"],
-            strokeDash=list(PLOT.marker_rule_dash),
-            strokeWidth=PLOT.marker_rule_width,
-        )
-        .encode(y=f"{plot_field}:Q")
-    )
-
-    chart = (zero + residual).properties(
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_RESIDUAL_HEIGHT,
+        rule_y=(0.0,),
     )
 
-    return _with_axis_multiplier(chart, plot_data[plot_field])
+    return SvgFigure(
+        title="Measurement fit",
+        panels=(fit_panel, residual_panel),
+        columns=1,
+        panel_spacing=44,
+    )
 
 
-def _measurement_fit_tooltips():
+def _residual(result) -> SvgFigure:
 
-    return [
-        alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-        alt.Tooltip("measurement:Q", title="Measurement", format=".8g"),
-        alt.Tooltip("retrieved_model:Q", title="Retrieved model", format=".8g"),
-        alt.Tooltip("residual:Q", title="Residual", format=".8g"),
-    ]
-
-
-def _residual(result):
-
-    data = _fit_frame(result)
-    data, _, y = scaled_y(data, "residual", "Residual", compact_axis=True)
-
-    chart = wavelength_line_chart(
-        data,
-        y,
-        [
-            alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip("residual:Q", title="Residual", format=".8g"),
-        ],
+    rows = _fit_rows(result)
+    residual = [row["residual"] for row in rows]
+    panel = line_panel(
+        title="Final residual",
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title="Residual",
+        x=[row["wavelength_nm"] for row in rows],
+        y=residual,
+        name="Residual",
         color=PLOT.colors["red"],
-    ).properties(
-        title=PLOT.title("Final residual"),
         width=PLOT.diagnostic_width,
         height=PLOT.height,
+        rule_y=(0.0,),
     )
 
-    return _with_axis_multiplier(chart, data["residual"])
+    return SvgFigure(title="Final residual", panels=(panel,))
 
 
-def _jacobian(result, *, columns: int):
+def _jacobian(result, *, columns: int) -> SvgFigure:
 
-    data = jacobian_frame(result)
+    rows = jacobian_frame(result)
     columns = max(1, columns)
-    charts = []
+    panels = []
 
     for index, state_name in enumerate(result.state_names):
-        panel_data = data[data["state_name"] == state_name].copy()
+        panel_rows = [row for row in rows if row["state_name"] == state_name]
+        values = [as_float(row["reflectance_jacobian"]) for row in panel_rows]
         derivative_title = _state_derivative_title(state_name)
-        panel_data, _, y = scaled_y(
-            panel_data,
-            "reflectance_jacobian",
-            derivative_title,
-            compact_axis=True,
+        panel = line_panel(
+            title=_state_panel_title(state_name),
+            x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+            y_title=derivative_title,
+            x=[as_float(row["wavelength_nm"]) for row in panel_rows],
+            y=values,
+            name=derivative_title,
+            color=_state_color_at(index),
+            width=_panel_width(columns),
+            height=JACOBIAN_PANEL_HEIGHT,
         )
-        chart = (
-            alt.Chart(panel_data)
-            .mark_line(color=_state_color_at(index), strokeWidth=1.7)
-            .encode(
-                x=wavelength_x(),
-                y=y,
-                tooltip=[
-                    alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-                    alt.Tooltip("state:N", title="State"),
-                    alt.Tooltip("unit:N", title="State unit"),
-                    alt.Tooltip(
-                        "reflectance_jacobian:Q",
-                        title=derivative_title,
-                        format=".8g",
-                    ),
-                ],
-            )
-            .properties(
-                title=PLOT.panel_title(_state_panel_title(state_name)),
-                width=_panel_width(columns),
-                height=JACOBIAN_PANEL_HEIGHT,
-            )
-        )
-        charts.append(_with_axis_multiplier(chart, panel_data["reflectance_jacobian"]))
+        panels.append(panel)
 
-    return wrap_panel_charts(
-        charts,
-        columns=columns,
+    return SvgFigure(
         title="Final reflectance Jacobians",
+        panels=tuple(panels),
+        columns=columns,
+        panel_spacing=112,
+        y_independent=True,
     )
 
 
@@ -480,27 +384,13 @@ def _state_columns(result) -> int:
     return min(STATE_TRACE_COLUMNS, max(1, len(result.state_names)))
 
 
-def _with_axis_multiplier(chart, values):
-
-    multiplier = axis_multiplier_text(values)
-
-    if multiplier is None:
-        return chart
-
-    return chart + multiplier
-
-
 def _panel_width(columns: int) -> int:
 
     return max(300, int(PLOT.diagnostic_width / max(1, columns)) - 35)
 
 
-def wrap_panel_charts(charts, *, columns: int, title: str):
+def _with_axis_multiplier(values: np.ndarray) -> str | None:
 
-    rows = [
-        alt.hconcat(*charts[start : start + columns], spacing=112, bounds="flush")
-        for start in range(0, len(charts), columns)
-    ]
-    chart = rows[0] if len(rows) == 1 else alt.vconcat(*rows, spacing=32, bounds="flush")
+    exponent = axis_exponent(values)
 
-    return chart.resolve_scale(y="independent").properties(title=PLOT.title(title))
+    return None if exponent is None else f"x1e{exponent}"

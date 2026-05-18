@@ -77,6 +77,10 @@ The validation tree is split by target:
   `zdisamar-fast` as a third model using the fast-mode sweep rows.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked paired-retrieval plot outputs.
+- `plot_quality/score.py`: deterministic SVG plot-quality benchmark for the
+  public `.plot` accessors.
+- `outputs/plot_quality/scores.json`: machine-scored plot-quality evidence for
+  spectrum, diagnostic-table, instrument-response, and optimal-estimation plots.
 
 ## Baseline Commands
 
@@ -89,6 +93,7 @@ The validation tree is split by target:
 - `uv run validation/optimal_estimation/sweep_optimal_estimation.py`
 - `uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py`
 - `uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py`
+- `uv run validation/plot_quality/score.py`
 
 The validation scripts own their plots and tracked summaries. They are invoked
 directly with `uv run ...`, not through `zig build`.

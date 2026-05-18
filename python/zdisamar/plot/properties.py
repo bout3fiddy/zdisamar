@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import altair as alt
-
 
 class PlotProperties:
     """One plotting style for spectra, diagnostics, and retrieval figures."""
@@ -56,9 +54,14 @@ class PlotProperties:
         self._enabled = False
 
     def prepare(self) -> None:
-        """Enable the zdisamar Altair theme before any chart is built."""
+        """Enable the zdisamar Altair theme when validation scripts use Altair."""
 
         if self._enabled:
+            return
+
+        try:
+            import altair as alt
+        except ModuleNotFoundError:
             return
 
         if not self._registered:
@@ -74,23 +77,23 @@ class PlotProperties:
 
     def title(self, text: str):
 
-        return alt.TitleParams(
-            text=text,
-            anchor="middle",
-            font=self.font,
-            fontSize=self.title_font_size,
-            fontWeight="normal",
-        )
+        return {
+            "text": text,
+            "anchor": "middle",
+            "font": self.font,
+            "fontSize": self.title_font_size,
+            "fontWeight": "normal",
+        }
 
     def panel_title(self, text: str):
 
-        return alt.TitleParams(
-            text=text,
-            anchor="middle",
-            font=self.font,
-            fontSize=self.panel_title_font_size,
-            fontWeight="normal",
-        )
+        return {
+            "text": text,
+            "anchor": "middle",
+            "font": self.font,
+            "fontSize": self.panel_title_font_size,
+            "fontWeight": "normal",
+        }
 
     def theme(self):
 
@@ -105,14 +108,23 @@ class PlotProperties:
         return chart
 
     def save(self, chart, path: str | Path) -> None:
-        """Use one high-resolution PNG setting for saved validation figures."""
+        """Save local SVG figures or validation-script Altair figures."""
 
         output = Path(path)
 
         if output.suffix == "":
-            output = output.with_suffix(".png")
+            output = output.with_suffix(".svg")
 
         output.parent.mkdir(parents=True, exist_ok=True)
+
+        if output.suffix.lower() == ".svg":
+            chart.save(output)
+
+            return
+
+        if hasattr(chart, "_repr_svg_"):
+            raise ValueError("zdisamar runtime plots save as SVG; use validation tooling for PNG")
+
         kwargs = {"scale_factor": self.png_scale_factor} if output.suffix.lower() == ".png" else {}
         chart.save(output, **kwargs)
 
@@ -190,7 +202,6 @@ class PlotAccessor:
 
     def __init__(self, target):
 
-        PLOT.prepare()
         self._target = target
 
     @property

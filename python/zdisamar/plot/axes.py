@@ -1,11 +1,65 @@
-"""Shared Altair axis and O2 A wavelength helpers."""
+"""Shared axis and O2 A wavelength helpers."""
 
 import math
-
-import altair as alt
+from dataclasses import dataclass
 
 from . import fields
 from .properties import PLOT
+
+
+@dataclass(frozen=True)
+class ScaleSpec:
+    """Small scale object kept for tests and SVG plot construction."""
+
+    domain: tuple[float, float] | None = None
+    zero: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+
+        result: dict[str, object] = {"zero": self.zero}
+
+        if self.domain is not None:
+            result["domain"] = [self.domain[0], self.domain[1]]
+
+        return result
+
+
+@dataclass(frozen=True)
+class AxisSpec:
+    """Small axis object kept independent of any plotting package."""
+
+    format: str = ".4g"
+    tickCount: int = 5  # noqa: N815
+    labelExpr: str | None = None  # noqa: N815
+
+    def to_dict(self) -> dict[str, object]:
+
+        result: dict[str, object] = {"format": self.format, "tickCount": self.tickCount}
+
+        if self.labelExpr is not None:
+            result["labelExpr"] = self.labelExpr
+
+        return result
+
+
+@dataclass(frozen=True)
+class EncodingSpec:
+    """Axis encoding object with the old `to_dict()` inspection surface."""
+
+    field: str
+    title: str | None
+    axis: AxisSpec
+    scale: ScaleSpec
+
+    def to_dict(self) -> dict[str, object]:
+
+        return {
+            "field": self.field,
+            "type": "quantitative",
+            "title": self.title,
+            "axis": self.axis.to_dict(),
+            "scale": self.scale.to_dict(),
+        }
 
 
 def label(name: str) -> str:
@@ -15,32 +69,35 @@ def label(name: str) -> str:
 
 def wavelength_x():
 
-    return alt.X(
-        f"{fields.WAVELENGTH_NM}:Q",
+    return EncodingSpec(
+        field=fields.WAVELENGTH_NM,
         title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
-        axis=alt.Axis(grid=False, tickCount=6, tickMinStep=5),
-        scale=alt.Scale(zero=False),
+        axis=AxisSpec(tickCount=6),
+        scale=ScaleSpec(zero=False),
     )
+
+
+def marker_values(values) -> list[float]:
+    """Draw fixed O2 A reference wavelengths only inside the plotted band."""
+
+    finite = _finite_values(values)
+
+    if not finite:
+        return []
+
+    start = min(finite)
+    end = max(finite)
+
+    return [value for value in PLOT.markers_nm if start <= value <= end]
 
 
 def marker_rules(data):
-    """Draw fixed O2 A reference wavelengths only inside the plotted band."""
+    """Return marker values for callers that still inspect this helper."""
 
-    import pandas as pd
+    if isinstance(data, dict):
+        return marker_values(data[fields.WAVELENGTH_NM])
 
-    start = float(data[fields.WAVELENGTH_NM].min())
-    end = float(data[fields.WAVELENGTH_NM].max())
-    markers = [value for value in PLOT.markers_nm if start <= value <= end]
-
-    return (
-        alt.Chart(pd.DataFrame({fields.WAVELENGTH_NM: markers}))
-        .mark_rule(
-            color=PLOT.colors["neutral"],
-            strokeDash=list(PLOT.marker_rule_dash),
-            strokeWidth=PLOT.marker_rule_width,
-        )
-        .encode(x=f"{fields.WAVELENGTH_NM}:Q")
-    )
+    return marker_values(row[fields.WAVELENGTH_NM] for row in data)
 
 
 def scaled_y(
@@ -48,7 +105,7 @@ def scaled_y(
     field: str,
     title: str | None,
     *,
-    axis: alt.Axis | None = None,
+    axis: AxisSpec | None = None,
     compact_axis: bool = False,
 ):
     """Return a y encoding without altering the plotted values."""
@@ -58,8 +115,8 @@ def scaled_y(
     return (
         data,
         field,
-        alt.Y(
-            f"{field}:Q",
+        EncodingSpec(
+            field=field,
             title=title,
             axis=axis or _default_numeric_axis(values, PLOT.y_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
@@ -72,7 +129,7 @@ def scaled_x(
     field: str,
     title: str | None,
     *,
-    axis: alt.Axis | None = None,
+    axis: AxisSpec | None = None,
     compact_axis: bool = False,
 ):
     """Return an x encoding without altering the plotted values."""
@@ -82,8 +139,8 @@ def scaled_x(
     return (
         data,
         field,
-        alt.X(
-            f"{field}:Q",
+        EncodingSpec(
+            field=field,
             title=title,
             axis=axis or _default_numeric_axis(values, PLOT.x_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
@@ -94,25 +151,36 @@ def scaled_x(
 def finite_padded_scale(values):
     """Pad finite y-ranges so flat or single-point plots remain readable."""
 
+    domain = finite_padded_domain(values)
+
+    if domain is None:
+        return ScaleSpec(zero=False)
+
+    return ScaleSpec(domain=domain, zero=False)
+
+
+def finite_padded_domain(values) -> tuple[float, float] | None:
+    """Return the finite padded domain used by all SVG plots."""
+
     finite = _finite_values(values)
 
     if not finite:
-        return alt.Scale(zero=False)
+        return None
 
     low = min(finite)
     high = max(finite)
 
     pad = max(abs(low) * 0.05, 1.0e-12) if low == high else (high - low) * 0.04
 
-    return alt.Scale(domain=[low - pad, high + pad], zero=False)
+    return (low - pad, high + pad)
 
 
-def _default_numeric_axis(values, tick_count: int, compact_axis: bool) -> alt.Axis:
+def _default_numeric_axis(values, tick_count: int, compact_axis: bool) -> AxisSpec:
 
     if compact_axis:
         return numeric_axis(values, tickCount=tick_count)
 
-    return alt.Axis(format=".4g", tickCount=tick_count)
+    return AxisSpec(format=".4g", tickCount=tick_count)
 
 
 def numeric_axis(values, *, tickCount: int):  # noqa: N803
@@ -121,11 +189,12 @@ def numeric_axis(values, *, tickCount: int):  # noqa: N803
     exponent = axis_exponent(values)
 
     if exponent is None:
-        return alt.Axis(format="~f", tickCount=tickCount)
+        return AxisSpec(format="~f", tickCount=tickCount)
 
     scale = 10.0**exponent
 
-    return alt.Axis(
+    return AxisSpec(
+        format="~g",
         labelExpr=f"format(datum.value / {scale:.16e}, '~g')",
         tickCount=tickCount,
     )
@@ -139,25 +208,7 @@ def axis_multiplier_text(values):
     if exponent is None:
         return None
 
-    import pandas as pd
-
-    return (
-        alt.Chart(pd.DataFrame({"axis_multiplier": [f"x1e{exponent}"]}))
-        .mark_text(
-            align="left",
-            baseline="bottom",
-            color="black",
-            dx=0,
-            dy=-10,
-            font=PLOT.font,
-            fontSize=PLOT.axis_label_font_size,
-        )
-        .encode(
-            x=alt.value(0),
-            y=alt.value(0),
-            text="axis_multiplier:N",
-        )
-    )
+    return f"x1e{exponent}"
 
 
 def axis_exponent(values) -> int | None:

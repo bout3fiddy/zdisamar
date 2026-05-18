@@ -60,26 +60,25 @@ def main() -> int:
 
     convergence = result.plot.convergence().to_dict()
     assert convergence["title"]["text"] == "Retrieved state trajectory"
-    assert len(convergence["hconcat"]) == 2
+    assert convergence["type"] == "zdisamar-svg"
+    assert len(convergence["panels"]) == 2
     assert convergence["resolve"]["scale"]["y"] == "independent"
     convergence_spec = json.dumps(convergence)
     assert "Aerosol optical depth" in convergence_spec
     assert "Layer mid-pressure (hPa)" in convergence_spec
-    assert '"labelAlign": "center"' in convergence_spec
-    assert '"labelAngle": 0' in convergence_spec
-    assert '"labelBaseline": "top"' in convergence_spec
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
+    assert result.plot.convergence().quality_metrics()["out_of_bounds_count"] == 0
 
     fit = result.plot.measurement_fit().to_dict()
     fit_spec = json.dumps(fit)
     assert fit["title"]["text"] == "Measurement fit"
-    assert len(fit["vconcat"]) == 2
-    assert '"point"' in fit_spec
+    assert len(fit["panels"]) == 2
+    assert '"points"' in fit_spec
     assert "Residual" in fit_spec
     assert "residual_scaled" not in fit_spec
-    assert fit["vconcat"][1]["width"] == PLOT.diagnostic_width
-    assert fit["vconcat"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    assert fit["panels"][1]["width"] == PLOT.diagnostic_width
+    assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
@@ -89,11 +88,10 @@ def main() -> int:
     jacobian = result.plot.jacobian().to_dict()
     jacobian_spec = json.dumps(jacobian)
     assert jacobian["title"]["text"] == "Final reflectance Jacobians"
-    assert len(jacobian["hconcat"]) == 2
+    assert len(jacobian["panels"]) == 2
     assert jacobian["resolve"]["scale"]["y"] == "independent"
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
-    assert "labelExpr" in jacobian_spec
     assert "x1e-5" in jacobian_spec
     assert "Reflectance jacobian" not in jacobian_spec
     assert "dR/d\\u03c4" in jacobian_spec

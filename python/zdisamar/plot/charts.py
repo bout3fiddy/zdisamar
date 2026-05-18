@@ -1,25 +1,31 @@
-"""Shared Altair chart grammar."""
-
-import altair as alt
+"""Shared chart grammar for SVG plots."""
 
 from .axes import wavelength_x
 from .properties import PLOT
+from .svg import SvgPanel, SvgSeries
 
 
 def wavelength_line_chart(
     data,
-    y: alt.Y,
+    y,
     tooltip,
     *,
     color: str | None = None,
-) -> alt.Chart:
+):
 
-    return (
-        alt.Chart(data)
-        .mark_line(color=color or PLOT.colors["blue"], strokeWidth=PLOT.line_width)
-        .encode(
-            x=wavelength_x(),
-            y=y,
-            tooltip=tooltip,
-        )
+    _ = tooltip
+    x_encoding = wavelength_x()
+
+    return SvgPanel(
+        title="",
+        x_title=str(x_encoding.title),
+        y_title=str(y.title),
+        series=(
+            SvgSeries.line(
+                str(y.field),
+                (float(row[x_encoding.field]) for row in data),
+                (float(row[y.field]) for row in data),
+                color=color or PLOT.colors["blue"],
+            ),
+        ),
     )

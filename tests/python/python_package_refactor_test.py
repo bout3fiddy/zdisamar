@@ -94,7 +94,7 @@ def assert_plot_jacobian_uses_rtm_conversion() -> None:
     frame, field, _title = jacobian_frame(Spectrum(), "aerosol_optical_depth")
     assert field == "reflectance_jacobian"
     assert np.allclose(
-        frame[field].to_numpy(dtype=float),
+        np.array([row[field] for row in frame], dtype=float),
         rtm.reflectance_jacobian_from_radiance_jacobian(
             Spectrum.radiance_jacobian[:, 0],
             Spectrum.irradiance,
@@ -276,7 +276,7 @@ def assert_reference_data_and_rtm_tables() -> None:
             output = Path(tmpdir) / "reflectance"
             chart = spectrum.plot.reflectance(save=output)
             assert chart is not None
-            assert output.with_suffix(".png").exists()
+            assert output.with_suffix(".svg").exists()
         finally:
             os.chdir(old_cwd)
 
