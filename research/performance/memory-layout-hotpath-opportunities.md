@@ -1056,6 +1056,73 @@ Conclusion:
   reported timing is a 0.03% OE session retrieval change, which is below this
   single-run noise floor and offset by faster sweep totals in the same run
 
+### Experiment 18: split ConvTP relaxation scratch from returned state
+
+Changed:
+- `StrongLineConvTPState` no longer stores the
+  `relaxation_weights[128 * 128]f64` preparation matrix
+- `prepareStrongLineConvTPStateWithScratch` fills the same relaxation weights in
+  caller-provided scratch while returning only the fields read by
+  `strongLineContribution`
+- the existing direct helper still provides internal scratch for callers that do
+  not manage scratch explicitly
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StrongLineConvTPState` | 136,208 B | 5,136 B | -96.23% |
+| returned-state cache span | 2,129 lines | 81 lines | -2,048 lines |
+| preparation-only relaxation scratch | 131,072 B | 131,072 B | unchanged |
+| 47 direct profile-node returned states | 6,401,776 B | 241,392 B | -5.875 MiB |
+
+Interpretation:
+- relaxation weights are read while deriving `line_mixing_coefficients`
+- after preparation, the direct strong-line contribution path reads
+  `population_t`, `dipole_t`, `mod_sig_cm1`, `half_width_cm1_at_t`,
+  `line_mixing_coefficients`, and `sig_moy_cm1`
+- this keeps the same dense preparation scratch but stops carrying the scratch
+  matrix as part of the post-preparation state
+- prepared profile paths already use exact-size scratch; this experiment fixes
+  the remaining direct ConvTP state shape without changing contribution math
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `197ad666abab4df9a9fff9f9198ebce0`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows: DISAMAR fixture worst interior max_abs `9.569e-14`;
+  session-vs-no-session reflectance residual `0.0`; fast-mode spectra worst
+  max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.998235 s | 1.005797 s | 1.0076 |
+| forward session setup | 0.709712 s | 0.711739 s | 1.0029 |
+| forward session cached median | 0.295524 s | 0.296306 s | 1.0026 |
+| forward fast four-scene median | 4.815198 s | 4.814990 s | 1.0000 |
+| OE session setup median | 0.715381 s | 0.716440 s | 1.0015 |
+| OE session retrieval median | 1.236752 s | 1.236149 s | 0.9995 |
+| OE fast retrieval median | 0.961629 s | 0.959866 s | 0.9982 |
+| OE sweep session total wall | 20.440127 s | 20.465027 s | 1.0012 |
+| OE sweep fast total wall | 11.186411 s | 11.185478 s | 0.9999 |
+
+Conclusion:
+- this removes the largest remaining fixed-capacity field from the direct
+  strong-line state without removing the scratch required by the preparation
+  algorithm
+- the no-session forward median moved slower in this single run, but the OE
+  retrieval and sweep surfaces are flat-to-slightly-faster or within the small
+  single-run noise band
+- this is worth keeping as a memory-layout win because the post-preparation
+  state shrinks by 128 KiB per direct state while the benchmark gate does not
+  show an end-to-end regression on the OE surfaces
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1254,24 +1321,23 @@ Relevant layout facts:
 
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
-| `StrongLineConvTPState` | 136,208 B | `relaxation_weights[128 * 128]f64` | 0 |
+| `StrongLineConvTPState` | 5,136 B | five `[128]f64` prepared-state arrays | 0 |
 
 Memory access shape:
-- per-line arrays are 1 KiB each, but the relaxation matrix is 128 KiB by
-  itself
-- the type carries maximum strong-line sidecar capacity independent of active
-  `line_count`
-- `weightAt` indexes by `row * line_count + col`, so active payload is logically
-  dense only for `line_count * line_count`
+- the returned direct state carries the prepared per-line arrays read by
+  `strongLineContribution`
+- the 128 KiB relaxation matrix is now preparation scratch instead of retained
+  returned-state payload
+- active prepared profile paths already use `line_count * line_count` scratch
+  rather than retaining the relaxation matrix
 
 Potential direction:
-- store relaxation weights as dynamic `line_count * line_count` side storage
-  when strong-line counts are normally below the maximum
+- inspect whether the direct public helper should also receive caller-owned
+  exact-size scratch on every hot call site
 - if the physical matrix has sparse or triangular access, encode only the used
-  coefficients
-- pass large convolution state by pointer in hot calls to avoid value copies
-- measure strong-line count distribution first; this is a capacity waste only
-  when active counts are well below 128
+  preparation coefficients
+- measure strong-line count distribution before changing the remaining scratch
+  shape; scratch is capacity waste only when active counts are below 128
 
 ### 6. Spectral caches already use sparse keyed lookup, but plan layout can make the lookup cheaper
 

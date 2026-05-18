@@ -6,13 +6,13 @@ const Core = @import("physics_core.zig");
 const Types = @import("types.zig");
 
 // layout(64-bit):
-//   size: 136208 B, align: 8 B
-//   field storage: 136208 B across 8 fields; largest: relaxation_weights=131072 B, population_t=1024 B, dipole_t=1024 B; padding: 0 B (0 bits)
+//   size: 5136 B, align: 8 B
+//   field storage: 5136 B across 7 fields; largest: population_t=1024 B, dipole_t=1024 B, mod_sig_cm1=1024 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 6 fields reserve 136192 B inside each instance
-//   cache span: 2129 cache line(s) at 64 B per line
+//   inline arrays: 5 fields reserve 5120 B inside each instance
+//   cache span: 81 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136208 B (133.0 KiB); total = per instance * live instance count
+//   footprint: per instance = 5136 B (5.016 KiB); total = per instance * live instance count
 pub const StrongLineConvTPState = struct {
     line_count: usize = 0,
     sig_moy_cm1: f64 = 0.0,
@@ -21,16 +21,6 @@ pub const StrongLineConvTPState = struct {
     mod_sig_cm1: [Types.max_strong_line_sidecars]f64 = [_]f64{0.0} ** Types.max_strong_line_sidecars,
     half_width_cm1_at_t: [Types.max_strong_line_sidecars]f64 = [_]f64{0.0} ** Types.max_strong_line_sidecars,
     line_mixing_coefficients: [Types.max_strong_line_sidecars]f64 = [_]f64{0.0} ** Types.max_strong_line_sidecars,
-    relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 =
-        [_]f64{0.0} ** (Types.max_strong_line_sidecars * Types.max_strong_line_sidecars),
-
-    pub fn weightAt(self: *const StrongLineConvTPState, row: usize, col: usize) f64 {
-        return self.relaxation_weights[row * self.line_count + col];
-    }
-
-    pub fn setWeight(self: *StrongLineConvTPState, row: usize, col: usize, value: f64) void {
-        self.relaxation_weights[row * self.line_count + col] = value;
-    }
 };
 
 pub fn strongLineContribution(
@@ -145,17 +135,35 @@ pub fn prepareStrongLineConvTPState(
     temperature_k: f64,
     pressure_atm: f64,
 ) StrongLineConvTPState {
+    var relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 = undefined;
+    return prepareStrongLineConvTPStateWithScratch(
+        strong_lines,
+        relaxation_matrix,
+        temperature_k,
+        pressure_atm,
+        relaxation_weights[0..],
+    );
+}
+
+pub fn prepareStrongLineConvTPStateWithScratch(
+    strong_lines: []const Types.SpectroscopyStrongLine,
+    relaxation_matrix: Types.RelaxationMatrix,
+    temperature_k: f64,
+    pressure_atm: f64,
+    relaxation_weights: []f64,
+) StrongLineConvTPState {
     const safe_temperature = @max(temperature_k, 150.0);
     const temperature_ratio = Types.hitran_reference_temperature_k / safe_temperature;
     const partition_ratio = hitran_partition_tables.ratioT0OverT(66, safe_temperature, Types.hitran_reference_temperature_k) orelse temperature_ratio;
     const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), Types.max_strong_line_sidecars);
+    std.debug.assert(line_count == 0 or relaxation_weights.len / line_count >= line_count);
 
     var state = StrongLineConvTPState{ .line_count = line_count };
     if (line_count == 0) return state;
 
     fillStrongLineState(
         &state,
-        state.relaxation_weights[0..],
+        relaxation_weights,
         strong_lines,
         relaxation_matrix,
         line_count,
