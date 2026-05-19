@@ -380,7 +380,7 @@ pub fn populate(
         @as(f64, 0.0);
     context.aerosol_phase_coefficients = aerosol_phase_coefficients;
     context.cloud_phase_coefficients = cloud_phase_coefficients;
-    var profile_spectroscopy_cache = LayerSpectroscopy.ProfileSpectroscopyCache.init(
+    var profile_spectroscopy_cache = try LayerSpectroscopy.ProfileSpectroscopyCache.init(
         context,
         absorbers,
         context.midpoint_nm,

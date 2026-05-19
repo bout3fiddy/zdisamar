@@ -49,6 +49,7 @@ const ProfileCacheValueWorker = struct {
 //   cache span: 49 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 3096 B (3.023 KiB); total also includes referenced storage above
+//   capacity: enabled profile-spectroscopy requests with more than 64 profile nodes are rejected
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
@@ -63,11 +64,12 @@ pub const ProfileSpectroscopyCache = struct {
         context: *const Context,
         absorbers: *const Absorbers.AbsorberBuildState,
         wavelength_nm: f64,
-    ) ProfileSpectroscopyCache {
+    ) !ProfileSpectroscopyCache {
         const line_list = absorbers.owned_lines orelse return .{};
         if (absorbers.owned_line_absorbers.len != 0 or context.operational_o2_lut.enabled()) return .{};
         const node_count = context.spectroscopy_profile_altitudes_km.len;
-        if (node_count < 3 or node_count > max_spectroscopy_profile_nodes) return .{};
+        if (node_count > max_spectroscopy_profile_nodes) return error.InvalidRequest;
+        if (node_count < 3) return .{};
         if (context.spectroscopy_profile_pressures_hpa.len != node_count or
             context.spectroscopy_profile_temperatures_k.len != node_count) return .{};
         const prepared_states = if (absorbers.profile_strong_line_states) |states|
