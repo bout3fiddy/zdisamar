@@ -181,16 +181,17 @@ pub const IterationWorkspace = struct {
 
 // Native result storage exposed through the C ABI.
 // layout(64-bit):
-//   size: 232 B, align: 8 B
-//   field storage: scalars=24 B, slice descriptors=208 B across 13 fields; padding: 0 B
-//   unused bits: 0 padding + 7 bool-storage slack = 7 bits
+//   size: 240 B, align: 8 B
+//   field storage: scalar block=32 B, slice descriptors=208 B across 13 fields
+//   unused bits: 56 scalar padding + 7 bool-storage slack = 63 bits
 //   out-of-line: state, posterior, history, and timing arrays are owned contiguous f64/u8 buffers
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: one per completed retrieval result handle
-//   footprint: per instance = 232 B (0.227 KiB); total also includes referenced result buffers
+//   footprint: per instance = 240 B (0.234 KiB); total also includes referenced result buffers
 pub const Result = struct {
     state_count: usize = 0,
     iteration_count: usize = 0,
+    timing_count: usize = 0,
     converged: bool = false,
     state_ids: []jacobian.State = &.{},
     state: []f64 = &.{},
@@ -322,10 +323,11 @@ pub fn runO2A(
 
     var converged = false;
     var iteration_count: usize = 0;
+    const collect_timing = controls.collect_timing;
     for (0..controls.max_iterations) |iteration_offset| {
-        const iteration_start_ns = std.time.nanoTimestamp();
+        const iteration_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
         const previous = state;
-        const rtm_start_ns = std.time.nanoTimestamp();
+        const rtm_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
         var evaluation = try evaluateO2AState(
             allocator,
             &loaded_inputs,
@@ -337,9 +339,9 @@ pub fn runO2A(
             derivative_state_mask,
         );
         defer evaluation.runtime_case.deinit(allocator);
-        const rtm_end_ns = std.time.nanoTimestamp();
+        const rtm_end_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
 
-        const solver_start_ns = std.time.nanoTimestamp();
+        const solver_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
         const accumulation = try accumulateNormalSystem(
             measurement,
             evaluation.view,
@@ -374,7 +376,7 @@ pub fn runO2A(
         const state_conv = quadraticForm(step.posterior_precision, dx_iter, state_specs.len) /
             @as(f64, @floatFromInt(state_specs.len));
         converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
-        const solver_end_ns = std.time.nanoTimestamp();
+        const solver_end_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
 
         const history_offset = iteration_offset * state_specs.len;
         for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
@@ -383,9 +385,11 @@ pub fn runO2A(
         result.history_chi2_state_vector[iteration_offset] = chi2_state;
         result.history_state_vector_convergence[iteration_offset] = state_conv;
         result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
-        result.timing_rtm_and_jacobian_s[iteration_offset] = secondsBetween(rtm_start_ns, rtm_end_ns);
-        result.timing_solver_update_s[iteration_offset] = secondsBetween(solver_start_ns, solver_end_ns);
-        result.timing_total_iteration_s[iteration_offset] = secondsBetween(iteration_start_ns, solver_end_ns);
+        if (collect_timing) {
+            result.timing_rtm_and_jacobian_s[iteration_offset] = secondsBetween(rtm_start_ns, rtm_end_ns);
+            result.timing_solver_update_s[iteration_offset] = secondsBetween(solver_start_ns, solver_end_ns);
+            result.timing_total_iteration_s[iteration_offset] = secondsBetween(iteration_start_ns, solver_end_ns);
+        }
 
         final_posterior_precision = step.posterior_precision;
         scratch.jt_invse_j = accumulation.jt_invse_j;
@@ -396,6 +400,7 @@ pub fn runO2A(
     const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
     const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
     result.iteration_count = iteration_count;
+    result.timing_count = if (collect_timing) iteration_count else 0;
     result.converged = converged;
     for (0..state_specs.len) |row| {
         result.state[row] = state[row];

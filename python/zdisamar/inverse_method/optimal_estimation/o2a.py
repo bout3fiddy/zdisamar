@@ -315,6 +315,7 @@ def _result_from_native(
 
     state_count = _native_int(raw, "state_count")
     iteration_count = _native_int(raw, "iteration_count")
+    timing_count = _native_int(raw, "timing_count")
     history_state = _native_floats(raw, "history_state")
     history_chi2 = _native_floats(raw, "history_chi2")
     history_chi2_reflectance = _native_floats(raw, "history_chi2_reflectance")
@@ -331,6 +332,9 @@ def _result_from_native(
 
     if state_count != len(state_names):
         raise RuntimeError("native optimal-estimation state count does not match request")
+
+    if timing_count not in (0, iteration_count):
+        raise RuntimeError("native optimal-estimation timing count does not match result history")
 
     history = tuple(
         Iteration(
@@ -351,7 +355,7 @@ def _result_from_native(
             solver_update_s=timing_solver_update[index],
             total_iteration_s=timing_total_iteration[index],
         )
-        for index in range(iteration_count)
+        for index in range(timing_count)
     )
 
     return Result(

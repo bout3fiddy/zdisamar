@@ -41,6 +41,7 @@ build-backend = "hatchling.build"
 dev = [
     "basedpyright>=1.22",
     "hatchling>=1.29",
+    "numpy>=2.0,<3",
     "ruff>=0.15",
     "ty>=0.0.1a1",
 ]

@@ -240,6 +240,7 @@ class COptimalEstimationResult(ctypes.Structure):
     _fields_ = [
         ("state_count", ctypes.c_size_t),
         ("iteration_count", ctypes.c_size_t),
+        ("timing_count", ctypes.c_size_t),
         ("converged", ctypes.c_uint8),
         ("state_ids", ctypes.POINTER(ctypes.c_uint8)),
         ("state", ctypes.POINTER(ctypes.c_double)),
