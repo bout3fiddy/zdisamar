@@ -3360,6 +3360,76 @@ Conclusion:
 - this is kept because it removes unused metadata from a repeated LABOS order
   payload and improves the latency surfaces that matter most for retrieval
 
+### Experiment 51: gate per-layer breakdown stores on derivative routes
+
+Changed:
+- `shared_carrier.fillLayerInputFromSharedCarrier` now writes the seven
+  per-component `LayerInput` optical-depth breakdown fields only when
+  `compute_jacobian` is true
+- no-derivative routes still write the aggregate fields LABOS consumes:
+  `optical_depth`, `scattering_optical_depth`, `single_scatter_albedo`,
+  geometry cosines, and encoded phase mixture
+- top-level `ForwardInput` optical-depth totals are unchanged because the
+  function still returns the full `OpticalDepthBreakdown` accumulator
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| per no-derivative shared-grid `LayerInput` breakdown stores | 56 B/layer row | 0 B/layer row | -56 B/layer row |
+| current O2 A layers per high-resolution forward solve | 6,496 B | 0 B | -6.34 KiB/write pass |
+| current 701-miss no-session forward solve lower bound | 4,553,696 B | 0 B | -4.34 MiB/write traffic |
+| 10 no-session benchmark repeats lower bound | 45,536,960 B | 0 B | -43.43 MiB/write traffic |
+
+Interpretation:
+- this is a memory-traffic change, not a retained-layout change:
+  `LayerInput` remains 208 B
+- LABOS no-derivative transport reads aggregate layer fields, not the
+  per-component breakdown fields
+- derivative routes keep the fields current because aerosol optical-depth
+  weighting uses the aerosol breakdown and Jacobian vectors
+- the lower-bound count excludes the first-use session forward and fast-mode
+  forward cases, which also use no-derivative shared-carrier layer fills
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `38484974c9e94abc928b09ad2613a108`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 50:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 139.848251 s | 140.029479 s | 1.0013 |
+| total benchmark CPU | 269.841033 s | 270.156206 s | 1.0012 |
+| peak RSS high-water mark | 100.31 MiB | 78.75 MiB | 0.7850 |
+| forward no-session median | 0.950345 s | 0.954903 s | 1.0048 |
+| forward session cached median | 0.255979 s | 0.254594 s | 0.9946 |
+| forward fast four-scene median | 4.618706 s | 4.620401 s | 1.0004 |
+| OE session retrieval median | 1.072821 s | 1.073463 s | 1.0006 |
+| OE fast retrieval median | 0.830212 s | 0.830158 s | 0.9999 |
+| OE sweep session total wall | 19.259032 s | 19.275704 s | 1.0009 |
+| OE sweep fast total wall | 10.530824 s | 10.550308 s | 1.0019 |
+
+Conclusion:
+- accepted as a memory-traffic win, not as a latency win
+- the no-session lower bound clears the requested additional 40 MiB traffic
+  reduction before counting the other no-derivative benchmark surfaces
+- latency stayed within the benchmark noise band on the intended 2-worker
+  boundary; the small total wall/CPU movement is not large enough to outweigh
+  the removed hot-path stores
+- retained RSS improved in this clean run, but this change is justified by
+  store traffic and residual-safe route specialization rather than retained
+  struct-size reduction
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

@@ -150,13 +150,17 @@ fn fillLayerInputFromSharedCarrier(
 ) void {
     const total_optical_depth = breakdown.totalOpticalDepth();
     const total_scattering = breakdown.totalScatteringOpticalDepth();
-    layer_input.gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth;
-    layer_input.gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth;
-    layer_input.cia_optical_depth = breakdown.cia_optical_depth;
-    layer_input.aerosol_optical_depth = breakdown.aerosol_optical_depth;
-    layer_input.aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth;
-    layer_input.cloud_optical_depth = breakdown.cloud_optical_depth;
-    layer_input.cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth;
+    // No-derivative LABOS consumes the aggregate transport fields below;
+    // per-component fields feed derivative weighting.
+    if (compute_jacobian) {
+        layer_input.gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth;
+        layer_input.gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth;
+        layer_input.cia_optical_depth = breakdown.cia_optical_depth;
+        layer_input.aerosol_optical_depth = breakdown.aerosol_optical_depth;
+        layer_input.aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth;
+        layer_input.cloud_optical_depth = breakdown.cloud_optical_depth;
+        layer_input.cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth;
+    }
     layer_input.optical_depth = total_optical_depth;
     layer_input.scattering_optical_depth = total_scattering;
     layer_input.single_scatter_albedo = breakdown.singleScatterAlbedo();
