@@ -3212,6 +3212,82 @@ Conclusion:
 - do not retry this exact field-ordering change without lower-level evidence
   from compiler output or hardware counters showing fewer hot cache-line loads
 
+### Experiment 49: reject RTM aerosol Jacobian side storage
+
+Changed during experiment:
+- prototype only; reverted after benchmark
+- removed derivative-only `aerosol_ksca_jacobian` from
+  `RtmQuadratureLevel`
+- added derivative-only side storage on `RtmQuadratureGrid`, summary buffers,
+  forward-worker scratch, and spectral-forward call boundaries
+- kept no-derivative routes on an empty side slice and allocated the side slice
+  only when `route.derivative_mode != .none`
+- updated `layout(64-bit)` comments and verified sizes with a scratch Zig
+  `@sizeOf` check: `RtmQuadratureLevel=64`, `RtmQuadratureGrid=48`,
+  `ForwardInput=320`, `Buffers=288`, `SummaryStorage=616`
+
+Memory traffic hypothesis:
+
+| item | before | attempted | expected effect |
+| --- | ---: | ---: | --- |
+| `RtmQuadratureLevel` size | 72 B | 64 B | one 64 B cache line per level row |
+| current O2 A RTM levels, 117 levels | 8,424 B | 7,488 B | -936 B per no-derivative quadrature buffer |
+| derivative RTM payload | 117 * 72 B | 117 * 64 B + 117 * 8 B side slice | same scalar payload, hot row separated from derivative-only data |
+| `RtmQuadratureGrid` descriptor | 32 B | 48 B | +16 B side-slice descriptor |
+| `ForwardInput` descriptor payload | 304 B | 320 B | +16 B through embedded grid |
+| `Buffers` descriptor payload | 272 B | 288 B | +16 B side-slice descriptor |
+| `SummaryStorage` owner payload | 600 B | 616 B | +16 B retained owner descriptor |
+
+Interpretation:
+- this was primarily a cache-line traffic experiment, not a large retained
+  footprint reduction
+- the no-derivative RTM level row becomes exactly one cache line, which is the
+  attractive part of the layout
+- derivative routes keep the same per-level scalar payload but now read and
+  write one extra side array when assembling aerosol weighting functions
+- because current OE/retrieval benchmark surfaces are derivative-heavy, the
+  side-array load/store path has to beat the cache-line benefit to be worth
+  keeping
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `c3f119f870914802ab490c563615c3ee`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 47:
+
+| metric | before | attempted | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.676606 s | 140.911488 s | 1.0017 |
+| total benchmark CPU | 271.460597 s | 271.998000 s | 1.0020 |
+| peak RSS high-water mark | 100.81 MiB | 98.14 MiB | 0.9735 |
+| forward no-session median | 0.945517 s | 0.953005 s | 1.0079 |
+| forward session cached median | 0.254982 s | 0.259207 s | 1.0166 |
+| forward fast four-scene median | 4.634547 s | 4.634065 s | 0.9999 |
+| OE session retrieval median | 1.081314 s | 1.091362 s | 1.0093 |
+| OE fast retrieval median | 0.835691 s | 0.840708 s | 1.0060 |
+| OE sweep session total wall | 19.533589 s | 19.574158 s | 1.0021 |
+| OE sweep fast total wall | 10.659538 s | 10.659939 s | 1.0000 |
+
+Conclusion:
+- rejected and reverted
+- the cache-line shape is better, but latency got worse on derivative-heavy
+  forward and OE surfaces
+- the lower peak RSS is not enough to keep this because the retained footprint
+  reduction is small and the side-array access worsens the latency surfaces
+  that matter
+- do not retry derivative-side storage for `RtmQuadratureLevel` unless the
+  derivative path is split into a separate specialized layout or hardware
+  counters show the current derivative row is actually memory-stall bound
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
