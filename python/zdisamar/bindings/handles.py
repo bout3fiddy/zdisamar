@@ -44,6 +44,7 @@ from .structures import (
 
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
 _MAX_UINT32 = 2**32 - 1
+_NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
 
 
 def contiguous_wavelengths(wavelengths_nm):
@@ -312,7 +313,12 @@ class RtmHandle:
 
         state_buffers = []
         state_specs = []
-        max_iterations = int(controls.max_iterations)
+        raw_max_iterations = controls.max_iterations
+
+        if not isinstance(raw_max_iterations, Integral) or isinstance(raw_max_iterations, bool):
+            raise ValueError("optimal-estimation max_iterations must be an integer")
+
+        max_iterations = int(raw_max_iterations)
 
         if max_iterations <= 0 or max_iterations > _MAX_OPTIMAL_ESTIMATION_ITERATIONS:
             raise ValueError(
@@ -321,7 +327,22 @@ class RtmHandle:
             )
 
         for parameter in state_vector.parameters:
-            state_name = getattr(parameter, "jacobian_name", parameter.name)
+            parameter_name = parameter.name
+            state_name = getattr(parameter, "jacobian_name", parameter_name)
+
+            if state_name != parameter_name:
+                raise ValueError(
+                    "native optimal estimation requires direct state parameters; "
+                    "transformed state-vector parameters are not supported"
+                )
+
+            if (
+                getattr(parameter, "jacobian_scale", None) is not None
+                and state_name != _NATIVE_PRESSURE_STATE
+            ):
+                raise ValueError(
+                    "native optimal estimation does not support custom jacobian_scale transforms"
+                )
 
             try:
                 state_id = JACOBIAN_STATE_NAMES.index(state_name)

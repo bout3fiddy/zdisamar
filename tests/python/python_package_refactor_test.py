@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 
@@ -321,6 +321,17 @@ def assert_native_oe_marshaling_bounds() -> None:
         else:
             raise AssertionError("invalid max_iterations reached native OE marshaling")
 
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=cast(Any, 1.9)),
+        )
+    except ValueError as error:
+        assert "max_iterations" in str(error)
+    else:
+        raise AssertionError("non-integer max_iterations reached native OE marshaling")
+
     state_vector.parameters[0].interval_index_1based = 2**32
 
     try:
@@ -346,6 +357,36 @@ def assert_native_oe_marshaling_bounds() -> None:
         assert "interval_index_1based" in str(error)
     else:
         raise AssertionError("non-integer interval index reached native OE marshaling")
+
+    state_vector.parameters[0].interval_index_1based = 0
+    state_vector.parameters[0].name = "log_aerosol_optical_depth"
+    state_vector.parameters[0].jacobian_name = "aerosol_optical_depth"
+
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+    except ValueError as error:
+        assert "transformed state-vector parameters" in str(error)
+    else:
+        raise AssertionError("transformed state vector reached native OE marshaling")
+
+    state_vector.parameters[0].name = "aerosol_optical_depth"
+    state_vector.parameters[0].jacobian_name = "aerosol_optical_depth"
+    state_vector.parameters[0].jacobian_scale = lambda _value: 2.0
+
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+    except ValueError as error:
+        assert "jacobian_scale" in str(error)
+    else:
+        raise AssertionError("custom jacobian scale reached native OE marshaling")
 
 
 def assert_native_oe_runs_after_default_prepare() -> None:
