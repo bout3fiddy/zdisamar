@@ -271,16 +271,16 @@ fn layerResolvedLabosWithWorkspace(
         owned_orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, nlayer + 1);
         break :blk &(owned_orders_workspace.?);
     };
-    const layer_phase_kernels: ?[]basis.PhaseKernel = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseKernelCache(nlayer + 1) else try allocator.alloc(basis.PhaseKernel, nlayer + 1)
+    const layer_phase_rows: ?[]basis.PhaseKernelRow = if (use_integrated_source)
+        if (workspace) |scratch| try scratch.phaseRowCache(nlayer + 1) else try allocator.alloc(basis.PhaseKernelRow, nlayer + 1)
     else
         null;
-    defer if (workspace == null) if (layer_phase_kernels) |cache| allocator.free(cache);
-    const layer_phase_kernel_valid: ?[]bool = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseKernelValid(nlayer + 1) else try allocator.alloc(bool, nlayer + 1)
+    defer if (workspace == null) if (layer_phase_rows) |cache| allocator.free(cache);
+    const layer_phase_row_valid: ?[]bool = if (use_integrated_source)
+        if (workspace) |scratch| try scratch.phaseRowValid(nlayer + 1) else try allocator.alloc(bool, nlayer + 1)
     else
         null;
-    defer if (workspace == null) if (layer_phase_kernel_valid) |valid| allocator.free(valid);
+    defer if (workspace == null) if (layer_phase_row_valid) |valid| allocator.free(valid);
 
     const layer_phase_max_indices = if (workspace) |scratch| blk: {
         const indices = try scratch.layerPhaseMaxIndices(nlayer);
@@ -335,8 +335,8 @@ fn layerResolvedLabosWithWorkspace(
                     layer_phase_max_indices,
                     layer_effective_scattering_suffixes,
                     phase_suffix_stride,
-                    layer_phase_kernels,
-                    layer_phase_kernel_valid,
+                    layer_phase_rows,
+                    layer_phase_row_valid,
                     if (workspace != null) orders_workspace.rt_active else null,
                 );
             }
@@ -417,8 +417,8 @@ fn layerResolvedLabosWithWorkspace(
                         geo,
                         plm_basis,
                         adjacent_layer_phase_max_indices,
-                        layer_phase_kernels,
-                        layer_phase_kernel_valid,
+                        layer_phase_rows,
+                        layer_phase_row_valid,
                     )
                 else
                     calcReflectance(orders_result.ud, nlayer, geo);

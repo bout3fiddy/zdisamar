@@ -20,6 +20,7 @@ pub const LayerRT = basis.LayerRT;
 pub const UDField = basis.UDField;
 pub const UDLocal = basis.UDLocal;
 pub const PhaseKernel = basis.PhaseKernel;
+pub const PhaseKernelRow = basis.PhaseKernelRow;
 pub const FourierPlmBasis = basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = basis.fillZplusZminFromBasis;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;

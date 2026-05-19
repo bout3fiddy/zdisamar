@@ -206,8 +206,8 @@ pub fn calcIntegratedReflectanceWithBasis(
     geo: *const basis.Geometry,
     plm_basis: *const basis.FourierPlmBasis,
     adjacent_layer_phase_max_indices: ?[]const usize,
-    layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
-    layer_phase_kernel_valid: ?[]const bool,
+    layer_phase_row_cache: ?[]const basis.PhaseKernelRow,
+    layer_phase_row_valid: ?[]const bool,
 ) f64 {
     const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
@@ -260,15 +260,14 @@ pub fn calcIntegratedReflectanceWithBasis(
         const phase_rows: PhaseRows = blk: {
             if (!use_rtm_quadrature) {
                 if (reuseLayerKernelIndex(layers, source_interface.?, ilevel)) |above_index| {
-                    if (layer_phase_kernel_cache) |cache| {
-                        if (layer_phase_kernel_valid) |valid| {
+                    if (layer_phase_row_cache) |cache| {
+                        if (layer_phase_row_valid) |valid| {
                             const cache_index = above_index + 1;
                             if (cache_index < cache.len and cache_index < valid.len and valid[cache_index]) {
-                                const z = &cache[cache_index];
-                                const row_offset = view_idx * z.Zplus.n;
+                                const row = &cache[cache_index];
                                 break :blk PhaseRows{
-                                    .zplus = z.Zplus.data[row_offset .. row_offset + z.Zplus.n],
-                                    .zmin = z.Zmin.data[row_offset .. row_offset + z.Zmin.n],
+                                    .zplus = row.zplus[0..row.n],
+                                    .zmin = row.zmin[0..row.n],
                                 };
                             }
                         }

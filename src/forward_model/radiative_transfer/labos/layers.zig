@@ -563,14 +563,14 @@ pub fn calcRTlayersIntoWithBasis(
     layer_phase_max_indices: ?[]const usize,
     layer_effective_scattering_suffixes: ?[]const f64,
     layer_effective_scattering_suffix_stride: usize,
-    phase_kernel_cache: ?[]basis.PhaseKernel,
-    phase_kernel_valid: ?[]bool,
+    phase_row_cache: ?[]basis.PhaseKernelRow,
+    phase_row_valid: ?[]bool,
     rt_active: ?[]bool,
 ) void {
     const nlayer = layers.len;
     rt[0] = zeroLayerRt(geo.nmutot);
     if (rt_active) |active| active[0] = false;
-    if (phase_kernel_valid) |valid| @memset(valid, false);
+    if (phase_row_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
         Trace.plotU("layer_visits", 1);
@@ -613,9 +613,9 @@ pub fn calcRTlayersIntoWithBasis(
             );
         };
         Trace.plotU("phase_matrix_builds", 1);
-        if (phase_kernel_cache) |cache| {
-            cache[rt_idx] = z;
-            if (phase_kernel_valid) |valid| valid[rt_idx] = true;
+        if (phase_row_cache) |cache| {
+            cachePhaseKernelViewRow(cache, rt_idx, &z, geo.viewIdx());
+            if (phase_row_valid) |valid| valid[rt_idx] = true;
         }
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
@@ -703,6 +703,26 @@ pub fn calcRTlayersIntoWithBasis(
 
         if (rt_active) |active| active[rt_idx] = a != 0.0;
     }
+}
+
+fn cachePhaseKernelViewRow(
+    phase_row_cache: []basis.PhaseKernelRow,
+    rt_idx: usize,
+    z: *const basis.PhaseKernel,
+    row_index: usize,
+) void {
+    const n = z.Zplus.n;
+    const row_offset = row_index * n;
+    var row = basis.PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = n,
+    };
+    for (0..n) |col| {
+        row.zplus[col] = z.Zplus.data[row_offset + col];
+        row.zmin[col] = z.Zmin.data[row_offset + col];
+    }
+    phase_row_cache[rt_idx] = row;
 }
 
 // hot path:

@@ -1961,6 +1961,74 @@ Conclusion:
   this run, so this should be watched in the next benchmark rather than counted
   as a latency win
 
+### Experiment 31: cache integrated-source phase rows instead of full kernels
+
+Changed:
+- the LABOS integrated-source reuse cache now stores `PhaseKernelRow` entries
+  for the observer row used by reflectance instead of full `PhaseKernel`
+  matrices
+- RT layer construction still builds the full local phase kernel for single
+  scatter and doubling math; only the workspace reuse payload narrows
+- `calcIntegratedReflectanceWithBasis` consumes the cached row directly when a
+  source interface mirrors an adjacent layer, and keeps the existing computed
+  row fallback for RTM quadrature or non-reusable interfaces
+
+Memory traffic result:
+
+| item | before | after for current `nlayer=116` | change |
+| --- | ---: | ---: | ---: |
+| cached source reuse payload per level | `PhaseKernel` = 2,320 B | `PhaseKernelRow` = 200 B | -2,120 B |
+| retained cache storage per workspace | 265.1 KiB | 22.9 KiB | -242.2 KiB |
+| validity flags per workspace | 117 B | 117 B | unchanged |
+| full-active 40-Fourier write surface | 10.27 MiB | 0.89 MiB | -9.38 MiB |
+
+Interpretation:
+- reflectance reuse only reads the `geo.viewIdx()` row from the cached layer
+  phase matrix, so the other rows were retained and copied without being read by
+  that consumer
+- the full matrix remains a local value in the RT layer builder because the RT
+  construction path still consumes both `Zplus` and `Zmin` matrices
+- this is a row-cache narrowing, not a recomputation tradeoff: the reused row is
+  copied from the matrix already built for the current layer/Fourier term
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `614180e23bad4e4c84f80a0ab820979c`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check/comparison commands
+  themselves were present
+- benchmark residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.600`; session-vs-no-session reflectance residual `0.0`; OE session AOD
+  diff `8.699e-08`; fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against Experiment 30:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 144.783458 s | 143.940124 s | 0.9942 |
+| total benchmark CPU | 279.261029 s | 277.524613 s | 0.9938 |
+| forward no-session median | 0.985769 s | 0.982903 s | 0.9971 |
+| forward session setup | 0.710595 s | 0.718419 s | 1.0110 |
+| forward session first cached | 0.281500 s | 0.272933 s | 0.9696 |
+| forward session cached median | 0.277718 s | 0.275325 s | 0.9914 |
+| forward fast four-scene median | 4.724862 s | 4.709146 s | 0.9967 |
+| OE session retrieval median | 1.157562 s | 1.150896 s | 0.9942 |
+| OE fast retrieval median | 0.897334 s | 0.891557 s | 0.9936 |
+| OE sweep session total wall | 19.917845 s | 19.774512 s | 0.9928 |
+| OE sweep fast total wall | 10.925058 s | 10.834246 s | 0.9917 |
+
+Conclusion:
+- this removes about 242.2 KiB of retained integrated-source phase reuse cache
+  storage per LABOS workspace for the current O2A layer count
+- total benchmark wall and CPU are both faster, and every execution row except
+  forward session setup improved against the same `run_benchmark.py` boundary
+- forward session setup is 7.8 ms slower in this run, so do not claim setup
+  improvement; the rest of the timing surface supports keeping the row cache
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

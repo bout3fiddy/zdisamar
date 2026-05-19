@@ -24,8 +24,8 @@ pub const Workspace = struct {
     layer_effective_scattering_suffix: []f64 = &.{},
     source_phase_max_indices: []usize = &.{},
     orders: ?orders_mod.OrdersWorkspace = null,
-    layer_phase_kernels: []basis.PhaseKernel = &.{},
-    layer_phase_kernel_valid: []bool = &.{},
+    layer_phase_rows: []basis.PhaseKernelRow = &.{},
+    layer_phase_row_valid: []bool = &.{},
     plm_basis_cache: []basis.FourierPlmBasis = &.{},
     plm_basis_cache_valid: []bool = &.{},
     previous_layer_phase_signatures: []u64 = &.{},
@@ -46,8 +46,8 @@ pub const Workspace = struct {
         self.allocator.free(self.layer_phase_max_indices);
         self.allocator.free(self.layer_effective_scattering_suffix);
         self.allocator.free(self.source_phase_max_indices);
-        self.allocator.free(self.layer_phase_kernels);
-        self.allocator.free(self.layer_phase_kernel_valid);
+        self.allocator.free(self.layer_phase_rows);
+        self.allocator.free(self.layer_phase_row_valid);
         self.allocator.free(self.plm_basis_cache);
         self.allocator.free(self.plm_basis_cache_valid);
         self.allocator.free(self.previous_layer_phase_signatures);
@@ -174,14 +174,14 @@ pub const Workspace = struct {
         return &(self.orders.?);
     }
 
-    pub fn phaseKernelCache(self: *Workspace, nlevel: usize) ![]basis.PhaseKernel {
-        try ensureCapacity(basis.PhaseKernel, self.allocator, &self.layer_phase_kernels, nlevel);
-        return self.layer_phase_kernels[0..nlevel];
+    pub fn phaseRowCache(self: *Workspace, nlevel: usize) ![]basis.PhaseKernelRow {
+        try ensureCapacity(basis.PhaseKernelRow, self.allocator, &self.layer_phase_rows, nlevel);
+        return self.layer_phase_rows[0..nlevel];
     }
 
-    pub fn phaseKernelValid(self: *Workspace, nlevel: usize) ![]bool {
-        try ensureCapacity(bool, self.allocator, &self.layer_phase_kernel_valid, nlevel);
-        return self.layer_phase_kernel_valid[0..nlevel];
+    pub fn phaseRowValid(self: *Workspace, nlevel: usize) ![]bool {
+        try ensureCapacity(bool, self.allocator, &self.layer_phase_row_valid, nlevel);
+        return self.layer_phase_row_valid[0..nlevel];
     }
 
     pub fn fourierPlmBasis(

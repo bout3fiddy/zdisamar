@@ -8,9 +8,10 @@ const Geometry = labos.Geometry;
 const UDField = labos.UDField;
 const Vec = labos.Vec;
 const Vec2 = labos.Vec2;
-const PhaseKernel = labos.PhaseKernel;
+const PhaseKernelRow = labos.PhaseKernelRow;
 const FourierPlmBasis = labos.FourierPlmBasis;
 const fillZplusZminFromBasis = labos.fillZplusZminFromBasis;
+const calcRTlayersIntoWithBasis = labos.calcRTlayersIntoWithBasis;
 const max_phase_coef = labos.max_phase_coef;
 const calcIntegratedReflectance = labos.calcIntegratedReflectance;
 const calcIntegratedReflectanceWithBasis = labos.calcIntegratedReflectanceWithBasis;
@@ -56,16 +57,27 @@ test "cached layer kernels preserve integrated reflectance when source interface
     };
     const i_fourier: usize = 1;
     const plm_basis = FourierPlmBasis.init(i_fourier, resolvedPhaseCoefficientMax(input), &geo);
-    var kernel_cache: [3]PhaseKernel = undefined;
-    var kernel_valid = [_]bool{false} ** 3;
+    var row_cache: [3]PhaseKernelRow = undefined;
+    var row_valid = [_]bool{false} ** 3;
     for (0..layers.len) |layer_idx| {
-        kernel_cache[layer_idx + 1] = fillZplusZminFromBasis(
+        const kernel = fillZplusZminFromBasis(
             i_fourier,
             &layers[layer_idx].phase_coefficients,
             &geo,
             &plm_basis,
         );
-        kernel_valid[layer_idx + 1] = true;
+        var row = PhaseKernelRow{
+            .zplus = undefined,
+            .zmin = undefined,
+            .n = geo.nmutot,
+        };
+        const view_row_offset = geo.viewIdx() * geo.nmutot;
+        for (0..geo.nmutot) |col| {
+            row.zplus[col] = kernel.Zplus.data[view_row_offset + col];
+            row.zmin[col] = kernel.Zmin.data[view_row_offset + col];
+        }
+        row_cache[layer_idx + 1] = row;
+        row_valid[layer_idx + 1] = true;
     }
 
     const baseline = calcIntegratedReflectance(
@@ -87,11 +99,56 @@ test "cached layer kernels preserve integrated reflectance when source interface
         &geo,
         &plm_basis,
         null,
-        &kernel_cache,
-        &kernel_valid,
+        &row_cache,
+        &row_valid,
     );
 
     try std.testing.expectApproxEqAbs(baseline, cached, 1.0e-12);
+}
+
+test "layer build caches observer phase row for integrated-source reflectance" {
+    const geo = Geometry.init(4, 0.58, 0.64);
+    const layer_phase = .{ 1.0, 0.47, 0.18, 0.06 } ++ .{0.0} ** (max_phase_coef - 4);
+    const layers = [_]common.LayerInput{.{
+        .optical_depth = 0.2,
+        .scattering_optical_depth = 0.18,
+        .single_scatter_albedo = 0.9,
+        .phase_coefficients = layer_phase,
+    }};
+    const i_fourier: usize = 1;
+    const plm_basis = FourierPlmBasis.init(i_fourier, 3, &geo);
+    var rt: [2]labos.LayerRT = undefined;
+    var row_cache: [2]PhaseKernelRow = undefined;
+    var row_valid = [_]bool{false} ** 2;
+
+    calcRTlayersIntoWithBasis(
+        &rt,
+        &layers,
+        i_fourier,
+        &geo,
+        .{ .n_streams = 8, .scattering = .single },
+        &plm_basis,
+        null,
+        null,
+        max_phase_coef,
+        &row_cache,
+        &row_valid,
+        null,
+    );
+
+    const expected_kernel = fillZplusZminFromBasis(
+        i_fourier,
+        &layers[0].phase_coefficients,
+        &geo,
+        &plm_basis,
+    );
+    const row_offset = geo.viewIdx() * geo.nmutot;
+    try std.testing.expect(row_valid[1]);
+    try std.testing.expectEqual(geo.nmutot, row_cache[1].n);
+    for (0..geo.nmutot) |col| {
+        try std.testing.expectApproxEqAbs(expected_kernel.Zplus.data[row_offset + col], row_cache[1].zplus[col], 1.0e-12);
+        try std.testing.expectApproxEqAbs(expected_kernel.Zmin.data[row_offset + col], row_cache[1].zmin[col], 1.0e-12);
+    }
 }
 
 test "integrated source truncates quadrature phase kernels by adjacent layers" {
