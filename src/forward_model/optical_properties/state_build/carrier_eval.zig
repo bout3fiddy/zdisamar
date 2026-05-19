@@ -234,17 +234,17 @@ const CiaWavelengthCoefficients = struct {
 };
 
 // layout(64-bit):
-//   size: 1224 B, align: 8 B
-//   field storage: ksca=8 B, aerosol_scattering_optical_depth_per_km=8 B, phase_coefficients=1208 B; padding: 0 B (0 bits)
+//   size: 32 B, align: 8 B
+//   field storage: ksca=8 B, gas_scattering_optical_depth_per_km=8 B, aerosol_scattering_optical_depth_per_km=8 B, cloud_scattering_optical_depth_per_km=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[151]f64=1208 B
-//   cache span: 20 cache line(s) at 64 B per line
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1224 B (1.195 KiB); total = per instance * live instance count
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const PreparedQuadratureCarrier = struct {
     ksca: f64,
+    gas_scattering_optical_depth_per_km: f64 = 0.0,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
-    phase_coefficients: [phase_coefficient_count]f64,
+    cloud_scattering_optical_depth_per_km: f64 = 0.0,
 };
 
 // layout(64-bit):
@@ -779,7 +779,6 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
         level_geometry.particle_below_support_row_index,
     );
     fillRtmQuadratureLevelFromBoundaryParts(
-        self,
         wavelength_nm,
         level_geometry,
         gas_carrier.gas_scattering_optical_depth_per_km,
@@ -828,7 +827,6 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         wavelength_cache.particle_scales,
     );
     fillRtmQuadratureLevelFromBoundaryParts(
-        self,
         wavelength_nm,
         level_geometry,
         gas_carrier.gas_scattering_optical_depth_per_km,
@@ -840,7 +838,6 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
 }
 
 fn fillRtmQuadratureLevelFromBoundaryParts(
-    self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
     level_geometry: SharedRtmLevelGeometry,
     gas_scattering_optical_depth_per_km: f64,
@@ -849,31 +846,21 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
     rayleigh_phase_coefficient2: ?f64,
     rtm_level: *transport_common.RtmQuadratureLevel,
 ) void {
+    const aerosol_ksca = particle_above.aerosol_scattering_optical_depth_per_km;
+    const cloud_ksca = particle_above.cloud_scattering_optical_depth_per_km;
     rtm_level.* = .{
         .altitude_km = level_geometry.altitude_km,
         .weight = level_geometry.weight_km,
         .ksca = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
-        .phase_coefficients = if (rayleigh_phase_coefficient2) |coefficient2|
-            PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
-                coefficient2,
-                gas_scattering_optical_depth_per_km,
-                particle_above.aerosol_scattering_optical_depth_per_km,
-                particle_above.cloud_scattering_optical_depth_per_km,
-                &self.aerosol_phase_coefficients,
-                &self.cloud_phase_coefficients,
-            )
-        else
-            PhaseFunctions.combinePhaseCoefficients(
-                wavelength_nm,
-                gas_scattering_optical_depth_per_km,
-                particle_above.aerosol_scattering_optical_depth_per_km,
-                particle_above.cloud_scattering_optical_depth_per_km,
-                &self.aerosol_phase_coefficients,
-                &self.cloud_phase_coefficients,
-            ),
-        .aerosol_ksca_above_per_km = particle_above.aerosol_scattering_optical_depth_per_km,
+        .aerosol_ksca_above_per_km = aerosol_ksca,
         .aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
     };
+    rtm_level.setPhaseMixture(
+        rayleigh_phase_coefficient2 orelse PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        gas_scattering_optical_depth_per_km,
+        aerosol_ksca,
+        cloud_ksca,
+    );
 }
 
 fn fillZeroRtmQuadratureLevel(
@@ -884,7 +871,6 @@ fn fillZeroRtmQuadratureLevel(
         .altitude_km = level_geometry.altitude_km,
         .weight = level_geometry.weight_km,
         .ksca = 0.0,
-        .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
     };
 }
 
@@ -1133,8 +1119,9 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     );
     return .{
         .ksca = carrier.totalScatteringOpticalDepthPerKm(),
+        .gas_scattering_optical_depth_per_km = carrier.gas_scattering_optical_depth_per_km,
         .aerosol_scattering_optical_depth_per_km = carrier.aerosol_scattering_optical_depth_per_km,
-        .phase_coefficients = carrier.phase_coefficients,
+        .cloud_scattering_optical_depth_per_km = carrier.cloud_scattering_optical_depth_per_km,
     };
 }
 

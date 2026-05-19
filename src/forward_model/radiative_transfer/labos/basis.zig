@@ -50,4 +50,5 @@ pub const FourierPlmBasis = phase_basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = phase_basis.fillZplusZminFromBasis;
 pub const fillZplusZminFromBasisLimited = phase_basis.fillZplusZminFromBasisLimited;
 pub const fillZplusZminRowFromBasisLimited = phase_basis.fillZplusZminRowFromBasisLimited;
+pub const fillZplusZminRowFromWeightedPhaseLimited = phase_basis.fillZplusZminRowFromWeightedPhaseLimited;
 pub const fillZplusZmin = phase_basis.fillZplusZmin;

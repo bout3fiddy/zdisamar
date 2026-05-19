@@ -77,6 +77,60 @@ fn maxPhaseCoefficientIndex(phase_coefficients: *const [basis.max_phase_coef]f64
     return max_index;
 }
 
+fn maxWeightedPhaseCoefficientIndex(
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefficients: *const [basis.max_phase_coef]f64,
+    cloud_phase_coefficients: *const [basis.max_phase_coef]f64,
+) usize {
+    var max_index: usize = 0;
+    if (@abs(rayleigh2_weight) > 1.0e-12) max_index = 2;
+    if (@abs(aerosol_weight) > 1.0e-12) {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(aerosol_phase_coefficients));
+    }
+    if (@abs(cloud_weight) > 1.0e-12) {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(cloud_phase_coefficients));
+    }
+    return max_index;
+}
+
+fn maxRtmQuadraturePhaseCoefficientIndex(
+    level: *const common.RtmQuadratureLevel,
+    rtm_quadrature: common.RtmQuadratureGrid,
+) usize {
+    return maxWeightedPhaseCoefficientIndex(
+        level.phase_aerosol_weight,
+        level.phase_cloud_weight,
+        level.phase_rayleigh2_weight,
+        rtm_quadrature.aerosol_phase_coefficients,
+        rtm_quadrature.cloud_phase_coefficients,
+    );
+}
+
+fn fillRtmQuadraturePhaseRow(
+    rtm_quadrature: common.RtmQuadratureGrid,
+    level: *const common.RtmQuadratureLevel,
+    i_fourier: usize,
+    max_phase_index: usize,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+    row_index: usize,
+) basis.PhaseKernelRow {
+    return basis.fillZplusZminRowFromWeightedPhaseLimited(
+        i_fourier,
+        level.phase_aerosol_weight,
+        level.phase_cloud_weight,
+        level.phase_rayleigh2_weight,
+        rtm_quadrature.aerosol_phase_coefficients,
+        rtm_quadrature.cloud_phase_coefficients,
+        max_phase_index,
+        geo,
+        plm_basis,
+        row_index,
+    );
+}
+
 fn maxInterfacePhaseCoefficientIndex(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -238,14 +292,12 @@ pub fn calcIntegratedReflectanceWithBasis(
         else
             1.0;
         if (source_rtm_weight <= 0.0 or source_ksca <= 0.0) continue;
-        const phase_coefficients = if (use_rtm_quadrature)
-            &rtm_quadrature.levels[ilevel].phase_coefficients
-        else
-            &source_interface.?.phase_coefficients_above;
         const source_max_phase_index = if (adjacent_layer_phase_max_indices) |indices|
             indices[ilevel]
-        else if (use_rtm_quadrature or layers.len != 0)
+        else if (layers.len != 0)
             adjacentLayerPhaseCoefficientIndex(layers, ilevel)
+        else if (use_rtm_quadrature)
+            maxRtmQuadraturePhaseCoefficientIndex(&rtm_quadrature.levels[ilevel], rtm_quadrature)
         else
             maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);
         if (i_fourier > source_max_phase_index) {
@@ -274,14 +326,25 @@ pub fn calcIntegratedReflectanceWithBasis(
                     }
                 }
             }
-            computed_row = basis.fillZplusZminRowFromBasisLimited(
-                i_fourier,
-                phase_coefficients,
-                source_max_phase_index,
-                geo,
-                plm_basis,
-                view_idx,
-            );
+            computed_row = if (use_rtm_quadrature)
+                fillRtmQuadraturePhaseRow(
+                    rtm_quadrature,
+                    &rtm_quadrature.levels[ilevel],
+                    i_fourier,
+                    source_max_phase_index,
+                    geo,
+                    plm_basis,
+                    view_idx,
+                )
+            else
+                basis.fillZplusZminRowFromBasisLimited(
+                    i_fourier,
+                    &source_interface.?.phase_coefficients_above,
+                    source_max_phase_index,
+                    geo,
+                    plm_basis,
+                    view_idx,
+                );
             break :blk PhaseRows{
                 .zplus = computed_row.zplus[0..computed_row.n],
                 .zmin = computed_row.zmin[0..computed_row.n],
@@ -956,7 +1019,7 @@ fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
     var max_index: usize = 0;
     for (rtm_quadrature.levels) |*level| {
         if (level.weight <= 0.0 or level.ksca <= 0.0) continue;
-        max_index = @max(max_index, maxPhaseCoefficientIndex(&level.phase_coefficients));
+        max_index = @max(max_index, maxRtmQuadraturePhaseCoefficientIndex(level, rtm_quadrature));
     }
     return max_index;
 }

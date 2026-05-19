@@ -269,39 +269,63 @@ pub const SourceInterfaceInput = struct {
 };
 
 // layout(64-bit):
-//   size: 1256 B, align: 8 B
-//   field storage: 1256 B across 7 fields; largest: phase_coefficients=1208 B, altitude_km=8 B, weight=8 B; padding: 0 B (0 bits)
+//   size: 72 B, align: 8 B
+//   field storage: 72 B across 9 fields; largest: altitude_km=8 B, weight=8 B, ksca=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[151]f64=1208 B
-//   cache span: 20 cache line(s) at 64 B per line
+//   encoded fields: phase_aerosol_weight, phase_cloud_weight, and phase_rayleigh2_weight encode the full 1208 B combined phase row
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1256 B (1.227 KiB); total = per instance * live instance count
+//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
 pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
     ksca: f64 = 0.0,
-    phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
     aerosol_ksca_above_per_km: f64 = 0.0,
     aerosol_ksca_below_per_km: f64 = 0.0,
     aerosol_ksca_jacobian: f64 = 0.0,
+    phase_aerosol_weight: f64 = 0.0,
+    phase_cloud_weight: f64 = 0.0,
+    phase_rayleigh2_weight: f64 = 0.0,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
         return self.weight * self.ksca;
     }
+
+    pub fn setPhaseMixture(
+        self: *RtmQuadratureLevel,
+        rayleigh_phase_coefficient2: f64,
+        gas_ksca: f64,
+        aerosol_ksca: f64,
+        cloud_ksca: f64,
+    ) void {
+        const total = gas_ksca + aerosol_ksca + cloud_ksca;
+        if (total <= 0.0) {
+            self.phase_aerosol_weight = 0.0;
+            self.phase_cloud_weight = 0.0;
+            self.phase_rayleigh2_weight = rayleigh_phase_coefficient2;
+            return;
+        }
+        const inv_total = 1.0 / total;
+        self.phase_aerosol_weight = aerosol_ksca * inv_total;
+        self.phase_cloud_weight = cloud_ksca * inv_total;
+        self.phase_rayleigh2_weight = gas_ksca * inv_total * rayleigh_phase_coefficient2;
+    }
 };
 
 const default_aerosol_phase_coefficients = phase_functions.zeroPhaseCoefficients();
+const default_cloud_phase_coefficients = phase_functions.zeroPhaseCoefficients();
 
 // layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: levels=16 B, aerosol_phase_coefficients=8 B; padding: 0 B (0 bits)
+//   size: 32 B, align: 8 B
+//   field storage: levels=16 B, aerosol_phase_coefficients=8 B, cloud_phase_coefficients=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients points at prepared phase storage; referenced storage is not included in size
+//   out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients and cloud_phase_coefficients point at prepared phase storage; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const RtmQuadratureGrid = struct {
     levels: []const RtmQuadratureLevel = &.{},
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64 = &default_aerosol_phase_coefficients,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64 = &default_cloud_phase_coefficients,
 
     pub fn isValidFor(self: RtmQuadratureGrid, layer_count: usize) bool {
         return self.levels.len == layer_count + 1;
@@ -350,13 +374,13 @@ pub const PseudoSphericalGrid = struct {
 };
 
 // layout(64-bit):
-//   size: 296 B, align: 8 B
-//   field storage: 296 B across 21 fields; largest: rtm_controls=64 B, pseudo_spherical_grid=48 B, rtm_quadrature=24 B; padding: 0 B (0 bits)
+//   size: 304 B, align: 8 B
+//   field storage: 304 B across 21 fields; largest: rtm_controls=64 B, pseudo_spherical_grid=48 B, rtm_quadrature=32 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: layers, source_interfaces carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 296 B (0.289 KiB); total also includes referenced storage above
+//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
 pub const ForwardInput = struct {
     wavelength_nm: f64 = 440.0,
     spectral_weight: f64 = 1.0,

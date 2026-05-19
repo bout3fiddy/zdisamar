@@ -440,6 +440,191 @@ fn fillZplusZminRowFromBasisLimited12(
     return row;
 }
 
+inline fn weightedPhaseCoefficient(
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefs: *const [types.max_phase_coef]f64,
+    cloud_phase_coefs: *const [types.max_phase_coef]f64,
+    index: usize,
+) f64 {
+    if (index == 0) return 1.0;
+    var coefficient =
+        aerosol_weight * aerosol_phase_coefs[index] +
+        cloud_weight * cloud_phase_coefs[index];
+    if (index == 2) coefficient += rayleigh2_weight;
+    return coefficient;
+}
+
+// hot path:
+//   when: integrated-source RTM quadrature levels store phase mixture weights instead of combined rows
+//   work: builds one Z+/Z- row directly from gas/aerosol/cloud phase weights
+//   data: phase weights, prepared particle phase rows, row index, PLM basis
+//   follow: reflectance RTM quadrature path
+pub fn fillZplusZminRowFromWeightedPhaseLimited(
+    i_fourier: usize,
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefs: *const [types.max_phase_coef]f64,
+    cloud_phase_coefs: *const [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+    row_index: usize,
+) PhaseKernelRow {
+    const n = geo.nmutot;
+    if (n == 12) {
+        return fillZplusZminRowFromWeightedPhaseLimited12(
+            i_fourier,
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+            row_index,
+        );
+    }
+
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (row_index >= n or i_fourier > bounded_max_phase_index) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = n,
+        };
+    }
+
+    var row = PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = n,
+    };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = weightedPhaseCoefficient(
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            l,
+        );
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
+            const scaled_plus_row = alpha1 * plus_l[row_index];
+            const scaled_minus_row = alpha1 * minus_sign * plus_l[row_index];
+            if (first_order) {
+                for (0..n) |j| {
+                    row.zplus[j] = scaled_plus_row * plus_l[j];
+                    row.zmin[j] = scaled_minus_row * plus_l[j];
+                }
+            } else {
+                for (0..n) |j| {
+                    row.zplus[j] += scaled_plus_row * plus_l[j];
+                    row.zmin[j] += scaled_minus_row * plus_l[j];
+                }
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
+            const scaled_plus_row = alpha1 * plm.plus[row_index];
+            const scaled_minus_row = alpha1 * minus_sign * plm.plus[row_index];
+            if (first_order) {
+                for (0..n) |j| {
+                    row.zplus[j] = scaled_plus_row * plm.plus[j];
+                    row.zmin[j] = scaled_minus_row * plm.plus[j];
+                }
+            } else {
+                for (0..n) |j| {
+                    row.zplus[j] += scaled_plus_row * plm.plus[j];
+                    row.zmin[j] += scaled_minus_row * plm.plus[j];
+                }
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = n,
+        };
+    }
+    return row;
+}
+
+fn fillZplusZminRowFromWeightedPhaseLimited12(
+    i_fourier: usize,
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefs: *const [types.max_phase_coef]f64,
+    cloud_phase_coefs: *const [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+    row_index: usize,
+) PhaseKernelRow {
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (row_index >= 12 or i_fourier > bounded_max_phase_index) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = 12,
+        };
+    }
+
+    var row = PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = 12,
+    };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = weightedPhaseCoefficient(
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            l,
+        );
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                fillPhaseRow12(&row, alpha1, plus_l, minus_sign, row_index, true);
+            } else {
+                fillPhaseRow12(&row, alpha1, plus_l, minus_sign, row_index, false);
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                fillPhaseRow12(&row, alpha1, &plm.plus, minus_sign, row_index, true);
+            } else {
+                fillPhaseRow12(&row, alpha1, &plm.plus, minus_sign, row_index, false);
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = 12,
+        };
+    }
+    return row;
+}
+
 fn fillZplusZminFromBasisLimited12(
     i_fourier: usize,
     phase_coefs: *const [types.max_phase_coef]f64,

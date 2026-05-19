@@ -153,9 +153,9 @@ test "layer build caches observer phase row for integrated-source reflectance" {
 
 test "integrated source truncates quadrature phase kernels by adjacent layers" {
     const geo = Geometry.init(4, 0.58, 0.64);
-    const layer_phase = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (max_phase_coef - 3);
-    const source_phase_with_tail = .{ 1.0, 0.18, 0.31, 4.0 } ++ .{0.0} ** (max_phase_coef - 4);
-    const source_phase_truncated = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (max_phase_coef - 3);
+    const layer_phase: [max_phase_coef]f64 = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (max_phase_coef - 3);
+    const source_phase_with_tail: [max_phase_coef]f64 = .{ 1.0, 0.18, 0.31, 4.0 } ++ .{0.0} ** (max_phase_coef - 4);
+    const source_phase_truncated: [max_phase_coef]f64 = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (max_phase_coef - 3);
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.1,
@@ -187,19 +187,19 @@ test "integrated source truncates quadrature phase kernels by adjacent layers" {
         .{
             .weight = 1.0,
             .ksca = 1.0,
-            .phase_coefficients = source_phase_with_tail,
+            .phase_aerosol_weight = 1.0,
         },
         .{},
-    } };
+    }, .aerosol_phase_coefficients = &source_phase_with_tail };
     const rtm_quadrature_truncated = common.RtmQuadratureGrid{ .levels = &.{
         .{},
         .{
             .weight = 1.0,
             .ksca = 1.0,
-            .phase_coefficients = source_phase_truncated,
+            .phase_aerosol_weight = 1.0,
         },
         .{},
-    } };
+    }, .aerosol_phase_coefficients = &source_phase_truncated };
     const i_fourier: usize = 0;
     const plm_basis = FourierPlmBasis.init(i_fourier, 3, &geo);
 

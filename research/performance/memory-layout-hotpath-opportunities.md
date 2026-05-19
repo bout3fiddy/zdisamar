@@ -2029,6 +2029,80 @@ Conclusion:
 - forward session setup is 7.8 ms slower in this run, so do not claim setup
   improvement; the rest of the timing surface supports keeping the row cache
 
+### Experiment 32: encode RTM quadrature combined phase rows as weights
+
+Changed:
+- `RtmQuadratureLevel` now stores aerosol, cloud, and Rayleigh phase weights
+  instead of a full combined `[151]f64` phase row
+- `RtmQuadratureGrid` carries prepared aerosol and cloud phase row pointers so
+  LABOS can build the required phase row directly at the consumer boundary
+- `PreparedQuadratureCarrier` now returns gas, aerosol, and cloud scattering
+  scalars instead of returning a full combined phase row
+- `phase_basis.fillZplusZminRowFromWeightedPhaseLimited` builds the RTM
+  quadrature source row from the encoded weights without materializing a
+  temporary combined coefficient array
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `RtmQuadratureLevel` | 1,256 B | 72 B | -1,184 B (-94.27%) |
+| `PreparedQuadratureCarrier` | 1,224 B | 32 B | -1,192 B (-97.39%) |
+| 48-level RTM buffer | 60,288 B | 3,456 B | -56,832 B |
+| 701 forward misses x 48 RTM levels | 42,261,888 B | 2,422,656 B | -39,839,232 B |
+| `RtmQuadratureGrid` view | 24 B | 32 B | +8 B |
+| `ForwardInput` | 296 B | 304 B | +8 B |
+
+Interpretation:
+- the removed row is a normalized blend of Rayleigh, aerosol, and cloud phase
+  coefficients; the three stored weights encode that blend for the current RTM
+  level
+- the hot reflectance row builder now computes each active coefficient directly
+  from the weights and prepared particle phase rows instead of reading a
+  precombined 1,208 B level payload
+- this is a lazy-computation tradeoff with no temporary full-row array; the
+  extra arithmetic is inside the same phase-row loop that already consumes the
+  coefficients
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `e52183dcda4741a0a8ead2c5faa6ab1e`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check/comparison commands
+  themselves were present
+- benchmark residual rows unchanged within reported precision: fast-mode spectra
+  worst max_abs_over_noise `1.600`; session-vs-no-session reflectance residual
+  `0.0`; OE session AOD diff `8.699e-08`; fast-vs-session sweep AOD max_abs
+  delta `3.766e-03`
+
+Benchmark comparison against Experiment 31:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.940124 s | 143.786135 s | 0.9989 |
+| total benchmark CPU | 277.524613 s | 277.374268 s | 0.9995 |
+| forward no-session median | 0.982903 s | 0.973944 s | 0.9909 |
+| forward session setup | 0.718419 s | 0.716795 s | 0.9977 |
+| forward session first cached | 0.272933 s | 0.274820 s | 1.0069 |
+| forward session cached median | 0.275325 s | 0.272758 s | 0.9907 |
+| forward fast four-scene median | 4.709146 s | 4.703780 s | 0.9989 |
+| OE session retrieval median | 1.150896 s | 1.143928 s | 0.9939 |
+| OE fast retrieval median | 0.891557 s | 0.883573 s | 0.9910 |
+| OE sweep session total wall | 19.774512 s | 19.774224 s | 1.0000 |
+| OE sweep fast total wall | 10.834246 s | 10.821774 s | 0.9988 |
+
+Conclusion:
+- this removes about 38.0 MiB of RTM quadrature level payload over the current
+  five-case benchmark's forward misses and cuts each retained RTM level by 94%
+- total benchmark wall and CPU are flat-to-faster, with the OE session and fast
+  retrieval medians both faster on the same benchmark boundary
+- the isolated first cached forward run is 1.9 ms slower in this run; the
+  benchmark-wide timing surface supports keeping the encoded phase weights
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -2447,13 +2521,13 @@ These are not ignored, but they are lower value for the memory-layout pass:
 
 | subsystem | markers | memory-layout focus |
 | --- | ---: | --- |
-| optical properties | 65 | carrier caches, phase arrays, spectroscopy caches, layer accumulation |
-| radiative transfer | 42 | LABOS attenuation, layer matrices, order transport, phase basis |
+| optical properties | 67 | carrier caches, phase arrays, spectroscopy caches, layer accumulation |
+| radiative transfer | 43 | LABOS attenuation, layer matrices, order transport, phase basis |
 | instrument grid | 41 | wavelength plans, integration kernels, spectral caches, calibration/noise |
-| reference input | 28 | line-list windows, spectroscopy physics, CIA and climatology lookup |
+| reference input | 29 | line-list windows, spectroscopy physics, CIA and climatology lookup |
 | input instrument | 13 | LUT evaluation, line shape, solar spectrum |
 | implementations | 11 | route dispatch, adaptive integration, noise/surface/instrument functions |
-| common math | 9 | quadrature, interpolation, linear algebra |
+| common math | 10 | quadrature, interpolation, linear algebra |
 | work partition | 3 | worker ranges and chunk scheduling |
 | jacobian | 2 | state mask inclusion and derivative vector loops |
 | atmosphere/reference data input | 2 | fraction controls and solar irradiance lookup |
@@ -2466,7 +2540,7 @@ table verifies all markers are covered by this scratch analysis.
 
 | markers | file |
 | ---: | --- |
-| 10 | `src/forward_model/optical_properties/state_build/carrier_eval.zig` |
+| 12 | `src/forward_model/optical_properties/state_build/carrier_eval.zig` |
 | 9 | `src/forward_model/radiative_transfer/labos/layers.zig` |
 | 8 | `src/forward_model/radiative_transfer/labos/reflectance.zig` |
 | 8 | `src/forward_model/instrument_grid/grid_calculation/simulate.zig` |
@@ -2484,6 +2558,7 @@ table verifies all markers are covered by this scratch analysis.
 | 4 | `src/input/reference/spectroscopy/physics_core.zig` |
 | 4 | `src/input/reference/spectroscopy/line_list_eval.zig` |
 | 4 | `src/input/reference/cia.zig` |
+| 4 | `src/forward_model/radiative_transfer/labos/phase_basis.zig` |
 | 4 | `src/forward_model/radiative_transfer/labos/matrix.zig` |
 | 4 | `src/forward_model/radiative_transfer/labos/execute.zig` |
 | 4 | `src/forward_model/optical_properties/state_build/vertical_grid.zig` |
@@ -2491,19 +2566,19 @@ table verifies all markers are covered by this scratch analysis.
 | 4 | `src/forward_model/optical_properties/state_build/state_scalar.zig` |
 | 4 | `src/forward_model/optical_properties/state_build/layer_accumulation.zig` |
 | 4 | `src/common/math/quadrature/gauss_legendre.zig` |
+| 3 | `src/input/reference/spectroscopy/strong_lines.zig` |
 | 3 | `src/input/reference/airmass_phase.zig` |
 | 3 | `src/input/instrument/solar_spectrum.zig` |
 | 3 | `src/input/instrument/line_shape.zig` |
 | 3 | `src/input/instrument/cross_section_lut_eval.zig` |
 | 3 | `src/forward_model/work_partition.zig` |
-| 3 | `src/forward_model/radiative_transfer/labos/phase_basis.zig` |
 | 3 | `src/forward_model/optical_properties/state_build/spectroscopy.zig` |
 | 3 | `src/forward_model/optical_properties/state_build/shared_carrier.zig` |
 | 3 | `src/forward_model/optical_properties/state_build/layer_spectroscopy.zig` |
 | 3 | `src/forward_model/implementations/noise.zig` |
+| 3 | `src/common/math/interpolation/spline.zig` |
 | 2 | `src/output/radiative_transfer_diagnostics.zig` |
 | 2 | `src/output/o2_line_contributions.zig` |
-| 2 | `src/input/reference/spectroscopy/strong_lines.zig` |
 | 2 | `src/input/reference/cross_sections.zig` |
 | 2 | `src/input/reference/climatology.zig` |
 | 2 | `src/input/instrument/cross_section_lut_basis.zig` |
@@ -2520,7 +2595,6 @@ table verifies all markers are covered by this scratch analysis.
 | 2 | `src/forward_model/instrument_grid/grid_calculation/postprocess.zig` |
 | 2 | `src/forward_model/implementations/instrument/integration.zig` |
 | 2 | `src/common/math/linalg/cholesky.zig` |
-| 2 | `src/common/math/interpolation/spline.zig` |
 | 1 | `src/output/o2_o2_cia.zig` |
 | 1 | `src/output/instrument_response.zig` |
 | 1 | `src/output/atmospheric_budget.zig` |

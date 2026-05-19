@@ -140,7 +140,6 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 .altitude_km = 0.0,
                 .weight = 0.0,
                 .ksca = 0.0,
-                .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
             };
         }
         return false;
@@ -148,13 +147,14 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 
     if (layer_inputs.len != sublayers.len) return false;
 
+    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
     for (rtm_levels, 0..) |*rtm_level, level| {
         rtm_level.* = .{
             .altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, level),
             .weight = 0.0,
             .ksca = 0.0,
-            .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
         };
+        rtm_level.setPhaseMixture(rayleigh_phase_coefficient2, 0.0, 0.0, 0.0);
     }
 
     var has_active_quadrature = false;
@@ -196,9 +196,14 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             rtm_levels[level].altitude_km = node_altitude_km;
             rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;
             rtm_levels[level].ksca = carrier.ksca;
-            rtm_levels[level].phase_coefficients = carrier.phase_coefficients;
             rtm_levels[level].aerosol_ksca_above_per_km = carrier.aerosol_scattering_optical_depth_per_km;
             rtm_levels[level].aerosol_ksca_below_per_km = rtm_levels[level].aerosol_ksca_above_per_km;
+            rtm_levels[level].setPhaseMixture(
+                rayleigh_phase_coefficient2,
+                carrier.gas_scattering_optical_depth_per_km,
+                carrier.aerosol_scattering_optical_depth_per_km,
+                carrier.cloud_scattering_optical_depth_per_km,
+            );
             fillAerosolSourceJacobian(
                 self,
                 &rtm_levels[level],
@@ -265,7 +270,6 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
                 .altitude_km = 0.0,
                 .weight = 0.0,
                 .ksca = 0.0,
-                .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
             };
         }
         return false;
