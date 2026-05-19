@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import fields, replace
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 
 def assert_import_laziness() -> None:
@@ -201,6 +202,7 @@ def assert_reference_data_and_rtm_tables() -> None:
 
     import numpy as np
     from zdisamar import rtm
+    from zdisamar.output.tables import PandasConversionError
     from zdisamar.wavelength_bands import o2a
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -271,6 +273,14 @@ def assert_reference_data_and_rtm_tables() -> None:
             rows = budget.to_rows()
             assert len(rows) == budget.row_count
             assert "support_row_kind_label" in rows[0]
+
+            with patch.dict(sys.modules, {"pandas": None}):
+                try:
+                    budget.to_pandas()
+                except PandasConversionError as error:
+                    assert "to_rows" in str(error)
+                else:
+                    raise AssertionError("to_pandas succeeded without pandas installed")
 
             spectrum = rtm.spectrum(case)
             output = Path(tmpdir) / "reflectance"
