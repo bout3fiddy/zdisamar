@@ -8,6 +8,7 @@ from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluat
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
 from zdisamar.plot.optimal_estimation import MEASUREMENT_RESIDUAL_HEIGHT
 from zdisamar.plot.properties import PLOT
+from zdisamar.plot.svg import SvgFigure, SvgPanel, SvgSeries
 
 
 def build_result() -> Result:
@@ -83,11 +84,15 @@ def main() -> int:
     assert "residual_scaled" not in fit_spec
     assert fit["panels"][1]["width"] == PLOT.diagnostic_width
     assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    fit_residual_domain = fit["panels"][1]["y_domain"]
+    assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
     assert residual["title"]["text"] == "Final residual"
     assert "residual_scaled" not in residual_spec
+    residual_domain = residual["panels"][0]["y_domain"]
+    assert residual_domain[0] <= 0.0 <= residual_domain[1]
 
     jacobian = result.plot.jacobian().to_dict()
     jacobian_spec = json.dumps(jacobian)
@@ -116,6 +121,37 @@ def main() -> int:
     assert f".grid {{ stroke: {PLOT.colors['grid']};" in jacobian_svg
     assert f"stroke-opacity: {PLOT.grid_opacity}" in jacobian_svg
     assert f".axis-title {{ font-size: {PLOT.axis_title_font_size}px;" in jacobian_svg
+
+    missing_samples_plot = SvgFigure(
+        title="Missing samples",
+        panels=(
+            SvgPanel(
+                title="Missing samples",
+                x_title="x",
+                y_title="y",
+                series=(
+                    SvgSeries.band(
+                        "band",
+                        [0.0, 1.0, 2.0, 3.0],
+                        [-0.1, -0.2, np.nan, -0.3],
+                        [0.1, 0.2, np.inf, 0.3],
+                    ),
+                    SvgSeries.line("line", [0.0, 1.0, 2.0, 3.0], [0.0, np.nan, 1.0, 2.0]),
+                    SvgSeries.points("points", [0.0, 1.0, 2.0], [0.0, np.inf, 1.0]),
+                ),
+            ),
+        ),
+    )
+
+    with TemporaryDirectory() as directory:
+        missing_samples_path = Path(directory) / "missing-samples.svg"
+        missing_samples_plot.save(missing_samples_path)
+        missing_samples = missing_samples_path.read_text()
+
+    assert "nan" not in missing_samples.lower()
+    assert "inf" not in missing_samples.lower()
+    assert 'd="M0.000' in missing_samples
+    assert " M" in missing_samples
 
     print("optimal_estimation_plot=ok")
 

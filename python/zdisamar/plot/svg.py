@@ -149,6 +149,8 @@ class SvgPanel:
             values.extend(value for value in series.y if isfinite(value))
             values.extend(value for value in series.y2 if isfinite(value))
 
+        values.extend(value for value in self.rule_y if isfinite(value))
+
         domain = finite_padded_domain(values)
 
         return (0.0, 1.0) if domain is None else domain
@@ -478,28 +480,33 @@ def series_svg(
 ) -> list[str]:
 
     if series.kind == "band":
-        upper = [
-            (
-                scale_value(x, x_domain, 0.0, float(panel.width)),
-                scale_value(y, y_domain, float(panel.height), 0.0),
-            )
-            for x, y in zip(series.x, series.y2, strict=True)
-        ]
-        lower = [
-            (
-                scale_value(x, x_domain, 0.0, float(panel.width)),
-                scale_value(y, y_domain, float(panel.height), 0.0),
-            )
-            for x, y in zip(reversed(series.x), reversed(series.y), strict=True)
-        ]
-        points = " ".join(f"{x:.3f},{y:.3f}" for x, y in [*upper, *lower])
+        elements = []
+        upper: list[tuple[float, float]] = []
+        lower: list[tuple[float, float]] = []
 
-        return [
-            (
-                f'<polygon class="series band" points="{points}" fill="{series.color}" '
-                f'opacity="{series.opacity:.3f}" />'
+        for x, y_low, y_high in zip(series.x, series.y, series.y2, strict=True):
+            if not all(isfinite(value) for value in (x, y_low, y_high)):
+                elements.extend(band_polygon_svg(series, upper, lower))
+                upper = []
+                lower = []
+                continue
+
+            upper.append(
+                (
+                    scale_value(x, x_domain, 0.0, float(panel.width)),
+                    scale_value(y_high, y_domain, float(panel.height), 0.0),
+                )
             )
-        ]
+            lower.append(
+                (
+                    scale_value(x, x_domain, 0.0, float(panel.width)),
+                    scale_value(y_low, y_domain, float(panel.height), 0.0),
+                )
+            )
+
+        elements.extend(band_polygon_svg(series, upper, lower))
+
+        return elements
 
     if series.kind == "points":
         radius = max(series.point_size, 1.0) ** 0.5 / 2.0
@@ -514,16 +521,25 @@ def series_svg(
                 f"<title>{escape(series.name)}</title></circle>"
             )
             for x, y in zip(series.x, series.y, strict=True)
+            if isfinite(x) and isfinite(y)
         ]
 
-    path = [
-        path_data(
-            scale_value(x, x_domain, 0.0, float(panel.width)),
-            scale_value(y, y_domain, float(panel.height), 0.0),
-            index,
+    path = []
+    move_next = True
+
+    for x, y in zip(series.x, series.y, strict=True):
+        if not (isfinite(x) and isfinite(y)):
+            move_next = True
+            continue
+
+        path.append(
+            path_data(
+                scale_value(x, x_domain, 0.0, float(panel.width)),
+                scale_value(y, y_domain, float(panel.height), 0.0),
+                move_next,
+            )
         )
-        for index, (x, y) in enumerate(zip(series.x, series.y, strict=True))
-    ]
+        move_next = False
 
     return [
         (
@@ -539,9 +555,28 @@ def series_x_values(series: Sequence[SvgSeries]) -> list[float]:
     return [value for item in series for value in item.x]
 
 
-def path_data(x: float, y: float, index: int) -> str:
+def band_polygon_svg(
+    series: SvgSeries,
+    upper: Sequence[tuple[float, float]],
+    lower: Sequence[tuple[float, float]],
+) -> list[str]:
 
-    command = "M" if index == 0 else "L"
+    if len(upper) < 2 or len(lower) < 2:
+        return []
+
+    points = " ".join(f"{x:.3f},{y:.3f}" for x, y in [*upper, *reversed(lower)])
+
+    return [
+        (
+            f'<polygon class="series band" points="{points}" fill="{series.color}" '
+            f'opacity="{series.opacity:.3f}" />'
+        )
+    ]
+
+
+def path_data(x: float, y: float, move: bool) -> str:
+
+    command = "M" if move else "L"
 
     return f"{command}{x:.3f},{y:.3f}"
 
