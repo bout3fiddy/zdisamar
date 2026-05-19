@@ -3637,11 +3637,11 @@ Relevant layout facts:
 | `AttenArray` | 405,616 B | `[12][65][65]f64` | 0 |
 | `RuntimeAttenArray` | 48 B plus backing slices | adjacent and top-to-level slices | 0 |
 | `Mat` | 1,160 B | `[144]f64` | 0 |
-| `Vec` | 104 B | `[12]f64` + `n` | 0 |
-| `Vec2` | 216 B | two `Vec` values + `n` | 0 |
+| `Vec` | 96 B | `[12]f64` | 0 |
+| `Vec2` | 192 B | two fixed-size vector payloads | 0 |
 | `LayerRT` | 2,320 B | `R` and `T` matrices | 0 |
-| `UDField` | 536 B | `E`, `U`, `D` vectors | 0 |
-| `UDLocal` | 432 B | `U`, `D` vectors | 0 |
+| `UDField` | 480 B | `E`, `U`, `D` vectors | 0 |
+| `UDLocal` | 384 B | `U`, `D` vectors | 0 |
 | `Geometry` | 2,832 B | `dmu_plus`, `dmu_min`, `dmu_same` | 0 |
 | `FourierPlmBasis` | 14,512 B | weighted plus-side PLM rows | 0 |
 | `OrdersWorkspace` | 104 B plus backing slices | `UD*`, active flags | 0 |
@@ -3656,12 +3656,15 @@ Memory access shape:
   separate upward and downward passes
 - `FourierPlmBasis` now stores plus-side PLM rows and derives minus-side rows
   by coefficient parity while building `Zmin`
-- `Vec` and `Vec2` carry `n` metadata inside many small fixed-capacity values
+- `Vec` and `Vec2` no longer carry local `n` metadata; the active dimension is
+  supplied by geometry/workspace context
 - `rt_active: []bool` marks active layers and is read during transport loops
 
 Completed layout changes:
 - non-local-sum order routes allocate `ud_sum_local` lazily instead of
   retaining or repeatedly allocating an unused `UDLocal` array
+- vector-local `n` metadata was removed from `Vec`, `Vec2`, `UDField`, and
+  `UDLocal`
 
 Potential direction:
 - keep extending the `RuntimeAttenArray` pattern where measured call sites do
@@ -3672,8 +3675,9 @@ Potential direction:
   layers are sparse enough to skip work
 - keep fixed-size matrix kernels for `12 x 10` math where benchmarked kernels
   show the shape is the computational core
-- remove per-value `n` metadata only if it stays derivable from the workspace or
-  route without making call sites branchier
+- keep per-value `n` metadata out of vector payloads as long as active
+  dimensions remain derivable from the workspace or route without making call
+  sites branchier
 
 ### 3. Optical-property carriers keep phase coefficient payloads with scalar state
 
@@ -3693,7 +3697,7 @@ Relevant layout facts:
 | `EvaluatedLayer` | 112 B | optical-depth breakdown + encoded phase mixture | 0 |
 | `SharedOpticalCarrier` | 56 B | scalar optical-depth carrier | 0 |
 | `SharedBoundaryCarrier` | 112 B | boundary scalars + encoded above phase + bounds | 0 |
-| `SourceInterfaceInput` | 112 B | source scalars + encoded above phase + bounds | 0 |
+| `SourceInterfaceInput` | 80 B | source scalars + encoded above phase + bounds | 0 |
 | `RtmQuadratureLevel` | 72 B | source scalars + encoded phase weights | 0 |
 | `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
 | `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + scalar carrier slice | 0 |
@@ -3718,6 +3722,9 @@ Memory access shape:
   per-layer phase-numerator arrays
 - source-interface rows now use the same encoded phase shape and retain only
   compact Fourier bounds for the above and below interface rows
+- source-interface rows no longer retain unused gas/particle scattering
+  breakdown fields; integrated-source transport reads the aggregate scattering
+  scalar and encoded phase bounds
 - scalar-only shared carrier returns no longer construct or return combined
   phase rows
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
