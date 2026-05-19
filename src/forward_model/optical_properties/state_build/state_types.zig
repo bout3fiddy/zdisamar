@@ -306,16 +306,16 @@ pub const OpticalDepthBreakdown = struct {
 };
 
 // layout(64-bit):
-//   size: 1280 B, align: 8 B
-//   field storage: breakdown=56 B, phase_coefficients=1208 B, solar_mu=8 B, view_mu=8 B; padding: 0 B (0 bits)
+//   size: 112 B, align: 8 B
+//   field storage: breakdown=56 B, phase=40 B, solar_mu=8 B, view_mu=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[151]f64=1208 B
-//   cache span: 20 cache line(s) at 64 B per line
+//   encoded fields: phase stores gas/aerosol/cloud phase weights plus shared phase-row references instead of a full 1208 B coefficient row
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1280 B (1.250 KiB); total = per instance * live instance count
+//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced phase storage above
 pub const EvaluatedLayer = struct {
     breakdown: OpticalDepthBreakdown = .{},
-    phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.gasPhaseCoefficients(),
+    phase: PhaseFunctions.PhaseMixture = .{},
     solar_mu: f64 = 1.0,
     view_mu: f64 = 1.0,
 };

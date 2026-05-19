@@ -269,7 +269,7 @@ pub const Workspace = struct {
 
         var probe = LayerPhaseSignatureProbe{ .layer_count = layers.len };
         for (layers, layer_phase_max_indices[0..layers.len], 0..) |*layer, max_index, layer_idx| {
-            const signature = layerPhaseSignature(&layer.phase_coefficients, max_index);
+            const signature = layerPhaseSignature(layer.phase, max_index);
             const possible_templates = @min(max_index, fourier_max) + 1;
             probe.possible_fourier_layer_templates += possible_templates;
             if (self.previous_layer_phase_signature_valid[layer_idx]) {
@@ -287,10 +287,11 @@ pub const Workspace = struct {
     }
 };
 
-fn layerPhaseSignature(phase_coefficients: *const [common.phase_coefficient_count]f64, max_index: usize) u64 {
+fn layerPhaseSignature(phase: common.LayerPhase, max_index: usize) u64 {
     var hasher = std.hash.Wyhash.init(0x9e37_79b9_7f4a_7c15);
     hasher.update(std.mem.asBytes(&max_index));
-    for (phase_coefficients[0 .. max_index + 1]) |coefficient| {
+    for (0..max_index + 1) |index| {
+        const coefficient = phase.coefficient(index);
         const bits = @as(u64, @bitCast(coefficient));
         hasher.update(std.mem.asBytes(&bits));
     }

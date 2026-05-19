@@ -182,6 +182,7 @@ pub const forward_model = struct {
         pub const DerivativeMode = root.DerivativeMode;
         pub const DispatchRequest = root.DispatchRequest;
         pub const Route = root.Route;
+        pub const LayerPhase = root.LayerPhase;
         pub const LayerInput = root.LayerInput;
         pub const SourceInterfaceInput = root.SourceInterfaceInput;
         pub const RtmQuadratureLevel = root.RtmQuadratureLevel;

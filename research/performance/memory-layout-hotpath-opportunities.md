@@ -2696,6 +2696,84 @@ Conclusion:
   deletes a full phase-row source-interface buffer from routes that never read
   it, while the benchmark/residual gate stayed clean
 
+### Experiment 42: encode layer phase rows as mixture weights
+
+Changed:
+- `LayerInput` stores a compact phase mixture instead of an inline
+  `[151]f64` phase coefficient row
+- `EvaluatedLayer` uses the same compact phase mixture so diagnostic/evaluation
+  routes do not return a full phase row only to copy it into `LayerInput`
+- shared-grid layer filling now accumulates scalar optical-depth totals and
+  derives phase weights from those totals, instead of zeroing and filling a
+  per-layer `phase_numerator: [151]f64`
+- LABOS layer construction builds phase matrices directly from the encoded
+  gas/aerosol/cloud weights and prepared particle phase rows
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `LayerInput` row | 1,376 B | 208 B | -1,168 B (-84.88%) |
+| `EvaluatedLayer` row | 1,280 B | 112 B | -1,168 B (-91.25%) |
+| 116-row layer buffer | 159,616 B | 24,128 B | -135,488 B (-132.31 KiB) |
+| 2-worker retained layer buffers | 319,232 B | 48,256 B | -270,976 B (-264.63 KiB) |
+| layer-buffer write surface, 701 forward misses | 111,890,816 B | 16,913,728 B | -94,977,088 B (-90.58 MiB) |
+| removed `phase_numerator` stack rows, 116 layers x 701 misses | 98,229,728 B | 0 B | -93.68 MiB |
+
+Interpretation:
+- the removed layer phase row was a normalized blend of Rayleigh, aerosol, and
+  cloud phase coefficients; the blend is exactly represented by three weights
+  plus pointers to the request-level prepared particle phase rows
+- this is not a diagnostic-only payload: LABOS still consumes the phase during
+  layer matrix construction, but it now computes each active coefficient inside
+  the phase-term loop instead of reading a precombined 1,208 B row
+- the shared-grid layer fill path no longer writes a full phase numerator and
+  final phase row for every transport layer at every wavelength
+- the tradeoff is 40 B of weights/pointers per layer and a few arithmetic
+  operations per active phase coefficient; the benchmark shows this is cheaper
+  than the previous memory traffic on the current O2 A workload
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; broad GUI/Codex load was present but no competing
+  forward-model process was detected
+- `uv run benchmark/run_benchmark.py`: run
+  `8c1c050d733f4ca099b74e11f2d8b630`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.59985574045`; OE session AOD diff
+  `8.699e-08`; fast-vs-session sweep max AOD delta `0.00376644268103`,
+  pressure delta `5.08465488742 hPa`
+
+Benchmark comparison against Experiment 41:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.585126 s | 140.938993 s | 0.9816 |
+| total benchmark CPU | 276.774470 s | 271.838358 s | 0.9822 |
+| forward no-session median | 0.980726 s | 0.948907 s | 0.9676 |
+| forward session setup | 0.708519 s | 0.699653 s | 0.9875 |
+| forward session first cached | 0.270053 s | 0.255445 s | 0.9459 |
+| forward session cached median | 0.271677 s | 0.255834 s | 0.9417 |
+| forward fast four-scene median | 4.711620 s | 4.636771 s | 0.9841 |
+| OE session setup median | 0.714977 s | 0.713594 s | 0.9981 |
+| OE session retrieval median | 1.136909 s | 1.086213 s | 0.9554 |
+| OE fast retrieval median | 0.878925 s | 0.835809 s | 0.9509 |
+| OE sweep session total wall | 19.632331 s | 19.582979 s | 0.9975 |
+| OE sweep fast total wall | 10.753636 s | 10.625625 s | 0.9881 |
+
+Conclusion:
+- accepted
+- this removes the largest remaining final layer phase row while improving the
+  benchmark-wide wall and CPU totals
+- the current experiment is a clean memory-layout win: retained layer storage,
+  per-wavelength layer fill traffic, and OE retrieval latency all improved on
+  the same benchmark/residual boundary
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -2825,47 +2903,48 @@ Relevant layout facts:
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
 | `PreparedSublayer` | 272 B | scalar layer state + shared phase references | 48 |
+| `LayerInput` | 208 B | optical scalars, Jacobian vectors, encoded phase mixture | 0 |
+| `EvaluatedLayer` | 112 B | optical-depth breakdown + encoded phase mixture | 0 |
 | `SharedOpticalCarrier` | 1,264 B | combined `[151]f64` phase row | 0 |
-| `SharedBoundaryCarrier` | 2,472 B | above/below combined phase rows | 0 |
-| `RtmQuadratureLevel` | 1,256 B | combined phase row + aerosol scattering scalars | 0 |
+| `SharedBoundaryCarrier` | 1,272 B | above combined phase row + below phase bound | 0 |
+| `RtmQuadratureLevel` | 72 B | source scalars + encoded phase weights | 0 |
 | `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
 | `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + scalar carrier slice | 0 |
 
 Memory access shape:
-- scalar optical-depth values and phase coefficient vectors are stored in the
-  same row objects
+- final RT layer rows now store optical-depth scalars and an encoded phase
+  mixture instead of a full combined phase row
 - `PreparedSublayer` now carries scalar layer state and reads shared prepared
   particle phase data instead of carrying per-row copies
 - `WavelengthCarrierCache` uses `support_row_valid: []bool` and a
   `[]SharedOpticalScalars` cache for support-row reuse
-- `RtmQuadratureLevel` now keeps combined source phase inline but stores aerosol
-  phase-dependent source/Jacobian data as scalars plus the grid-level unit phase
+- `RtmQuadratureLevel` stores source phase as gas/aerosol/cloud weights and
+  uses grid-level prepared phase rows at the consumer boundary
 - shared-grid layer, source-interface, and RTM quadrature builders now write
   final rows directly instead of materializing `EvaluatedLayer`,
   `SharedBoundaryCarrier`, or local `LevelCarrier` intermediates
 - pseudo-spherical attenuation builders now write only the prepared
   `PseudoSphericalSample` grid and no longer mirror optical depth into unused
   full-width `LayerInput` rows
-- cached shared-grid layer fill accumulates phase numerators directly from the
-  scalar support-row cache and prepared phase arrays instead of loading cached
-  per-support-row phase rows
+- cached shared-grid layer fill now derives layer phase weights from scalar
+  optical totals instead of loading cached per-support-row phase rows or writing
+  per-layer phase-numerator arrays
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
   reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated
   layer-specific fill of phase arrays dominates the PLM basis itself
 
 Potential direction:
-- finish the scalar/phase split for non-cache carrier rows only where callers
-  do not need the combined phase row inline
-- inspect whether remaining combined phase rows can use side storage without
-  moving expensive phase recomputation into the LABOS hot loop
+- inspect `SharedOpticalCarrier` and `SourceInterfaceInput.phase_coefficients_above`
+  as the remaining combined phase-row carriers, but only where the consumer can
+  use encoded weights without adding branchy lookup to the hot loop
 - use generation tags or active support-row lists for `support_row_valid` when
   the cache is repeatedly reset per wavelength
 - keep `SharedRtmSubgrid` as a workspace slice and next inspect whether
   `GaussRuleScratch` capacity itself should remain 128
-- benchmark before replacing phase memoization: recomputing phase coefficients
-  may be cheaper than carrying arrays, but phase fill is already a known hot
-  path and must be measured with the RTM caller intact
+- keep benchmark evidence attached to any remaining phase-memoization change:
+  the accepted layer phase encoding worked because it removed large row traffic
+  without making the LABOS phase matrix path slower
 
 ### 4. Profile spectroscopy caches store multiple breakdown arrays
 

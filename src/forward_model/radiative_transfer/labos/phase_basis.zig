@@ -298,6 +298,108 @@ pub fn fillZplusZminFromBasisLimited(
 }
 
 // hot path:
+//   when: layer RT construction stores phase rows as gas/aerosol/cloud weights
+//   work: builds dense Z+ and Z- phase matrices directly from encoded phase weights
+//   data: phase weights, prepared particle phase rows, Fourier PLM basis
+//   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
+pub fn fillZplusZminFromWeightedPhaseLimited(
+    i_fourier: usize,
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefs: *const [types.max_phase_coef]f64,
+    cloud_phase_coefs: *const [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+) PhaseKernel {
+    const n = geo.nmutot;
+    if (n == 12) {
+        return fillZplusZminFromWeightedPhaseLimited12(
+            i_fourier,
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+        );
+    }
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
+
+    var zplus = Mat{ .data = undefined, .n = n };
+    var zmin = Mat{ .data = undefined, .n = n };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = weightedPhaseCoefficient(
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            l,
+        );
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                for (0..n) |i| {
+                    const scaled_plus_i = alpha1 * plus_l[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plus_l[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] = scaled_minus_i * plus_l[j];
+                    }
+                }
+            } else {
+                for (0..n) |i| {
+                    const scaled_plus_i = alpha1 * plus_l[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plus_l[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] += scaled_minus_i * plus_l[j];
+                    }
+                }
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                for (0..n) |i| {
+                    const scaled_plus_i = alpha1 * plm.plus[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plm.plus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] = scaled_minus_i * plm.plus[j];
+                    }
+                }
+            } else {
+                for (0..n) |i| {
+                    const scaled_plus_i = alpha1 * plm.plus[i];
+                    const scaled_minus_i = alpha1 * minus_sign * plm.plus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] += scaled_minus_i * plm.plus[j];
+                    }
+                }
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
+
+    return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+// hot path:
 //   when: reflectance and Jacobian weighting need phase rows rather than full matrices
 //   work: builds one Z+/Z- row from phase coefficients and PLM basis
 //   data: phase coefficients, row index, PLM basis, Z row outputs
@@ -640,6 +742,57 @@ fn fillZplusZminFromBasisLimited12(
     var first_order = true;
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_sign, true);
+            } else {
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_sign, false);
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            const minus_sign = minusParitySign(i_fourier, l);
+            if (first_order) {
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, minus_sign, true);
+            } else {
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, minus_sign, false);
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) return .{ .Zplus = Mat.zero(12), .Zmin = Mat.zero(12) };
+
+    return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+fn fillZplusZminFromWeightedPhaseLimited12(
+    i_fourier: usize,
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefs: *const [types.max_phase_coef]f64,
+    cloud_phase_coefs: *const [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+) PhaseKernel {
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = Mat.zero(12), .Zmin = Mat.zero(12) };
+
+    var zplus = Mat{ .data = undefined, .n = 12 };
+    var zmin = Mat{ .data = undefined, .n = 12 };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = weightedPhaseCoefficient(
+            aerosol_weight,
+            cloud_weight,
+            rayleigh2_weight,
+            aerosol_phase_coefs,
+            cloud_phase_coefs,
+            l,
+        );
         if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];

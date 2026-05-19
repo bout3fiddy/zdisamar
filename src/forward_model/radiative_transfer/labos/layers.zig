@@ -1,6 +1,5 @@
 const std = @import("std");
 const math = std.math;
-const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
@@ -500,7 +499,7 @@ inline fn doDouble12x10Step(
 fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
     for (layers) |*layer| {
-        max_index = @max(max_index, phase_functions.maxPhaseCoefficientIndex(&layer.phase_coefficients));
+        max_index = @max(max_index, layer.phase.maxIndex());
     }
     return max_index;
 }
@@ -516,7 +515,7 @@ pub fn fillLayerPhaseMaxIndices(
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
     for (layers, layer_phase_max_indices[0..layers.len]) |*layer, *max_index| {
-        max_index.* = phase_functions.maxPhaseCoefficientIndex(&layer.phase_coefficients);
+        max_index.* = layer.phase.maxIndex();
     }
 }
 
@@ -541,7 +540,7 @@ pub fn fillLayerEffectiveScatteringSuffixes(
         var reverse_index = max_phase_index + 1;
         while (reverse_index > 0) {
             reverse_index -= 1;
-            const beta_eff = @abs(layer.phase_coefficients[reverse_index]) * phase_odd_reciprocal[reverse_index];
+            const beta_eff = @abs(layer.phase.coefficient(reverse_index)) * phase_odd_reciprocal[reverse_index];
             suffix = @max(suffix, beta_eff);
             if (reverse_index < phase_stride) layer_suffixes[reverse_index] = suffix;
         }
@@ -583,11 +582,11 @@ pub fn calcRTlayersIntoWithBasis(
             continue;
         }
 
-        const phase_coefs = &layer.phase_coefficients;
+        const phase = layer.phase;
         const max_phase_index = if (layer_phase_max_indices) |indices|
             indices[layer_idx]
         else
-            phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+            phase.maxIndex();
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             if (rt_active) |active| active[rt_idx] = false;
@@ -604,9 +603,13 @@ pub fn calcRTlayersIntoWithBasis(
         var z = z: {
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_matrix");
             defer zone.end();
-            break :z basis.fillZplusZminFromBasisLimited(
+            break :z basis.fillZplusZminFromWeightedPhaseLimited(
                 i_fourier,
-                phase_coefs,
+                phase.aerosol_weight,
+                phase.cloud_weight,
+                phase.rayleigh2_weight,
+                phase.aerosol_phase_coefficients,
+                phase.cloud_phase_coefficients,
                 max_phase_index,
                 geo,
                 plm_basis,
@@ -633,8 +636,9 @@ pub fn calcRTlayersIntoWithBasis(
             var nonzero_terms: usize = 0;
             for (i_fourier..max_phase_index + 1) |ic| {
                 scanned_terms += 1;
-                if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
-                const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
+                const phase_coefficient = phase.coefficient(ic);
+                if (phase_coefficient != 0.0) nonzero_terms += 1;
+                const beta_eff = @abs(phase_coefficient) * phase_odd_reciprocal[ic];
                 if (beta_eff > suffix) suffix = beta_eff;
             }
             Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));

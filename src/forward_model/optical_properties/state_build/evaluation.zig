@@ -31,6 +31,6 @@ pub fn layerInputFromEvaluated(evaluated: State.EvaluatedLayer) transport_common
         .single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
         .solar_mu = evaluated.solar_mu,
         .view_mu = evaluated.view_mu,
-        .phase_coefficients = evaluated.phase_coefficients,
+        .phase = evaluated.phase,
     };
 }

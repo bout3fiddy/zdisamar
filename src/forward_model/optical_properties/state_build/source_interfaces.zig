@@ -74,7 +74,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
                         scattering_optical_depth / rtm_weight
                     else
                         0.0,
-                    .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                    .phase_coefficients_above = layer_inputs[ilevel].phase.coefficients(),
                 };
             }
             return;
@@ -92,7 +92,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
             if (sublayer_count == 0) {
                 source_interfaces[ilevel] = .{
                     .source_weight = 0.0,
-                    .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                    .phase_coefficients_above = layer_inputs[ilevel].phase.coefficients(),
                 };
                 continue;
             }
@@ -109,7 +109,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
                     scattering_optical_depth / rtm_weight
                 else
                     0.0,
-                .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                .phase_coefficients_above = layer_inputs[ilevel].phase.coefficients(),
             };
         }
         return;

@@ -6,7 +6,6 @@ const attenuation = @import("attenuation.zig");
 const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
-const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 const workspace_mod = @import("workspace.zig");
 const Trace = @import("../../performance_trace.zig");
 
@@ -612,7 +611,7 @@ fn singleLayerLabos(
         .single_scatter_albedo = input.single_scatter_albedo,
         .solar_mu = mu0,
         .view_mu = muv,
-        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
+        .phase = .{},
     };
     const layers = [_]common.LayerInput{layer};
     var layer_transmittance: [basis.max_nmutot]f64 = undefined;

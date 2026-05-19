@@ -317,7 +317,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 0.0,
             .solar_mu = scene.geometry.solarCosineAtAltitude(layer.altitude_km),
             .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
-            .phase_coefficients = PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor),
+            .phase = PhaseFunctions.PhaseMixture.fromUnitPhase(&self.aerosol_phase_coefficients),
         };
         attachAerosolOpticalDepthJacobian(scene, layer_input);
         totals.gas_absorption_optical_depth += gas_absorption_optical_depth;

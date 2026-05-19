@@ -2,6 +2,7 @@ const common_types = @import("common_types.zig");
 const common_route = @import("common_route.zig");
 
 pub const phase_coefficient_count = common_types.phase_coefficient_count;
+pub const LayerPhase = common_types.LayerPhase;
 pub const ScatteringMode = common_types.ScatteringMode;
 pub const RadiativeTransferPerformanceThresholds = common_types.RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = common_types.RadiativeTransferControls;

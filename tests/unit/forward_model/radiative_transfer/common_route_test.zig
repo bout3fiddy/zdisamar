@@ -56,14 +56,16 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
 }
 
 test "source interface builder preserves the top boundary weight and halves the bottom boundary weight" {
+    const layer0_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 });
+    const layer1_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 });
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.20,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 }),
+            .phase = common.LayerPhase.fromUnitPhase(&layer0_phase),
         },
         .{
             .scattering_optical_depth = 0.40,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 }),
+            .phase = common.LayerPhase.fromUnitPhase(&layer1_phase),
         },
     };
     var source_interfaces: [3]common.SourceInterfaceInput = undefined;

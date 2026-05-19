@@ -7,7 +7,6 @@ const Scalar = @import("state_scalar.zig");
 const Spectroscopy = @import("state_spectroscopy.zig");
 const Types = @import("state_types.zig");
 
-const phase_coefficient_count = Types.phase_coefficient_count;
 const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
 const OpticalDepthBreakdown = Types.OpticalDepthBreakdown;
@@ -128,10 +127,6 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     profile_cache: ?*const Spectroscopy.ProfileNodeSpectroscopyCache,
 ) EvaluatedLayer {
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
-    const gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
-    const aerosol_phase_coefficients = self.aerosol_phase_coefficients;
-    const cloud_phase_coefficients = self.cloud_phase_coefficients;
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
 
     for (sublayers, 0..) |sublayer, sublayer_index| {
@@ -247,27 +242,18 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         breakdown.aerosol_scattering_optical_depth += aerosol_scattering_optical_depth;
         breakdown.cloud_optical_depth += cloud_optical_depth;
         breakdown.cloud_scattering_optical_depth += cloud_scattering_optical_depth;
-
-        for (0..phase_coefficient_count) |index| {
-            phase_numerator[index] +=
-                gas_scattering_optical_depth * gas_phase_coefficients[index] +
-                aerosol_scattering_optical_depth * aerosol_phase_coefficients[index] +
-                cloud_scattering_optical_depth * cloud_phase_coefficients[index];
-        }
-    }
-
-    const total_scattering = breakdown.totalScatteringOpticalDepth();
-    var phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
-    if (total_scattering > 0.0) {
-        for (0..phase_coefficient_count) |index| {
-            phase_coefficients[index] = phase_numerator[index] / total_scattering;
-        }
-        phase_coefficients[0] = 1.0;
     }
 
     return .{
         .breakdown = breakdown,
-        .phase_coefficients = phase_coefficients,
+        .phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
+            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+            breakdown.gas_scattering_optical_depth,
+            breakdown.aerosol_scattering_optical_depth,
+            breakdown.cloud_scattering_optical_depth,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
+        ),
         .solar_mu = if (scene) |owned_scene| owned_scene.geometry.solarCosineAtAltitude(altitude_km) else 1.0,
         .view_mu = if (scene) |owned_scene| owned_scene.geometry.viewingCosineAtAltitude(altitude_km) else 1.0,
     };

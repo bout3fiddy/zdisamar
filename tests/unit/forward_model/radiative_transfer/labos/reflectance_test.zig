@@ -19,16 +19,18 @@ const resolvedPhaseCoefficientMax = labos.resolvedPhaseCoefficientMax;
 
 test "cached layer kernels preserve integrated reflectance when source interfaces mirror layers" {
     const geo = Geometry.init(4, 0.58, 0.64);
+    const layer0_phase: [max_phase_coef]f64 = .{ 1.0, 0.56, 0.24, 0.09 } ++
+        .{0.0} ** (max_phase_coef - 4);
+    const layer1_phase: [max_phase_coef]f64 = .{ 1.0, 0.41, 0.17, 0.05 } ++
+        .{0.0} ** (max_phase_coef - 4);
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.22,
-            .phase_coefficients = .{ 1.0, 0.56, 0.24, 0.09 } ++
-                .{0.0} ** (max_phase_coef - 4),
+            .phase = common.LayerPhase.fromUnitPhase(&layer0_phase),
         },
         .{
             .scattering_optical_depth = 0.18,
-            .phase_coefficients = .{ 1.0, 0.41, 0.17, 0.05 } ++
-                .{0.0} ** (max_phase_coef - 4),
+            .phase = common.LayerPhase.fromUnitPhase(&layer1_phase),
         },
     };
     var ud: [3]UDField = undefined;
@@ -60,9 +62,10 @@ test "cached layer kernels preserve integrated reflectance when source interface
     var row_cache: [3]PhaseKernelRow = undefined;
     var row_valid = [_]bool{false} ** 3;
     for (0..layers.len) |layer_idx| {
+        const phase_coefficients = layers[layer_idx].phase.coefficients();
         const kernel = fillZplusZminFromBasis(
             i_fourier,
-            &layers[layer_idx].phase_coefficients,
+            &phase_coefficients,
             &geo,
             &plm_basis,
         );
@@ -108,12 +111,12 @@ test "cached layer kernels preserve integrated reflectance when source interface
 
 test "layer build caches observer phase row for integrated-source reflectance" {
     const geo = Geometry.init(4, 0.58, 0.64);
-    const layer_phase = .{ 1.0, 0.47, 0.18, 0.06 } ++ .{0.0} ** (max_phase_coef - 4);
+    const layer_phase: [max_phase_coef]f64 = .{ 1.0, 0.47, 0.18, 0.06 } ++ .{0.0} ** (max_phase_coef - 4);
     const layers = [_]common.LayerInput{.{
         .optical_depth = 0.2,
         .scattering_optical_depth = 0.18,
         .single_scatter_albedo = 0.9,
-        .phase_coefficients = layer_phase,
+        .phase = common.LayerPhase.fromUnitPhase(&layer_phase),
     }};
     const i_fourier: usize = 1;
     const plm_basis = FourierPlmBasis.init(i_fourier, 3, &geo);
@@ -136,9 +139,10 @@ test "layer build caches observer phase row for integrated-source reflectance" {
         null,
     );
 
+    const expected_phase = layers[0].phase.coefficients();
     const expected_kernel = fillZplusZminFromBasis(
         i_fourier,
-        &layers[0].phase_coefficients,
+        &expected_phase,
         &geo,
         &plm_basis,
     );
@@ -159,11 +163,11 @@ test "integrated source truncates quadrature phase kernels by adjacent layers" {
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.1,
-            .phase_coefficients = layer_phase,
+            .phase = common.LayerPhase.fromUnitPhase(&layer_phase),
         },
         .{
             .scattering_optical_depth = 0.1,
-            .phase_coefficients = layer_phase,
+            .phase = common.LayerPhase.fromUnitPhase(&layer_phase),
         },
     };
     var ud: [3]UDField = undefined;

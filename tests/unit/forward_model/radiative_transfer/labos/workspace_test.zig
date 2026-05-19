@@ -37,8 +37,8 @@ test "workspace layer effective scattering suffix uses active phase stride" {
     const layer0_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.2, 0.3, 0.4 });
     const layer1_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.1, 0.0, 0.0 });
     const layers = [_]common.LayerInput{
-        .{ .phase_coefficients = layer0_phase },
-        .{ .phase_coefficients = layer1_phase },
+        .{ .phase = common.LayerPhase.fromUnitPhase(&layer0_phase) },
+        .{ .phase = common.LayerPhase.fromUnitPhase(&layer1_phase) },
     };
     const max_indices = [_]usize{ 3, 1 };
 

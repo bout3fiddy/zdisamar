@@ -152,11 +152,11 @@ fn adjacentLayerPhaseCoefficientIndex(
     ilevel: usize,
 ) usize {
     if (layers.len == 0) return 0;
-    if (ilevel == 0) return maxPhaseCoefficientIndex(&layers[0].phase_coefficients);
-    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(&layers[layers.len - 1].phase_coefficients);
+    if (ilevel == 0) return layers[0].phase.maxIndex();
+    if (ilevel >= layers.len) return layers[layers.len - 1].phase.maxIndex();
     return @max(
-        maxPhaseCoefficientIndex(&layers[ilevel - 1].phase_coefficients),
-        maxPhaseCoefficientIndex(&layers[ilevel].phase_coefficients),
+        layers[ilevel - 1].phase.maxIndex(),
+        layers[ilevel].phase.maxIndex(),
     );
 }
 
@@ -188,10 +188,11 @@ fn reuseLayerKernelIndex(
 ) ?usize {
     if (layers.len == 0) return null;
     const above_index = @min(ilevel, layers.len - 1);
+    const layer_phase_coefficients = layers[above_index].phase.coefficients();
     if (!std.mem.eql(
         f64,
         source_interface.phase_coefficients_above[0..],
-        layers[above_index].phase_coefficients[0..],
+        layer_phase_coefficients[0..],
     )) {
         return null;
     }
@@ -1001,7 +1002,7 @@ pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
 fn maxFourierIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
     for (layers) |*layer| {
-        max_index = @max(max_index, maxPhaseCoefficientIndex(&layer.phase_coefficients));
+        max_index = @max(max_index, layer.phase.maxIndex());
     }
     return max_index;
 }

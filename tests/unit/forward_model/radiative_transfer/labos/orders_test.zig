@@ -9,6 +9,9 @@ const OrdersWorkspace = labos.OrdersWorkspace;
 const ordersScatInto = labos.ordersScatInto;
 const ordersScatIntoWithLocalSum = labos.ordersScatIntoWithLocalSum;
 
+const default_layer_phase: [labos.max_phase_coef]f64 = .{ 1.0, 0.22, 0.05 } ++ .{0.0} ** (labos.max_phase_coef - 3);
+const pressure_layer_phase: [labos.max_phase_coef]f64 = .{ 1.0, 0.18, 0.04 } ++ .{0.0} ** (labos.max_phase_coef - 3);
+
 test "labos semi-analytical surface albedo tangent matches local finite difference" {
     const allocator = std.testing.allocator;
     const common = internal.forward_model.radiative_transfer;
@@ -36,7 +39,7 @@ test "labos semi-analytical surface albedo tangent matches local finite differen
         .single_scatter_albedo = 0.7,
         .solar_mu = 0.61,
         .view_mu = 0.72,
-        .phase_coefficients = .{ 1.0, 0.22, 0.05 } ++ .{0.0} ** (labos.max_phase_coef - 3),
+        .phase = common.LayerPhase.fromUnitPhase(&default_layer_phase),
     };
     jacobian.set(&layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa, 0.002);
     jacobian.set(&layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa, 0.001);
@@ -172,7 +175,7 @@ test "labos rejects non-integrated pressure tangent without layer pressure jacob
         .single_scatter_albedo = 0.7,
         .solar_mu = 0.61,
         .view_mu = 0.72,
-        .phase_coefficients = .{ 1.0, 0.22, 0.05 } ++ .{0.0} ** (labos.max_phase_coef - 3),
+        .phase = common.LayerPhase.fromUnitPhase(&default_layer_phase),
     }};
     const input: common.ForwardInput = .{
         .mu0 = 0.61,
@@ -262,7 +265,7 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
         .single_scatter_albedo = 0.7,
         .solar_mu = 0.61,
         .view_mu = 0.72,
-        .phase_coefficients = .{ 1.0, 0.22, 0.05 } ++ .{0.0} ** (labos.max_phase_coef - 3),
+        .phase = common.LayerPhase.fromUnitPhase(&default_layer_phase),
     }};
     const input: common.ForwardInput = .{
         .mu0 = 0.61,
@@ -304,7 +307,7 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
         .single_scatter_albedo = 0.65,
         .solar_mu = 0.63,
         .view_mu = 0.71,
-        .phase_coefficients = .{ 1.0, 0.18, 0.04 } ++ .{0.0} ** (labos.max_phase_coef - 3),
+        .phase = common.LayerPhase.fromUnitPhase(&pressure_layer_phase),
     };
     jacobian.set(&layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa, 0.003);
     jacobian.set(&layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa, 0.002);

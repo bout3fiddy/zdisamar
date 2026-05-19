@@ -73,7 +73,6 @@ pub fn resolveSharedRtmSubgrid(
 
 pub fn accumulateSharedCarrier(
     breakdown: *OpticalDepthBreakdown,
-    phase_numerator: *[phase_coefficient_count]f64,
     carrier: *const carrier_eval.SharedOpticalCarrier,
     weight_km: f64,
 ) void {
@@ -92,25 +91,12 @@ pub fn accumulateSharedCarrier(
     breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
     breakdown.cloud_optical_depth += weighted_cloud;
     breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
-
-    const weighted_scattering = weighted_gas_scattering +
-        weighted_aerosol_scattering +
-        weighted_cloud_scattering;
-    if (weighted_scattering <= 0.0) return;
-
-    for (0..phase_coefficient_count) |index| {
-        phase_numerator[index] += weighted_scattering * carrier.phase_coefficients[index];
-    }
 }
 
 fn accumulateSharedScalars(
     breakdown: *OpticalDepthBreakdown,
-    phase_numerator: *[phase_coefficient_count]f64,
     scalars: *const carrier_eval.SharedOpticalScalars,
     weight_km: f64,
-    rayleigh_phase_coefficient2: f64,
-    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) void {
     const weighted_gas_absorption = scalars.gas_absorption_optical_depth_per_km * weight_km;
     const weighted_gas_scattering = scalars.gas_scattering_optical_depth_per_km * weight_km;
@@ -127,19 +113,6 @@ fn accumulateSharedScalars(
     breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
     breakdown.cloud_optical_depth += weighted_cloud;
     breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
-
-    const weighted_scattering = weighted_gas_scattering +
-        weighted_aerosol_scattering +
-        weighted_cloud_scattering;
-    if (weighted_scattering <= 0.0) return;
-
-    for (0..phase_coefficient_count) |index| {
-        phase_numerator[index] +=
-            weighted_aerosol_scattering * aerosol_phase_coefficients[index] +
-            weighted_cloud_scattering * cloud_phase_coefficients[index];
-    }
-    phase_numerator[0] += weighted_gas_scattering;
-    phase_numerator[2] += weighted_gas_scattering * rayleigh_phase_coefficient2;
 }
 
 pub fn evaluatedLayerFromSharedCarrier(
@@ -147,20 +120,19 @@ pub fn evaluatedLayerFromSharedCarrier(
     wavelength_nm: f64,
     altitude_km: f64,
     breakdown: OpticalDepthBreakdown,
-    phase_numerator: [phase_coefficient_count]f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) EvaluatedLayer {
-    const total_scattering = breakdown.totalScatteringOpticalDepth();
-    var phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
-    if (total_scattering > 0.0) {
-        for (0..phase_coefficient_count) |index| {
-            phase_coefficients[index] = phase_numerator[index] / total_scattering;
-        }
-        phase_coefficients[0] = 1.0;
-    }
-
     return .{
         .breakdown = breakdown,
-        .phase_coefficients = phase_coefficients,
+        .phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
+            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+            breakdown.gas_scattering_optical_depth,
+            breakdown.aerosol_scattering_optical_depth,
+            breakdown.cloud_scattering_optical_depth,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
+        ),
         .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
         .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
     };
@@ -171,7 +143,8 @@ fn fillLayerInputFromSharedCarrier(
     wavelength_nm: f64,
     altitude_km: f64,
     breakdown: OpticalDepthBreakdown,
-    phase_numerator: *const [phase_coefficient_count]f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
     layer_input: *transport_common.LayerInput,
 ) void {
     const total_optical_depth = breakdown.totalOpticalDepth();
@@ -192,16 +165,15 @@ fn fillLayerInputFromSharedCarrier(
         .single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
         .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
         .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
-        .phase_coefficients = undefined,
+        .phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
+            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+            breakdown.gas_scattering_optical_depth,
+            breakdown.aerosol_scattering_optical_depth,
+            breakdown.cloud_scattering_optical_depth,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
+        ),
     };
-    if (total_scattering > 0.0) {
-        for (0..phase_coefficient_count) |index| {
-            layer_input.phase_coefficients[index] = phase_numerator[index] / total_scattering;
-        }
-        layer_input.phase_coefficients[0] = 1.0;
-        return;
-    }
-    layer_input.phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
 }
 
 pub fn evaluateReducedLayerFromSupportRows(
@@ -233,14 +205,14 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) EvaluatedLayer {
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     if (support_sublayers.len < 2) {
         return evaluatedLayerFromSharedCarrier(
             scene,
             wavelength_nm,
             layer_geometry.midpoint_altitude_km,
             breakdown,
-            phase_numerator,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         );
     }
 
@@ -259,14 +231,15 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
             strong_line_state,
             profile_cache,
         );
-        accumulateSharedCarrier(&breakdown, &phase_numerator, &carrier, weight_km);
+        accumulateSharedCarrier(&breakdown, &carrier, weight_km);
     }
     return evaluatedLayerFromSharedCarrier(
         scene,
         wavelength_nm,
         layer_geometry.midpoint_altitude_km,
         breakdown,
-        phase_numerator,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
     );
 }
 
@@ -281,7 +254,6 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
     layer_input: *transport_common.LayerInput,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     if (support_sublayers.len >= 2) {
         for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
@@ -298,7 +270,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                 strong_line_state,
                 profile_cache,
             );
-            accumulateSharedCarrier(&breakdown, &phase_numerator, &carrier, weight_km);
+            accumulateSharedCarrier(&breakdown, &carrier, weight_km);
         }
     }
     fillLayerInputFromSharedCarrier(
@@ -306,7 +278,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         wavelength_nm,
         layer_geometry.midpoint_altitude_km,
         breakdown,
-        &phase_numerator,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
         layer_input,
     );
     return breakdown;
@@ -327,14 +300,14 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
 ) EvaluatedLayer {
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     if (support_sublayers.len < 2) {
         return evaluatedLayerFromSharedCarrier(
             scene,
             wavelength_nm,
             layer_geometry.midpoint_altitude_km,
             breakdown,
-            phase_numerator,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         );
     }
 
@@ -356,12 +329,8 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
         );
         accumulateSharedScalars(
             &breakdown,
-            &phase_numerator,
             scalars,
             weight_km,
-            wavelength_cache.rayleigh_phase_coefficient2,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
         );
     }
     return evaluatedLayerFromSharedCarrier(
@@ -369,7 +338,8 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
         wavelength_nm,
         layer_geometry.midpoint_altitude_km,
         breakdown,
-        phase_numerator,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
     );
 }
 
@@ -384,7 +354,6 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
     layer_input: *transport_common.LayerInput,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     if (support_sublayers.len >= 2) {
         for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
@@ -404,12 +373,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
             );
             accumulateSharedScalars(
                 &breakdown,
-                &phase_numerator,
                 scalars,
                 weight_km,
-                wavelength_cache.rayleigh_phase_coefficient2,
-                &self.aerosol_phase_coefficients,
-                &self.cloud_phase_coefficients,
             );
         }
     }
@@ -418,7 +383,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
         wavelength_nm,
         layer_geometry.midpoint_altitude_km,
         breakdown,
-        &phase_numerator,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
         layer_input,
     );
     return breakdown;
@@ -549,7 +515,6 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         scratch,
     );
     var breakdown: OpticalDepthBreakdown = .{};
-    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
     for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         if (weight_km <= 0.0) continue;
@@ -563,7 +528,6 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         );
         accumulateSharedCarrier(
             &breakdown,
-            &phase_numerator,
             &carrier,
             weight_km,
         );
@@ -573,7 +537,8 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         wavelength_nm,
         layer_geometry.midpoint_altitude_km,
         breakdown,
-        phase_numerator,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
     );
 }
 

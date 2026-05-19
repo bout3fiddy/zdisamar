@@ -4,6 +4,7 @@ const jacobian = @import("../jacobian/root.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 pub const phase_coefficient_count = phase_functions.phase_coefficient_count;
+pub const LayerPhase = phase_functions.PhaseMixture;
 
 // Atmospheric scattering treatment.
 pub const ScatteringMode = enum(u2) {
@@ -214,13 +215,14 @@ pub const Route = struct {
 };
 
 // layout(64-bit):
-//   size: 1376 B, align: 8 B
-//   field storage: 1376 B across 16 fields; largest: phase_coefficients=1208 B, optical_depth_jacobian=24 B, scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
+//   size: 208 B, align: 8 B
+//   field storage: 208 B across 16 fields; largest: phase=40 B, optical_depth_jacobian=24 B, scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 4 fields reserve 1280 B inside each instance
-//   cache span: 22 cache line(s) at 64 B per line
+//   inline arrays: 3 Jacobian vectors reserve 72 B inside each instance
+//   encoded fields: phase stores gas/aerosol/cloud phase weights plus shared phase-row references instead of a full 1208 B coefficient row
+//   cache span: 4 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1376 B (1.344 KiB); total = per instance * live instance count
+//   footprint: per instance = 208 B (0.203 KiB); total also includes referenced phase storage above
 pub const LayerInput = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -237,7 +239,7 @@ pub const LayerInput = struct {
     single_scatter_albedo_jacobian: jacobian.Vector = jacobian.zero(),
     solar_mu: f64 = 1.0,
     view_mu: f64 = 1.0,
-    phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    phase: LayerPhase = .{},
 };
 
 // layout(64-bit):
