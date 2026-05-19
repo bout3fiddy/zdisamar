@@ -78,7 +78,7 @@ test "source interface builder preserves the top boundary weight and halves the 
     try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[0].phase_coefficients_above[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[1].phase_coefficients_above[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_above[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].phase_coefficients_below[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[1].phase_coefficients_below[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_below[1], 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 0), source_interfaces[0].phase_max_index_below);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[1].phase_max_index_below);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[2].phase_max_index_below);
 }

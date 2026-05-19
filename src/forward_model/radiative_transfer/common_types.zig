@@ -241,13 +241,14 @@ pub const LayerInput = struct {
 };
 
 // layout(64-bit):
-//   size: 2472 B, align: 8 B
-//   field storage: 2472 B across 9 fields; largest: phase_coefficients_above=1208 B, phase_coefficients_below=1208 B, source_weight=8 B; padding: 0 B (0 bits)
+//   size: 1272 B, align: 8 B
+//   field storage: 1272 B across 9 fields; largest: phase_coefficients_above=1208 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients_above:[151]f64=1208 B, phase_coefficients_below:[151]f64=1208 B
-//   cache span: 39 cache line(s) at 64 B per line
+//   inline arrays: phase_coefficients_above:[151]f64=1208 B
+//   encoded fields: phase_max_index_below stores the below-row Fourier bound instead of a full 1208 B phase row
+//   cache span: 20 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2472 B (2.414 KiB); total = per instance * live instance count
+//   footprint: per instance = 1272 B (1.242 KiB); total = per instance * live instance count
 pub const SourceInterfaceInput = struct {
     source_weight: f64 = 0.0,
     rtm_weight: f64 = 0.0,
@@ -257,7 +258,7 @@ pub const SourceInterfaceInput = struct {
     ksca_above: f64 = 0.0,
     ksca_below: f64 = 0.0,
     phase_coefficients_above: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
-    phase_coefficients_below: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    phase_max_index_below: usize = 0,
 
     pub fn effectiveWeight(self: SourceInterfaceInput) f64 {
         if (self.rtm_weight > 0.0 and self.ksca_above > 0.0) {

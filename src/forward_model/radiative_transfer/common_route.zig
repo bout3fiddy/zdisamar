@@ -38,10 +38,10 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
         else
             0.0,
         .phase_coefficients_above = layers[above_index].phase_coefficients,
-        .phase_coefficients_below = if (ilevel > 0)
-            layers[below_index].phase_coefficients
+        .phase_max_index_below = if (ilevel > 0)
+            phase_functions.maxPhaseCoefficientIndex(&layers[below_index].phase_coefficients)
         else
-            phase_functions.zeroPhaseCoefficients(),
+            0,
     };
 }
 

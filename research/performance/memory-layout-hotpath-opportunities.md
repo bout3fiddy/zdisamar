@@ -1753,6 +1753,77 @@ Conclusion:
   phase rows because it gives a clean speed win while preserving the current
   dense phase-row consumer layout
 
+### Experiment 28: encode source-interface below phase as a Fourier bound
+
+Changed:
+- `SourceInterfaceInput` now stores `phase_max_index_below` instead of a full
+  `[151]f64` below-side phase row
+- `SharedBoundaryCarrier` uses the same encoding for the below boundary row
+- source-interface filling still computes the below combined phase row locally
+  and stores the exact maximum populated Fourier index
+- the above phase row remains inline because integrated source reflectance
+  consumes the actual above-side coefficients when constructing the source row
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SourceInterfaceInput` | 2,472 B | 1,272 B | -1,200 B (-48.54%) |
+| `SourceInterfaceInput` cache span | 39 lines | 20 lines | -19 lines |
+| `SharedBoundaryCarrier` | 2,472 B | 1,272 B | -1,200 B (-48.54%) |
+| below-side phase storage | 1,208 B inline row | 8 B max index | -1,200 B |
+| current 117-row source-interface buffer | 282.5 KiB | 145.4 KiB | -137.1 KiB |
+| 301-output-sample lower-bound write surface | 87.1 MB (83.0 MiB) | 44.8 MB (42.7 MiB) | -42.3 MB (-40.3 MiB) |
+
+Interpretation:
+- the below phase row was only needed to compute the highest active Fourier
+  order; no current LABOS source-row consumer reads the below coefficient array
+- the encoded index preserves the same Fourier loop bound while removing one
+  1.2 KiB retained row from every source-interface record
+- the local below-row recomputation is kept at the fill boundary, so this is a
+  storage/layout change rather than a scientific approximation
+- the above row stays dense and inline to avoid adding pointer chasing to the
+  row that the source reflectance kernel actually consumes
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `859c55fdaec6445b80398cc54552ae11`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check command itself were
+  present
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against Experiment 27:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 146.417382 s | 144.972863 s | 0.9901 |
+| total benchmark CPU | 282.591216 s | 279.545778 s | 0.9892 |
+| forward no-session median | 0.989707 s | 0.987443 s | 0.9977 |
+| forward session setup | 0.713116 s | 0.710486 s | 0.9963 |
+| forward session first cached | 0.284773 s | 0.277352 s | 0.9739 |
+| forward session cached median | 0.283050 s | 0.278981 s | 0.9856 |
+| forward fast four-scene median | 4.769943 s | 4.732407 s | 0.9921 |
+| OE session retrieval median | 1.189757 s | 1.165139 s | 0.9793 |
+| OE fast retrieval median | 0.922561 s | 0.900696 s | 0.9763 |
+| OE sweep session total wall | 20.143692 s | 19.882759 s | 0.9870 |
+| OE sweep fast total wall | 11.098399 s | 10.889717 s | 0.9812 |
+
+Conclusion:
+- this removes the remaining retained below-side phase row from the
+  source-interface layout while preserving the exact Fourier bound used by LABOS
+- the retained benchmark is faster across every tracked timing row, with total
+  wall down about 1.0% and total CPU down about 1.1%
+- this is worth keeping because it is a sizeable per-source-interface footprint
+  reduction and the measured timing boundary improved instead of regressing
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
