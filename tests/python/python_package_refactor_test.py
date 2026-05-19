@@ -129,7 +129,6 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
 
 def assert_optimal_estimation_result_dataclass() -> None:
 
-    import numpy as np
     from zdisamar.inverse_method.optimal_estimation.retrieval import IterationTiming, Result
     from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 
@@ -137,12 +136,12 @@ def assert_optimal_estimation_result_dataclass() -> None:
     second = cast(RtmEvaluation, object())
     result = Result(
         state_names=(),
-        state=np.array([], dtype=np.float64),
+        state=(),
         iterations=0,
         converged=True,
         history=(),
-        posterior_covariance=np.empty((0, 0), dtype=np.float64),
-        averaging_kernel=np.empty((0, 0), dtype=np.float64),
+        posterior_covariance=(),
+        averaging_kernel=(),
         final_evaluation=first,
     )
     assert result.final_evaluation is first
@@ -153,12 +152,12 @@ def assert_optimal_estimation_result_dataclass() -> None:
     timing = (IterationTiming(1, 2.0, 3.0, 5.0),)
     positional = Result(
         (),
-        np.array([], dtype=np.float64),
+        (),
         0,
         True,
         (),
-        np.empty((0, 0), dtype=np.float64),
-        np.empty((0, 0), dtype=np.float64),
+        (),
+        (),
         timing,
     )
     assert positional.timing is timing
@@ -167,7 +166,6 @@ def assert_optimal_estimation_result_dataclass() -> None:
 
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
-    import numpy as np
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import Result
     from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
@@ -176,13 +174,13 @@ def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
     calls = 0
     result = Result(
         state_names=("aerosol_optical_depth",),
-        state=np.array([1.0], dtype=np.float64),
+        state=(1.0,),
         iterations=1,
         converged=True,
         history=(),
-        posterior_covariance=np.eye(1, dtype=np.float64),
-        averaging_kernel=np.eye(1, dtype=np.float64),
-        last_evaluated_state=np.array([1.0], dtype=np.float64),
+        posterior_covariance=((1.0,),),
+        averaging_kernel=((1.0,),),
+        last_evaluated_state=(1.0,),
         last_evaluation=sentinel,
     )
 
@@ -265,10 +263,10 @@ def assert_reference_data_and_rtm_tables() -> None:
 
             budget = rtm.atmospheric_budget(case, np.array([760.76], dtype=np.float64))
             assert budget.row_count > 0
-            assert budget.column("wavelength_nm").size == budget.row_count
+            assert len(budget.column("wavelength_nm")) == budget.row_count
             first_table = budget.table
-            first_wavelength = float(first_table["wavelength_nm"][0])
-            first_table["wavelength_nm"][0] = -1.0
+            first_wavelength = float(first_table[0]["wavelength_nm"])
+            first_table[0]["wavelength_nm"] = -1.0
             assert float(budget.column("wavelength_nm")[0]) == first_wavelength
             rows = budget.to_rows()
             assert len(rows) == budget.row_count

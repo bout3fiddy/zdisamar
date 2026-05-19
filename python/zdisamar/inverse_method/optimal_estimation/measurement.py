@@ -1,8 +1,8 @@
 """Measurement-grid validation for optimal estimation."""
 
+import math
+from array import array
 from dataclasses import dataclass
-
-import numpy as np
 
 from .retrieval import Measurement
 
@@ -15,36 +15,34 @@ class WavelengthGridMismatchError(ValueError):
 class MeasurementArrays:
     """Validated retrieval-vector arrays in solver-ready dtype."""
 
-    wavelength_nm: np.ndarray
-    reflectance: np.ndarray
-    variance: np.ndarray
+    wavelength_nm: array[float]
+    reflectance: array[float]
+    variance: array[float]
 
 
 def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
     """Return validated float64 arrays for a measurement."""
 
-    wavelength_nm = np.asarray(measurement.wavelength_nm, dtype=np.float64)
-    reflectance = np.asarray(measurement.reflectance, dtype=np.float64)
-    variance = np.asarray(measurement.variance, dtype=np.float64)
+    wavelength_nm = array("d", (float(value) for value in measurement.wavelength_nm))
+    reflectance = array("d", (float(value) for value in measurement.reflectance))
+    variance = array("d", (float(value) for value in measurement.variance))
 
-    if wavelength_nm.ndim != 1 or reflectance.ndim != 1 or variance.ndim != 1:
-        raise ValueError(
-            "measurement wavelength, reflectance, and variance must be one-dimensional"
-        )
-
-    if wavelength_nm.size == 0:
+    if not wavelength_nm:
         raise ValueError("measurement must contain at least one sample")
 
-    if wavelength_nm.shape != reflectance.shape or wavelength_nm.shape != variance.shape:
+    if len(wavelength_nm) != len(reflectance) or len(wavelength_nm) != len(variance):
         raise ValueError("measurement wavelength, reflectance, and variance shapes must match")
 
-    if np.any(~np.isfinite(wavelength_nm)) or np.any(~np.isfinite(reflectance)):
+    if any(not math.isfinite(value) for value in wavelength_nm):
         raise ValueError("measurement wavelength and reflectance values must be finite")
 
-    if np.any(~np.isfinite(variance)) or np.any(variance <= 0.0):
+    if any(not math.isfinite(value) for value in reflectance):
+        raise ValueError("measurement wavelength and reflectance values must be finite")
+
+    if any(not math.isfinite(value) or value <= 0.0 for value in variance):
         raise ValueError("measurement variance values must be finite and positive")
 
-    if np.any(np.diff(wavelength_nm) <= 0.0):
+    if any(upper <= lower for lower, upper in zip(wavelength_nm, wavelength_nm[1:], strict=False)):
         raise ValueError("measurement wavelength grid must be strictly increasing")
 
     return MeasurementArrays(
@@ -55,20 +53,18 @@ def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
 
 
 def require_matching_wavelength_grid(
-    expected: np.ndarray,
-    actual: np.ndarray,
+    expected,
+    actual,
     *,
     expected_name: str,
     actual_name: str,
 ) -> None:
     """Reject hidden wavelength-grid adaptation at OE boundaries."""
 
-    expected_values = np.asarray(expected, dtype=np.float64)
-    actual_values = np.asarray(actual, dtype=np.float64)
+    expected_values = tuple(float(value) for value in expected)
+    actual_values = tuple(float(value) for value in actual)
 
-    if expected_values.shape != actual_values.shape or not np.array_equal(
-        expected_values, actual_values
-    ):
+    if expected_values != actual_values:
         raise WavelengthGridMismatchError(
             f"{actual_name} wavelength grid must match {expected_name} wavelength grid"
         )

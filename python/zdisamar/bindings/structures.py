@@ -195,3 +195,65 @@ class CRadiativeTransferDiagnostics(ctypes.Structure):
         ("len", ctypes.c_size_t),
         ("rows", ctypes.POINTER(CRadiativeTransferDiagnosticRow)),
     ]
+
+
+class COptimalEstimationStateSpec(ctypes.Structure):
+    _fields_ = [
+        ("state_id", ctypes.c_uint8),
+        ("has_lower", ctypes.c_uint8),
+        ("has_upper", ctypes.c_uint8),
+        ("interval_index_1based", ctypes.c_uint32),
+        ("initial", ctypes.c_double),
+        ("prior", ctypes.c_double),
+        ("variance", ctypes.c_double),
+        ("lower", ctypes.c_double),
+        ("upper", ctypes.c_double),
+        ("thickness_hpa", ctypes.c_double),
+        ("pressure_profile_count", ctypes.c_size_t),
+        ("pressure_profile_altitude_km", ctypes.POINTER(ctypes.c_double)),
+        ("pressure_profile_pressure_hpa", ctypes.POINTER(ctypes.c_double)),
+    ]
+
+
+class COptimalEstimationControls(ctypes.Structure):
+    _fields_ = [
+        ("max_iterations", ctypes.c_size_t),
+        ("state_vector_convergence_threshold", ctypes.c_double),
+        ("max_change_transformed_state", ctypes.c_double),
+        ("collect_timing", ctypes.c_uint8),
+    ]
+
+
+class COptimalEstimationRequest(ctypes.Structure):
+    _fields_ = [
+        ("sample_count", ctypes.c_size_t),
+        ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
+        ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("variance", ctypes.POINTER(ctypes.c_double)),
+        ("state_count", ctypes.c_size_t),
+        ("states", ctypes.POINTER(COptimalEstimationStateSpec)),
+        ("controls", COptimalEstimationControls),
+    ]
+
+
+class COptimalEstimationResult(ctypes.Structure):
+    _fields_ = [
+        ("state_count", ctypes.c_size_t),
+        ("iteration_count", ctypes.c_size_t),
+        ("converged", ctypes.c_uint8),
+        ("state_ids", ctypes.POINTER(ctypes.c_uint8)),
+        ("state", ctypes.POINTER(ctypes.c_double)),
+        ("initial_state", ctypes.POINTER(ctypes.c_double)),
+        ("posterior_covariance", ctypes.POINTER(ctypes.c_double)),
+        ("averaging_kernel", ctypes.POINTER(ctypes.c_double)),
+        ("history_state", ctypes.POINTER(ctypes.c_double)),
+        ("history_chi2", ctypes.POINTER(ctypes.c_double)),
+        ("history_chi2_reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("history_chi2_state_vector", ctypes.POINTER(ctypes.c_double)),
+        ("history_state_vector_convergence", ctypes.POINTER(ctypes.c_double)),
+        ("history_snr_normal", ctypes.POINTER(ctypes.c_uint8)),
+        ("timing_rtm_and_jacobian_s", ctypes.POINTER(ctypes.c_double)),
+        ("timing_solver_update_s", ctypes.POINTER(ctypes.c_double)),
+        ("timing_total_iteration_s", ctypes.POINTER(ctypes.c_double)),
+        ("result_handle", ctypes.c_void_p),
+    ]

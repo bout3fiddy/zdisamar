@@ -101,7 +101,7 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 def posterior_sigma(result: Any, state_name: str) -> float:
 
     index = result.state_names.index(state_name)
-    variance = float(result.posterior_covariance[index, index])
+    variance = float(result.posterior_covariance[index][index])
 
     return math.sqrt(max(variance, 0.0))
 

@@ -16,18 +16,14 @@ def main() -> int:
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
 
             spectrum = rtm.spectrum(case)
-            assert int(spectrum.wavelength_nm.size) == int(case.spectral_grid.sample_count)
+            assert len(spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
 
             reference_spectrum = rtm.spectrum(o2a.reference_case())
-            assert int(reference_spectrum.wavelength_nm.size) == int(
-                case.spectral_grid.sample_count
-            )
+            assert len(reference_spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
 
             with rtm.SessionCache(case) as cache:
                 cached_spectrum = cache.spectrum()
-                assert int(cached_spectrum.wavelength_nm.size) == int(
-                    case.spectral_grid.sample_count
-                )
+                assert len(cached_spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
         finally:
             os.chdir(old_cwd)
 

@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import numpy as np
-
 from . import fields
 from .axes import label
 from .data import column_values
@@ -76,9 +74,9 @@ def profile_wavelength(table, wavelength_nm: float | None) -> float | None:
     if wavelength_nm is not None:
         return wavelength_nm
 
-    values = np.unique(table.column(fields.WAVELENGTH_NM))
+    values = sorted({float(value) for value in table.column(fields.WAVELENGTH_NM)})
 
-    if values.size <= 1:
+    if len(values) <= 1:
         return None
 
-    return float(values[int(np.argmin(np.abs(values - DEFAULT_PROFILE_WAVELENGTH_NM)))])
+    return min(values, key=lambda value: abs(value - DEFAULT_PROFILE_WAVELENGTH_NM))

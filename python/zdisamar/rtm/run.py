@@ -1,5 +1,6 @@
 """Functional RTM execution helpers."""
 
+from array import array
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -121,14 +122,18 @@ def o2_line_contributions(
 def nominal_wavelengths(case: O2AInput):
     """Recreate the nominal spectrum grid from a wavelength-band case."""
 
-    import numpy as np
+    count = int(case.spectral_grid.sample_count)
 
-    return np.linspace(
-        case.spectral_grid.start_nm,
-        case.spectral_grid.end_nm,
-        case.spectral_grid.sample_count,
-        dtype=np.float64,
-    )
+    if count <= 0:
+        return array("d")
+
+    if count == 1:
+        return array("d", [float(case.spectral_grid.start_nm)])
+
+    start = float(case.spectral_grid.start_nm)
+    step = (float(case.spectral_grid.end_nm) - start) / float(count - 1)
+
+    return array("d", (start + step * index for index in range(count)))
 
 
 def o2a_reference_case() -> O2AInput:

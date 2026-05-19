@@ -28,9 +28,7 @@ classifiers = [
     "Programming Language :: Zig",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
-dependencies = [
-    "numpy>=2.0,<3",
-]
+dependencies = []
 
 [project.urls]
 Repository = "https://github.com/bout3fiddy/zdisamar"

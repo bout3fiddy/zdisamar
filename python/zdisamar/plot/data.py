@@ -3,8 +3,6 @@
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Protocol, TypeGuard
 
-import numpy as np
-
 from . import fields
 
 PlotRow = dict[str, object]
@@ -89,12 +87,6 @@ def as_float(value: object) -> float:
 
     if isinstance(value, int | float | str):
         return float(value)
-
-    if isinstance(value, np.generic):
-        scalar = value.item()
-
-        if isinstance(scalar, int | float | str):
-            return float(scalar)
 
     raise TypeError(f"expected numeric plotting value, got {type(value).__name__}")
 

@@ -144,7 +144,7 @@ def probe_rtm_calls(
     def radiance_reflectance_only() -> None:
 
         spectrum = rtm.spectrum(state_case, cache=cache)
-        _ = spectrum.reflectance.copy()
+        _ = list(spectrum.reflectance)
 
     def radiance_reflectance_and_jacobian() -> None:
 

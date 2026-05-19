@@ -1,8 +1,5 @@
 """Optimal-estimation retrieval API."""
 
-from .core import retrieve
-from .diagnostics import FinalDiagnostics, final_diagnostics
-from .gauss_newton import gauss_newton_step
 from .measurement import WavelengthGridMismatchError
 from .o2a import (
     attach_final_evaluation,
@@ -39,7 +36,6 @@ __all__ = [
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
-    "FinalDiagnostics",
     "RtmEvaluation",
     "Iteration",
     "Measurement",
@@ -55,10 +51,7 @@ __all__ = [
     "disamar_oe",
     "evaluate_reflectance",
     "evaluate_state",
-    "final_diagnostics",
-    "gauss_newton_step",
     "measurement_from_case",
     "measurement_from_sun_normalized_radiance_noise",
     "pressure_altitude_profile_from_case",
-    "retrieve",
 ]

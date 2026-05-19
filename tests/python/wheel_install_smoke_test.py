@@ -55,7 +55,7 @@ def main() -> int:
             # shared library, Linux can fail here even when the same code works
             # as a standalone Zig executable or on macOS.
             reference_spectrum = rtm.spectrum(reference_case)
-            assert int(reference_spectrum.wavelength_nm.size) == 701
+            assert len(reference_spectrum.wavelength_nm) == 701
             assert np.all(np.isfinite(reference_spectrum.reflectance))
             assert int(np.count_nonzero(reference_spectrum.reflectance)) == 701
             reflectance_min = float(np.min(reference_spectrum.reflectance))
@@ -73,7 +73,7 @@ def main() -> int:
             wavelengths = np.array([760.76], dtype=np.float64)
             budget = rtm.atmospheric_budget(case, wavelengths)
             assert budget.row_count > 0
-            assert int(budget.column("wavelength_nm").size) == budget.row_count
+            assert len(budget.column("wavelength_nm")) == budget.row_count
         finally:
             os.chdir(old_cwd)
 

@@ -35,10 +35,10 @@ def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
     """Build a reflectance measurement with retained O2 A baseline SNR semantics."""
 
     spectrum = rtm.spectrum(case)
-    wavelength_nm = spectrum.wavelength_nm.copy()
-    radiance = spectrum.radiance.copy()
-    irradiance = spectrum.irradiance.copy()
-    reflectance = spectrum.reflectance.copy()
+    wavelength_nm = np.asarray(spectrum.wavelength_nm, dtype=np.float64).copy()
+    radiance = np.asarray(spectrum.radiance, dtype=np.float64).copy()
+    irradiance = np.asarray(spectrum.irradiance, dtype=np.float64).copy()
+    reflectance = np.asarray(spectrum.reflectance, dtype=np.float64).copy()
 
     noise = components_from_spectrum(
         wavelength_nm=wavelength_nm,
@@ -48,9 +48,9 @@ def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
     )
 
     return optimal_estimation.Measurement(
-        wavelength_nm=wavelength_nm,
-        reflectance=reflectance,
-        variance=noise.reflectance_noise**2,
+        wavelength_nm=wavelength_nm.tolist(),
+        reflectance=reflectance.tolist(),
+        variance=(noise.reflectance_noise**2).tolist(),
     )
 
 

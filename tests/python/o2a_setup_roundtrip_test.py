@@ -30,10 +30,10 @@ def parse_args() -> argparse.Namespace:
 def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
 
     return {
-        "wavelength_nm": spectrum.wavelength_nm.copy(),
-        "radiance": spectrum.radiance.copy(),
-        "irradiance": spectrum.irradiance.copy(),
-        "reflectance": spectrum.reflectance.copy(),
+        "wavelength_nm": np.asarray(spectrum.wavelength_nm, dtype=np.float64).copy(),
+        "radiance": np.asarray(spectrum.radiance, dtype=np.float64).copy(),
+        "irradiance": np.asarray(spectrum.irradiance, dtype=np.float64).copy(),
+        "reflectance": np.asarray(spectrum.reflectance, dtype=np.float64).copy(),
     }
 
 
@@ -84,7 +84,10 @@ def run_roundtrip() -> dict[str, Any]:
         perturbed_session_spectrum = cache.spectrum(jacobian=True)
         perturbed_session_rtm_s = time.perf_counter() - perturbed_session_rtm_start_s
         perturbed_session_arrays = spectrum_arrays(perturbed_session_spectrum)
-        perturbed_session_jacobian = perturbed_session_spectrum.radiance_jacobian.copy()
+        perturbed_session_jacobian = np.asarray(
+            perturbed_session_spectrum.radiance_jacobian,
+            dtype=np.float64,
+        ).copy()
 
         requested_jacobian_names = (
             "aerosol_optical_depth",
@@ -95,7 +98,10 @@ def run_roundtrip() -> dict[str, Any]:
             jacobian_state_names=requested_jacobian_names,
         )
         compact_session_names = compact_session_spectrum.jacobian_state_names
-        compact_session_jacobian = compact_session_spectrum.radiance_jacobian.copy()
+        compact_session_jacobian = np.asarray(
+            compact_session_spectrum.radiance_jacobian,
+            dtype=np.float64,
+        ).copy()
         empty_jacobian_state_selection_rejected = False
 
         try:
@@ -105,7 +111,10 @@ def run_roundtrip() -> dict[str, Any]:
 
     perturbed_functional_spectrum = rtm.spectrum(perturbed_case, jacobian=True)
     perturbed_functional_arrays = spectrum_arrays(perturbed_functional_spectrum)
-    perturbed_functional_jacobian = perturbed_functional_spectrum.radiance_jacobian.copy()
+    perturbed_functional_jacobian = np.asarray(
+        perturbed_functional_spectrum.radiance_jacobian,
+        dtype=np.float64,
+    ).copy()
 
     checks = {
         "typed_sample_count": int(typed_arrays["wavelength_nm"].size),

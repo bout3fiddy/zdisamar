@@ -1,6 +1,6 @@
 """Shared profile-table transforms for vertical diagnostic plots."""
 
-import numpy as np
+import math
 
 from . import fields
 from .data import PlotRow, as_float, require_columns, to_records
@@ -34,7 +34,7 @@ def active_profile_rows(
     result = [
         row
         for row in result
-        if np.isfinite(as_float(row[vertical_axis])) and np.isfinite(as_float(row[value]))
+        if math.isfinite(as_float(row[vertical_axis])) and math.isfinite(as_float(row[value]))
     ]
 
     if result and "support_row_kind_label" in result[0]:

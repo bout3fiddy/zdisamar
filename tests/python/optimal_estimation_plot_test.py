@@ -17,14 +17,14 @@ def build_result() -> Result:
 
     return Result(
         state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
-        state=np.array([0.3, 900.0], dtype=np.float64),
-        initial_state=np.array([0.12, 875.0], dtype=np.float64),
+        state=(0.3, 900.0),
+        initial_state=(0.12, 875.0),
         iterations=2,
         converged=True,
         history=(
             Iteration(
                 index=1,
-                state=np.array([0.21, 888.0], dtype=np.float64),
+                state=(0.21, 888.0),
                 chi2=10.0,
                 chi2_reflectance=9.5,
                 chi2_state_vector=0.5,
@@ -33,7 +33,7 @@ def build_result() -> Result:
             ),
             Iteration(
                 index=2,
-                state=np.array([0.3, 900.0], dtype=np.float64),
+                state=(0.3, 900.0),
                 chi2=1.0,
                 chi2_reflectance=0.9,
                 chi2_state_vector=0.1,
@@ -41,19 +41,20 @@ def build_result() -> Result:
                 snr_normal=True,
             ),
         ),
-        posterior_covariance=np.eye(2, dtype=np.float64),
-        averaging_kernel=np.eye(2, dtype=np.float64),
+        posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+        averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
         measurement=Measurement(
-            wavelength_nm=np.array([755.0, 756.0, 757.0], dtype=np.float64),
-            reflectance=np.array([0.1, 0.2, 0.3], dtype=np.float64),
-            variance=np.ones(3, dtype=np.float64),
+            wavelength_nm=(755.0, 756.0, 757.0),
+            reflectance=(0.1, 0.2, 0.3),
+            variance=(1.0, 1.0, 1.0),
         ),
         final_evaluation=RtmEvaluation(
-            wavelength_nm=np.array([755.0, 756.0, 757.0], dtype=np.float64),
-            reflectance=np.array([0.11, 0.19, 0.29], dtype=np.float64),
-            reflectance_jacobian=np.array(
-                [[0.1, -1.0e-5], [0.2, -2.0e-5], [0.3, -3.0e-5]],
-                dtype=np.float64,
+            wavelength_nm=(755.0, 756.0, 757.0),
+            reflectance=(0.11, 0.19, 0.29),
+            reflectance_jacobian=(
+                (0.1, -1.0e-5),
+                (0.2, -2.0e-5),
+                (0.3, -3.0e-5),
             ),
         ),
     )

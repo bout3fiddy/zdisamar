@@ -1,10 +1,8 @@
 """Retrieval data objects and diagnostics."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Self
-
-import numpy as np
 
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
@@ -20,9 +18,9 @@ class Measurement:
     can be added later without changing the public meaning of this type.
     """
 
-    wavelength_nm: np.ndarray
-    reflectance: np.ndarray
-    variance: np.ndarray
+    wavelength_nm: Sequence[float]
+    reflectance: Sequence[float]
+    variance: Sequence[float]
 
 
 @dataclass(frozen=True)
@@ -56,7 +54,7 @@ class Iteration:
     """
 
     index: int
-    state: np.ndarray
+    state: Sequence[float]
     chi2: float
     chi2_reflectance: float
     chi2_state_vector: float
@@ -79,18 +77,18 @@ class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
     state_names: tuple[StateName, ...]
-    state: np.ndarray
+    state: Sequence[float]
     iterations: int
     converged: bool
     history: tuple[Iteration, ...]
-    posterior_covariance: np.ndarray
-    averaging_kernel: np.ndarray
+    posterior_covariance: Sequence[Sequence[float]]
+    averaging_kernel: Sequence[Sequence[float]]
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
     final_evaluation: RtmEvaluation | None = None
-    last_evaluated_state: np.ndarray | None = None
+    last_evaluated_state: Sequence[float] | None = None
     last_evaluation: RtmEvaluation | None = None
-    initial_state: np.ndarray | None = None
+    initial_state: Sequence[float] | None = None
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,

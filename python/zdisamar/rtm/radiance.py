@@ -1,13 +1,16 @@
 """Radiance-space helper functions."""
 
-import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from array import array
+from collections.abc import Iterable
 
 
 def sun_normalized_radiance(
-    radiance: ArrayLike,
-    irradiance: ArrayLike,
-) -> NDArray[np.float64]:
+    radiance: Iterable[float],
+    irradiance: Iterable[float],
+) -> array[float]:
     """Return radiance divided by irradiance."""
 
-    return np.asarray(radiance, dtype=np.float64) / np.asarray(irradiance, dtype=np.float64)
+    return array(
+        "d",
+        (float(value) / float(scale) for value, scale in zip(radiance, irradiance, strict=True)),
+    )

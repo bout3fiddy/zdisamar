@@ -55,6 +55,27 @@ pub const PreparedRuntimeCase = struct {
     prepared: OpticsPrepare.PreparedOpticalState,
 };
 
+// Runtime-prepared O2 A case for repeated native retrieval evaluations.
+// layout(64-bit):
+//   size: 3808 B, align: 8 B
+//   field storage: scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: scene and prepared carry owned buffers; referenced storage is not included in size
+//   cache span: 60 cache line(s) at 64 B per line
+//   count: one live value per native OE forward evaluation
+//   footprint: per instance = 3808 B (3.719 KiB); total also includes referenced storage above
+pub const PreparedRuntimeEvaluation = struct {
+    scene: Scene,
+    route: Route,
+    prepared: OpticsPrepare.PreparedOpticalState,
+
+    pub fn deinit(self: *PreparedRuntimeEvaluation, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
@@ -581,6 +602,57 @@ pub fn prepareResolvedVendorO2ACase(
 
     return .{
         .reference = reference,
+        .scene = scene,
+        .route = route,
+        .prepared = prepared,
+    };
+}
+
+pub fn prepareResolvedVendorO2AEvaluationWithInputs(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+) !PreparedRuntimeEvaluation {
+    var scene = scene: {
+        const zone = Trace.staticZone(@src(), "prepare.build_scene");
+        defer zone.end();
+        break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
+    };
+    errdefer scene.deinitOwned(allocator);
+
+    var prepared = prepared: {
+        const zone = Trace.staticZone(@src(), "prepare.optical");
+        defer zone.end();
+        break :prepared try OpticsPrepare.prepare(allocator, &scene, .{
+            .profile = &inputs.profile,
+            .spectroscopy_profile = &inputs.spectroscopy_profile,
+            .cross_sections = &inputs.cross_sections,
+            .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+            .spectroscopy_lines = &inputs.line_list,
+            .lut = &inputs.lut,
+        });
+    };
+    errdefer prepared.deinit(allocator);
+
+    {
+        const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
+        defer zone.end();
+        try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
+    }
+
+    {
+        const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
+        defer zone.end();
+        try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
+    }
+
+    const route = route: {
+        const zone = Trace.staticZone(@src(), "prepare.route");
+        defer zone.end();
+        break :route try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
+    };
+
+    return .{
         .scene = scene,
         .route = route,
         .prepared = prepared,

@@ -22,11 +22,11 @@ def reference_spectrum_metrics(
     pressure_scale = mid_pressure_jacobian_scale(case)
     radiance_reference = load_csv(config.RADIANCE_REFERENCE_PATH)
     jacobian_reference = load_csv(config.REFLECTANCE_JACOBIAN_REFERENCE_PATH)
-    wavelength_nm = spectrum.wavelength_nm
+    wavelength_nm = np.asarray(spectrum.wavelength_nm, dtype=np.float64)
     mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
     series = {
         "RTM reflectance": (
-            spectrum.reflectance,
+            np.asarray(spectrum.reflectance, dtype=np.float64),
             np.interp(
                 wavelength_nm,
                 radiance_reference["wavelength_nm"],
@@ -47,7 +47,7 @@ def reference_spectrum_metrics(
             jacobian_reference["wavelength_nm"],
             jacobian_reference[config.REFERENCE_COLUMNS[state_name]],
         )
-        current_values = spectrum.reflectance_jacobian(state_name)
+        current_values = np.asarray(spectrum.reflectance_jacobian(state_name), dtype=np.float64)
 
         if state_name == "aerosol_layer_mid_pressure_hpa":
             reference_values = reference_values * pressure_scale
@@ -64,15 +64,20 @@ def reference_spectrum_metrics(
 def spectrum_delta_metrics(reference: Spectrum, current: Spectrum) -> dict[str, float]:
 
     payload = {
-        "radiance_max_abs": max_abs(current.radiance - reference.radiance),
-        "irradiance_max_abs": max_abs(current.irradiance - reference.irradiance),
-        "reflectance_max_abs": max_abs(current.reflectance - reference.reflectance),
+        "radiance_max_abs": max_abs(_as_array(current.radiance) - _as_array(reference.radiance)),
+        "irradiance_max_abs": max_abs(
+            _as_array(current.irradiance) - _as_array(reference.irradiance)
+        ),
+        "reflectance_max_abs": max_abs(
+            _as_array(current.reflectance) - _as_array(reference.reflectance)
+        ),
     }
 
     for state_name in config.FORWARD_STATE_NAMES:
         key = f"reflectance_jacobian_{state_name}_max_abs"
         payload[key] = max_abs(
-            current.reflectance_jacobian(state_name) - reference.reflectance_jacobian(state_name)
+            _as_array(current.reflectance_jacobian(state_name))
+            - _as_array(reference.reflectance_jacobian(state_name))
         )
 
     return payload
@@ -80,13 +85,14 @@ def spectrum_delta_metrics(reference: Spectrum, current: Spectrum) -> dict[str, 
 
 def fast_scene_metrics(label: str, reference: Spectrum, fast: Spectrum) -> dict[str, Any]:
 
-    residual = fast.reflectance - reference.reflectance
-    metric = residual_metrics(reference.wavelength_nm, residual)
+    residual = _as_array(fast.reflectance) - _as_array(reference.reflectance)
+    wavelength_nm = _as_array(reference.wavelength_nm)
+    metric = residual_metrics(wavelength_nm, residual)
     noise = components_from_spectrum(
-        wavelength_nm=reference.wavelength_nm,
-        radiance=reference.radiance,
-        irradiance=reference.irradiance,
-        reflectance=reference.reflectance,
+        wavelength_nm=wavelength_nm,
+        radiance=_as_array(reference.radiance),
+        irradiance=_as_array(reference.irradiance),
+        reflectance=_as_array(reference.reflectance),
     ).reflectance_noise
     normalized = residual / np.maximum(noise, np.finfo(np.float64).tiny)
 
@@ -164,6 +170,11 @@ def metric_payload(wavelength_nm: np.ndarray, residual: np.ndarray) -> dict[str,
 def max_abs(values: np.ndarray) -> float:
 
     return float(np.max(np.abs(values)))
+
+
+def _as_array(values) -> np.ndarray:
+
+    return np.asarray(values, dtype=np.float64)
 
 
 def load_csv(path: Path) -> np.ndarray:

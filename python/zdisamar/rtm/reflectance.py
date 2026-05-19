@@ -1,45 +1,66 @@
 """Reflectance-space helper functions."""
 
 import math
+from array import array
+from collections.abc import Iterable, Sequence
 
-import numpy as np
-from numpy.typing import ArrayLike, NDArray
+
+def _is_row_sequence(values: Sequence[object]) -> bool:
+
+    return (
+        bool(values) and not isinstance(values[0], int | float) and hasattr(values[0], "__iter__")
+    )
 
 
 def reflectance_from_radiance(
-    radiance: ArrayLike,
-    irradiance: ArrayLike,
+    radiance: Iterable[float],
+    irradiance: Iterable[float],
     solar_zenith_cosine: float,
-) -> NDArray[np.float64]:
+) -> array[float]:
     """Return reflectance from radiance, irradiance, and solar zenith cosine."""
 
-    return (
-        np.asarray(radiance, dtype=np.float64)
-        * np.pi
-        / (float(solar_zenith_cosine) * np.asarray(irradiance, dtype=np.float64))
+    factor = math.pi / float(solar_zenith_cosine)
+
+    return array(
+        "d",
+        (
+            float(value) * factor / float(scale)
+            for value, scale in zip(radiance, irradiance, strict=True)
+        ),
     )
 
 
 def reflectance_jacobian_from_radiance_jacobian(
-    radiance_jacobian: ArrayLike,
-    irradiance: ArrayLike,
+    radiance_jacobian,
+    irradiance: Iterable[float],
     solar_zenith_cosine: float,
-) -> NDArray[np.float64]:
+) -> array[float] | tuple[array[float], ...]:
     """Convert dL/dx to dR/dx for R = pi * L / (mu0 * E0)."""
 
-    jacobian = np.asarray(radiance_jacobian, dtype=np.float64)
-    scale = float(solar_zenith_cosine) * np.asarray(irradiance, dtype=np.float64) / math.pi
+    scales = array(
+        "d",
+        (float(solar_zenith_cosine) * float(value) / math.pi for value in irradiance),
+    )
+    jacobian = tuple(radiance_jacobian)
 
-    if jacobian.ndim == 1:
-        return jacobian / scale
+    if _is_row_sequence(jacobian):
+        return tuple(
+            array("d", (float(value) / scale for value in row))
+            for row, scale in zip(jacobian, scales, strict=True)
+        )
 
-    return jacobian / scale[..., None]
+    return array(
+        "d",
+        (float(value) / scale for value, scale in zip(jacobian, scales, strict=True)),
+    )
 
 
 def reflectance_noise_from_sun_normalized_radiance_noise(
-    noise: ArrayLike,
+    noise: Iterable[float],
     solar_zenith_cosine: float,
-) -> NDArray[np.float64]:
+) -> array[float]:
     """Convert sun-normalized radiance noise to reflectance noise."""
 
-    return np.asarray(noise, dtype=np.float64) * (math.pi / float(solar_zenith_cosine))
+    factor = math.pi / float(solar_zenith_cosine)
+
+    return array("d", (float(value) * factor for value in noise))
