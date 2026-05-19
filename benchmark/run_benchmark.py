@@ -41,6 +41,7 @@ def main() -> int:
 
     configure_runtime_defaults()
 
+    config.DB_PATH.unlink(missing_ok=True)
     db = BenchmarkDb(config.DB_PATH)
     run_id = db.create_run(git=report.git_metadata(), command=config.COMMAND)
     memory_probe = memory.start_peak_rss_probe()

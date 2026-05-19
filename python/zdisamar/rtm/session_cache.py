@@ -22,7 +22,7 @@ class SessionCache:
         self.case = None
 
         if initial_case is not None:
-            self.load(initial_case)
+            self.load(initial_case, copy_case=False)
             self._handle.warm_cache()
 
     def load(self, case: O2AInput, *, copy_case: bool = True) -> None:
@@ -37,7 +37,7 @@ class SessionCache:
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
-        include_case: bool = True,
+        include_case: bool = False,
     ):
         """Run the RTM using cached storage."""
 

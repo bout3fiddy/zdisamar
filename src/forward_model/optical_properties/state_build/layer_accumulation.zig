@@ -36,19 +36,20 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //   count: one per optical-state accumulation request
 //   footprint: per instance = 1048 B (1.023 KiB); precomputes a 512 B spline-second table
 //   sample traffic: pair-density samples avoid 10240 B endpoint-secant spline scratch per call
+//   capacity: enabled collision-complex requests with more than 64 profile nodes are rejected
 const CollisionComplexProfileCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
     log_complex_vmr_fraction: [max_collision_complex_profile_nodes]f64 = undefined,
     log_complex_second: [max_collision_complex_profile_nodes]f64 = undefined,
 
-    fn init(context: *const Context) CollisionComplexProfileCache {
+    fn init(context: *const Context) !CollisionComplexProfileCache {
         if (context.collision_induced_absorption == null and !context.operational_o2o2_lut.enabled()) {
             return .{};
         }
         const node_count = context.spectroscopy_profile_altitudes_km.len;
+        if (node_count > max_collision_complex_profile_nodes) return error.InvalidRequest;
         if (node_count < 3 or
-            node_count > max_collision_complex_profile_nodes or
             context.spectroscopy_profile_pressures_hpa.len != node_count or
             context.spectroscopy_profile_temperatures_k.len != node_count)
         {
@@ -388,7 +389,7 @@ pub fn populate(
         &profile_spectroscopy_cache
     else
         null;
-    const collision_complex_cache = CollisionComplexProfileCache.init(context);
+    const collision_complex_cache = try CollisionComplexProfileCache.init(context);
 
     if (usesDisamarParitySupportGrid(context)) {
         if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {

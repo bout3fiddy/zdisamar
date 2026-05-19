@@ -80,6 +80,7 @@ class Spectrum(NotebookDisplay):
     irradiance_quantity: Irradiance
     reflectance_quantity: Reflectance
     case: O2AInput | None = None
+    solar_mu0_value: float | None = None
     diagnostic_report: DiagnosticReport | None = None
     radiance_jacobian_quantity: RadianceJacobian | None = None
     reflectance_jacobian_quantity: ReflectanceJacobian | None = None
@@ -109,7 +110,7 @@ class Spectrum(NotebookDisplay):
     def solar_mu0(self) -> float | None:
 
         if self.case is None:
-            return None
+            return self.solar_mu0_value
 
         return self.case.geometry.solar_mu0
 

@@ -1,5 +1,6 @@
 """Low-level Zig binding handle for RTM calls."""
 
+import copy
 import ctypes
 from typing import Self
 
@@ -90,7 +91,8 @@ class RtmHandle:
 
         self._lib = configure(load_library())
         self._ctx = self._lib.zds_context_create()
-        self._case_json: bytes | None = None
+        self._case: O2AInput | None = None
+        self._solar_mu0: float | None = None
 
         if not self._ctx:
             raise RuntimeError("failed to start zdisamar RTM handle")
@@ -99,7 +101,7 @@ class RtmHandle:
     def input(self) -> O2AInput | None:
         """Return the wavelength-band case loaded into this handle."""
 
-        return None if self._case_json is None else O2AInput.from_json(self._case_json)
+        return None if self._case is None else copy.deepcopy(self._case)
 
     def default_o2a_case(self) -> O2AInput:
         """Read the packaged O2 A reference case from the Zig binding."""
@@ -130,7 +132,8 @@ class RtmHandle:
                 len(payload),
             )
         )
-        self._case_json = case.to_json_bytes() if copy_case else None
+        self._case = copy.deepcopy(case) if copy_case else None
+        self._solar_mu0 = case.geometry.solar_mu0
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
@@ -142,7 +145,7 @@ class RtmHandle:
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
-        include_case: bool = True,
+        include_case: bool = False,
     ) -> Spectrum:
         """Run the loaded wavelength-band case and return copied spectral arrays."""
 
@@ -289,7 +292,8 @@ class RtmHandle:
         if self._ctx:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
-            self._case_json = None
+            self._case = None
+            self._solar_mu0 = None
 
     def _copied_spectrum(
         self,
@@ -326,6 +330,7 @@ class RtmHandle:
             irradiance_quantity=Irradiance(irradiance),
             reflectance_quantity=Reflectance(reflectance),
             case=self.input if include_case else None,
+            solar_mu0_value=self._solar_mu0,
             diagnostic_report=report,
             radiance_jacobian_quantity=(
                 None
