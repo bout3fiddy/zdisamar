@@ -3148,6 +3148,70 @@ Conclusion:
 - do not count the lower peak RSS as a retained-footprint win; the code change
   does not remove an allocation or shrink a live struct
 
+### Experiment 48: reject moving derivative fields to struct tails
+
+Changed during experiment:
+- prototype only; reverted after benchmark
+- moved `LayerInput` geometry and encoded phase fields before the three
+  derivative vectors, leaving the derivative vectors at the tail
+- moved `RtmQuadratureLevel.aerosol_ksca_jacobian` after the phase-weight
+  fields, leaving source scalars and phase weights in the first 64 B
+- updated the `layout(64-bit)` comments to describe the intended hot/cold field
+  order
+
+Memory traffic hypothesis:
+
+| item | before | attempted | expected effect |
+| --- | ---: | ---: | --- |
+| `LayerInput` size | 208 B | 208 B | unchanged retained footprint |
+| `LayerInput` hot scalar/phase prefix | split around 72 B of Jacobian vectors | first 136 B | fewer cold derivative cache lines for no-derivative phase consumers |
+| `RtmQuadratureLevel` size | 72 B | 72 B | unchanged retained footprint |
+| `RtmQuadratureLevel` source/phase prefix | phase tail crossed after Jacobian scalar | first 64 B | keep no-derivative source/phase fields in one cache line |
+
+Interpretation:
+- this was a cache-line locality experiment, not a footprint reduction
+- the source-level hypothesis was plausible because no-derivative routes read
+  scalar and phase fields but not derivative fields
+- the compiler/runtime did not convert that field order into a measured win on
+  the retained benchmark boundary
+- because retained size is unchanged, any timing slowdown is enough to reject
+  the layout
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `c1cde60637e64ec3a5a0cfdbdbdcc26d`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 47:
+
+| metric | before | attempted | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.676606 s | 140.884675 s | 1.0015 |
+| total benchmark CPU | 271.460597 s | 271.818383 s | 1.0013 |
+| peak RSS high-water mark | 100.81 MiB | 100.33 MiB | 0.9952 |
+| forward no-session median | 0.945517 s | 0.953651 s | 1.0086 |
+| forward session cached median | 0.254982 s | 0.256128 s | 1.0045 |
+| forward fast four-scene median | 4.634547 s | 4.645745 s | 1.0024 |
+| OE session retrieval median | 1.081314 s | 1.081043 s | 0.9997 |
+| OE fast retrieval median | 0.835691 s | 0.836362 s | 1.0008 |
+| OE sweep session total wall | 19.533589 s | 19.560612 s | 1.0014 |
+| OE sweep fast total wall | 10.659538 s | 10.624702 s | 0.9967 |
+
+Conclusion:
+- rejected and reverted
+- this did not reduce retained memory and made the main forward timing surfaces
+  slower, including `+0.86%` on no-session forward
+- do not retry this exact field-ordering change without lower-level evidence
+  from compiler output or hardware counters showing fewer hot cache-line loads
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
