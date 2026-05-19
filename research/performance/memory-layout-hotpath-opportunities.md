@@ -2394,6 +2394,74 @@ Conclusion:
 - this is worth keeping because the traffic reduction is direct and the retained
   benchmark boundary shows no material runtime regression
 
+### Experiment 37: reject small adaptive Gauss scratch routing
+
+Changed during experiment:
+- adaptive sample generation was changed to try a 64-entry Gauss node/weight
+  scratch for common adaptive division counts
+- the old 2048-entry scratch path was retained as a fallback for larger
+  configured quadrature orders
+- the final attempted shape stored a `max_division_count` in
+  `AdaptiveIntervalPlan` without increasing the plan's 20,504 B size, avoiding
+  both a per-kernel pre-scan and a per-interval scratch-size branch
+
+Memory result:
+
+| item | before | attempted | change |
+| --- | ---: | ---: | ---: |
+| common adaptive Gauss scratch | 32,768 B | 1,024 B | -31,744 B |
+| large-order fallback scratch | 32,768 B | 32,768 B | unchanged |
+| `AdaptiveIntervalPlan` | 20,504 B | 20,504 B | unchanged |
+
+Interpretation:
+- the apparent win is a stack-frame footprint reduction inside adaptive
+  integration-kernel construction, not a retained multi-megabyte storage
+  reduction
+- the arrays are `undefined` and only the active quadrature order is written, so
+  the change reduces reserved scratch capacity more than actual per-interval
+  writes
+- this makes the result less valuable than the retained backing-storage removals
+  in the LABOS and forward-transport experiments
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU
+- `uv run benchmark/run_benchmark.py`: final attempted run
+  `edfec57f87e44aa68f1fd5781fcd181a`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode worst
+  `max_abs_over_noise=1.59985574045`; session-vs-no-session reflectance
+  max_abs `0`; OE session AOD diff `8.69864882902e-08`; fast-vs-session sweep
+  max AOD delta `0.00376644268103`
+
+Benchmark comparison against Experiment 36:
+
+| metric | before | attempted | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.762322 s | 143.964118 s | 1.0014 |
+| total benchmark CPU | 277.189873 s | 277.648368 s | 1.0017 |
+| forward no-session median | 0.969912 s | 0.982131 s | 1.0126 |
+| forward session setup | 0.712534 s | 0.712321 s | 0.9997 |
+| forward session first cached | 0.267561 s | 0.274032 s | 1.0242 |
+| forward session cached median | 0.271549 s | 0.273047 s | 1.0055 |
+| forward fast four-scene median | 4.730962 s | 4.735771 s | 1.0010 |
+| OE session retrieval median | 1.137109 s | 1.136667 s | 0.9996 |
+| OE fast retrieval median | 0.879721 s | 0.879294 s | 0.9995 |
+| OE sweep session total wall | 19.677212 s | 19.671595 s | 0.9997 |
+| OE sweep fast total wall | 10.812318 s | 10.764040 s | 0.9955 |
+
+Conclusion:
+- rejected and reverted
+- the retained benchmark residuals stayed unchanged and OE sweep rows were flat
+  or slightly faster, but forward no-session and cached-forward rows moved
+  slower
+- this is not worth keeping because the memory improvement is stack scratch
+  capacity rather than retained footprint, and the final benchmark shape did not
+  satisfy the "no worsening performance" bar for the forward path
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
