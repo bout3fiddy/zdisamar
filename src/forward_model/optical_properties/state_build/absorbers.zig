@@ -13,6 +13,7 @@ const work_partition = @import("../../work_partition.zig");
 const Allocator = std.mem.Allocator;
 const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
+const max_profile_spectroscopy_cache_nodes: usize = 64;
 
 // layout(64-bit):
 //   size: 304 B, align: 8 B
@@ -138,6 +139,13 @@ pub fn build(
 
     try buildCrossSectionAbsorbers(allocator, context, &state);
     try buildLineAbsorbers(allocator, context, &state, &owned_lines, operational_o2_lut);
+    if (state.owned_line_absorbers.len == 0 and
+        state.owned_lines != null and
+        !operational_o2_lut.enabled() and
+        context.spectroscopy_profile_altitudes_km.len > max_profile_spectroscopy_cache_nodes)
+    {
+        return error.InvalidRequest;
+    }
 
     state.strong_line_states = if (state.owned_line_absorbers.len == 0)
         if (state.owned_lines) |line_list|

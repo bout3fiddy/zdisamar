@@ -23,6 +23,7 @@ const max_spectroscopy_profile_nodes: usize = 64;
 //   cache span: 17 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 1032 B (1.008 KiB); total = per instance * live instance count
+//   capacity: prepared states reject enabled profile spectroscopy with more than 64 profile nodes
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
