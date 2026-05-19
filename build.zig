@@ -79,6 +79,9 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_ztracy", false);
     const build_options_module = build_options.createModule();
 
+    // Boundary: shipped library/CLI modules always receive the stub trace module
+    // and enable_ztracy=false. Only explicit validation trace executables below
+    // use trace_build_options, so profiling never changes the product build.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);

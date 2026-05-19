@@ -527,6 +527,18 @@ const Accumulation = struct {
     jt_invse_j: Matrix,
 };
 
+// Per-iteration projection from native RTM Jacobian columns into the OE state vector.
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: source_index=24 B, state_scale=24 B; padding: 0 B
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one stack value per OE iteration
+//   footprint: per instance = 48 B (0.047 KiB)
+const JacobianProjection = struct {
+    source_index: [max_state_count]usize = [_]usize{0} ** max_state_count,
+    state_scale: Vector = algebra.zeroVector(),
+};
+
 fn accumulateNormalSystem(
     measurement: MeasurementWorkspace,
     view: InstrumentGrid.InstrumentGridProductView,
@@ -542,8 +554,15 @@ fn accumulateNormalSystem(
     scratch.b = algebra.zeroVector();
     scratch.g = algebra.zeroMatrix();
     scratch.jt_invse_j = algebra.zeroMatrix();
+    var projection: JacobianProjection = .{};
     for (0..state_specs.len) |index| {
         scratch.dx_white[index] = (previous[index] - prior[index]) / sqrt_sa[index];
+        const spec = state_specs[index];
+        projection.source_index[index] = jacobian.stateIndex(spec.state);
+        projection.state_scale[index] = if (spec.state == .aerosol_layer_mid_pressure_hpa)
+            try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[index])
+        else
+            1.0;
     }
 
     var chi2_reflectance: f64 = 0.0;
@@ -554,13 +573,10 @@ fn accumulateNormalSystem(
         const inv_variance = measurement.inv_variance[sample_index];
         chi2_reflectance += residual * residual * inv_variance;
         const reflectance_scale = std.math.pi / (solar_mu0 * @max(view.irradiance[sample_index], 1.0e-300));
-        for (state_specs, 0..) |spec, state_index| {
-            const source_index = sample_index * jacobian.state_count + jacobian.stateIndex(spec.state);
-            var value = raw_jacobian[source_index] * reflectance_scale;
-            if (spec.state == .aerosol_layer_mid_pressure_hpa) {
-                value *= try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[state_index]);
-            }
-            column_values[state_index] = value;
+        for (0..state_specs.len) |state_index| {
+            const source_index = sample_index * jacobian.state_count + projection.source_index[state_index];
+            column_values[state_index] =
+                raw_jacobian[source_index] * reflectance_scale * projection.state_scale[state_index];
         }
         for (0..state_specs.len) |row| {
             const weighted_row = column_values[row] * inv_variance;
