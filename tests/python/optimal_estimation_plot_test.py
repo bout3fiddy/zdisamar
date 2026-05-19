@@ -6,7 +6,9 @@ import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
+from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
 from zdisamar.plot.optimal_estimation import MEASUREMENT_RESIDUAL_HEIGHT
+from zdisamar.plot.profiles import interval_profile_rows
 from zdisamar.plot.properties import PLOT
 from zdisamar.plot.svg import SvgFigure, SvgPanel, SvgSeries
 
@@ -165,6 +167,21 @@ def main() -> int:
         empty_path = Path(directory) / "empty.svg"
         empty_plot.save(empty_path)
         assert "<svg" in empty_path.read_text()
+
+    empty_profile = interval_profile_rows(
+        [
+            {
+                WAVELENGTH_NM: 760.76,
+                "altitude_km": np.nan,
+                "top_altitude_km": 1.0,
+                "bottom_altitude_km": 0.0,
+                TOTAL_OPTICAL_DEPTH: 1.0,
+            }
+        ],
+        value=TOTAL_OPTICAL_DEPTH,
+        vertical_axis="altitude_km",
+    )
+    assert empty_profile == []
 
     print("optimal_estimation_plot=ok")
 

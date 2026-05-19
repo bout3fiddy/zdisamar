@@ -73,13 +73,17 @@ def interval_profile_rows(
     if denominator is not None:
         required.append(denominator)
 
+    source_rows = to_records(obj)
+    require_columns(source_rows, required)
     result = active_profile_rows(
-        obj,
+        source_rows,
         value=value,
         vertical_axis=vertical_axis,
         wavelength_nm=wavelength_nm,
     )
-    require_columns(result, required)
+
+    if not result:
+        return result
 
     top_column = "top_pressure_hpa" if vertical_axis == "pressure_hpa" else "top_altitude_km"
     bottom_column = (
