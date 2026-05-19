@@ -8,7 +8,7 @@ const o2_line_contributions = @import("output/o2_line_contributions.zig");
 const radiative_transfer_diagnostics = @import("output/radiative_transfer_diagnostics.zig");
 const report_json = @import("output/json.zig");
 const spectrum = @import("forward_model/run_spectrum.zig");
-pub const optimal_estimation = @import("optimal_estimation/root.zig");
+pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
 pub const Input = @import("input/Scene.zig").Scene;
 pub const O2AInput = o2a_reference.O2AInput;
