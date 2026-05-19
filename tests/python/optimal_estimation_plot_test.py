@@ -155,6 +155,17 @@ def main() -> int:
     assert 'd="M0.000' in missing_samples
     assert " M" in missing_samples
 
+    empty_plot = SvgFigure(title="Empty figure", panels=())
+    empty_spec = empty_plot.to_dict()
+    assert empty_spec["panels"] == []
+    assert empty_plot.width > 0
+    assert empty_plot.height > 0
+
+    with TemporaryDirectory() as directory:
+        empty_path = Path(directory) / "empty.svg"
+        empty_plot.save(empty_path)
+        assert "<svg" in empty_path.read_text()
+
     print("optimal_estimation_plot=ok")
 
     return 0

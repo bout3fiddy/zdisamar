@@ -190,8 +190,8 @@ class SvgFigure:
     @property
     def width(self) -> int:
 
-        panel_width = max(panel.width for panel in self.panels)
-        columns = min(max(self.columns, 1), len(self.panels))
+        panel_width = max((panel.width for panel in self.panels), default=PLOT.width)
+        columns = min(max(self.columns, 1), max(len(self.panels), 1))
 
         return (
             self.margin_left
@@ -203,8 +203,8 @@ class SvgFigure:
     @property
     def height(self) -> int:
 
-        panel_height = max(panel.height for panel in self.panels)
-        rows = (len(self.panels) + max(self.columns, 1) - 1) // max(self.columns, 1)
+        panel_height = max((panel.height for panel in self.panels), default=PLOT.height)
+        rows = max(1, (len(self.panels) + max(self.columns, 1) - 1) // max(self.columns, 1))
 
         return (
             self.effective_margin_top()
