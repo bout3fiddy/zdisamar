@@ -146,34 +146,35 @@ fn fillLayerInputFromSharedCarrier(
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
     cloud_phase_coefficients: *const [phase_coefficient_count]f64,
     layer_input: *transport_common.LayerInput,
+    compute_jacobian: bool,
 ) void {
     const total_optical_depth = breakdown.totalOpticalDepth();
     const total_scattering = breakdown.totalScatteringOpticalDepth();
-    layer_input.* = .{
-        .gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth,
-        .gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth,
-        .cia_optical_depth = breakdown.cia_optical_depth,
-        .aerosol_optical_depth = breakdown.aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth,
-        .cloud_optical_depth = breakdown.cloud_optical_depth,
-        .cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth,
-        .optical_depth = total_optical_depth,
-        .scattering_optical_depth = total_scattering,
-        .single_scatter_albedo = breakdown.singleScatterAlbedo(),
-        .optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
-        .scattering_optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
-        .single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count,
-        .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
-        .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
-        .phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
-            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
-            breakdown.gas_scattering_optical_depth,
-            breakdown.aerosol_scattering_optical_depth,
-            breakdown.cloud_scattering_optical_depth,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
-        ),
-    };
+    layer_input.gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth;
+    layer_input.gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth;
+    layer_input.cia_optical_depth = breakdown.cia_optical_depth;
+    layer_input.aerosol_optical_depth = breakdown.aerosol_optical_depth;
+    layer_input.aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth;
+    layer_input.cloud_optical_depth = breakdown.cloud_optical_depth;
+    layer_input.cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth;
+    layer_input.optical_depth = total_optical_depth;
+    layer_input.scattering_optical_depth = total_scattering;
+    layer_input.single_scatter_albedo = breakdown.singleScatterAlbedo();
+    if (compute_jacobian) {
+        layer_input.optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
+        layer_input.scattering_optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
+        layer_input.single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
+    }
+    layer_input.solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km);
+    layer_input.view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km);
+    layer_input.phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        breakdown.gas_scattering_optical_depth,
+        breakdown.aerosol_scattering_optical_depth,
+        breakdown.cloud_scattering_optical_depth,
+        aerosol_phase_coefficients,
+        cloud_phase_coefficients,
+    );
 }
 
 pub fn evaluateReducedLayerFromSupportRows(
@@ -252,6 +253,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
     layer_geometry: SharedRtmLayerGeometry,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     layer_input: *transport_common.LayerInput,
+    compute_jacobian: bool,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
     if (support_sublayers.len >= 2) {
@@ -281,6 +283,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         &self.aerosol_phase_coefficients,
         &self.cloud_phase_coefficients,
         layer_input,
+        compute_jacobian,
     );
     return breakdown;
 }
@@ -352,6 +355,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
     layer_geometry: SharedRtmLayerGeometry,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
     layer_input: *transport_common.LayerInput,
+    compute_jacobian: bool,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
     if (support_sublayers.len >= 2) {
@@ -386,6 +390,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
         &self.aerosol_phase_coefficients,
         &self.cloud_phase_coefficients,
         layer_input,
+        compute_jacobian,
     );
     return breakdown;
 }

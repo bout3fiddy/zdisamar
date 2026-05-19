@@ -730,10 +730,11 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
     level_geometry: SharedRtmLevelGeometry,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     rtm_level: *transport_common.RtmQuadratureLevel,
+    compute_jacobian: bool,
 ) void {
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
-        fillZeroRtmQuadratureLevel(level_geometry, rtm_level);
+        fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
         return;
     }
     const strong_line_state = if (strong_line_states) |states|
@@ -768,6 +769,7 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
         particle_below,
         null,
         rtm_level,
+        compute_jacobian,
     );
 }
 
@@ -779,10 +781,11 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
     level_geometry: SharedRtmLevelGeometry,
     wavelength_cache: *WavelengthCarrierCache,
     rtm_level: *transport_common.RtmQuadratureLevel,
+    compute_jacobian: bool,
 ) void {
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
-        fillZeroRtmQuadratureLevel(level_geometry, rtm_level);
+        fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
         return;
     }
     const strong_line_state = if (strong_line_states) |states|
@@ -816,6 +819,7 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         particle_below,
         wavelength_cache.rayleigh_phase_coefficient2,
         rtm_level,
+        compute_jacobian,
     );
 }
 
@@ -827,16 +831,16 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
     particle_below: ParticleBoundaryCarrier,
     rayleigh_phase_coefficient2: ?f64,
     rtm_level: *transport_common.RtmQuadratureLevel,
+    compute_jacobian: bool,
 ) void {
     const aerosol_ksca = particle_above.aerosol_scattering_optical_depth_per_km;
     const cloud_ksca = particle_above.cloud_scattering_optical_depth_per_km;
-    rtm_level.* = .{
-        .altitude_km = level_geometry.altitude_km,
-        .weight = level_geometry.weight_km,
-        .ksca = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
-        .aerosol_ksca_above_per_km = aerosol_ksca,
-        .aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
-    };
+    rtm_level.altitude_km = level_geometry.altitude_km;
+    rtm_level.weight = level_geometry.weight_km;
+    rtm_level.ksca = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm();
+    rtm_level.aerosol_ksca_above_per_km = aerosol_ksca;
+    rtm_level.aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km;
+    if (compute_jacobian) rtm_level.aerosol_ksca_jacobian = 0.0;
     rtm_level.setPhaseMixture(
         rayleigh_phase_coefficient2 orelse PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
         gas_scattering_optical_depth_per_km,
@@ -848,12 +852,17 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
 fn fillZeroRtmQuadratureLevel(
     level_geometry: SharedRtmLevelGeometry,
     rtm_level: *transport_common.RtmQuadratureLevel,
+    compute_jacobian: bool,
 ) void {
-    rtm_level.* = .{
-        .altitude_km = level_geometry.altitude_km,
-        .weight = level_geometry.weight_km,
-        .ksca = 0.0,
-    };
+    rtm_level.altitude_km = level_geometry.altitude_km;
+    rtm_level.weight = level_geometry.weight_km;
+    rtm_level.ksca = 0.0;
+    rtm_level.aerosol_ksca_above_per_km = 0.0;
+    rtm_level.aerosol_ksca_below_per_km = 0.0;
+    if (compute_jacobian) rtm_level.aerosol_ksca_jacobian = 0.0;
+    rtm_level.phase_aerosol_weight = 0.0;
+    rtm_level.phase_cloud_weight = 0.0;
+    rtm_level.phase_rayleigh2_weight = 0.0;
 }
 
 pub fn sharedActiveCarrierAtLevel(

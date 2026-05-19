@@ -3073,6 +3073,81 @@ Conclusion:
   wins would need an encoding of the support grid or weights that avoids adding
   extra mutex work to plan construction
 
+### Experiment 47: gate derivative-only layer and RTM traffic on forward routes
+
+Changed:
+- `configuredForwardInput` now carries `route.derivative_mode != .none` into
+  carrier-backed layer and RTM quadrature fills
+- no-derivative routes skip writing the three `LayerInput` Jacobian vectors in
+  the shared-carrier layer fill
+- no-derivative routes skip writing `RtmQuadratureLevel.aerosol_ksca_jacobian`
+  and skip the shared aerosol-source Jacobian pass over layer and RTM rows
+- derivative routes still clear and fill the same Jacobian fields before
+  retrieval/LABOS weighting-function code reads them
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `LayerInput` Jacobian vector writes | 72 B per layer row | 0 B on no-derivative shared-grid fills | route-gated |
+| current O2 A layer rows, 116 layers | 8,352 B per high-res wavelength | 0 B on no-derivative shared-grid fills | -8.16 KiB/write pass |
+| RTM aerosol-source Jacobian scalar writes | 8 B per RTM level | 0 B on no-derivative RTM quadrature fills | route-gated |
+| current O2 A RTM levels, 117 levels | 936 B per high-res wavelength | 0 B on no-derivative RTM quadrature fills | -0.91 KiB/write pass |
+| 701-miss no-derivative forward solve lower bound | 6,510,888 B written | 0 B written for those derivative slots | -6.21 MiB/write traffic |
+| 10 no-session benchmark repeats lower bound | 65,108,880 B written | 0 B written for those derivative slots | -62.09 MiB/write traffic |
+
+Interpretation:
+- this is a memory-traffic change, not a retained-footprint change:
+  `LayerInput` remains 208 B and `RtmQuadratureLevel` remains 72 B
+- the removed fields are only consumed when `derivative_mode != .none`; pure
+  forward routes were clearing and populating derivative-only storage that
+  LABOS never reads on that route
+- the table counts only writes to derivative slots; it excludes the additional
+  skipped `fillSharedAerosolSourceJacobianFromLayers` reads over layer Jacobian
+  vectors and RTM levels
+- the no-session benchmark repeats alone clear the requested additional
+  40 MiB traffic cut; session/fast-mode forward paths add more no-derivative
+  traffic savings on the full benchmark process
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `d7cecf96e60e4b6892b8db3494f44523`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against clean baseline run `67b0ff8ab0454fa38c2d695be1c3d36c`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.657775 s | 140.676606 s | 1.0001 |
+| total benchmark CPU | 271.410193 s | 271.460597 s | 1.0002 |
+| peak RSS high-water mark | 103.45 MiB | 100.81 MiB | 0.9745 |
+| forward no-session median | 0.947293 s | 0.945517 s | 0.9981 |
+| forward session cached median | 0.255178 s | 0.254982 s | 0.9992 |
+| forward fast four-scene median | 4.637104 s | 4.634547 s | 0.9994 |
+| OE session retrieval median | 1.081923 s | 1.081314 s | 0.9994 |
+| OE fast retrieval median | 0.836423 s | 0.835691 s | 0.9991 |
+| OE sweep session total wall | 19.495538 s | 19.533589 s | 1.0020 |
+| OE sweep fast total wall | 10.625189 s | 10.659538 s | 1.0032 |
+
+Conclusion:
+- accepted
+- the latency boundary is effectively flat: pure-forward medians are slightly
+  faster, the total benchmark wall moved by only `+0.013%`, and the OE sweep
+  differences are small enough to treat as benchmark noise on this run
+- this is kept because it removes derivative-only hot-loop traffic from the
+  no-derivative route without changing residuals or degrading the measured
+  forward medians
+- do not count the lower peak RSS as a retained-footprint win; the code change
+  does not remove an allocation or shrink a live struct
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

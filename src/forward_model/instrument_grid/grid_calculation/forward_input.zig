@@ -25,6 +25,7 @@ pub fn configuredForwardInput(
     support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
+    const compute_jacobian = route.derivative_mode != .none;
     var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
     const resolved_profile_cache = if (profile_spectroscopy_cache) |cache|
         cache
@@ -48,6 +49,7 @@ pub fn configuredForwardInput(
             wavelength_nm,
             layer_inputs,
             &wavelength_cache,
+            compute_jacobian,
         );
     };
     var input = OpticsPreparation.transport.forwardInputFromOpticalDepths(
@@ -71,6 +73,7 @@ pub fn configuredForwardInput(
                 input.layers,
                 rtm_quadrature_levels[0 .. input.layers.len + 1],
                 &wavelength_cache,
+                compute_jacobian,
             );
         }
         if (has_rtm_quadrature) {

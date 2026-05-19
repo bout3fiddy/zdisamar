@@ -84,6 +84,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
         layer_inputs,
         rtm_levels,
         &profile_cache,
+        true,
     );
 }
 
@@ -98,6 +99,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     layer_inputs: []const transport_common.LayerInput,
     rtm_levels: []transport_common.RtmQuadratureLevel,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    compute_jacobian: bool,
 ) bool {
     const sublayers = self.sublayers orelse return false;
     if (rtm_levels.len != layer_inputs.len + 1) return false;
@@ -113,12 +115,15 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                     level_geometry,
                     profile_cache,
                     rtm_level,
+                    compute_jacobian,
                 );
-                fillAerosolSourceJacobian(
-                    self,
-                    rtm_level,
-                    rtm_level.aerosol_ksca_above_per_km,
-                );
+                if (compute_jacobian) {
+                    fillAerosolSourceJacobian(
+                        self,
+                        rtm_level,
+                        rtm_level.aerosol_ksca_above_per_km,
+                    );
+                }
             }
             // PARITY:
             //   DISAMAR's integrated-source reflectance uses RTMweight(level)
@@ -204,11 +209,13 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 carrier.aerosol_scattering_optical_depth_per_km,
                 carrier.cloud_scattering_optical_depth_per_km,
             );
-            fillAerosolSourceJacobian(
-                self,
-                &rtm_levels[level],
-                carrier.aerosol_scattering_optical_depth_per_km,
-            );
+            if (compute_jacobian) {
+                fillAerosolSourceJacobian(
+                    self,
+                    &rtm_levels[level],
+                    carrier.aerosol_scattering_optical_depth_per_km,
+                );
+            }
             raw_scattering_sum += rtm_levels[level].weightedScattering();
         }
 
@@ -225,7 +232,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 rtm_levels[level].ksca *= scale;
                 rtm_levels[level].aerosol_ksca_above_per_km *= scale;
                 rtm_levels[level].aerosol_ksca_below_per_km *= scale;
-                rtm_levels[level].aerosol_ksca_jacobian *= scale;
+                if (compute_jacobian) rtm_levels[level].aerosol_ksca_jacobian *= scale;
             }
             has_active_quadrature = true;
         } else {
@@ -250,6 +257,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     layer_inputs: []const transport_common.LayerInput,
     rtm_levels: []transport_common.RtmQuadratureLevel,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    compute_jacobian: bool,
 ) bool {
     const sublayers = self.sublayers orelse return false;
     if (rtm_levels.len != layer_inputs.len + 1) return false;
@@ -261,6 +269,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             layer_inputs,
             rtm_levels,
             wavelength_cache.profile_cache,
+            compute_jacobian,
         );
     }
 
@@ -284,14 +293,17 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             level_geometry,
             wavelength_cache,
             rtm_level,
+            compute_jacobian,
         );
-        fillAerosolSourceJacobian(
-            self,
-            rtm_level,
-            rtm_level.aerosol_ksca_above_per_km,
-        );
+        if (compute_jacobian) {
+            fillAerosolSourceJacobian(
+                self,
+                rtm_level,
+                rtm_level.aerosol_ksca_above_per_km,
+            );
+        }
     }
-    fillSharedAerosolSourceJacobianFromLayers(self, layer_inputs, rtm_levels);
+    if (compute_jacobian) fillSharedAerosolSourceJacobianFromLayers(self, layer_inputs, rtm_levels);
 
     var has_active_quadrature = false;
     for (rtm_levels) |rtm_level| {
