@@ -2103,6 +2103,86 @@ Conclusion:
 - the isolated first cached forward run is 1.9 ms slower in this run; the
   benchmark-wide timing surface supports keeping the encoded phase weights
 
+### Experiment 33: cap LABOS Fourier workspaces by reachable Fourier support
+
+Changed:
+- LABOS now computes `plm_cache_max = min(phase_max, fourier_max)` once for a
+  layer-resolved solve
+- `Workspace.fourierPlmBasis` uses that cache bound for retained PLM-basis
+  capacity while still building each `FourierPlmBasis` through the full
+  `phase_max` needed by the phase matrix math
+- the effective-scattering suffix table uses the same reachable-Fourier stride
+  and still scans the full phase-coefficient tail before storing only columns
+  that the Fourier loop can read
+- an earlier separate pre-size version was rejected after two clean benchmark
+  runs because it introduced roughly +0.6% to +1.7% timing drift; the retained
+  version folds the bound into the existing cache lookup instead
+
+Memory traffic result:
+
+| item | before | after for current fast mode (`phase_max=39`, `fourier_order_cap=5`) | change |
+| --- | ---: | ---: | ---: |
+| PLM basis cache rows per workspace | 40 | 6 | -34 rows |
+| retained `FourierPlmBasis` storage per workspace | 566.9 KiB | 85.0 KiB | -481.8 KiB |
+| effective-scattering suffix columns per layer | 40 | 6 | -34 columns |
+| retained suffix storage for 116 layers | 36.3 KiB | 5.4 KiB | -30.8 KiB |
+| 301-output-sample suffix write surface | 11.2 MB (10.7 MiB) | 1.7 MB (1.6 MiB) | -9.5 MB (-9.1 MiB) |
+| worst-case `phase_max=150`, `fourier_order_cap=5` PLM cache | 2.09 MiB | 85.0 KiB | -2.01 MiB |
+
+Interpretation:
+- Experiment 29 capped PLM cache capacity by active phase support; this further
+  caps fast-mode workspaces by the lower Fourier order actually reachable under
+  the configured route
+- the PLM basis rows are still computed with full phase support, so phase
+  matrix construction does not lose high-order coefficient terms
+- the suffix table stores only Fourier columns that can be read, but each stored
+  suffix still includes the maximum contribution from the skipped high-order
+  coefficient tail
+- uncapped routes where `fourier_max == phase_max` keep the previous retained
+  capacity, so the change mainly affects capped fast-mode routes and
+  near-scalar geometries
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `1ae3bdc700354f9189c433e69b75b48b`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check/comparison commands
+  themselves were present
+- benchmark residual rows unchanged within reported precision: fast-mode spectra
+  worst max_abs_over_noise `1.600`; session-vs-no-session reflectance residual
+  `0.0`; OE session AOD diff `8.699e-08`; fast-vs-session sweep AOD max_abs
+  delta `3.766e-03`
+
+Benchmark comparison against Experiment 32:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.786135 s | 143.972796 s | 1.0013 |
+| total benchmark CPU | 277.374268 s | 277.697413 s | 1.0012 |
+| forward no-session median | 0.973944 s | 0.990163 s | 1.0167 |
+| forward session setup | 0.716795 s | 0.711307 s | 0.9923 |
+| forward session first cached | 0.274820 s | 0.274993 s | 1.0006 |
+| forward session cached median | 0.272758 s | 0.274644 s | 1.0069 |
+| forward fast four-scene median | 4.703780 s | 4.702744 s | 0.9998 |
+| OE session retrieval median | 1.143928 s | 1.142367 s | 0.9986 |
+| OE fast retrieval median | 0.883573 s | 0.883091 s | 0.9995 |
+| OE sweep session total wall | 19.774224 s | 19.777368 s | 1.0002 |
+| OE sweep fast total wall | 10.821774 s | 10.837783 s | 1.0015 |
+
+Conclusion:
+- the intended fast-mode/OE timing surface is flat while the retained fast-mode
+  workspace footprint drops by about 512.7 KiB per LABOS workspace
+- the no-session forward median moved slower in this run even though that route
+  does not use the workspace capacity reduction; treat it as a noise row to
+  watch rather than a claimed speedup
+- this is worth keeping because capped routes avoid unreachable Fourier cache
+  rows and suffix columns without changing residuals or the measured OE timing
+  boundary
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

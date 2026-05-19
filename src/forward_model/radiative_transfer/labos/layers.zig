@@ -538,12 +538,12 @@ pub fn fillLayerEffectiveScatteringSuffixes(
         const layer_suffixes = suffixes[layer_idx * phase_stride ..][0..phase_stride];
         @memset(layer_suffixes, 0.0);
         var suffix: f64 = 0.0;
-        var reverse_index = @min(max_phase_index + 1, phase_stride);
+        var reverse_index = max_phase_index + 1;
         while (reverse_index > 0) {
             reverse_index -= 1;
             const beta_eff = @abs(layer.phase_coefficients[reverse_index]) * phase_odd_reciprocal[reverse_index];
             suffix = @max(suffix, beta_eff);
-            layer_suffixes[reverse_index] = suffix;
+            if (reverse_index < phase_stride) layer_suffixes[reverse_index] = suffix;
         }
     }
 }

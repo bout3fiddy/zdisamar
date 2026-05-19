@@ -188,9 +188,10 @@ pub const Workspace = struct {
         self: *Workspace,
         i_fourier: usize,
         max_phase_index: usize,
+        cache_max_index: usize,
         geo: *const basis.Geometry,
     ) !*const basis.FourierPlmBasis {
-        return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, geo)).plm_basis;
+        return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, cache_max_index, geo)).plm_basis;
     }
 
     // layout(64-bit):
@@ -210,11 +211,13 @@ pub const Workspace = struct {
         self: *Workspace,
         i_fourier: usize,
         max_phase_index: usize,
+        cache_max_index: usize,
         geo: *const basis.Geometry,
     ) !PlmBasisCacheStatus {
         std.debug.assert(i_fourier < basis.max_phase_coef);
         std.debug.assert(max_phase_index < basis.max_phase_coef);
-        const required_len = @max(i_fourier + 1, max_phase_index + 1);
+        std.debug.assert(cache_max_index < basis.max_phase_coef);
+        const required_len = @max(i_fourier + 1, cache_max_index + 1);
         const previous_cache_len = self.plm_basis_cache.len;
         const previous_valid_len = self.plm_basis_cache_valid.len;
         try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, required_len);

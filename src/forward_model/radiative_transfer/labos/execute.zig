@@ -255,7 +255,8 @@ fn layerResolvedLabosWithWorkspace(
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
-    const phase_suffix_stride = phase_max + 1;
+    const plm_cache_max = @min(phase_max, fourier_max);
+    const phase_suffix_stride = plm_cache_max + 1;
     const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
     const wants_aerosol_optical_depth = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
     const wants_aerosol_layer_mid_pressure = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
@@ -316,7 +317,7 @@ fn layerResolvedLabosWithWorkspace(
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
                 break :plm_basis if (workspace) |scratch| blk: {
-                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
+                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, plm_cache_max, geo);
                 } else blk: {
                     owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
                     break :blk &owned_plm_basis;
