@@ -2533,6 +2533,56 @@ Conclusion:
   telemetry that proves the row-cache write traffic is actually material in the
   consolidated workload
 
+### Experiment 39: defer direct-surface runtime attenuation
+
+Changed during experiment:
+- `directSurfaceOnlyResolvedWithWorkspace` was changed to use
+  `Workspace.runtimeAttenuation` instead of `Workspace.attenuation`
+- the no-workspace fallback allocated layer-transmittance and top-to-level
+  buffers, then called `fillRuntimeAttenuationWithGridInBuffers`
+- the direct path read `RuntimeAttenArray.adjacent` for the upward view path and
+  `RuntimeAttenArray.get(top, surface)` for the solar path
+- the prototype was reverted because the benchmark gate could not be completed
+  under a clean host timing window
+
+Memory result:
+
+| item | before | attempted | change |
+| --- | ---: | ---: | ---: |
+| direct-route attenuation backing | `nmutot * nlevel * nlevel * 8 B` | `nmutot * (nlayer + nlevel) * 8 B` | removes full level-pair table |
+| current 20-stream, 117-level shape | 1,095,120 B | 22,320 B | -1,072,800 B (-97.96%) |
+| workspace dynamic attenuation buffer | retained for direct route | not needed by direct route | route-dependent |
+
+Interpretation:
+- the no-scattering direct surface path only needs adjacent upward
+  transmittance and top-to-surface solar transmittance
+- the full dynamic attenuation matrix stores every level pair for every stream,
+  which is useful for scattering order transport but not for this direct path
+- this is a retained-memory improvement for absorption-only/direct routes; the
+  consolidated O2 A benchmark uses multiple scattering and is not expected to
+  exercise this branch
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py` attempts were not accepted as timing
+  evidence because unrelated host load produced visible cached-forward and
+  fast-mode outliers
+- one redirected run completed as `0708d8e567314435b9dfc4437673c2f5`, but
+  fast-mode repeats ranged from 4.764 s to 10.362 s, so the run was treated as
+  tainted
+- `benchmark/results.json` was restored to the accepted Experiment 36 run after
+  reverting the prototype
+
+Conclusion:
+- deferred and reverted
+- the layout change is still a strong candidate for direct/no-scattering routes
+  because it removes an O(nlevel^2) table from a path that reads O(nlevel)
+  attenuation values
+- do not commit the implementation until `run_benchmark.py` can be repeated
+  under a clean timing window, or until the benchmark suite includes an
+  absorption-only direct-route case with stable evidence
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
