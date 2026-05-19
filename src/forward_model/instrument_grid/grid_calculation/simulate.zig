@@ -609,7 +609,6 @@ fn fillRadianceSamples(
                 setup.safe_span,
                 implementations,
                 buffers.layer_inputs[0..transport_layer_count],
-                buffers.pseudo_spherical_layers,
                 buffers.source_interfaces[0 .. transport_layer_count + 1],
                 buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1],
                 buffers.pseudo_spherical_samples,

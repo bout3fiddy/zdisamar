@@ -28,13 +28,13 @@ pub const Error =
     };
 
 // layout(64-bit):
-//   size: 288 B, align: 8 B
-//   field storage: 288 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
+//   size: 272 B, align: 8 B
+//   field storage: 272 B across 17 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, scratch, +8 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, scratch, +12 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
+//   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
 pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
@@ -43,7 +43,6 @@ pub const Buffers = struct {
     scratch: []f64,
     scratch_aux: []f64,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
@@ -58,13 +57,13 @@ pub const Buffers = struct {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 616 B, align: 8 B
-//   field storage: 612 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
+//   size: 600 B, align: 8 B
+//   field storage: 596 B across 29 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 28 bool-storage slack = 60 bits
-//   out-of-line: noise_sigma, forward_misses, irradiance, reflectance, scratch, +16 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: noise_sigma, forward_misses, irradiance, reflectance, scratch, +15 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 616 B (0.602 KiB); total also includes referenced storage above
+//   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -73,7 +72,6 @@ pub const SummaryStorage = struct {
     scratch: []f64 = &.{},
     scratch_aux: []f64 = &.{},
     layer_inputs: []common.LayerInput = &.{},
-    pseudo_spherical_layers: []common.LayerInput = &.{},
     source_interfaces: []common.SourceInterfaceInput = &.{},
     rtm_quadrature_levels: []common.RtmQuadratureLevel = &.{},
     pseudo_spherical_samples: []common.PseudoSphericalSample = &.{},
@@ -108,7 +106,6 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.scratch);
         freeBuffer(allocator, self.scratch_aux);
         freeLayerBuffer(allocator, self.layer_inputs);
-        freeLayerBuffer(allocator, self.pseudo_spherical_layers);
         freeSourceInterfaceBuffer(allocator, self.source_interfaces);
         freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
         freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
@@ -201,7 +198,6 @@ pub const SummaryStorage = struct {
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
         try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
-        try ensureLayerBufferCapacity(allocator, &self.pseudo_spherical_layers, pseudo_spherical_sample_count);
         try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
         try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
         try ensurePseudoSphericalSampleBufferCapacity(allocator, &self.pseudo_spherical_samples, pseudo_spherical_sample_count);
@@ -225,7 +221,6 @@ pub const SummaryStorage = struct {
             .scratch = self.scratch[0..sample_count],
             .scratch_aux = self.scratch_aux[0..sample_count],
             .layer_inputs = self.layer_inputs[0..layer_count],
-            .pseudo_spherical_layers = self.pseudo_spherical_layers[0..pseudo_spherical_sample_count],
             .source_interfaces = self.source_interfaces[0 .. layer_count + 1],
             .rtm_quadrature_levels = self.rtm_quadrature_levels[0 .. layer_count + 1],
             .pseudo_spherical_samples = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count],
@@ -312,13 +307,12 @@ pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
         buffers.scratch.len != sample_count or
         buffers.scratch_aux.len != sample_count or
         buffers.layer_inputs.len == 0 or
-        buffers.pseudo_spherical_layers.len == 0 or
         buffers.source_interfaces.len != buffers.layer_inputs.len + 1 or
         buffers.rtm_quadrature_levels.len != buffers.layer_inputs.len + 1)
     {
         return error.ShapeMismatch;
     }
-    if (buffers.pseudo_spherical_samples.len != buffers.pseudo_spherical_layers.len or
+    if (buffers.pseudo_spherical_samples.len == 0 or
         buffers.pseudo_spherical_level_starts.len != buffers.layer_inputs.len + 1 or
         buffers.pseudo_spherical_level_altitudes.len != buffers.layer_inputs.len + 1)
     {

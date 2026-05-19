@@ -1397,6 +1397,78 @@ Conclusion:
 - the next retained-footprint step should target the inline final phase rows
   themselves, but only with a representation that keeps LABOS phase access dense
 
+### Experiment 23: remove pseudo-spherical layer mirror buffer
+
+Changed:
+- removed `pseudo_spherical_layers` from reusable product storage and per-worker
+  forward scratch
+- pseudo-spherical builders now write only the LABOS-facing
+  `PseudoSphericalSample`, level-start, and level-altitude buffers
+- deleted the old mirror writes that stored only optical depth into full
+  `LayerInput` rows and never reached the `ForwardInput` contract
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| pseudo-spherical mirror row | 1,376 B | 0 B | -100.00% |
+| current benchmark scratch mirror, 29 layers x 4 support samples | 159,616 B | 0 B | -155.88 KiB |
+| current benchmark storage hint, 29 layers x (4 + 2) rows | 239,424 B | 0 B | -233.81 KiB retained capacity |
+| conservative 301-output-sample lower bound | 48,044,416 B | 0 B | -45.82 MiB hot mirror traffic |
+| `ForwardSampleScratch` header | 3,312 B | 3,296 B | -16 B |
+| `SummaryStorage` header | 616 B | 600 B | -16 B |
+
+Interpretation:
+- `LayerInput` is a 1,376 B row because it carries phase coefficients,
+  jacobian vectors, and optical-depth/scattering scalar fields
+- the pseudo-spherical attenuation path consumes `PseudoSphericalSample`
+  rows, not full transport-layer rows, so the mirror buffer was zero-filling
+  and touching cold `LayerInput` fields that were not read afterward
+- the current `run_benchmark.py` baseline scene uses 301 output samples and
+  16/4/6 interval divisions after `baseline.configure_case`; the traffic row
+  above uses that current benchmark shape rather than the older 701-sample
+  reference shape
+- the forward-miss count can exceed the output sample count when integration
+  uses additional support wavelengths, so the 45.82 MiB row is a lower bound
+  for the measured benchmark path
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: run
+  `8f3cc6a4e8174b018cc57186f0c09c37`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.008663 s | 0.995911 s | 0.9874 |
+| forward session setup | 0.718924 s | 0.714895 s | 0.9944 |
+| forward session cached median | 0.289888 s | 0.288857 s | 0.9964 |
+| forward fast four-scene median | 4.818098 s | 4.824211 s | 1.0013 |
+| OE session setup median | 0.724329 s | 0.717994 s | 0.9913 |
+| OE session retrieval median | 1.207204 s | 1.203150 s | 0.9966 |
+| OE fast retrieval median | 0.934268 s | 0.933107 s | 0.9988 |
+| OE sweep session total wall | 20.468999 s | 20.478792 s | 1.0005 |
+| OE sweep fast total wall | 11.126235 s | 11.132325 s | 1.0005 |
+
+Conclusion:
+- this removes a full-width `LayerInput` mirror from the pseudo-spherical hot
+  fill path without adding recomputation or changing LABOS inputs
+- most timing surfaces moved faster; the fast four-scene and sweep totals moved
+  by about +0.05% to +0.13%, which is inside the single-run noise band seen in
+  these memory-traffic experiments
+- this is worth keeping because it removes at least 45.82 MiB of hot mirror
+  traffic in the current benchmark shape and also drops retained session
+  capacity by 233.81 KiB
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1540,6 +1612,9 @@ Memory access shape:
 - shared-grid layer, source-interface, and RTM quadrature builders now write
   final rows directly instead of materializing `EvaluatedLayer`,
   `SharedBoundaryCarrier`, or local `LevelCarrier` intermediates
+- pseudo-spherical attenuation builders now write only the prepared
+  `PseudoSphericalSample` grid and no longer mirror optical depth into unused
+  full-width `LayerInput` rows
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
   reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated

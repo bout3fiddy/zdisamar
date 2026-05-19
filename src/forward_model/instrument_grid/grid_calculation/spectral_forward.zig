@@ -41,16 +41,15 @@ const forward_prefetch_pooled_chunk_size: usize = 16;
 //   data: per-worker scratch slices and labos.Workspace
 //   follow: reuse inside prefetchForwardWorkerMain across forward misses
 // layout(64-bit):
-//   size: 3312 B, align: 8 B
-//   field storage: 3312 B across 10 fields; largest: labos_workspace=3168 B, layer_inputs=16 B, pseudo_spherical_layers=16 B; padding: 0 B (0 bits)
+//   size: 3296 B, align: 8 B
+//   field storage: 3296 B across 9 fields; largest: labos_workspace=3168 B, layer_inputs=16 B, source_interfaces=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layer_inputs, pseudo_spherical_layers, source_interfaces, rtm_quadrature_levels, pseudo_spherical_samples, +4 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: layer_inputs, source_interfaces, rtm_quadrature_levels, pseudo_spherical_samples, pseudo_spherical_level_starts, +3 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 52 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3312 B (3.234 KiB); total also includes referenced storage above
+//   footprint: per instance = 3296 B (3.219 KiB); total also includes referenced storage above
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
@@ -72,8 +71,6 @@ const ForwardSampleScratch = struct {
 
         const layer_inputs = try allocator.alloc(common.LayerInput, layer_count);
         errdefer allocator.free(layer_inputs);
-        const pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count);
-        errdefer allocator.free(pseudo_spherical_layers);
         const source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1);
         errdefer allocator.free(source_interfaces);
         const rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1);
@@ -91,7 +88,6 @@ const ForwardSampleScratch = struct {
 
         return .{
             .layer_inputs = layer_inputs,
-            .pseudo_spherical_layers = pseudo_spherical_layers,
             .source_interfaces = source_interfaces,
             .rtm_quadrature_levels = rtm_quadrature_levels,
             .pseudo_spherical_samples = pseudo_spherical_samples,
@@ -106,7 +102,6 @@ const ForwardSampleScratch = struct {
     fn deinit(self: *ForwardSampleScratch, allocator: Allocator) void {
         self.labos_workspace.deinit();
         allocator.free(self.layer_inputs);
-        allocator.free(self.pseudo_spherical_layers);
         allocator.free(self.source_interfaces);
         allocator.free(self.rtm_quadrature_levels);
         allocator.free(self.pseudo_spherical_samples);
@@ -241,7 +236,6 @@ pub fn computeForwardSampleAtWavelength(
     safe_span: f64,
     implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
@@ -264,7 +258,6 @@ pub fn computeForwardSampleAtWavelength(
         safe_span,
         implementations,
         layer_inputs,
-        pseudo_spherical_layers,
         source_interfaces,
         rtm_quadrature_levels,
         pseudo_spherical_samples,
@@ -291,7 +284,6 @@ fn computeForwardSampleAtWavelengthWithScratch(
     safe_span: f64,
     implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
@@ -315,7 +307,6 @@ fn computeForwardSampleAtWavelengthWithScratch(
             prepared,
             wavelength_nm,
             layer_inputs,
-            pseudo_spherical_layers,
             source_interfaces,
             rtm_quadrature_levels,
             pseudo_spherical_samples,
@@ -393,7 +384,6 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                     worker.safe_span,
                     worker.implementations,
                     scratch.layer_inputs,
-                    scratch.pseudo_spherical_layers,
                     scratch.source_interfaces,
                     scratch.rtm_quadrature_levels,
                     scratch.pseudo_spherical_samples,
@@ -464,7 +454,6 @@ pub fn prefetchForwardSamples(
                 safe_span,
                 implementations,
                 scratch.layer_inputs,
-                scratch.pseudo_spherical_layers,
                 scratch.source_interfaces,
                 scratch.rtm_quadrature_levels,
                 scratch.pseudo_spherical_samples,

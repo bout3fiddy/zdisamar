@@ -374,7 +374,6 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
     wavelength_nm: f64,
     support_sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     sample_index_start: usize,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
@@ -403,9 +402,6 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
             .thickness_km = weight_km,
             .optical_depth = optical_depth,
         };
-        if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index].optical_depth = optical_depth;
-        }
         sample_index += 1;
     }
     return sample_index;
@@ -421,7 +417,6 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     wavelength_nm: f64,
     support_sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     sample_index_start: usize,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
@@ -451,9 +446,6 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
             .thickness_km = weight_km,
             .optical_depth = optical_depth,
         };
-        if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index].optical_depth = optical_depth;
-        }
         sample_index += 1;
     }
     return sample_index;
@@ -537,7 +529,6 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgrid(
     support_sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     layer_geometry: SharedRtmLayerGeometry,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     sample_index_start: usize,
     scratch: *shared_geometry.GaussRuleScratch,
@@ -549,7 +540,6 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgrid(
         support_sublayers,
         strong_line_states,
         layer_geometry,
-        attenuation_layers,
         attenuation_samples,
         sample_index_start,
         scratch,
@@ -564,7 +554,6 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
     support_sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     layer_geometry: SharedRtmLayerGeometry,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     sample_index_start: usize,
     scratch: *shared_geometry.GaussRuleScratch,
@@ -595,9 +584,6 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
             .thickness_km = weight_km,
             .optical_depth = optical_depth,
         };
-        if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index].optical_depth = optical_depth;
-        }
         sample_index += 1;
     }
     return sample_index;
