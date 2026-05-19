@@ -9,9 +9,182 @@ const o2a_reference = internal.o2a_reference;
 const default_output_dir = "out/optimal-estimation-trace";
 const measurement_sigma_reflectance = 1.0e-3;
 
+const AtomicUsize = std.atomic.Value(usize);
+const Allocator = std.mem.Allocator;
+
 const Config = struct {
     output_dir: []const u8 = default_output_dir,
     max_iterations: usize = 3,
+};
+
+// Snapshot of the trace-only allocation counter.
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 usize fields; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one stack value per measured phase boundary
+//   footprint: per instance = 64 B (0.062 KiB)
+const AllocationSnapshot = struct {
+    alloc_count: usize,
+    free_count: usize,
+    resize_count: usize,
+    remap_count: usize,
+    allocated_bytes: usize,
+    freed_bytes: usize,
+    live_bytes: usize,
+    phase_peak_live_bytes: usize,
+};
+
+// Difference between two allocation snapshots from the trace executable.
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: 72 B across 9 usize fields; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one stack value per reported trace phase
+//   footprint: per instance = 72 B (0.070 KiB)
+const AllocationDelta = struct {
+    alloc_count: usize,
+    free_count: usize,
+    resize_count: usize,
+    remap_count: usize,
+    allocated_bytes: usize,
+    freed_bytes: usize,
+    live_bytes_before: usize,
+    live_bytes_after: usize,
+    peak_live_bytes_over_start: usize,
+};
+
+// Trace-only allocator wrapper. Normal product builds never instantiate it; the
+// build graph wires this file only into the explicit optimal-estimation trace executable.
+// layout(64-bit):
+//   size: 80 B, align: 8 B
+//   field storage: child=16 B, eight atomic usize counters at 8 B each; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: child allocator owns the actual memory; counters are inline atomic scalars
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one live value in the trace executable
+//   footprint: per instance = 80 B (0.078 KiB); no heap storage
+const CountingAllocator = struct {
+    child: Allocator,
+    alloc_count: AtomicUsize = AtomicUsize.init(0),
+    free_count: AtomicUsize = AtomicUsize.init(0),
+    resize_count: AtomicUsize = AtomicUsize.init(0),
+    remap_count: AtomicUsize = AtomicUsize.init(0),
+    allocated_bytes: AtomicUsize = AtomicUsize.init(0),
+    freed_bytes: AtomicUsize = AtomicUsize.init(0),
+    live_bytes: AtomicUsize = AtomicUsize.init(0),
+    phase_peak_live_bytes: AtomicUsize = AtomicUsize.init(0),
+
+    fn init(child: Allocator) CountingAllocator {
+        return .{ .child = child };
+    }
+
+    fn allocator(self: *CountingAllocator) Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn snapshot(self: *CountingAllocator) AllocationSnapshot {
+        return .{
+            .alloc_count = self.alloc_count.load(.monotonic),
+            .free_count = self.free_count.load(.monotonic),
+            .resize_count = self.resize_count.load(.monotonic),
+            .remap_count = self.remap_count.load(.monotonic),
+            .allocated_bytes = self.allocated_bytes.load(.monotonic),
+            .freed_bytes = self.freed_bytes.load(.monotonic),
+            .live_bytes = self.live_bytes.load(.monotonic),
+            .phase_peak_live_bytes = self.phase_peak_live_bytes.load(.monotonic),
+        };
+    }
+
+    fn resetPhasePeak(self: *CountingAllocator) AllocationSnapshot {
+        const start = self.snapshot();
+        self.phase_peak_live_bytes.store(start.live_bytes, .monotonic);
+        return start;
+    }
+
+    fn delta(self: *CountingAllocator, start: AllocationSnapshot) AllocationDelta {
+        const finish = self.snapshot();
+        return .{
+            .alloc_count = finish.alloc_count - start.alloc_count,
+            .free_count = finish.free_count - start.free_count,
+            .resize_count = finish.resize_count - start.resize_count,
+            .remap_count = finish.remap_count - start.remap_count,
+            .allocated_bytes = finish.allocated_bytes - start.allocated_bytes,
+            .freed_bytes = finish.freed_bytes - start.freed_bytes,
+            .live_bytes_before = start.live_bytes,
+            .live_bytes_after = finish.live_bytes,
+            .peak_live_bytes_over_start = finish.phase_peak_live_bytes -| start.live_bytes,
+        };
+    }
+
+    fn alloc(context: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(context));
+        const ptr = self.child.rawAlloc(len, alignment, ret_addr) orelse return null;
+        _ = self.alloc_count.fetchAdd(1, .monotonic);
+        _ = self.allocated_bytes.fetchAdd(len, .monotonic);
+        self.addLiveBytes(len);
+        return ptr;
+    }
+
+    fn resize(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *CountingAllocator = @ptrCast(@alignCast(context));
+        if (!self.child.rawResize(memory, alignment, new_len, ret_addr)) return false;
+        _ = self.resize_count.fetchAdd(1, .monotonic);
+        self.recordSizeChange(memory.len, new_len);
+        return true;
+    }
+
+    fn remap(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(context));
+        const ptr = self.child.rawRemap(memory, alignment, new_len, ret_addr) orelse return null;
+        _ = self.remap_count.fetchAdd(1, .monotonic);
+        self.recordSizeChange(memory.len, new_len);
+        return ptr;
+    }
+
+    fn free(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *CountingAllocator = @ptrCast(@alignCast(context));
+        self.child.rawFree(memory, alignment, ret_addr);
+        _ = self.free_count.fetchAdd(1, .monotonic);
+        _ = self.freed_bytes.fetchAdd(memory.len, .monotonic);
+        _ = self.live_bytes.fetchSub(memory.len, .monotonic);
+    }
+
+    fn recordSizeChange(self: *CountingAllocator, old_len: usize, new_len: usize) void {
+        if (new_len > old_len) {
+            const delta_bytes = new_len - old_len;
+            _ = self.allocated_bytes.fetchAdd(delta_bytes, .monotonic);
+            self.addLiveBytes(delta_bytes);
+        } else if (old_len > new_len) {
+            const delta_bytes = old_len - new_len;
+            _ = self.freed_bytes.fetchAdd(delta_bytes, .monotonic);
+            _ = self.live_bytes.fetchSub(delta_bytes, .monotonic);
+        }
+    }
+
+    fn addLiveBytes(self: *CountingAllocator, byte_count: usize) void {
+        const previous = self.live_bytes.fetchAdd(byte_count, .monotonic);
+        const live = previous + byte_count;
+        self.updatePeak(&self.phase_peak_live_bytes, live);
+    }
+
+    fn updatePeak(self: *CountingAllocator, counter: *AtomicUsize, candidate: usize) void {
+        _ = self;
+        var current = counter.load(.monotonic);
+        while (candidate > current) {
+            current = counter.cmpxchgWeak(current, candidate, .monotonic, .monotonic) orelse return;
+        }
+    }
 };
 
 pub fn main() !void {
@@ -31,7 +204,8 @@ fn mainInner() !void {
 
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
-    const allocator = debug_allocator.allocator();
+    var counting_allocator = CountingAllocator.init(debug_allocator.allocator());
+    const allocator = counting_allocator.allocator();
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -41,8 +215,10 @@ fn mainInner() !void {
     const input = o2a_reference.defaultInput();
 
     var reference_timer = try std.time.Timer.start();
+    const reference_alloc_start = counting_allocator.resetPhasePeak();
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(allocator, &input);
     const reference_prepare_ns = reference_timer.read();
+    const reference_allocations = counting_allocator.delta(reference_alloc_start);
     defer prepared_case.deinit(allocator);
 
     const sample_count = prepared_case.reference.len;
@@ -97,6 +273,7 @@ fn mainInner() !void {
     defer product_storage.deinit(allocator);
 
     var retrieval_timer = try std.time.Timer.start();
+    const retrieval_alloc_start = counting_allocator.resetPhasePeak();
     var result = try OptimalEstimation.runO2A(
         allocator,
         &input,
@@ -112,6 +289,7 @@ fn mainInner() !void {
         },
     );
     const retrieval_ns = retrieval_timer.read();
+    const retrieval_allocations = counting_allocator.delta(retrieval_alloc_start);
     defer result.deinit(allocator);
 
     try writeSummary(
@@ -123,6 +301,8 @@ fn mainInner() !void {
         &input,
         reference_mid_pressure_hpa,
         &result,
+        reference_allocations,
+        retrieval_allocations,
     );
 
     std.debug.print(
@@ -164,6 +344,8 @@ fn writeSummary(
     input: *const o2a_reference.O2AInput,
     reference_mid_pressure_hpa: f64,
     result: *const OptimalEstimation.Result,
+    reference_allocations: AllocationDelta,
+    retrieval_allocations: AllocationDelta,
 ) !void {
     var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer file.close();
@@ -195,8 +377,8 @@ fn writeSummary(
         \\  "residuals": {{
         \\    "aerosol_optical_depth_abs_error": {e:.17},
         \\    "aerosol_layer_mid_pressure_abs_error_hpa": {e:.17}
-        \\  }}
-        \\}}
+        \\  }},
+        \\  "allocation_stats": {{
         \\
     ,
         .{
@@ -218,7 +400,45 @@ fn writeSummary(
             @abs(retrieved_mid_pressure_hpa - reference_mid_pressure_hpa),
         },
     );
+    try writeAllocationDelta(&writer.interface, "reference_prepare", reference_allocations, true);
+    try writeAllocationDelta(&writer.interface, "retrieval", retrieval_allocations, false);
+    try writer.interface.writeAll(
+        \\  }
+        \\}
+        \\
+    );
     try writer.interface.flush();
+}
+
+fn writeAllocationDelta(writer: *std.Io.Writer, name: []const u8, delta_value: AllocationDelta, needs_comma: bool) !void {
+    try writer.print(
+        \\    "{s}": {{
+        \\      "alloc_count": {},
+        \\      "free_count": {},
+        \\      "resize_count": {},
+        \\      "remap_count": {},
+        \\      "allocated_bytes": {},
+        \\      "freed_bytes": {},
+        \\      "live_bytes_before": {},
+        \\      "live_bytes_after": {},
+        \\      "peak_live_bytes_over_start": {}
+        \\    }}{s}
+        \\
+    ,
+        .{
+            name,
+            delta_value.alloc_count,
+            delta_value.free_count,
+            delta_value.resize_count,
+            delta_value.remap_count,
+            delta_value.allocated_bytes,
+            delta_value.freed_bytes,
+            delta_value.live_bytes_before,
+            delta_value.live_bytes_after,
+            delta_value.peak_live_bytes_over_start,
+            if (needs_comma) "," else "",
+        },
+    );
 }
 
 fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {

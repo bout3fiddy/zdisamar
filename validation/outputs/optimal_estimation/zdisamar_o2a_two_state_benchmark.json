@@ -1,20 +1,20 @@
 {
   "phases_s": {
-    "build_case_s": 1.9875005818903446e-05,
-    "build_measurement_s": 0.3624585421057418,
-    "build_pressure_altitude_profile_s": 0.04405900009442121,
-    "build_state_vector_s": 1.0041054338216782e-05,
-    "build_summary_s": 7.974996697157621e-05,
-    "load_reference_s": 5.895807407796383e-05,
-    "retrieval_s": 0.43652620899956673,
-    "session_create_s": 0.2800144999055192,
-    "total_s": 1.123852749937214,
-    "write_summary_s": 0.0003298750380054116
+    "build_case_s": 1.9291997887194157e-05,
+    "build_measurement_s": 0.37077729194425046,
+    "build_pressure_altitude_profile_s": 0.5416244160151109,
+    "build_state_vector_s": 1.7333077266812325e-05,
+    "build_summary_s": 7.345899939537048e-05,
+    "load_reference_s": 5.7750032283365726e-05,
+    "retrieval_s": 0.43434537504799664,
+    "session_create_s": 0.26649862492922693,
+    "total_s": 1.6140125419478863,
+    "write_summary_s": 0.0002995000686496496
   },
   "retrieval": {
-    "first_use_retrieval_s": 0.7165407089050859,
+    "first_use_retrieval_s": 0.7008439999772236,
     "iterations": 4,
-    "retrieval_s": 0.43652620899956673,
-    "setup_s": 0.2800144999055192
+    "retrieval_s": 0.43434537504799664,
+    "setup_s": 0.26649862492922693
   }
 }
