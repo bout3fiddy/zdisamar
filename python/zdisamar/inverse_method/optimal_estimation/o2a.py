@@ -111,11 +111,9 @@ def _lazy_final_evaluator(
 ) -> Callable[[Sequence[float]], RtmEvaluation]:
     """Keep a way to evaluate the final retrieval state after the run ends."""
 
-    def evaluate_with_fresh_cache(state: Sequence[float]) -> RtmEvaluation:
+    template = copy.deepcopy(case)
 
-        # Final spectra are a cold plotting path. Deferring this copy keeps the
-        # native retrieval timing focused on OE work, not Python object cloning.
-        template = copy.deepcopy(case)
+    def evaluate_with_fresh_cache(state: Sequence[float]) -> RtmEvaluation:
 
         return evaluate_state(template, state, state_vector)
 

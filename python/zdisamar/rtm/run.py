@@ -131,9 +131,12 @@ def nominal_wavelengths(case: O2AInput):
         return array("d", [float(case.spectral_grid.start_nm)])
 
     start = float(case.spectral_grid.start_nm)
-    step = (float(case.spectral_grid.end_nm) - start) / float(count - 1)
+    end = float(case.spectral_grid.end_nm)
+    step = (end - start) / float(count - 1)
+    wavelengths = array("d", (start + step * index for index in range(count)))
+    wavelengths[-1] = end
 
-    return array("d", (start + step * index for index in range(count)))
+    return wavelengths
 
 
 def o2a_reference_case() -> O2AInput:

@@ -15,9 +15,9 @@ class WavelengthGridMismatchError(ValueError):
 class MeasurementArrays:
     """Validated retrieval-vector arrays in solver-ready dtype."""
 
-    wavelength_nm: array[float]
-    reflectance: array[float]
-    variance: array[float]
+    wavelength_nm: array
+    reflectance: array
+    variance: array
 
 
 def measurement_arrays(measurement: Measurement) -> MeasurementArrays:

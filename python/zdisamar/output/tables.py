@@ -76,7 +76,7 @@ class RtmTable:
         """Create a DataFrame when the caller has installed pandas."""
 
         try:
-            import pandas as pd
+            import pandas as pd  # pyright: ignore[reportMissingImports]
         except ModuleNotFoundError as error:
             if error.name != "pandas":
                 raise

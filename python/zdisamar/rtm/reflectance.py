@@ -16,7 +16,7 @@ def reflectance_from_radiance(
     radiance: Iterable[float],
     irradiance: Iterable[float],
     solar_zenith_cosine: float,
-) -> array[float]:
+) -> array:
     """Return reflectance from radiance, irradiance, and solar zenith cosine."""
 
     factor = math.pi / float(solar_zenith_cosine)
@@ -34,7 +34,7 @@ def reflectance_jacobian_from_radiance_jacobian(
     radiance_jacobian,
     irradiance: Iterable[float],
     solar_zenith_cosine: float,
-) -> array[float] | tuple[array[float], ...]:
+) -> array | tuple[array, ...]:
     """Convert dL/dx to dR/dx for R = pi * L / (mu0 * E0)."""
 
     scales = array(
@@ -58,7 +58,7 @@ def reflectance_jacobian_from_radiance_jacobian(
 def reflectance_noise_from_sun_normalized_radiance_noise(
     noise: Iterable[float],
     solar_zenith_cosine: float,
-) -> array[float]:
+) -> array:
     """Convert sun-normalized radiance noise to reflectance noise."""
 
     factor = math.pi / float(solar_zenith_cosine)

@@ -30,35 +30,35 @@ class DiagnosticReport:
 class SpectralAxis:
     """Wavelength coordinates for one RTM spectrum."""
 
-    wavelength_nm: array[float]
+    wavelength_nm: array
 
 
 @dataclass(frozen=True)
 class Radiance:
     """Radiance samples on a spectral axis."""
 
-    values: array[float]
+    values: array
 
 
 @dataclass(frozen=True)
 class Irradiance:
     """Irradiance samples on a spectral axis."""
 
-    values: array[float]
+    values: array
 
 
 @dataclass(frozen=True)
 class Reflectance:
     """Reflectance samples on a spectral axis."""
 
-    values: array[float]
+    values: array
 
 
 @dataclass(frozen=True)
 class RadianceJacobian:
     """Radiance Jacobian columns returned by the RTM."""
 
-    values: tuple[array[float], ...]
+    values: tuple[array, ...]
     state_names: tuple[str, ...]
 
 
@@ -66,7 +66,7 @@ class RadianceJacobian:
 class ReflectanceJacobian:
     """Reflectance Jacobian columns used by inverse methods."""
 
-    values: tuple[array[float], ...]
+    values: tuple[array, ...]
     state_names: tuple[str, ...]
 
 
@@ -114,27 +114,27 @@ class Spectrum(NotebookDisplay):
         return self.case.geometry.solar_mu0
 
     @property
-    def wavelength_nm(self) -> array[float]:
+    def wavelength_nm(self) -> array:
 
         return self.axis.wavelength_nm
 
     @property
-    def radiance(self) -> array[float]:
+    def radiance(self) -> array:
 
         return self.radiance_quantity.values
 
     @property
-    def irradiance(self) -> array[float]:
+    def irradiance(self) -> array:
 
         return self.irradiance_quantity.values
 
     @property
-    def reflectance(self) -> array[float]:
+    def reflectance(self) -> array:
 
         return self.reflectance_quantity.values
 
     @property
-    def sun_normalized_radiance(self) -> array[float]:
+    def sun_normalized_radiance(self) -> array:
         """Use the same radiance normalization as validation analysis."""
 
         from ..rtm.radiance import sun_normalized_radiance
@@ -153,7 +153,7 @@ class Spectrum(NotebookDisplay):
         return ()
 
     @property
-    def radiance_jacobian(self) -> tuple[array[float], ...]:
+    def radiance_jacobian(self) -> tuple[array, ...]:
         """Return d(radiance)/d(state) before reflectance scaling."""
 
         if self.radiance_jacobian_quantity is None:
@@ -161,7 +161,7 @@ class Spectrum(NotebookDisplay):
 
         return self.radiance_jacobian_quantity.values
 
-    def reflectance_jacobian(self, state: str) -> array[float]:
+    def reflectance_jacobian(self, state: str) -> array:
         """Return d(reflectance)/d(state) for one retrieval variable."""
 
         names = self.jacobian_state_names

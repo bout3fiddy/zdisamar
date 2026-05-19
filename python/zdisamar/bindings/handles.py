@@ -444,7 +444,7 @@ class RtmHandle:
             ),
         )
 
-    def _copied_double_array(self, pointer, count: int) -> array[float]:
+    def _copied_double_array(self, pointer, count: int) -> array:
 
         return array("d", (float(pointer[index]) for index in range(count)))
 

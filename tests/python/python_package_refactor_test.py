@@ -196,6 +196,44 @@ def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
     assert calls == 0
 
 
+def assert_lazy_final_evaluator_snapshots_case() -> None:
+
+    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+    from zdisamar.wavelength_bands import o2a
+
+    sentinel = cast(RtmEvaluation, object())
+    observed_solar_zenith: list[float] = []
+    case = o2a.reference_case()
+    original_solar_zenith = case.geometry.solar_zenith_deg
+
+    def fake_evaluate_state(template, _state, _state_vector):
+
+        observed_solar_zenith.append(template.geometry.solar_zenith_deg)
+
+        return sentinel
+
+    with patch.object(o2a_oe, "evaluate_state", fake_evaluate_state):
+        evaluator = o2a_oe._lazy_final_evaluator(  # noqa: SLF001
+            case,
+            optimal_estimation.StateVector(
+                [
+                    optimal_estimation.AerosolOpticalDepth(
+                        initial=0.3,
+                        prior=0.3,
+                        variance=0.8,
+                    )
+                ]
+            ),
+        )
+        case.geometry.solar_zenith_deg = 0.0
+
+        assert evaluator([1.0]) is sentinel
+
+    assert observed_solar_zenith == [original_solar_zenith]
+
+
 def assert_reference_data_and_rtm_tables() -> None:
 
     import numpy as np
@@ -252,6 +290,9 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert (
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
+            nominal_wavelengths = rtm.nominal_wavelengths(case)
+            assert nominal_wavelengths[0] == case.spectral_grid.start_nm
+            assert nominal_wavelengths[-1] == case.spectral_grid.end_nm
             mutable_case = copy.deepcopy(case)
 
             with rtm.SessionCache() as cache:
@@ -305,6 +346,7 @@ def main() -> int:
     assert_optimal_estimation_grid_mismatch_rejected()
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
+    assert_lazy_final_evaluator_snapshots_case()
     assert_reference_data_and_rtm_tables()
     print("python_package_refactor=ok")
 

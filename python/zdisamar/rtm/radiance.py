@@ -7,7 +7,7 @@ from collections.abc import Iterable
 def sun_normalized_radiance(
     radiance: Iterable[float],
     irradiance: Iterable[float],
-) -> array[float]:
+) -> array:
     """Return radiance divided by irradiance."""
 
     return array(
