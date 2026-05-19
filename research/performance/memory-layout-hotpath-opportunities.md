@@ -1544,6 +1544,74 @@ Conclusion:
   only because the removed phase-row traffic is large and residuals were
   unchanged on the benchmark boundary
 
+### Experiment 25: remove unused weak/strong profile-cache series
+
+Changed:
+- `ProfileSpectroscopyCache` now caches only `line`, `line_mixing`, and
+  `total` profile series plus their endpoint-secant second derivatives
+- weak-line and strong-line breakdown series were removed from this prepare
+  cache because the only cache consumer reads line, line-mixing, total, and the
+  existing zero temperature derivative
+- added `endpointSecantSecondDerivatives3` so cache construction solves three
+  series together instead of using the old five-series helper
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `ProfileSpectroscopyCache` | 5,144 B | 3,096 B | -2,048 B (-39.81%) |
+| inline cache arrays | 5,120 B | 3,072 B | -2,048 B |
+| cache span | 81 cache lines | 49 cache lines | -32 cache lines |
+| derivative-helper stack scratch | 34,816 B | 22,528 B | -12,288 B |
+| current 47-node value/second writes | 3,760 B | 2,256 B | -1,504 B |
+
+Interpretation:
+- this is the remaining full profile cache used during optical-state layer
+  preparation, not the retained forward-miss `ProfileNodeSpectroscopyCache`
+- prepared sublayer construction stores and accumulates `line`,
+  `line_mixing`, and `total`; weak/strong breakdown values were cached and
+  splined but not consumed by that path
+- `total` remains cached separately instead of derived from `line +
+  line_mixing`, preserving the existing spline-of-clamped-total behavior
+- the struct still has no padding waste; the removed memory is unused series
+  storage and the corresponding derivative workspace
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `e2bf7e7f6ced4f379dd956d42182e6c3`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 1.001330 s | 0.995434 s | 0.9941 |
+| forward session setup | 0.715155 s | 0.717953 s | 1.0039 |
+| forward session cached median | 0.286655 s | 0.285699 s | 0.9967 |
+| forward fast four-scene median | 4.829014 s | 4.826326 s | 0.9994 |
+| OE session setup median | 0.719351 s | 0.716343 s | 0.9958 |
+| OE session retrieval median | 1.200826 s | 1.202613 s | 1.0015 |
+| OE fast retrieval median | 0.932683 s | 0.931660 s | 0.9989 |
+| OE sweep session total wall | 20.564469 s | 20.496456 s | 0.9967 |
+| OE sweep fast total wall | 11.202943 s | 11.207220 s | 1.0004 |
+
+Conclusion:
+- this removes two unused breakdown series from the preparation cache and
+  reduces the cache span by 32 cache lines
+- the retained benchmark boundary is flat-to-faster overall; the only slower
+  timings are forward session setup at +0.39%, OE session retrieval at +0.15%,
+  and fast sweep total at +0.04%
+- this is worth keeping because it reduces prepare-time cache footprint and
+  derivative workspace while preserving benchmark residuals
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1724,25 +1792,25 @@ Relevant layout facts:
 
 | struct | size | dominant payload | unused bits |
 | --- | ---: | --- | ---: |
-| `ProfileSpectroscopyCache` | 5,144 B | ten `[64]f64` arrays | 0 |
+| `ProfileSpectroscopyCache` | 3,096 B | six `[64]f64` arrays | 0 |
 | `ProfileNodeSpectroscopyCache` | 1,032 B | total values + second derivatives | 0 |
 | `ProfileCacheValueWorker` | 288 B | `SpectroscopyLineList` descriptor | 0 |
 | `StrongLineWavelengthWindow` | 1,048 B | fixed anchor payload | 0 |
 
 Memory access shape:
-- the full profile cache stores weak, strong, line, line-mixing, total, and all
+- the layer-preparation profile cache stores line, line-mixing, total, and the
   corresponding second-derivative arrays
 - the smaller node cache stores only total values and total second derivatives
 - many forward paths appear to need the total profile value first; breakdown
   arrays are more valuable for diagnostics, validation, or derivative-specific
   paths
-- worker structs embed the wavelength window payload directly
+- worker structs carry a pointer to the request-local wavelength window
 
 Potential direction:
 - route plain forward execution through the total-only cache where breakdown
   output is not requested
-- keep breakdown arrays in a side cache that is only allocated when diagnostics
-  or a derivative path needs them
+- keep any remaining breakdown arrays in a side cache that is only allocated
+  when diagnostics or a derivative path needs them
 - store strong-line windows as ranges or handles into prepared line storage when
   the window is already derived from sorted line lists
 - measure actual `node_count` distribution before replacing `[256]f64` with

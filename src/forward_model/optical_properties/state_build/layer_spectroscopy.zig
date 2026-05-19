@@ -41,24 +41,20 @@ const ProfileCacheValueWorker = struct {
 //   data: pressure, temperature, density, VMR, prepared profile line-state arrays
 //   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
 // layout(64-bit):
-//   size: 5144 B, align: 8 B
-//   field storage: 5144 B across 12 fields; largest: weak_values=512 B, strong_values=512 B, line_values=512 B; padding: 0 B (0 bits)
+//   size: 3096 B, align: 8 B
+//   field storage: 3096 B across 8 fields; largest: line_values=512 B, line_mixing_values=512 B, total_values=512 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 10 fields reserve 5120 B inside each instance
+//   inline arrays: 6 fields reserve 3072 B inside each instance
 //   out-of-line: altitudes_km carry references/descriptors; referenced storage is not included in size
-//   cache span: 81 cache line(s) at 64 B per line
+//   cache span: 49 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 5144 B (5.023 KiB); total also includes referenced storage above
+//   footprint: per instance = 3096 B (3.023 KiB); total also includes referenced storage above
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
-    weak_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    strong_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_mixing_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    weak_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    strong_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_mixing_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
@@ -86,13 +82,9 @@ pub const ProfileSpectroscopyCache = struct {
         var cache = ProfileSpectroscopyCache{
             .node_count = node_count,
             .altitudes_km = context.spectroscopy_profile_altitudes_km[0..node_count],
-            .weak_values = undefined,
-            .strong_values = undefined,
             .line_values = undefined,
             .line_mixing_values = undefined,
             .total_values = undefined,
-            .weak_second = undefined,
-            .strong_second = undefined,
             .line_second = undefined,
             .line_mixing_second = undefined,
             .total_second = undefined,
@@ -112,15 +104,11 @@ pub const ProfileSpectroscopyCache = struct {
             wavelength_window,
         );
         const altitudes = cache.altitudes_km[0..node_count];
-        spline.endpointSecantSecondDerivatives5(
+        spline.endpointSecantSecondDerivatives3(
             altitudes,
-            cache.weak_values[0..node_count],
-            cache.strong_values[0..node_count],
             cache.line_values[0..node_count],
             cache.line_mixing_values[0..node_count],
             cache.total_values[0..node_count],
-            cache.weak_second[0..node_count],
-            cache.strong_second[0..node_count],
             cache.line_second[0..node_count],
             cache.line_mixing_second[0..node_count],
             cache.total_second[0..node_count],
@@ -148,22 +136,6 @@ pub const ProfileSpectroscopyCache = struct {
             }
         }
         return .{
-            .weak_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.weak_values[0..self.node_count],
-                self.weak_second[0..self.node_count],
-                altitude_km,
-                klo,
-                khi,
-            ),
-            .strong_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.strong_values[0..self.node_count],
-                self.strong_second[0..self.node_count],
-                altitude_km,
-                klo,
-                khi,
-            ),
             .line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.line_values[0..self.node_count],
@@ -320,8 +292,6 @@ fn fillProfileSpectroscopyCacheValueRange(
                 context.spectroscopy_profile_temperatures_k[index],
                 context.spectroscopy_profile_pressures_hpa[index],
             );
-        cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
-        cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
         cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
         cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
         cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
