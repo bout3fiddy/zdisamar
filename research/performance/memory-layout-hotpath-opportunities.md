@@ -1824,6 +1824,76 @@ Conclusion:
 - this is worth keeping because it is a sizeable per-source-interface footprint
   reduction and the measured timing boundary improved instead of regressing
 
+### Experiment 29: cap LABOS PLM basis cache by active phase support
+
+Changed:
+- `Workspace.fourierPlmBasisWithStatus` now sizes `plm_basis_cache` and its
+  valid slice to `max_phase_index + 1` instead of always reserving all 151
+  Fourier slots
+- the cache still grows if a later solve needs higher phase support, and growth
+  invalidates cached basis rows exactly as the previous full-capacity path did
+- the Fourier basis payload and consumer math are unchanged; this only removes
+  unused retained cache capacity
+
+Memory traffic result:
+
+| item | before | after for O2A default `phase_max=39` | change |
+| --- | ---: | ---: | ---: |
+| PLM basis cache capacity | 151 rows | 40 rows | -111 rows |
+| retained `FourierPlmBasis` storage per workspace | 2.09 MiB | 566.9 KiB | -1.54 MiB |
+| valid flags per workspace | 151 B | 40 B | -111 B |
+| worst-case `phase_max=150` | 2.09 MiB | 2.09 MiB | 0 B |
+
+Interpretation:
+- each `FourierPlmBasis` is 14.2 KiB, so reserving all 151 rows kept about
+  2.09 MiB in every LABOS workspace even when only lower Fourier orders were
+  reachable
+- the benchmark O2A phase function uses HG `g=0.7` with threshold `1e-8`,
+  which yields active phase support through order 39
+- this is a retained workspace-capacity change, not a lazy recomputation change:
+  already-computed Fourier bases still cache by Fourier index inside the active
+  range
+- high-order phase cases remain supported because the workspace grows up to the
+  original 151-row capacity when the input phase support requires it
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `2eeabc95722146ec8d93dc687c781622`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check command itself were
+  present
+- benchmark residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.600`; session-vs-no-session reflectance residual `0.0`; OE session AOD
+  diff `8.699e-08`; fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against Experiment 28:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 144.972863 s | 144.806837 s | 0.9989 |
+| total benchmark CPU | 279.545778 s | 279.384573 s | 0.9994 |
+| forward no-session median | 0.987443 s | 0.985431 s | 0.9980 |
+| forward session setup | 0.710486 s | 0.719042 s | 1.0120 |
+| forward session first cached | 0.277352 s | 0.277250 s | 0.9996 |
+| forward session cached median | 0.278981 s | 0.278131 s | 0.9970 |
+| forward fast four-scene median | 4.732407 s | 4.727819 s | 0.9990 |
+| OE session retrieval median | 1.165139 s | 1.158920 s | 0.9947 |
+| OE fast retrieval median | 0.900696 s | 0.900045 s | 0.9993 |
+| OE sweep session total wall | 19.882759 s | 19.893846 s | 1.0006 |
+| OE sweep fast total wall | 10.889717 s | 10.890247 s | 1.0000 |
+
+Conclusion:
+- this removes about 1.54 MiB of retained PLM basis cache capacity per LABOS
+  workspace for the current O2A benchmark phase support
+- total benchmark wall and CPU are flat-to-slightly faster; steady-state forward
+  and retrieval medians are flat-to-faster
+- forward session setup is 8.6 ms slower in this run, so treat that single row
+  as benchmark noise to watch rather than a claimed setup speedup
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

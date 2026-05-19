@@ -213,11 +213,13 @@ pub const Workspace = struct {
         geo: *const basis.Geometry,
     ) !PlmBasisCacheStatus {
         std.debug.assert(i_fourier < basis.max_phase_coef);
+        std.debug.assert(max_phase_index < basis.max_phase_coef);
+        const required_len = @max(i_fourier + 1, max_phase_index + 1);
         const previous_cache_len = self.plm_basis_cache.len;
         const previous_valid_len = self.plm_basis_cache_valid.len;
-        try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, basis.max_phase_coef);
-        try ensureCapacity(bool, self.allocator, &self.plm_basis_cache_valid, basis.max_phase_coef);
-        if (previous_cache_len < basis.max_phase_coef or previous_valid_len < basis.max_phase_coef) {
+        try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, required_len);
+        try ensureCapacity(bool, self.allocator, &self.plm_basis_cache_valid, required_len);
+        if (previous_cache_len < required_len or previous_valid_len < required_len) {
             @memset(self.plm_basis_cache_valid, false);
         }
         const was_valid = self.plm_basis_cache_valid[i_fourier];
