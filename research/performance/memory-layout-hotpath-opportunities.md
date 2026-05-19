@@ -2183,6 +2183,74 @@ Conclusion:
   rows and suffix columns without changing residuals or the measured OE timing
   boundary
 
+### Experiment 34: allocate LABOS order local sums only for local-sum routes
+
+Changed:
+- `OrdersWorkspace.initForRoute` can skip the `ud_sum_local` backing slice
+  when a route returns only transported order fields
+- `Workspace.ordersWorkspace` now receives the route-local-sum requirement and
+  allocates `ud_sum_local` lazily if a later route needs it
+- non-Jacobian integrated-source routes, transport-only routes, and the
+  single-layer route keep `ud_sum_local` empty
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `OrdersWorkspace` header | 96 B | 96 B | unchanged |
+| unused `ud_sum_local` backing row | `nlevel * 432 B` | 0 B | -100.00% |
+| current 117-level O2 A workspace | 50,544 B | 0 B | -49.4 KiB |
+| 701 no-workspace forward misses | 35,431,344 B | 0 B | -33.8 MiB allocation surface |
+
+Interpretation:
+- `UDLocal` is 432 B and stores local U/D fields for one level
+- local-source sums are only returned by the Jacobian integrated-source order
+  routes; routes that return `ud_sum_local = &.{}` no longer allocate the
+  backing array
+- session-backed non-Jacobian forward work saves one retained local-sum slice
+  per LABOS workspace, while no-workspace forward calls avoid repeated transient
+  allocations
+- if a reused workspace later enters a local-sum route, `ensureLocalSumCapacity`
+  allocates the slice before the route reads or writes it
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU
+- `uv run benchmark/run_benchmark.py`: run
+  `102a43f11cf041feae0e4f8db7c0c761`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode worst
+  `max_abs_over_noise=1.59985574045`; session-vs-no-session reflectance
+  max_abs `0`; OE session AOD diff `8.69864882902e-08`; fast-vs-session sweep
+  max AOD delta `0.00376644268103`
+
+Benchmark comparison against Experiment 33:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.972796 s | 144.042204 s | 1.0005 |
+| total benchmark CPU | 277.697413 s | 277.686383 s | 1.0000 |
+| forward no-session median | 0.990163 s | 0.983889 s | 0.9937 |
+| forward session setup | 0.711307 s | 0.709735 s | 0.9978 |
+| forward session first cached | 0.274993 s | 0.274181 s | 0.9970 |
+| forward session cached median | 0.274644 s | 0.274392 s | 0.9991 |
+| forward fast four-scene median | 4.702744 s | 4.706151 s | 1.0007 |
+| OE session retrieval median | 1.142367 s | 1.143309 s | 1.0008 |
+| OE fast retrieval median | 0.883091 s | 0.882785 s | 0.9997 |
+| OE sweep session total wall | 19.777368 s | 19.850683 s | 1.0037 |
+| OE sweep fast total wall | 10.837783 s | 10.808254 s | 0.9973 |
+
+Conclusion:
+- the change removes unused local-sum storage from the routes that already
+  expose an empty local-sum result
+- benchmark movement is flat overall; the only slower OE rows are below
+  `+0.37%`, while the no-session forward median improved in this clean run
+- this is worth keeping because it converts a route-inactive backing array into
+  lazy side storage without changing the arithmetic loop or residuals
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -2281,6 +2349,10 @@ Memory access shape:
   by coefficient parity while building `Zmin`
 - `Vec` and `Vec2` carry `n` metadata inside many small fixed-capacity values
 - `rt_active: []bool` marks active layers and is read during transport loops
+
+Completed layout changes:
+- non-local-sum order routes allocate `ud_sum_local` lazily instead of
+  retaining or repeatedly allocating an unused `UDLocal` array
 
 Potential direction:
 - keep extending the `RuntimeAttenArray` pattern where measured call sites do

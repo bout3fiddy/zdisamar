@@ -41,6 +41,7 @@ pub const OrdersResultView = struct {
 //   field storage: 96 B across 6 fields; largest: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: ud, ud_sum_local, ud_orde, ud_local, rt_active carry references/descriptors; referenced storage is not included in size
+//   storage shape: ud_sum_local is allocated only for routes that return local-source sums
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
@@ -56,9 +57,17 @@ pub const OrdersWorkspace = struct {
         allocator: Allocator,
         nlevel: usize,
     ) !OrdersWorkspace {
+        return initForRoute(allocator, nlevel, true);
+    }
+
+    pub fn initForRoute(
+        allocator: Allocator,
+        nlevel: usize,
+        needs_local_sum: bool,
+    ) !OrdersWorkspace {
         const ud = try allocator.alloc(basis.UDField, nlevel);
         errdefer allocator.free(ud);
-        const ud_sum_local = try allocator.alloc(basis.UDLocal, nlevel);
+        const ud_sum_local = try allocator.alloc(basis.UDLocal, if (needs_local_sum) nlevel else 0);
         errdefer allocator.free(ud_sum_local);
         const ud_orde = try allocator.alloc(basis.UDField, nlevel);
         errdefer allocator.free(ud_orde);
@@ -73,6 +82,13 @@ pub const OrdersWorkspace = struct {
             .ud_local = ud_local,
             .rt_active = rt_active,
         };
+    }
+
+    pub fn ensureLocalSumCapacity(self: *OrdersWorkspace, nlevel: usize) !void {
+        if (self.ud_sum_local.len >= nlevel) return;
+        const ud_sum_local = try self.allocator.alloc(basis.UDLocal, nlevel);
+        self.allocator.free(self.ud_sum_local);
+        self.ud_sum_local = ud_sum_local;
     }
 
     pub fn deinit(self: *OrdersWorkspace) void {
@@ -491,13 +507,17 @@ fn initializeOrdersBuffers(
     ud_local: []basis.UDLocal,
     nmutot: usize,
 ) void {
-    for (ud, ud_sum_local, ud_orde, ud_local) |*field, *sum_local, *orde, *local| {
+    for (0..ud.len) |index| {
+        const field = &ud[index];
+        const orde = &ud_orde[index];
+        const local = &ud_local[index];
         field.* = undefined;
         field.E.n = nmutot;
         initVec2Metadata(&field.U, nmutot);
         initVec2Metadata(&field.D, nmutot);
 
         if (track_sum_local) {
+            const sum_local = &ud_sum_local[index];
             sum_local.U = basis.Vec2.zero(nmutot);
             sum_local.D = basis.Vec2.zero(nmutot);
         }
@@ -634,13 +654,13 @@ fn ordersScatInternal(
     const n_gauss = geo.n_gauss;
     const nlevel = end_level + 1;
     std.debug.assert(ud.len >= nlevel);
-    std.debug.assert(ud_sum_local.len >= nlevel);
+    if (track_sum_local) std.debug.assert(ud_sum_local.len >= nlevel);
     std.debug.assert(ud_orde.len >= nlevel);
     std.debug.assert(ud_local.len >= nlevel);
     std.debug.assert(rt_active.len >= nlevel);
 
     const ud_view = ud[0..nlevel];
-    const ud_sum_local_view = ud_sum_local[0..nlevel];
+    const ud_sum_local_view = if (track_sum_local) ud_sum_local[0..nlevel] else ud_sum_local[0..0];
     const ud_orde_view = ud_orde[0..nlevel];
     const ud_local_view = ud_local[0..nlevel];
     const rt_active_view = rt_active[0..nlevel];

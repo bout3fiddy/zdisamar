@@ -264,12 +264,13 @@ fn layerResolvedLabosWithWorkspace(
     var surface_albedo_tangent: f64 = 0.0;
     var aerosol_optical_depth_tangent: f64 = 0.0;
     var aerosol_layer_mid_pressure_tangent: f64 = 0.0;
+    const needs_order_local_sum = use_integrated_source and compute_jacobian;
     var owned_orders_workspace: ?orders_mod.OrdersWorkspace = null;
     defer if (owned_orders_workspace) |*orders_workspace| orders_workspace.deinit();
     const orders_workspace = if (workspace) |scratch|
-        try scratch.ordersWorkspace(nlayer + 1)
+        try scratch.ordersWorkspace(nlayer + 1, needs_order_local_sum)
     else blk: {
-        owned_orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, nlayer + 1);
+        owned_orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, nlayer + 1, needs_order_local_sum);
         break :blk &(owned_orders_workspace.?);
     };
     const layer_phase_rows: ?[]basis.PhaseKernelRow = if (use_integrated_source)
@@ -630,7 +631,7 @@ fn singleLayerLabos(
 
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
-    var orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, 2);
+    var orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, 2, false);
     defer orders_workspace.deinit();
     for (0..fourier_max + 1) |i_fourier| {
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);

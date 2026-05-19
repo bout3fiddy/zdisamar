@@ -162,15 +162,16 @@ pub const Workspace = struct {
         return self.source_phase_max_indices[0..nlevel];
     }
 
-    pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorkspace {
+    pub fn ordersWorkspace(self: *Workspace, nlevel: usize, needs_local_sum: bool) !*orders_mod.OrdersWorkspace {
         if (self.orders) |*orders| {
             if (orders.ud.len >= nlevel) {
+                if (needs_local_sum) try orders.ensureLocalSumCapacity(nlevel);
                 return orders;
             }
             orders.deinit();
             self.orders = null;
         }
-        self.orders = try orders_mod.OrdersWorkspace.init(self.allocator, nlevel);
+        self.orders = try orders_mod.OrdersWorkspace.initForRoute(self.allocator, nlevel, needs_local_sum);
         return &(self.orders.?);
     }
 

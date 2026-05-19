@@ -390,6 +390,9 @@ test "multiple scattering drops the first below-threshold order" {
     defer multiple_workspace.deinit();
     var local_sum_workspace = try OrdersWorkspace.init(allocator, nlevel);
     defer local_sum_workspace.deinit();
+    var lazy_workspace = try OrdersWorkspace.initForRoute(allocator, nlevel, false);
+    defer lazy_workspace.deinit();
+    try std.testing.expectEqual(@as(usize, 0), lazy_workspace.ud_sum_local.len);
 
     const single_result = ordersScatInto(
         &single_workspace,
@@ -439,10 +442,30 @@ test "multiple scattering drops the first below-threshold order" {
         },
         20,
     );
+    const lazy_result = ordersScatInto(
+        &lazy_workspace,
+        0,
+        1,
+        &geo,
+        UnitAtten{},
+        &rt,
+        .{
+            .scattering = .multiple,
+            .performance_thresholds = .{
+                .threshold_conv_first = 1.0e-12,
+                .threshold_conv_mult = 1.0,
+            },
+        },
+        20,
+    );
 
     try std.testing.expectEqual(@as(usize, 0), single_result.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, 0), multiple_result.ud_sum_local.len);
+    try std.testing.expectEqual(@as(usize, 0), lazy_result.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, nlevel), local_sum_result.ud_sum_local.len);
+
+    try lazy_workspace.ensureLocalSumCapacity(nlevel);
+    try std.testing.expectEqual(@as(usize, nlevel), lazy_workspace.ud_sum_local.len);
 
     for (0..nlevel) |ilevel| {
         for (0..2) |col| {
