@@ -25,7 +25,7 @@ pub fn assemble(
     else
         PhaseSupportKind.none;
 
-    const prepared: State.PreparedOpticalState = .{
+    var prepared: State.PreparedOpticalState = .{
         .layers = context.layers,
         .sublayers = context.sublayers,
         .strong_line_states = absorbers.strong_line_states,
@@ -60,6 +60,8 @@ pub fn assemble(
             table.interpolate(context.midpoint_nm).single_scatter_albedo
         else
             scene.cloud.single_scatter_albedo,
+        .aerosol_phase_coefficients = context.aerosol_phase_coefficients,
+        .cloud_phase_coefficients = context.cloud_phase_coefficients,
         .effective_temperature_k = means.effective_temperature_k,
         .effective_pressure_hpa = means.effective_pressure_hpa,
         .air_column_density_factor = means.air_column_density_factor,
@@ -87,6 +89,8 @@ pub fn assemble(
         .aerosol_fraction_control = context.aerosol_fraction_control,
         .cloud_fraction_control = context.cloud_fraction_control,
     };
+    prepared.spectroscopy_plan_key = prepared.computeSpectroscopyPlanKey();
+    prepared.spectroscopy_profile_cache_inputs_key = prepared.computeSpectroscopyProfileCacheInputsKey();
 
     context.layers = &.{};
     context.sublayers = &.{};

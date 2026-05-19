@@ -1,6 +1,5 @@
 """Reference-data asset input objects."""
 
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -33,7 +32,7 @@ class ReferenceAsset:
         path = Path(self.path)
 
         if path.is_absolute():
-            return deepcopy(self)
+            return type(self)(id=self.id, path=self.path, format=self.format)
 
         return type(self)(id=self.id, path=str(resolver(path)), format=self.format)
 

@@ -28,6 +28,11 @@ fn interpolatePreparedScalarBetweenSublayers(
     return left_value + (right_value - left_value) * fraction;
 }
 
+// hot path:
+//   when: altitude-based carrier evaluation samples prepared scalar profiles
+//   work: brackets neighboring sublayers and linearly interpolates one scalar field
+//   data: prepared sublayer array, scalar value slice, target altitude
+//   follow: continuumCarrierDensityAtAltitude and line absorber density interpolation
 pub fn interpolatePreparedScalarAtAltitude(
     sublayers: []const PreparedSublayer,
     values: []const f64,
@@ -118,6 +123,11 @@ pub fn lineSpectroscopyCarrierDensity(
     return @max(@as(f64, 0.0), absorber_density_cm3 - cross_section_density_cm3);
 }
 
+// hot path:
+//   when: support-row or layer evaluation resolves line spectroscopy carrier density
+//   work: combines absorber, oxygen, and cross-section carrier densities for one sublayer
+//   data: prepared sublayer, global sublayer index, line/cross-section absorber density arrays
+//   follow: state_spectroscopy and carrier_eval spectroscopy weighting
 pub fn lineSpectroscopyCarrierDensityAtSublayer(
     self: *const PreparedOpticalState,
     sublayer: PreparedSublayer,
@@ -134,6 +144,11 @@ pub fn lineSpectroscopyCarrierDensityAtSublayer(
     );
 }
 
+// hot path:
+//   when: altitude carrier evaluation resolves continuum density
+//   work: selects owner-species density and interpolates it over prepared sublayers
+//   data: sublayer array, absorber/oxygen densities, continuum owner species
+//   follow: carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache
 pub fn continuumCarrierDensityAtAltitude(
     self: *const PreparedOpticalState,
     sublayers: []const PreparedSublayer,
@@ -155,6 +170,11 @@ fn fractionAtWavelength(control: AtmosphereModel.FractionControl, wavelength_nm:
     return control.valueAtWavelength(wavelength_nm);
 }
 
+// hot path:
+//   when: layer and diagnostic evaluation scale aerosol/cloud optical depth to wavelength
+//   work: applies Angstrom scaling and optional fraction-control scaling
+//   data: reference optical depth, reference wavelength, Angstrom exponent, fraction control
+//   follow: state_optical_depth and atmospheric_budget particle terms
 pub fn particleOpticalDepthAtWavelength(
     effective_reference_optical_depth: f64,
     base_reference_optical_depth: f64,

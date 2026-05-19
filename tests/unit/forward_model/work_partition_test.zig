@@ -38,3 +38,26 @@ test "static worker ranges stay balanced" {
 test "preferred worker count stays single-threaded below threshold" {
     try std.testing.expectEqual(@as(usize, 1), work_partition.preferredWorkerCount(31, 32));
 }
+
+test "preferred worker count honors an explicit worker limit" {
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        work_partition.preferredWorkerCountForCpuCount(1024, 32, 12, 2),
+    );
+}
+
+test "preferred worker count still respects available work and hard cap" {
+    try std.testing.expectEqual(
+        @as(usize, 4),
+        work_partition.preferredWorkerCountForCpuCount(128, 32, 12, null),
+    );
+    try std.testing.expectEqual(
+        @as(usize, work_partition.max_workers),
+        work_partition.preferredWorkerCountForCpuCount(
+            work_partition.max_workers * 128,
+            1,
+            work_partition.max_workers * 2,
+            null,
+        ),
+    );
+}

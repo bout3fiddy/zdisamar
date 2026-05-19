@@ -2,6 +2,14 @@ const std = @import("std");
 const ReferenceData = @import("../../ReferenceData.zig");
 const types = @import("reference_assets_types.zig");
 
+// layout(64-bit):
+//   size: 152 B, align: 8 B
+//   field storage: 149 B across 11 fields; largest: bundle_manifest_path=16 B, bundle_id=16 B, owner_package=16 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   out-of-line: bundle_manifest_path, bundle_id, owner_package, asset_id, asset_path, +4 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 152 B (0.148 KiB); total also includes referenced storage above
 pub const LoadedAsset = struct {
     kind: types.AssetKind,
     bundle_manifest_path: []const u8,

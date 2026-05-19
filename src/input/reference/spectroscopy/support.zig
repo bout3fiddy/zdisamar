@@ -26,10 +26,10 @@ pub fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
         -Physics.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
 }
 
-pub fn lineIndexIsStrongAnchor(anchor_indices: []const ?usize, line_index: usize) bool {
+pub fn lineIndexIsStrongAnchor(anchor_indices: []const Types.StrongLineAnchorIndex, line_index: usize) bool {
     for (anchor_indices) |anchor| {
-        if (anchor == null) continue;
-        if (anchor.? == line_index) return true;
+        if (anchor == Types.missing_strong_line_anchor_index) continue;
+        if (@as(usize, @intCast(anchor)) == line_index) return true;
     }
     return false;
 }

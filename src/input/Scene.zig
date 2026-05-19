@@ -33,6 +33,14 @@ pub const DerivativeMode = enum {
     numerical,
 };
 
+// layout(64-bit):
+//   size: 2680 B, align: 8 B
+//   field storage: 2680 B across 12 fields; largest: observation_model=1864 B, cloud=224 B, aerosol=224 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: id carry references/descriptors; referenced storage is not included in size
+//   cache span: 42 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2680 B (2.617 KiB); total also includes referenced storage above
 pub const Scene = struct {
     id: []const u8 = "scene-0",
     atmosphere: Atmosphere = .{},
@@ -106,6 +114,9 @@ pub const Scene = struct {
         };
     }
 
+    // layout(64-bit):
+    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn lutNominalWavelengthBounds(self: *const Scene) struct { start_nm: f64, end_nm: f64 } {
         const nominal_wavelengths = self.observation_model.measured_wavelengths_nm;
         if (nominal_wavelengths.len != 0) {
@@ -126,6 +137,9 @@ pub const Scene = struct {
             self.observation_model.lutSamplingHalfSpanNm() > 0.0;
     }
 
+    // layout(64-bit):
+    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per returned value = 16 B (0.016 KiB)
     fn lutLowResolutionSamplingIdentity(self: *const Scene) struct {
         sample_count: u32,
         wavelength_hash: u64,

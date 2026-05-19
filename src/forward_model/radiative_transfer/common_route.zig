@@ -1,5 +1,4 @@
 const common = @import("common_types.zig");
-const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 pub fn prepareRoute(request: common.DispatchRequest) common.PrepareError!common.Route {
     if (request.rtm_controls.use_adding) return common.Error.UnsupportedTransportSolver;
@@ -27,21 +26,13 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
 
     return .{
         .source_weight = source_weight,
-        .particle_ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
-        .particle_ksca_below = if (ilevel > 0)
-            @max(layers[below_index].scattering_optical_depth, 0.0)
-        else
-            0.0,
         .ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
-        .ksca_below = if (ilevel > 0)
-            @max(layers[below_index].scattering_optical_depth, 0.0)
+        .phase_above = layers[above_index].phase,
+        .phase_max_index_above = layers[above_index].phase.maxIndex(),
+        .phase_max_index_below = if (ilevel > 0)
+            layers[below_index].phase.maxIndex()
         else
-            0.0,
-        .phase_coefficients_above = layers[above_index].phase_coefficients,
-        .phase_coefficients_below = if (ilevel > 0)
-            layers[below_index].phase_coefficients
-        else
-            phase_functions.zeroPhaseCoefficients(),
+            0,
     };
 }
 

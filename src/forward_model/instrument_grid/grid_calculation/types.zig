@@ -11,6 +11,13 @@ pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 // Bound implementation implementations used by instrument grid evaluation.
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: transport=64 B, surface=24 B, instrument=48 B, noise=32 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const Implementations = struct {
     transport: TransportProviders.Implementation,
     surface: SurfaceProviders.Implementation,
@@ -19,6 +26,13 @@ pub const Implementations = struct {
 };
 
 // Measurement-space summary statistics for one spectral sweep.
+// layout(64-bit):
+//   size: 88 B, align: 8 B
+//   field storage: 84 B across 8 fields; largest: mean_jacobian=32 B, wavelength_start_nm=8 B, wavelength_end_nm=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 88 B (0.086 KiB); total = per instance * live instance count
 pub const InstrumentGridSummary = struct {
     sample_count: u32,
     wavelength_start_nm: f64,
@@ -31,6 +45,14 @@ pub const InstrumentGridSummary = struct {
 };
 
 // Measurement-space product arrays and associated bulk optical properties.
+// layout(64-bit):
+//   size: 320 B, align: 8 B
+//   field storage: 320 B across 21 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, noise_sigma, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 320 B (0.312 KiB); total also includes referenced storage above
 pub const InstrumentGridProduct = struct {
     summary: InstrumentGridSummary,
     wavelengths: []f64,
@@ -69,6 +91,14 @@ pub const InstrumentGridProduct = struct {
 };
 
 // Borrowed instrument grid outputs backed by a reusable product storage.
+// layout(64-bit):
+//   size: 320 B, align: 8 B
+//   field storage: 320 B across 21 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, noise_sigma, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 320 B (0.312 KiB); total also includes referenced storage above
 pub const InstrumentGridProductView = struct {
     summary: InstrumentGridSummary,
     wavelengths: []const f64,

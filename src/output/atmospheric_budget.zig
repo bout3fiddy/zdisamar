@@ -26,6 +26,13 @@ pub const SubcolumnLabel = enum(u32) {
     stratosphere = 4,
 };
 
+// layout(64-bit):
+//   size: 240 B, align: 8 B
+//   field storage: 240 B across 33 fields; largest: absorber_number_density_cm3=8 B, path_length_cm=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 240 B (0.234 KiB); total = per instance * live instance count
 pub const AtmosphericBudgetRow = struct {
     wavelength_nm: f64,
     layer_index: u32,
@@ -62,6 +69,11 @@ pub const AtmosphericBudgetRow = struct {
     single_scatter_albedo: f64,
 };
 
+// hot path:
+//   when: atmospheric-budget diagnostics are requested over wavelength by vertical row
+//   work: evaluates prepared optical state per wavelength/sublayer and materializes diagnostic rows
+//   data: wavelength array, prepared layers/sublayers, profile spectroscopy cache, output rows
+//   follow: sublayerRow and PreparedOpticalState.evaluateLayerAtWavelengthWithSpectroscopyCache
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -241,6 +253,9 @@ fn layerRow(
     };
 }
 
+// layout(64-bit):
+//   anonymous return struct: size 48 B, align 8 B; padding 0 B (0 bits)
+//   footprint: per returned value = 48 B (0.047 KiB)
 fn derivedTotals(breakdown: OpticalDepthBreakdown) struct {
     aerosol_absorption: f64,
     cloud_absorption: f64,

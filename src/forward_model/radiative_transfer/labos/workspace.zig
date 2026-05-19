@@ -6,17 +6,26 @@ const orders_mod = @import("orders.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 3168 B, align: 8 B
+//   field storage: 3161 B across 17 fields; largest: cached_geometry=2832 B, orders=104 B, allocator=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: attenuation_data, attenuation_layer_transmittance, attenuation_top_to_level, rt_layers, layer_phase_max_indices, +8 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 50 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3168 B (3.094 KiB); total also includes referenced storage above
 pub const Workspace = struct {
     allocator: Allocator,
     attenuation_data: []f64 = &.{},
     attenuation_layer_transmittance: []f64 = &.{},
+    attenuation_top_to_level: []f64 = &.{},
     rt_layers: []basis.LayerRT = &.{},
     layer_phase_max_indices: []usize = &.{},
     layer_effective_scattering_suffix: []f64 = &.{},
     source_phase_max_indices: []usize = &.{},
     orders: ?orders_mod.OrdersWorkspace = null,
-    layer_phase_kernels: []basis.PhaseKernel = &.{},
-    layer_phase_kernel_valid: []bool = &.{},
+    layer_phase_rows: []basis.PhaseKernelRow = &.{},
+    layer_phase_row_valid: []bool = &.{},
     plm_basis_cache: []basis.FourierPlmBasis = &.{},
     plm_basis_cache_valid: []bool = &.{},
     previous_layer_phase_signatures: []u64 = &.{},
@@ -32,12 +41,13 @@ pub const Workspace = struct {
         if (self.orders) |*orders| orders.deinit();
         self.allocator.free(self.attenuation_data);
         self.allocator.free(self.attenuation_layer_transmittance);
+        self.allocator.free(self.attenuation_top_to_level);
         self.allocator.free(self.rt_layers);
         self.allocator.free(self.layer_phase_max_indices);
         self.allocator.free(self.layer_effective_scattering_suffix);
         self.allocator.free(self.source_phase_max_indices);
-        self.allocator.free(self.layer_phase_kernels);
-        self.allocator.free(self.layer_phase_kernel_valid);
+        self.allocator.free(self.layer_phase_rows);
+        self.allocator.free(self.layer_phase_row_valid);
         self.allocator.free(self.plm_basis_cache);
         self.allocator.free(self.plm_basis_cache_valid);
         self.allocator.free(self.previous_layer_phase_signatures);
@@ -67,6 +77,26 @@ pub const Workspace = struct {
         );
     }
 
+    pub fn runtimeAttenuation(
+        self: *Workspace,
+        layers: []const common.LayerInput,
+        pseudo_spherical_grid: common.PseudoSphericalGrid,
+        geo: *const basis.Geometry,
+        use_spherical_correction: bool,
+    ) !attenuation_mod.RuntimeAttenArray {
+        const nlevel = layers.len + 1;
+        try ensureCapacity(f64, self.allocator, &self.attenuation_layer_transmittance, geo.nmutot * layers.len);
+        try ensureCapacity(f64, self.allocator, &self.attenuation_top_to_level, geo.nmutot * nlevel);
+        return attenuation_mod.fillRuntimeAttenuationWithGridInBuffers(
+            self.attenuation_layer_transmittance,
+            self.attenuation_top_to_level,
+            layers,
+            pseudo_spherical_grid,
+            geo,
+            use_spherical_correction,
+        );
+    }
+
     pub fn geometry(
         self: *Workspace,
         n_gauss: usize,
@@ -76,6 +106,13 @@ pub const Workspace = struct {
         return self.geometryWithStatus(n_gauss, mu0, muv).geometry;
     }
 
+    // layout(64-bit):
+    //   size: 16 B, align: 8 B
+    //   field storage: geometry=8 B, hit=1 B; padding: 7 B (56 bits)
+    //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+    //   out-of-line: geometry carry references/descriptors; referenced storage is not included in size
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
     pub const GeometryCacheStatus = struct {
         geometry: *const basis.Geometry,
         hit: bool,
@@ -114,8 +151,8 @@ pub const Workspace = struct {
         return self.layer_phase_max_indices[0..nlayer];
     }
 
-    pub fn layerEffectiveScatteringSuffix(self: *Workspace, nlayer: usize) ![]f64 {
-        const required_len = nlayer * basis.max_phase_coef;
+    pub fn layerEffectiveScatteringSuffix(self: *Workspace, nlayer: usize, phase_stride: usize) ![]f64 {
+        const required_len = nlayer * phase_stride;
         try ensureCapacity(f64, self.allocator, &self.layer_effective_scattering_suffix, required_len);
         return self.layer_effective_scattering_suffix[0..required_len];
     }
@@ -125,37 +162,46 @@ pub const Workspace = struct {
         return self.source_phase_max_indices[0..nlevel];
     }
 
-    pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorkspace {
+    pub fn ordersWorkspace(self: *Workspace, nlevel: usize, needs_local_sum: bool) !*orders_mod.OrdersWorkspace {
         if (self.orders) |*orders| {
             if (orders.ud.len >= nlevel) {
+                if (needs_local_sum) try orders.ensureLocalSumCapacity(nlevel);
                 return orders;
             }
             orders.deinit();
             self.orders = null;
         }
-        self.orders = try orders_mod.OrdersWorkspace.init(self.allocator, nlevel);
+        self.orders = try orders_mod.OrdersWorkspace.initForRoute(self.allocator, nlevel, needs_local_sum);
         return &(self.orders.?);
     }
 
-    pub fn phaseKernelCache(self: *Workspace, nlevel: usize) ![]basis.PhaseKernel {
-        try ensureCapacity(basis.PhaseKernel, self.allocator, &self.layer_phase_kernels, nlevel);
-        return self.layer_phase_kernels[0..nlevel];
+    pub fn phaseRowCache(self: *Workspace, nlevel: usize) ![]basis.PhaseKernelRow {
+        try ensureCapacity(basis.PhaseKernelRow, self.allocator, &self.layer_phase_rows, nlevel);
+        return self.layer_phase_rows[0..nlevel];
     }
 
-    pub fn phaseKernelValid(self: *Workspace, nlevel: usize) ![]bool {
-        try ensureCapacity(bool, self.allocator, &self.layer_phase_kernel_valid, nlevel);
-        return self.layer_phase_kernel_valid[0..nlevel];
+    pub fn phaseRowValid(self: *Workspace, nlevel: usize) ![]bool {
+        try ensureCapacity(bool, self.allocator, &self.layer_phase_row_valid, nlevel);
+        return self.layer_phase_row_valid[0..nlevel];
     }
 
     pub fn fourierPlmBasis(
         self: *Workspace,
         i_fourier: usize,
         max_phase_index: usize,
+        cache_max_index: usize,
         geo: *const basis.Geometry,
     ) !*const basis.FourierPlmBasis {
-        return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, geo)).plm_basis;
+        return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, cache_max_index, geo)).plm_basis;
     }
 
+    // layout(64-bit):
+    //   size: 16 B, align: 8 B
+    //   field storage: plm_basis=8 B, hit=1 B, extended=1 B; padding: 6 B (48 bits)
+    //   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+    //   out-of-line: plm_basis carry references/descriptors; referenced storage is not included in size
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
     pub const PlmBasisCacheStatus = struct {
         plm_basis: *const basis.FourierPlmBasis,
         hit: bool,
@@ -166,14 +212,18 @@ pub const Workspace = struct {
         self: *Workspace,
         i_fourier: usize,
         max_phase_index: usize,
+        cache_max_index: usize,
         geo: *const basis.Geometry,
     ) !PlmBasisCacheStatus {
         std.debug.assert(i_fourier < basis.max_phase_coef);
+        std.debug.assert(max_phase_index < basis.max_phase_coef);
+        std.debug.assert(cache_max_index < basis.max_phase_coef);
+        const required_len = @max(i_fourier + 1, cache_max_index + 1);
         const previous_cache_len = self.plm_basis_cache.len;
         const previous_valid_len = self.plm_basis_cache_valid.len;
-        try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, basis.max_phase_coef);
-        try ensureCapacity(bool, self.allocator, &self.plm_basis_cache_valid, basis.max_phase_coef);
-        if (previous_cache_len < basis.max_phase_coef or previous_valid_len < basis.max_phase_coef) {
+        try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, required_len);
+        try ensureCapacity(bool, self.allocator, &self.plm_basis_cache_valid, required_len);
+        if (previous_cache_len < required_len or previous_valid_len < required_len) {
             @memset(self.plm_basis_cache_valid, false);
         }
         const was_valid = self.plm_basis_cache_valid[i_fourier];
@@ -189,6 +239,12 @@ pub const Workspace = struct {
         };
     }
 
+    // layout(64-bit):
+    //   size: 40 B, align: 8 B
+    //   field storage: 40 B across 5 fields; largest: layer_count=8 B, max_index_matches=8 B, signature_matches=8 B; padding: 0 B (0 bits)
+    //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+    //   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
     pub const LayerPhaseSignatureProbe = struct {
         layer_count: usize = 0,
         max_index_matches: usize = 0,
@@ -212,8 +268,8 @@ pub const Workspace = struct {
         }
 
         var probe = LayerPhaseSignatureProbe{ .layer_count = layers.len };
-        for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_index, layer_idx| {
-            const signature = layerPhaseSignature(layer.phase_coefficients, max_index);
+        for (layers, layer_phase_max_indices[0..layers.len], 0..) |*layer, max_index, layer_idx| {
+            const signature = layerPhaseSignature(layer.phase, max_index);
             const possible_templates = @min(max_index, fourier_max) + 1;
             probe.possible_fourier_layer_templates += possible_templates;
             if (self.previous_layer_phase_signature_valid[layer_idx]) {
@@ -231,10 +287,11 @@ pub const Workspace = struct {
     }
 };
 
-fn layerPhaseSignature(phase_coefficients: [common.phase_coefficient_count]f64, max_index: usize) u64 {
+fn layerPhaseSignature(phase: common.LayerPhase, max_index: usize) u64 {
     var hasher = std.hash.Wyhash.init(0x9e37_79b9_7f4a_7c15);
     hasher.update(std.mem.asBytes(&max_index));
-    for (phase_coefficients[0 .. max_index + 1]) |coefficient| {
+    for (0..max_index + 1) |index| {
+        const coefficient = phase.coefficient(index);
         const bits = @as(u64, @bitCast(coefficient));
         hasher.update(std.mem.asBytes(&bits));
     }

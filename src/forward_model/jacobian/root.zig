@@ -10,6 +10,10 @@ pub const Vector = [state_count]f64;
 pub const StateMask = u8;
 pub const all_states_mask: StateMask = (1 << state_count) - 1;
 
+// layout(64-bit):
+//   size: 0 B, align: 1 B
+//   field storage: 0 B; padding: 0 B (0 bits)
+//   footprint: no runtime field storage; namespace/type declarations only
 pub const StateNames = struct {
     pub const surface_albedo = "surface_albedo";
     pub const aerosol_optical_depth = "aerosol_optical_depth";
@@ -44,10 +48,20 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
     vector[stateIndex(state)] = value;
 }
 
+// hot path:
+//   when: integrated forward samples accumulate active Jacobian vectors
+//   work: adds a scaled fixed-size derivative vector into an accumulator
+//   data: jacobian vector cells, accumulator cells, scalar factor
+//   follow: spectral_eval.integrateForwardAtNominal and reflectance assembly
 pub fn addScaled(accumulator: *Vector, vector: Vector, factor: f64) void {
     for (0..state_count) |index| accumulator[index] += factor * vector[index];
 }
 
+// hot path:
+//   when: simulation summaries compute mean Jacobian vectors
+//   work: multiplies the fixed-size derivative vector by one scalar
+//   data: jacobian vector cells and scalar factor
+//   follow: simulate.processJacobianSamples summary return path
 pub fn scale(vector: Vector, factor: f64) Vector {
     var result = vector;
     for (&result) |*value| value.* *= factor;

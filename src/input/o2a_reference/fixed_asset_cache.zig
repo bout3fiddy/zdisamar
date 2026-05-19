@@ -12,6 +12,13 @@ const ClimatologyProfile = ReferenceData.ClimatologyProfile;
 const CollisionInducedAbsorptionTable = ReferenceData.CollisionInducedAbsorptionTable;
 const AirmassFactorLut = ReferenceData.AirmassFactorLut;
 
+// layout(64-bit):
+//   size: 216 B, align: 8 B
+//   field storage: key=8 B, line_list=208 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 216 B (0.211 KiB); total = per instance * live instance count
 const LineListEntry = struct {
     key: u64,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -22,6 +29,12 @@ const LineListEntry = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: key=8 B, profile=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ProfileEntry = struct {
     key: u64,
     profile: ClimatologyProfile,
@@ -32,6 +45,12 @@ const ProfileEntry = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: key=8 B, table=24 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const CiaEntry = struct {
     key: u64,
     table: CollisionInducedAbsorptionTable,
@@ -42,6 +61,12 @@ const CiaEntry = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: key=8 B, lut=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const AirmassLutEntry = struct {
     key: u64,
     lut: AirmassFactorLut,
@@ -52,6 +77,13 @@ const AirmassLutEntry = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: key=8 B, samples=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: samples carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 const ReferenceEntry = struct {
     key: u64,
     samples: []ReferenceSample,
@@ -62,6 +94,13 @@ const ReferenceEntry = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: key=8 B, samples=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: samples carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 const SolarEntry = struct {
     key: u64,
     samples: []SolarSpectrumSample,

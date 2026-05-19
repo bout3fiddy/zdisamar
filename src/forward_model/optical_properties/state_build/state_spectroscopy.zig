@@ -8,20 +8,25 @@ const Types = @import("state_types.zig");
 
 const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
-const max_spectroscopy_profile_nodes: usize = 256;
+const max_spectroscopy_profile_nodes: usize = 64;
 
+// hot path:
+//   when: a high-resolution wavelength needs profile-node O2 spectroscopy reuse
+//   work: evaluates sigma at profile nodes and builds spline second derivatives for altitude sampling
+//   data: spectroscopy profile arrays, prepared weak/strong states, total sigma cache
+//   follow: spectroscopyEvaluationAtAltitudeWithCache and support-row carrier evaluation
+// layout(64-bit):
+//   size: 1032 B, align: 8 B
+//   field storage: node_count=8 B, total_values=512 B, total_second=512 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: total_values:[64]f64=512 B, total_second:[64]f64=512 B
+//   cache span: 17 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1032 B (1.008 KiB); total = per instance * live instance count
+//   capacity: prepared states reject enabled profile spectroscopy with more than 64 profile nodes
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
-    altitudes_km: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    weak_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    strong_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    line_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    line_mixing_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    weak_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    strong_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    line_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
-    line_mixing_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
 
     pub fn init(
@@ -45,24 +50,15 @@ pub const ProfileNodeSpectroscopyCache = struct {
 
         var cache = ProfileNodeSpectroscopyCache{
             .node_count = node_count,
-            .altitudes_km = undefined,
-            .weak_values = undefined,
-            .strong_values = undefined,
-            .line_values = undefined,
-            .line_mixing_values = undefined,
             .total_values = undefined,
-            .weak_second = undefined,
-            .strong_second = undefined,
-            .line_second = undefined,
-            .line_mixing_second = undefined,
             .total_second = undefined,
         };
+        var wavelength_anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
         const wavelength_window = if (prepared_states != null)
-            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
+            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm, &wavelength_anchor_storage)
         else
             null;
         for (0..node_count) |index| {
-            cache.altitudes_km[index] = self.spectroscopy_profile_altitudes_km[index];
             const evaluation = if (prepared_states) |states|
                 LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                     line_list,
@@ -80,94 +76,60 @@ pub const ProfileNodeSpectroscopyCache = struct {
                     self.spectroscopy_profile_temperatures_k[index],
                     self.spectroscopy_profile_pressures_hpa[index],
                 );
-            cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
-            cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
-            cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
-            cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
             cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
         }
-        const altitudes = cache.altitudes_km[0..node_count];
-        spline.endpointSecantSecondDerivatives5(
-            altitudes,
-            cache.weak_values[0..node_count],
-            cache.strong_values[0..node_count],
-            cache.line_values[0..node_count],
-            cache.line_mixing_values[0..node_count],
+        spline.endpointSecantSecondDerivatives(
+            self.spectroscopy_profile_altitudes_km,
             cache.total_values[0..node_count],
-            cache.weak_second[0..node_count],
-            cache.strong_second[0..node_count],
-            cache.line_second[0..node_count],
-            cache.line_mixing_second[0..node_count],
             cache.total_second[0..node_count],
         ) catch return .{};
         return cache;
     }
 
-    pub fn evaluationAtAltitude(
+    // hot path:
+    //   when: support-row carrier evaluation samples cached profile spectroscopy at altitude
+    //   work: brackets altitude and samples cached endpoint-secant spline sigma
+    //   data: altitude grid, cached total sigma values, cached second derivatives
+    //   follow: spectroscopyEvaluationAtAltitudeWithCache and carrier_eval support-row fills
+    pub fn totalSigmaAtAltitude(
         self: *const ProfileNodeSpectroscopyCache,
+        altitudes_km: []const f64,
         altitude_km: f64,
-    ) ?ReferenceData.SpectroscopyEvaluation {
-        if (self.node_count < 3) return null;
-        if (altitude_km < self.altitudes_km[0] or
-            altitude_km > self.altitudes_km[self.node_count - 1]) return null;
+    ) ?f64 {
+        if (self.node_count < 3 or altitudes_km.len != self.node_count) return null;
+        if (altitude_km < altitudes_km[0] or
+            altitude_km > altitudes_km[self.node_count - 1]) return null;
 
-        const altitudes = self.altitudes_km[0..self.node_count];
         var klo: usize = 0;
         var khi: usize = self.node_count - 1;
         while (khi - klo > 1) {
             const mid = (khi + klo) / 2;
-            if (altitudes[mid] > altitude_km) {
+            if (altitudes_km[mid] > altitude_km) {
                 khi = mid;
             } else {
                 klo = mid;
             }
         }
-        return .{
-            .weak_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.weak_values[0..self.node_count],
-                self.weak_second[0..self.node_count],
+        return @max(
+            sampleCachedEndpointSecant(
+                altitudes_km,
+                self.total_values[0..self.node_count],
+                self.total_second[0..self.node_count],
                 altitude_km,
                 klo,
                 khi,
             ),
-            .strong_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.strong_values[0..self.node_count],
-                self.strong_second[0..self.node_count],
-                altitude_km,
-                klo,
-                khi,
-            ),
-            .line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.line_values[0..self.node_count],
-                self.line_second[0..self.node_count],
-                altitude_km,
-                klo,
-                khi,
-            ),
-            .line_mixing_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
-                altitudes,
-                self.line_mixing_values[0..self.node_count],
-                self.line_mixing_second[0..self.node_count],
-                altitude_km,
-                klo,
-                khi,
-            ),
-            .total_sigma_cm2_per_molecule = @max(
-                sampleCachedEndpointSecant(
-                    altitudes,
-                    self.total_values[0..self.node_count],
-                    self.total_second[0..self.node_count],
-                    altitude_km,
-                    klo,
-                    khi,
-                ),
-                0.0,
-            ),
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-        };
+            0.0,
+        );
+    }
+
+    pub fn evaluationAtAltitude(
+        self: *const ProfileNodeSpectroscopyCache,
+        altitudes_km: []const f64,
+        altitude_km: f64,
+    ) ?ReferenceData.SpectroscopyEvaluation {
+        const sigma = self.totalSigmaAtAltitude(altitudes_km, altitude_km) orelse return null;
+        return spectroscopyEvaluationWithTotalSigma(sigma);
     }
 };
 
@@ -342,6 +304,11 @@ pub fn spectroscopyEvaluationAtAltitude(
     );
 }
 
+// hot path:
+//   when: support-row carrier evaluation needs spectroscopy at altitude
+//   work: resolves cached profile sigma or falls back to profile/direct spectroscopy evaluation
+//   data: wavelength, temperature, pressure, altitude, prepared strong-line state, profile cache
+//   follow: ProfileNodeSpectroscopyCache.evaluationAtAltitude and spectroscopyEvaluationAtWavelength
 pub fn spectroscopyEvaluationAtAltitudeWithCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -351,7 +318,7 @@ pub fn spectroscopyEvaluationAtAltitudeWithCache(
     prepared_state: ?*const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const ProfileNodeSpectroscopyCache,
 ) ReferenceData.SpectroscopyEvaluation {
-    if (profile_cache) |cache| if (cache.evaluationAtAltitude(altitude_km)) |evaluation| {
+    if (profile_cache) |cache| if (cache.evaluationAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km)) |evaluation| {
         return evaluation;
     };
     if (profileNodeSpectroscopyEvaluationAtAltitude(self, wavelength_nm, altitude_km)) |evaluation| return evaluation;
@@ -377,6 +344,11 @@ pub fn spectroscopySigmaAtAltitude(
     ).total_sigma_cm2_per_molecule;
 }
 
+// hot path:
+//   when: pseudo-spherical or diagnostic paths need only sigma at altitude
+//   work: samples cached profile sigma or delegates to full altitude spectroscopy evaluation
+//   data: wavelength, thermodynamic state, altitude, prepared strong-line state, profile cache
+//   follow: ProfileNodeSpectroscopyCache.totalSigmaAtAltitude and spectroscopyEvaluationAtAltitudeWithCache
 pub fn spectroscopySigmaAtAltitudeWithCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -386,6 +358,9 @@ pub fn spectroscopySigmaAtAltitudeWithCache(
     prepared_state: ?*const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const ProfileNodeSpectroscopyCache,
 ) f64 {
+    if (profile_cache) |cache| if (cache.totalSigmaAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km)) |sigma| {
+        return sigma;
+    };
     return spectroscopyEvaluationAtAltitudeWithCache(
         self,
         wavelength_nm,
@@ -425,7 +400,7 @@ fn profileNodeSpectroscopyEvaluationAtAltitude(
     altitude_km: f64,
 ) ?ReferenceData.SpectroscopyEvaluation {
     var cache = ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return cache.evaluationAtAltitude(altitude_km);
+    return cache.evaluationAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km);
 }
 
 fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
@@ -437,6 +412,12 @@ fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
         .total_sigma_cm2_per_molecule = 0.0,
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
+}
+
+fn spectroscopyEvaluationWithTotalSigma(total_sigma_cm2_per_molecule: f64) ReferenceData.SpectroscopyEvaluation {
+    var evaluation = zeroSpectroscopyEvaluation();
+    evaluation.total_sigma_cm2_per_molecule = total_sigma_cm2_per_molecule;
+    return evaluation;
 }
 
 pub fn weightedSpectroscopyEvaluationAtWavelength(

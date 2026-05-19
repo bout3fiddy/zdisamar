@@ -2,6 +2,13 @@ const std = @import("std");
 const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: wavelengths_nm=16 B, weights=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelengths_nm, weights carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const OperationalReferenceGrid = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     weights: []const f64 = &[_]f64{},
@@ -62,6 +69,12 @@ pub const OperationalReferenceGrid = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 6 B, align: 2 B
+//   field storage: points_per_fwhm=2 B, strong_line_min_divisions=2 B, strong_line_max_divisions=2 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count
 pub const AdaptiveReferenceGrid = struct {
     points_per_fwhm: u16 = 0,
     strong_line_min_divisions: u16 = 0,

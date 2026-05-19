@@ -3,21 +3,45 @@
 const std = @import("std");
 const Types = @import("types.zig");
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wr=8 B, wi=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const ComplexProbability = struct {
     wr: f64,
     wi: f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: real=8 B, imag=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const VoigtProfile = struct {
     real: f64,
     imag: f64,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: prefactor=8 B, cpf=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const WeakLineVoigtState = struct {
     prefactor: f64,
     cpf: ComplexProbability,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: evaluation_wavenumber_cm1=8 B, cutoff_grid_index=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const WeakLineWavelengthState = struct {
     evaluation_wavenumber_cm1: f64,
     cutoff_grid_index: ?usize,
@@ -36,16 +60,6 @@ pub fn clonePreparedStrongLineState(
     const half_width_cm1_at_t = try allocator.dupe(f64, state.half_width_cm1_at_t[0..state.line_count]);
     errdefer allocator.free(half_width_cm1_at_t);
     const line_mixing_coefficients = try allocator.dupe(f64, state.line_mixing_coefficients[0..state.line_count]);
-    errdefer allocator.free(line_mixing_coefficients);
-    const relaxation_weights = try allocator.alloc(f64, state.line_count * state.line_count);
-    errdefer allocator.free(relaxation_weights);
-
-    for (0..state.line_count) |row_index| {
-        for (0..state.line_count) |column_index| {
-            relaxation_weights[row_index * state.line_count + column_index] =
-                state.weightAt(row_index, column_index);
-        }
-    }
 
     return .{
         .line_count = state.line_count,
@@ -55,7 +69,6 @@ pub fn clonePreparedStrongLineState(
         .mod_sig_cm1 = mod_sig_cm1,
         .half_width_cm1_at_t = half_width_cm1_at_t,
         .line_mixing_coefficients = line_mixing_coefficients,
-        .relaxation_weights = relaxation_weights,
     };
 }
 
@@ -109,6 +122,11 @@ pub fn upperBoundLineIndex(lines: []const Types.SpectroscopyLine, wavelength_nm:
     return low;
 }
 
+// hot path:
+//   when: weak-line Voigt or strong-line line-mixing contribution evaluates CPF terms
+//   work: computes the complex probability function approximation
+//   data: x/y line-shape parameters and fixed approximation coefficients
+//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn complexProbabilityFunction(x: f64, y: f64) ComplexProbability {
     const t = [_]f64{ 0.314240376, 0.947788391, 1.59768264, 2.27950708, 3.02063703, 3.8897249 };
     const u = [_]f64{ 1.01172805, -0.75197147, 1.2557727e-2, 1.00220082e-2, -2.42068135e-4, 5.00848061e-7 };
@@ -176,6 +194,11 @@ pub fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight
         wavenumber_cm1;
 }
 
+// hot path:
+//   when: weak-line state is prepared for a thermodynamic profile node
+//   work: computes pressure/temperature-dependent Voigt state for one line
+//   data: line coefficients, temperature, pressure scale, partition-function ratio
+//   follow: prepareWeakLinePreparedLineState and prepared weak-line arrays
 pub fn prepareWeakLineVoigtState(
     wavelength_nm: f64,
     line: Types.SpectroscopyLine,
@@ -248,16 +271,35 @@ pub fn prepareWeakLineVoigtState(
     };
 }
 
+// hot path:
+//   when: weak-line prepared state is filled during absorber/profile setup
+//   work: stores compact line-shape and strength terms for repeated wavelength evaluation
+//   data: spectroscopy line, gas/isotope mass, thermodynamic state, prepared-line output
+//   follow: preparedWeakLineInsideVendorCutoff and weakLineSigmaPreparedWithStimulatedEmissionScale
 pub fn prepareWeakLinePreparedLineState(
     line: Types.SpectroscopyLine,
     temperature_k: f64,
     pressure_atm: f64,
     reference_temperature_k: f64,
 ) Types.WeakLinePreparedLineState {
-    const Strong = @import("strong_lines.zig");
-
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
+    return prepareWeakLinePreparedLineStateFromSafe(
+        line,
+        safe_temperature,
+        safe_pressure,
+        reference_temperature_k,
+    );
+}
+
+pub fn prepareWeakLinePreparedLineStateFromSafe(
+    line: Types.SpectroscopyLine,
+    safe_temperature: f64,
+    safe_pressure: f64,
+    reference_temperature_k: f64,
+) Types.WeakLinePreparedLineState {
+    const Strong = @import("strong_lines.zig");
+
     const center_wavenumber_cm1 = lineCenterWavenumberCm1(line);
     const temperature_ratio = reference_temperature_k / safe_temperature;
     const pressure_shift_cm1 = linePressureShiftCm1(line);
@@ -304,8 +346,6 @@ pub fn prepareWeakLinePreparedLineState(
             @sqrt(Types.hitran_pi) *
             safe_pressure *
             converted_strength,
-        .safe_temperature = safe_temperature,
-        .safe_pressure = safe_pressure,
     };
 }
 
@@ -407,6 +447,8 @@ pub fn weakLineContributionWithWavelengthState(
 pub fn weakLineContributionPrepared(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,
+    safe_temperature: f64,
+    safe_pressure: f64,
     runtime_controls: Types.SpectroscopyRuntimeControls,
 ) Types.SpectroscopyEvaluation {
     if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) {
@@ -424,12 +466,12 @@ pub fn weakLineContributionPrepared(
         prepared_line.line_shape_y,
     );
     const stimulated_emission_scale = wavelength_state.evaluation_wavenumber_cm1 *
-        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
+        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / safe_temperature));
     const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
-        prepared_line.safe_temperature *
+        safe_temperature *
         Types.hitran_boltzmann_constant_cm3_hpa_per_k /
-        prepared_line.safe_pressure /
+        safe_pressure /
         1013.25;
     const line_sigma = @max(prefactor * cpf.wr, 0.0);
     return .{
@@ -444,17 +486,30 @@ pub fn weakLineContributionPrepared(
 
 pub fn weakLinePreparedStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
-    prepared_line: Types.WeakLinePreparedLineState,
+    safe_temperature: f64,
 ) f64 {
     return wavelength_state.evaluation_wavenumber_cm1 *
-        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
+        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / safe_temperature));
 }
 
+pub fn weakLinePreparedThermodynamicScale(safe_temperature: f64, safe_pressure: f64) f64 {
+    return safe_temperature *
+        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
+        safe_pressure /
+        1013.25;
+}
+
+// hot path:
+//   when: each prepared weak line in the relevant window contributes to sigma
+//   work: evaluates cutoff, line-shape, and stimulated-emission-scaled sigma
+//   data: prepared weak-line state, wavelength state, thermodynamic scale
+//   follow: complexProbabilityFunction and relevant weak-line window ordering
 pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,
     runtime_controls: Types.SpectroscopyRuntimeControls,
     stimulated_emission_scale: f64,
+    thermodynamic_scale: f64,
 ) f64 {
     if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) return 0.0;
     const cpf = complexProbabilityFunction(
@@ -463,10 +518,7 @@ pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     );
     const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
-        prepared_line.safe_temperature *
-        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
-        prepared_line.safe_pressure /
-        1013.25;
+        thermodynamic_scale;
     return @max(prefactor * cpf.wr, 0.0);
 }
 

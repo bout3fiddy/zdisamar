@@ -7,6 +7,12 @@ pub const PhaseSupportKind = enum {
     mie_table,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: solar_zenith_deg=8 B, view_zenith_deg=8 B, relative_azimuth_deg=8 B, airmass_factor=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const AirmassFactorPoint = struct {
     solar_zenith_deg: f64,
     view_zenith_deg: f64,
@@ -14,6 +20,13 @@ pub const AirmassFactorPoint = struct {
     airmass_factor: f64,
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: wavelength_nm=8 B, extinction_scale=8 B, single_scatter_albedo=8 B, phase_coefficients=32 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: phase_coefficients:[4]f64=32 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 pub const MiePhasePoint = struct {
     wavelength_nm: f64,
     extinction_scale: f64,
@@ -21,6 +34,13 @@ pub const MiePhasePoint = struct {
     phase_coefficients: [4]f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const MiePhaseTable = struct {
     points: []MiePhasePoint,
 
@@ -29,6 +49,11 @@ pub const MiePhaseTable = struct {
         self.* = undefined;
     }
 
+    // hot path:
+    //   when: optical-state preparation samples aerosol/cloud Mie phase support at band midpoint
+    //   work: brackets wavelength and interpolates extinction, SSA, and compact phase coefficients
+    //   data: Mie phase point array, wavelength, coefficient output
+    //   follow: layer_accumulation midpoint Mie support and finalize particle SSA
     pub fn interpolate(self: MiePhaseTable, wavelength_nm: f64) MiePhasePoint {
         if (self.points.len == 0) {
             return .{
@@ -64,6 +89,13 @@ pub const MiePhaseTable = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const AirmassFactorLut = struct {
     points: []AirmassFactorPoint,
 
@@ -72,6 +104,11 @@ pub const AirmassFactorLut = struct {
         self.* = undefined;
     }
 
+    // hot path:
+    //   when: absorber preparation resolves the reference airmass factor for spectroscopy state
+    //   work: scans LUT points and returns the nearest angular support value
+    //   data: solar/view/relative azimuth angles and LUT point array
+    //   follow: absorbers.build profile state preparation
     pub fn nearest(self: AirmassFactorLut, solar_zenith_deg: f64, view_zenith_deg: f64, relative_azimuth_deg: f64) f64 {
         if (self.points.len == 0) return 1.0;
 
@@ -95,6 +132,11 @@ pub const AirmassFactorLut = struct {
     }
 };
 
+// hot path:
+//   when: reference support builds an airmass-like spectral profile from optical-depth proxies
+//   work: normalizes proxy samples, applies wavelength tilt, and restores requested mean
+//   data: wavelength array, optical-depth proxy array, output profile
+//   follow: callers that materialize reference-band support profiles
 pub fn spectralProfileFromOpticalDepth(
     allocator: Allocator,
     wavelengths_nm: []const f64,

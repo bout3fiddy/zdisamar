@@ -10,6 +10,12 @@ pub const Model = enum {
     spherical,
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: 33 B across 5 fields; largest: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
 pub const Geometry = struct {
     model: Model = .plane_parallel,
     // UNITS:

@@ -63,7 +63,7 @@ test "scalar Rayleigh phase coefficient follows vendor depolarization formula" {
 
 test "analytic HG phase coefficients follow vendor truncation budget" {
     const coefficients = hgPhaseCoefficients(0.7);
-    try std.testing.expectEqual(@as(usize, 39), maxPhaseCoefficientIndex(coefficients));
+    try std.testing.expectEqual(@as(usize, 39), maxPhaseCoefficientIndex(&coefficients));
     try std.testing.expectApproxEqAbs(
         @as(f64, 79.0 * std.math.pow(f64, 0.7, 39.0)),
         coefficients[39],

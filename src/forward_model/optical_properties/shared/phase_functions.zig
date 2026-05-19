@@ -13,6 +13,92 @@ pub fn zeroPhaseCoefficients() [phase_coefficient_count]f64 {
     return coefficients;
 }
 
+const default_phase_mixture_coefficients = zeroPhaseCoefficients();
+
+// Encoded phase-coefficient mixture for rows that are a gas/aerosol/cloud blend.
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: 40 B across 5 fields; largest: aerosol_weight=8 B, cloud_weight=8 B, rayleigh2_weight=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: aerosol_phase_coefficients and cloud_phase_coefficients point at shared prepared phase rows; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+pub const PhaseMixture = struct {
+    aerosol_weight: f64 = 0.0,
+    cloud_weight: f64 = 0.0,
+    rayleigh2_weight: f64 = 0.0,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64 = &default_phase_mixture_coefficients,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64 = &default_phase_mixture_coefficients,
+
+    pub fn fromUnitPhase(phase_coefficients: *const [phase_coefficient_count]f64) PhaseMixture {
+        return .{
+            .aerosol_weight = 1.0,
+            .aerosol_phase_coefficients = phase_coefficients,
+        };
+    }
+
+    pub fn fromScatteringMix(
+        rayleigh_coef2: f64,
+        gas_scattering: f64,
+        aerosol_scattering: f64,
+        cloud_scattering: f64,
+        aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+        cloud_phase_coefficients: *const [phase_coefficient_count]f64,
+    ) PhaseMixture {
+        const total_scattering = gas_scattering + aerosol_scattering + cloud_scattering;
+        if (total_scattering <= 0.0) {
+            return .{ .rayleigh2_weight = rayleigh_coef2 };
+        }
+        const inv_total = 1.0 / total_scattering;
+        const aerosol_weight = aerosol_scattering * inv_total;
+        const cloud_weight = cloud_scattering * inv_total;
+        const rayleigh2_weight = gas_scattering * inv_total * rayleigh_coef2;
+        return .{
+            .aerosol_weight = aerosol_weight,
+            .cloud_weight = cloud_weight,
+            .rayleigh2_weight = rayleigh2_weight,
+            .aerosol_phase_coefficients = aerosol_phase_coefficients,
+            .cloud_phase_coefficients = cloud_phase_coefficients,
+        };
+    }
+
+    pub fn coefficient(self: PhaseMixture, index: usize) f64 {
+        return weightedPhaseCoefficient(
+            self.aerosol_weight,
+            self.cloud_weight,
+            self.rayleigh2_weight,
+            self.aerosol_phase_coefficients,
+            self.cloud_phase_coefficients,
+            index,
+        );
+    }
+
+    pub fn eql(self: PhaseMixture, other: PhaseMixture) bool {
+        return self.aerosol_weight == other.aerosol_weight and
+            self.cloud_weight == other.cloud_weight and
+            self.rayleigh2_weight == other.rayleigh2_weight and
+            self.aerosol_phase_coefficients == other.aerosol_phase_coefficients and
+            self.cloud_phase_coefficients == other.cloud_phase_coefficients;
+    }
+
+    pub fn maxIndex(self: PhaseMixture) usize {
+        return maxWeightedPhaseCoefficientIndex(
+            self.aerosol_weight,
+            self.cloud_weight,
+            self.rayleigh2_weight,
+            self.aerosol_phase_coefficients,
+            self.cloud_phase_coefficients,
+        );
+    }
+
+    pub fn coefficients(self: PhaseMixture) [phase_coefficient_count]f64 {
+        var values: [phase_coefficient_count]f64 = undefined;
+        for (&values, 0..) |*value, index| value.* = self.coefficient(index);
+        return values;
+    }
+};
+
 pub fn phaseCoefficientsFromCompact(
     compact_coefficients: [compact_phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
@@ -24,13 +110,47 @@ pub fn phaseCoefficientsFromCompact(
     return coefficients;
 }
 
-pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64) usize {
+pub fn maxPhaseCoefficientIndex(phase_coefficients: *const [phase_coefficient_count]f64) usize {
     var idx = phase_coefficient_count;
     while (idx > 1) {
         idx -= 1;
         if (@abs(phase_coefficients[idx]) > 1.0e-12) return idx;
     }
     return 0;
+}
+
+pub fn weightedPhaseCoefficient(
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
+    index: usize,
+) f64 {
+    if (index == 0) return 1.0;
+    var coefficient =
+        aerosol_weight * aerosol_phase_coefficients[index] +
+        cloud_weight * cloud_phase_coefficients[index];
+    if (index == 2) coefficient += rayleigh2_weight;
+    return coefficient;
+}
+
+pub fn maxWeightedPhaseCoefficientIndex(
+    aerosol_weight: f64,
+    cloud_weight: f64,
+    rayleigh2_weight: f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
+) usize {
+    var max_index: usize = 0;
+    if (@abs(rayleigh2_weight) > 1.0e-12) max_index = 2;
+    if (@abs(aerosol_weight) > 1.0e-12) {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(aerosol_phase_coefficients));
+    }
+    if (@abs(cloud_weight) > 1.0e-12) {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(cloud_phase_coefficients));
+    }
+    return max_index;
 }
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
@@ -75,6 +195,11 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
     return hgPhaseCoefficientsWithThreshold(asymmetry_factor, vendor_hg_truncation_threshold);
 }
 
+// hot path:
+//   when: optical-state preparation builds particle phase coefficients
+//   work: fills Henyey-Greenstein coefficient tail until the truncation threshold
+//   data: asymmetry factor, truncation threshold, coefficient array
+//   follow: combinePhaseCoefficientsWithRayleigh2 and LABOS phase-basis builders
 pub fn hgPhaseCoefficientsWithThreshold(
     asymmetry_factor: f64,
     truncation_threshold: f64,
@@ -101,8 +226,8 @@ pub fn combinePhaseCoefficients(
     gas_scattering_optical_depth: f64,
     aerosol_scattering_optical_depth: f64,
     cloud_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: [phase_coefficient_count]f64,
-    cloud_phase_coefficients: [phase_coefficient_count]f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
     return combinePhaseCoefficientsWithRayleigh2(
         rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
@@ -114,39 +239,52 @@ pub fn combinePhaseCoefficients(
     );
 }
 
+// hot path:
+//   when: layer/sublayer carrier evaluation combines gas, aerosol, and cloud scattering
+//   work: blends Rayleigh, aerosol, and cloud phase coefficients by scattering optical depth
+//   data: scattering optical depths, Rayleigh coefficient, particle coefficient arrays
+//   follow: layer_accumulation phase writes and LABOS phase matrix construction
 pub fn combinePhaseCoefficientsWithRayleigh2(
     rayleigh_coef2: f64,
     gas_scattering_optical_depth: f64,
     aerosol_scattering_optical_depth: f64,
     cloud_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: [phase_coefficient_count]f64,
-    cloud_phase_coefficients: [phase_coefficient_count]f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
+    if (aerosol_scattering_optical_depth == 0.0 and cloud_scattering_optical_depth == 0.0) {
+        return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
+    }
 
     var combined: [phase_coefficient_count]f64 = undefined;
-    for (0..phase_coefficient_count) |index| {
-        const gas_phase_coefficient: f64 = if (index == 0)
-            1.0
-        else if (index == 2)
-            rayleigh_coef2
-        else
-            0.0;
-        var numerator = gas_scattering_optical_depth * gas_phase_coefficient;
-        if (aerosol_scattering_optical_depth != 0.0) {
-            numerator += aerosol_scattering_optical_depth * aerosol_phase_coefficients[index];
+    const inv_total = 1.0 / total_scattering;
+    const gas_weight = gas_scattering_optical_depth * inv_total;
+    const aerosol_weight = aerosol_scattering_optical_depth * inv_total;
+    const cloud_weight = cloud_scattering_optical_depth * inv_total;
+
+    if (cloud_scattering_optical_depth == 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] = aerosol_weight * aerosol_phase_coefficients[index];
         }
-        if (cloud_scattering_optical_depth != 0.0) {
-            numerator += cloud_scattering_optical_depth * cloud_phase_coefficients[index];
+    } else if (aerosol_scattering_optical_depth == 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] = cloud_weight * cloud_phase_coefficients[index];
         }
-        combined[index] = numerator / total_scattering;
+    } else {
+        for (0..phase_coefficient_count) |index| {
+            combined[index] =
+                aerosol_weight * aerosol_phase_coefficients[index] +
+                cloud_weight * cloud_phase_coefficients[index];
+        }
     }
     combined[0] = 1.0;
+    combined[2] += gas_weight * rayleigh_coef2;
     return combined;
 }
 
-pub fn backscatterFraction(phase_coefficients: [phase_coefficient_count]f64) f64 {
+pub fn backscatterFraction(phase_coefficients: *const [phase_coefficient_count]f64) f64 {
     return backscatterFractionFromAsymmetry(phase_coefficients[1]);
 }
 

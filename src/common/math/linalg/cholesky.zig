@@ -18,6 +18,11 @@ pub fn factor2x2(matrix: [2][2]f64) Error![2][2]f64 {
     };
 }
 
+// hot path:
+//   when: small dense polynomial fits or covariance-style helpers factor normal matrices
+//   work: performs in-place lower-triangular Cholesky factorization
+//   data: row-major dense matrix slice and dimension
+//   follow: cross_sections.differentialVector and dense.index access order
 pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
 
@@ -45,6 +50,11 @@ pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     }
 }
 
+// hot path:
+//   when: a previously factored small dense system solves polynomial coefficients
+//   work: runs forward and back substitution against a Cholesky factor
+//   data: factor matrix, rhs vector, output coefficient vector
+//   follow: cross_sections.differentialVector coefficient solve
 pub fn solveWithFactor(
     factor: []const f64,
     dimension: usize,

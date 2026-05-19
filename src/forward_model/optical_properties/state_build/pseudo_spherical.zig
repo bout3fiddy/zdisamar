@@ -11,6 +11,13 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: support_sublayers=16 B, strong_line_states=16 B, lower_altitude_km=8 B, upper_altitude_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: support_sublayers carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 const PseudoSphericalInterval = struct {
     support_sublayers: []const State.PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,
@@ -22,7 +29,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     self: *const PreparedOpticalState,
     scene: *const Scene,
     layer_inputs: []const transport_common.LayerInput,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
@@ -50,9 +56,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
                 .thickness_km = layer_geometry.thickness_km,
                 .optical_depth = layer_input.optical_depth,
             };
-            if (sample_index < attenuation_layers.len) {
-                attenuation_layers[sample_index] = .{ .optical_depth = layer_input.optical_depth };
-            }
             sample_index += 1;
             continue;
         }
@@ -62,7 +65,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
             .thickness_km = 0.0,
             .optical_depth = 0.0,
         };
-        if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
         sample_index += 1;
 
         attenuation_samples[sample_index] = .{
@@ -70,9 +72,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
             .thickness_km = layer_geometry.thickness_km,
             .optical_depth = layer_input.optical_depth,
         };
-        if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index] = .{ .optical_depth = layer_input.optical_depth };
-        }
         sample_index += 1;
 
         for (2..subgrid_divisions) |_| {
@@ -81,7 +80,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
                 .thickness_km = 0.0,
                 .optical_depth = 0.0,
             };
-            if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
             sample_index += 1;
         }
     }
@@ -95,7 +93,6 @@ pub fn fillPseudoSphericalGridAtWavelength(
     scene: *const Scene,
     wavelength_nm: f64,
     solver_layer_count: usize,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
@@ -106,7 +103,6 @@ pub fn fillPseudoSphericalGridAtWavelength(
         scene,
         wavelength_nm,
         solver_layer_count,
-        attenuation_layers,
         attenuation_samples,
         level_sample_starts,
         level_altitudes_km,
@@ -114,12 +110,16 @@ pub fn fillPseudoSphericalGridAtWavelength(
     );
 }
 
+// hot path:
+//   when: pseudo-spherical attenuation grids are built without a wavelength carrier cache
+//   work: expands solver layers into altitude/attenuation samples over support rows or subgrid divisions
+//   data: prepared sublayers, profile spectroscopy cache, attenuation sample arrays
+//   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithSpectroscopyCache
 pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
     wavelength_nm: f64,
     solver_layer_count: usize,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
@@ -160,7 +160,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                     wavelength_nm,
                     support.sublayers,
                     support.strong_line_states,
-                    attenuation_layers,
                     attenuation_samples,
                     sample_index,
                     profile_cache,
@@ -237,9 +236,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                 .thickness_km = altitude_span_km,
                 .optical_depth = optical_depth,
             };
-            if (sample_index < attenuation_layers.len) {
-                attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
-            }
             sample_index += 1;
             continue;
         }
@@ -249,9 +245,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             .thickness_km = 0.0,
             .optical_depth = 0.0,
         };
-        if (sample_index < attenuation_layers.len) {
-            attenuation_layers[sample_index] = .{};
-        }
         sample_index += 1;
 
         if (altitude_span_km <= 0.0) {
@@ -261,9 +254,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                     .thickness_km = 0.0,
                     .optical_depth = 0.0,
                 };
-                if (sample_index < attenuation_layers.len) {
-                    attenuation_layers[sample_index] = .{};
-                }
                 sample_index += 1;
             }
             continue;
@@ -287,9 +277,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                 .thickness_km = weight_km,
                 .optical_depth = optical_depth,
             };
-            if (sample_index < attenuation_layers.len) {
-                attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
-            }
             sample_index += 1;
         }
     }
@@ -298,12 +285,16 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     return true;
 }
 
+// hot path:
+//   when: pseudo-spherical attenuation grids are built for a cached wavelength solve
+//   work: expands shared RTM support rows into altitude/attenuation samples through WavelengthCarrierCache
+//   data: shared geometry, support sublayers, carrier cache, attenuation sample arrays
+//   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache
 pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
     wavelength_nm: f64,
     solver_layer_count: usize,
-    attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
@@ -328,11 +319,10 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
             scene,
             wavelength_nm,
             solver_layer_count,
-            attenuation_layers,
             attenuation_samples,
             level_sample_starts,
             level_altitudes_km,
-            &wavelength_cache.profile_cache,
+            wavelength_cache.profile_cache,
         );
     }
 
@@ -357,7 +347,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
             wavelength_nm,
             support.sublayers,
             support.strong_line_states,
-            attenuation_layers,
             attenuation_samples,
             sample_index,
             wavelength_cache,

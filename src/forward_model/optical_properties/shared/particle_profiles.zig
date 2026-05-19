@@ -3,6 +3,14 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 128 B, align: 8 B
+//   field storage: 128 B across 8 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_interval_indices_1based=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_interval_indices_1based, sublayer_top_altitudes_km, sublayer_bottom_altitudes_km, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
 pub const PreparedVerticalGrid = struct {
     layer_top_altitudes_km: []const f64,
     layer_bottom_altitudes_km: []const f64,
@@ -28,6 +36,11 @@ pub fn scaleOpticalDepth(
     return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
+// hot path:
+//   when: optical-state preparation distributes aerosol optical depth over sublayers
+//   work: chooses placement semantics and builds per-sublayer aerosol weights
+//   data: scene aerosol placement, prepared vertical grid, output weight array
+//   follow: finite-layer, interval-matched, and Gaussian distribution builders
 pub fn buildAerosolSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
@@ -66,6 +79,11 @@ pub fn buildAerosolSublayerDistribution(
     );
 }
 
+// hot path:
+//   when: optical-state preparation distributes cloud optical depth over sublayers
+//   work: chooses placement semantics and builds per-sublayer cloud weights
+//   data: scene cloud placement, prepared vertical grid, output weight array
+//   follow: finite-layer and interval-matched distribution builders
 pub fn buildCloudSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
@@ -123,6 +141,11 @@ pub fn buildPlacementBoundDistribution(
     );
 }
 
+// hot path:
+//   when: explicit interval placement distributes particle optical depth
+//   work: accumulates support-weighted sublayers for one interval and normalizes optical depth
+//   data: sublayer interval indexes, support weights, output distribution
+//   follow: layer_accumulation particle optical-depth reads
 pub fn buildIntervalMatchedDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
@@ -156,6 +179,11 @@ pub fn buildIntervalMatchedDistribution(
     return weights;
 }
 
+// hot path:
+//   when: finite altitude placement distributes aerosol or cloud optical depth
+//   work: computes vertical overlap weights for every sublayer and normalizes optical depth
+//   data: sublayer top/bottom altitudes, support weights, placement bounds, output weights
+//   follow: layer_accumulation particle distribution use
 pub fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
@@ -215,6 +243,11 @@ pub fn buildFiniteLayerSublayerDistribution(
     return weights;
 }
 
+// hot path:
+//   when: Gaussian aerosol placement distributes optical depth over sublayers
+//   work: computes Gaussian altitude weights and normalizes optical depth
+//   data: sublayer mid-altitudes, support weights, center/width parameters, output weights
+//   follow: layer_accumulation particle distribution use
 pub fn buildGaussianSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,

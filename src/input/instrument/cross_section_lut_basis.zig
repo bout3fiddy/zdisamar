@@ -1,3 +1,8 @@
+// hot path:
+//   when: each operational cross-section LUT evaluation builds pressure/temperature basis values
+//   work: fills Legendre recurrence values for one scaled coordinate
+//   data: basis output slice and scaled coordinate
+//   follow: cross_section_lut_eval.evaluateAtIndex
 pub fn fillLegendreValues(values: []f64, scaled_coordinate: f64) void {
     if (values.len == 0) return;
     values[0] = 1.0;
@@ -13,6 +18,11 @@ pub fn fillLegendreValues(values: []f64, scaled_coordinate: f64) void {
     }
 }
 
+// hot path:
+//   when: operational cross-section LUT evaluation needs dSigma/dT
+//   work: fills derivative basis values for the temperature coordinate
+//   data: derivative output slice, Legendre values, scaled coordinate, temperature bounds
+//   follow: cross_section_lut_eval.evaluate derivative bracket samples
 pub fn fillLegendreTemperatureDerivative(
     derivative_values: []f64,
     legendre_values: []const f64,

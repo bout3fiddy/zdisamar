@@ -1,6 +1,5 @@
 """Optimal-estimation benchmark phases."""
 
-import time
 from typing import Any
 
 from zdisamar import rtm
@@ -13,6 +12,7 @@ from . import cases, config, residuals
 from .db import BenchmarkDb
 from .progress import Progress
 from .stats import abs_stats, signed_stats, timing_stats
+from .timing import combine, elapsed_since, timing_start
 
 
 def run(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
@@ -164,11 +164,11 @@ def run_once(
     state_vector: Any,
 ) -> dict[str, Any]:
 
-    setup_start = time.perf_counter()
+    setup_start = timing_start()
 
     with rtm.SessionCache(case) as cache:
-        setup_s = time.perf_counter() - setup_start
-        retrieval_start = time.perf_counter()
+        setup_timing = elapsed_since(setup_start)
+        retrieval_start = timing_start()
         result = band_retrieval.disamar_oe(
             case=case,
             measurement=measurement,
@@ -176,23 +176,29 @@ def run_once(
             controls=setup.retrieval_controls(),
             cache=cache,
         )
-        retrieval_s = time.perf_counter() - retrieval_start
+        retrieval_timing = elapsed_since(retrieval_start)
 
     if not result.converged:
         raise RuntimeError(f"retrieval did not converge: {mode} {case_id}")
 
     rtm_and_jacobian_s = sum(timing.rtm_and_jacobian_s for timing in result.timing)
-    first_use_total_s = setup_s + retrieval_s
+    first_use_total = combine([setup_timing, retrieval_timing])
     db.sample(
         run_id,
         phase="retrieval",
         mode=mode,
         case_id=case_id,
         repeat=repeat,
-        elapsed_s=first_use_total_s,
+        elapsed_s=first_use_total.wall_s,
         payload={
-            "setup_s": setup_s,
-            "retrieval_s": retrieval_s,
+            "setup_s": setup_timing.wall_s,
+            "setup_process_cpu_s": setup_timing.process_cpu_s,
+            "setup_average_active_cores": setup_timing.average_active_cores,
+            "retrieval_s": retrieval_timing.wall_s,
+            "retrieval_process_cpu_s": retrieval_timing.process_cpu_s,
+            "retrieval_average_active_cores": retrieval_timing.average_active_cores,
+            "first_use_total_process_cpu_s": first_use_total.process_cpu_s,
+            "first_use_total_average_active_cores": first_use_total.average_active_cores,
             "rtm_and_jacobian_s": rtm_and_jacobian_s,
         },
     )
@@ -200,15 +206,21 @@ def run_once(
         phase,
         (
             f"{mode} case {case_id} repeat {repeat} "
-            f"total {first_use_total_s:.3f}s retrieval {retrieval_s:.3f}s"
+            f"total {first_use_total.wall_s:.3f}s retrieval {retrieval_timing.wall_s:.3f}s"
         ),
     )
 
     return {
         "result": result,
-        "setup_s": setup_s,
-        "retrieval_s": retrieval_s,
-        "first_use_total_s": first_use_total_s,
+        "setup_s": setup_timing.wall_s,
+        "setup_process_cpu_s": setup_timing.process_cpu_s,
+        "setup_average_active_cores": setup_timing.average_active_cores,
+        "retrieval_s": retrieval_timing.wall_s,
+        "retrieval_process_cpu_s": retrieval_timing.process_cpu_s,
+        "retrieval_average_active_cores": retrieval_timing.average_active_cores,
+        "first_use_total_s": first_use_total.wall_s,
+        "first_use_total_process_cpu_s": first_use_total.process_cpu_s,
+        "first_use_total_average_active_cores": first_use_total.average_active_cores,
         "rtm_and_jacobian_s": rtm_and_jacobian_s,
     }
 
@@ -230,6 +242,18 @@ def single_summary(
             "first_use_total_s": timing_stats(run["first_use_total_s"] for run in runs),
             "rtm_and_jacobian_s": timing_stats(run["rtm_and_jacobian_s"] for run in runs),
         },
+        "process_cpu_s": {
+            "setup_s": timing_stats(run["setup_process_cpu_s"] for run in runs),
+            "retrieval_s": timing_stats(run["retrieval_process_cpu_s"] for run in runs),
+            "first_use_total_s": timing_stats(run["first_use_total_process_cpu_s"] for run in runs),
+        },
+        "average_active_cores": {
+            "setup": timing_stats(run["setup_average_active_cores"] for run in runs),
+            "retrieval": timing_stats(run["retrieval_average_active_cores"] for run in runs),
+            "first_use_total": timing_stats(
+                run["first_use_total_average_active_cores"] for run in runs
+            ),
+        },
         "residuals": result_residuals,
     }
 
@@ -247,6 +271,17 @@ def sweep_summary(label: str, mode: str, rows: list[dict[str, Any]]) -> dict[str
             "first_use_total_s": timing_stats(row["first_use_total_s"] for row in rows),
             "retrieval_s": timing_stats(row["retrieval_s"] for row in rows),
             "rtm_and_jacobian_s": timing_stats(row["rtm_and_jacobian_s"] for row in rows),
+        },
+        "process_cpu_s": {
+            "total_process_cpu_s": sum(row["first_use_total_process_cpu_s"] for row in rows),
+            "first_use_total_s": timing_stats(row["first_use_total_process_cpu_s"] for row in rows),
+            "retrieval_s": timing_stats(row["retrieval_process_cpu_s"] for row in rows),
+        },
+        "average_active_cores": {
+            "first_use_total": timing_stats(
+                row["first_use_total_average_active_cores"] for row in rows
+            ),
+            "retrieval": timing_stats(row["retrieval_average_active_cores"] for row in rows),
         },
         "residuals": {
             "truth_aerosol_optical_depth_abs_error": abs_stats(
@@ -277,8 +312,13 @@ def sweep_row(index: int, truth: dict[str, float], run: dict[str, Any]) -> dict[
         "case": index,
         "converged": bool(result.converged),
         "setup_s": run["setup_s"],
+        "setup_process_cpu_s": run["setup_process_cpu_s"],
         "retrieval_s": run["retrieval_s"],
+        "retrieval_process_cpu_s": run["retrieval_process_cpu_s"],
+        "retrieval_average_active_cores": run["retrieval_average_active_cores"],
         "first_use_total_s": run["first_use_total_s"],
+        "first_use_total_process_cpu_s": run["first_use_total_process_cpu_s"],
+        "first_use_total_average_active_cores": run["first_use_total_average_active_cores"],
         "rtm_and_jacobian_s": run["rtm_and_jacobian_s"],
         "retrieved_aerosol_optical_depth": retrieved_aod,
         "retrieved_aerosol_mid_pressure_hpa": retrieved_mid_pressure,

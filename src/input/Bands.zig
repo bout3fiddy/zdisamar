@@ -3,6 +3,12 @@ const Allocator = std.mem.Allocator;
 const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: start_nm=8 B, end_nm=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const SpectralWindow = struct {
     start_nm: f64 = 0.0,
     end_nm: f64 = 0.0,
@@ -15,6 +21,13 @@ pub const SpectralWindow = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 56 B across 5 fields; largest: id=16 B, exclude=16 B, start_nm=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: id, exclude carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
 pub const SpectralBand = struct {
     id: []const u8 = "",
     // UNITS:
@@ -63,6 +76,13 @@ pub const SpectralBand = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: items=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: items carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const SpectralBandSet = struct {
     items: []const SpectralBand = &[_]SpectralBand{},
 

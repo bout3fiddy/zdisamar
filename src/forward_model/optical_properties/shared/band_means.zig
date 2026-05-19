@@ -5,11 +5,22 @@ const LineListEval = @import("../../../input/reference/spectroscopy/line_list_ev
 const OperationalReferenceGrid = @import("../../../input/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: line_mean_cross_section_cm2_per_molecule=8 B, line_mixing_mean_cross_section_cm2_per_molecule=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const LineBandMeans = struct {
     line_mean_cross_section_cm2_per_molecule: f64 = 0.0,
     line_mixing_mean_cross_section_cm2_per_molecule: f64 = 0.0,
 };
 
+// hot path:
+//   when: absorber preparation computes band-mean spectroscopy support values
+//   work: scans active line absorbers and accumulates weighted band means
+//   data: line absorber arrays, wavelength windows, weights, output means
+//   follow: prepared absorber state and band-mean consumers in layer accumulation
 pub fn computeBandLineMeans(
     allocator: std.mem.Allocator,
     scene: *const Scene,
@@ -41,7 +52,8 @@ pub fn computeBandLineMeans(
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
         const evaluation = if (prepared_state) |*state| blk: {
-            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm);
+            var anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
+            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm, &anchor_storage);
             break :blk LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                 line_list.*,
                 wavelength_nm,

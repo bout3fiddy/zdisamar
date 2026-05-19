@@ -24,6 +24,9 @@ pub fn resolvedParticleSingleScatterAlbedos(
     cloud_single_scatter_albedo: f64,
     effective_single_scatter_albedo: f64,
 ) struct {
+    // layout(64-bit):
+    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per returned value = 16 B (0.016 KiB)
     aerosol: f64,
     cloud: f64,
 } {

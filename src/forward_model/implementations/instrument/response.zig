@@ -20,10 +20,21 @@ pub fn adaptiveKernelHalfSpanNm(response: InstrumentModel.SpectralResponse) f64 
 pub fn resetKernel(kernel: *types.IntegrationKernel) void {
     kernel.enabled = false;
     kernel.sample_count = 0;
-    @memset(kernel.offsets_nm[0..], 0.0);
-    @memset(kernel.weights[0..], 0.0);
 }
 
+pub fn writeIdentityKernel(kernel: *types.IntegrationKernel, enabled: bool) void {
+    resetKernel(kernel);
+    kernel.enabled = enabled;
+    kernel.sample_count = 1;
+    kernel.offsets_nm[0] = 0.0;
+    kernel.weights[0] = 1.0;
+}
+
+// hot path:
+//   when: instrument integration kernels compute sample weights
+//   work: evaluates the configured slit/line-shape response at one wavelength offset
+//   data: response controls, offset, FWHM, builtin line-shape parameters
+//   follow: adaptive_plan sample generation and integrationForWavelengthWithAdaptiveCacheChecked
 pub fn spectralResponseWeight(response: InstrumentModel.SpectralResponse, offset_nm: f64) f64 {
     const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
     return switch (response.slit_index) {

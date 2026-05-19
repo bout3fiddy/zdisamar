@@ -9,12 +9,12 @@ from .session_cache import SessionCache
 
 
 @contextmanager
-def _temporary_cache(case: O2AInput) -> Generator[SessionCache]:
+def _temporary_cache(case: O2AInput, *, copy_case: bool = False) -> Generator[SessionCache]:
 
     cache = SessionCache()
 
     try:
-        cache.load(case)
+        cache.load(case, copy_case=copy_case)
         yield cache
     finally:
         cache.close()
@@ -26,6 +26,7 @@ def spectrum(
     cache: SessionCache | None = None,
     jacobian: bool = False,
     jacobian_state_names: tuple[str, ...] | None = None,
+    include_case: bool = False,
 ):
     """Run radiative transfer for one wavelength-band case."""
 
@@ -34,12 +35,14 @@ def spectrum(
             case,
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
+            include_case=include_case,
         )
 
-    with _temporary_cache(case) as temporary:
+    with _temporary_cache(case, copy_case=include_case) as temporary:
         return temporary.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
+            include_case=include_case,
         )
 
 

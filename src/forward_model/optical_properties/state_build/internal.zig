@@ -16,6 +16,12 @@ pub const state_spectroscopy = @import("state_spectroscopy.zig");
 
 pub const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: pressure_hpa=8 B, temperature_k=8 B, density_cm3=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 pub const ParitySupportThermodynamics = struct {
     pressure_hpa: f64,
     temperature_k: f64,

@@ -12,7 +12,6 @@ const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
-const OperationalInstrumentIntegration = @import("../../implementations/instrument.zig").IntegrationKernel;
 const Error = Storage.Error;
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
@@ -32,6 +31,11 @@ fn irradianceAtWavelength(
     return solar_compat.irradianceAtWavelength(scene, wavelength_nm);
 }
 
+// hot path:
+//   when: once per nominal radiance wavelength, with one or more integration samples
+//   work: accumulates weighted cached forward samples into radiance and Jacobian totals
+//   data: integration offsets, weights, spectral forward cache, jacobian vector accumulator
+//   follow: cachedForwardAtWavelength and the active instrument integration payload
 pub fn integrateForwardAtNominal(
     allocator: Allocator,
     scene: *const Scene,
@@ -41,19 +45,19 @@ pub fn integrateForwardAtNominal(
     safe_span: f64,
     implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     cache: *SpectralEvaluationCache,
-    integration: *const OperationalInstrumentIntegration,
+    integration: *const Plan.IntegrationKernelRef,
+    kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!ForwardIntegratedSample {
     // DECISION:
     //   When the instrument has no internal integration routine, fall back to
     //   the quantized cached forward sample at the nominal wavelength.
-    if (!integration.enabled) {
+    if (!integration.enabled()) {
         return cachedForwardAtWavelength(
             allocator,
             scene,
@@ -63,7 +67,6 @@ pub fn integrateForwardAtNominal(
             safe_span,
             implementations,
             layer_inputs,
-            pseudo_spherical_layers,
             source_interfaces,
             rtm_quadrature_levels,
             pseudo_spherical_samples,
@@ -75,9 +78,8 @@ pub fn integrateForwardAtNominal(
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian.zero();
-    for (0..integration.sample_count) |index| {
-        const offset_nm = integration.offsets_nm[index];
-        const weight = integration.weights[index];
+    const samples = integration.samples(kernel_storage);
+    for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
         const sample = try cachedForwardAtWavelength(
             allocator,
@@ -88,7 +90,6 @@ pub fn integrateForwardAtNominal(
             safe_span,
             implementations,
             layer_inputs,
-            pseudo_spherical_layers,
             source_interfaces,
             rtm_quadrature_levels,
             pseudo_spherical_samples,
@@ -106,25 +107,30 @@ pub fn integrateForwardAtNominal(
     };
 }
 
+// hot path:
+//   when: once per nominal irradiance wavelength, with one or more integration samples
+//   work: accumulates weighted cached solar irradiance samples
+//   data: integration offsets, weights, irradiance cache, solar support tables
+//   follow: cachedIrradianceAtWavelength and operational solar interpolation
 pub fn integrateIrradianceAtNominal(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     nominal_wavelength_nm: f64,
     safe_span: f64,
     cache: *SpectralEvaluationCache,
-    integration: *const OperationalInstrumentIntegration,
+    integration: *const Plan.IntegrationKernelRef,
+    kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!f64 {
     // DECISION:
     //   Integrated instruments sample irradiance through the same routine used
     //   for radiance so the instrument response stays aligned.
-    if (!integration.enabled) {
+    if (!integration.enabled()) {
         return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
 
     var irradiance_sum: f64 = 0.0;
-    for (0..integration.sample_count) |index| {
-        const offset_nm = integration.offsets_nm[index];
-        const weight = integration.weights[index];
+    const samples = integration.samples(kernel_storage);
+    for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         irradiance_sum += weight * try cachedIrradianceAtWavelength(
             scene,
             prepared,
@@ -136,6 +142,11 @@ pub fn integrateIrradianceAtNominal(
     return irradiance_sum;
 }
 
+// hot path:
+//   when: once per simulation plan before nominal wavelength integration
+//   work: reserves cache capacity, computes all forward misses, and inserts dense results by key
+//   data: forward miss array, profile spectroscopy caches, temporary result array, spectral cache map
+//   follow: spectral_forward.prefetchForwardSamples and cache.forward.put
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -146,8 +157,11 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     cache: *SpectralEvaluationCache,
+    thread_pool: ?*std.Thread.Pool,
 ) Error!void {
     if (misses.len == 0) return;
+
+    try cache.reserveForward(misses.len);
 
     const results = try allocator.alloc(ForwardIntegratedSample, misses.len);
     defer allocator.free(results);
@@ -162,12 +176,18 @@ pub fn prefetchForwardSamples(
         misses,
         profile_spectroscopy_caches,
         results,
+        thread_pool,
     );
     for (misses, results) |miss, result| {
         try cache.forward.put(miss.key, result);
     }
 }
 
+// hot path:
+//   when: on each high-resolution forward cache miss
+//   work: computes a wavelength-specific forward sample when the quantized key is absent
+//   data: layer/source/quadrature scratch arrays, pseudo-spherical arrays, spectral cache
+//   follow: spectral_forward.computeForwardSampleAtWavelength and cache key reuse
 pub fn cachedForwardAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -177,7 +197,6 @@ pub fn cachedForwardAtWavelength(
     safe_span: f64,
     implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
@@ -197,7 +216,6 @@ pub fn cachedForwardAtWavelength(
         safe_span,
         implementations,
         layer_inputs,
-        pseudo_spherical_layers,
         source_interfaces,
         rtm_quadrature_levels,
         pseudo_spherical_samples,
@@ -208,6 +226,11 @@ pub fn cachedForwardAtWavelength(
     return sample;
 }
 
+// hot path:
+//   when: on each high-resolution irradiance cache miss
+//   work: resolves solar irradiance from operational support or reference interpolation
+//   data: quantized wavelength key, irradiance cache, solar spectrum support
+//   follow: operational_solar_spectrum.interpolateIrradianceWithinBounds and cache insertion
 fn cachedIrradianceAtWavelength(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

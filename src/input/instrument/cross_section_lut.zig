@@ -11,6 +11,14 @@ const max_operational_refspec_pressure_coefficients = constants.max_operational_
 
 pub const GenerationSource = build_helpers.GenerationSource;
 
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: 66 B across 8 fields; largest: wavelengths_nm=16 B, coefficients=16 B, min_temperature_k=8 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   out-of-line: wavelengths_nm, coefficients carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
 pub const OperationalCrossSectionLut = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     coefficients: []const f64 = &[_]f64{},
@@ -114,6 +122,11 @@ pub const OperationalCrossSectionLut = struct {
         self.* = .{};
     }
 
+    // hot path:
+    //   when: operational cross-section LUT consumers need sigma at a support row
+    //   work: delegates to the shared LUT evaluator and returns sigma
+    //   data: LUT coefficient storage, wavelength, temperature, pressure
+    //   follow: cross_section_lut_eval.evaluate
     pub fn sigmaAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -123,6 +136,11 @@ pub const OperationalCrossSectionLut = struct {
         return eval_helpers.evaluate(@This(), self, wavelength_nm, temperature_k, pressure_hpa).sigma;
     }
 
+    // hot path:
+    //   when: operational cross-section LUT consumers need temperature derivative at a support row
+    //   work: delegates to the shared LUT evaluator and returns dSigma/dT
+    //   data: LUT coefficient storage, wavelength, temperature, pressure
+    //   follow: cross_section_lut_eval.evaluate
     pub fn dSigmaDTemperatureAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,

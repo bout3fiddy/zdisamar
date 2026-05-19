@@ -19,13 +19,17 @@ REFERENCE_OE_PATH = (
     / "disamar_o2a_two_state_reference.json"
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 BENCHMARK_NAME = "zdisamar_current"
 COMMAND = "uv run benchmark/run_benchmark.py"
 
 FORWARD_REPEATS = 10
 RETRIEVAL_REPEATS = 10
 SWEEP_COUNT = oe_cases.run_count()
+WORKER_LIMIT_ENV = "ZDISAMAR_WORKER_LIMIT"
+WORKER_LIMIT: int | None = None
+HOST_CPU_COUNT: int | None = None
+EFFECTIVE_WORKER_CAP: int | None = None
 FORWARD_STATE_NAMES = (
     "aerosol_optical_depth",
     "aerosol_layer_mid_pressure_hpa",
@@ -41,12 +45,16 @@ REFERENCE_COLUMNS = {
 }
 
 
-def run_controls() -> dict[str, bool | int]:
+def run_controls() -> dict[str, bool | int | str | None]:
 
     return {
         "forward_repeats": FORWARD_REPEATS,
         "retrieval_single_case_repeats": RETRIEVAL_REPEATS,
         "retrieval_sweep_session_count": SWEEP_COUNT,
         "retrieval_sweep_fast_mode_count": SWEEP_COUNT,
+        "native_worker_limit_env": WORKER_LIMIT_ENV,
+        "native_worker_limit": WORKER_LIMIT,
+        "host_cpu_count": HOST_CPU_COUNT,
+        "effective_native_worker_cap": EFFECTIVE_WORKER_CAP,
         "fortran_disamar_runs": False,
     }

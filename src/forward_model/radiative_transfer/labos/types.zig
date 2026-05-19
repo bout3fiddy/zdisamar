@@ -7,6 +7,15 @@ pub const max_nmutot: usize = max_gauss + max_extra;
 pub const max_n2: usize = max_nmutot * max_nmutot;
 pub const max_phase_coef: usize = phase_functions.phase_coefficient_count;
 
+// layout(64-bit):
+//   size: 1160 B, align: 8 B
+//   field storage: data=1152 B, n=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: n=8 B
+//   inline arrays: data:[144]f64=1152 B
+//   cache span: 19 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1160 B (1.133 KiB); total = per instance * live instance count
 pub const Mat = struct {
     data: [max_n2]f64,
     n: usize,
@@ -32,12 +41,20 @@ pub const Mat = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 96 B, align: 8 B
+//   field storage: data=96 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: data:[12]f64=96 B
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
 pub const Vec = struct {
     data: [max_nmutot]f64,
-    n: usize,
 
     pub fn zero(n: usize) Vec {
-        return .{ .data = .{0.0} ** max_nmutot, .n = n };
+        _ = n;
+        return .{ .data = .{0.0} ** max_nmutot };
     }
 
     pub fn get(self: *const Vec, i: usize) f64 {
@@ -49,34 +66,69 @@ pub const Vec = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 192 B, align: 8 B
+//   field storage: col=192 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: col:[2]Vec=192 B
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 192 B (0.188 KiB); total = per instance * live instance count
 pub const Vec2 = struct {
     col: [2]Vec,
-    n: usize,
 
     pub fn zero(n: usize) Vec2 {
         return .{
             .col = .{ Vec.zero(n), Vec.zero(n) },
-            .n = n,
         };
     }
 };
 
+// layout(64-bit):
+//   size: 2320 B, align: 8 B
+//   field storage: R=1160 B, T=1160 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 37 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2320 B (2.266 KiB); total = per instance * live instance count
 pub const LayerRT = struct {
     R: Mat,
     T: Mat,
 };
 
+// layout(64-bit):
+//   size: 480 B, align: 8 B
+//   field storage: E=96 B, U=192 B, D=192 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 8 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 480 B (0.469 KiB); total = per instance * live instance count
 pub const UDField = struct {
     E: Vec,
     U: Vec2,
     D: Vec2,
 };
 
+// layout(64-bit):
+//   size: 384 B, align: 8 B
+//   field storage: U=192 B, D=192 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 6 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 384 B (0.375 KiB); total = per instance * live instance count
 pub const UDLocal = struct {
     U: Vec2,
     D: Vec2,
 };
 
+// layout(64-bit):
+//   size: 2832 B, align: 8 B
+//   field storage: 2832 B across 11 fields; largest: dmu_plus=1152 B, dmu_min=1152 B, dmu_same=144 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: 7 fields reserve 2800 B inside each instance
+//   cache span: 45 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 2832 B (2.766 KiB); total = per instance * live instance count
 pub const Geometry = struct {
     n_gauss: usize,
     nmutot: usize,

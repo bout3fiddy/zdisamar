@@ -7,10 +7,20 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const particle_compat = @import("../particle_support.zig");
+const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Types = @import("state_types.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 3472 B, align: 8 B
+//   field storage: 3470 B across 61 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 2 B (16 bits)
+//   unused bits: 16 padding + 35 bool-storage slack = 51 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 55 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3472 B (3.391 KiB); total also includes referenced storage above
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -24,6 +34,8 @@ pub const PreparedOpticalState = struct {
     spectroscopy_profile_altitudes_km: []f64 = &.{},
     spectroscopy_profile_pressures_hpa: []f64 = &.{},
     spectroscopy_profile_temperatures_k: []f64 = &.{},
+    spectroscopy_plan_key: u64 = 0,
+    spectroscopy_profile_cache_inputs_key: u64 = 0,
     cross_section_absorbers: []Types.PreparedCrossSectionAbsorber = &.{},
     line_absorbers: []Types.PreparedLineAbsorber = &.{},
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
@@ -39,6 +51,8 @@ pub const PreparedOpticalState = struct {
     effective_single_scatter_albedo: f64,
     aerosol_single_scatter_albedo: f64 = -1.0,
     cloud_single_scatter_albedo: f64 = -1.0,
+    aerosol_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    cloud_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
     air_column_density_factor: f64 = 0.0,
@@ -138,6 +152,28 @@ pub const PreparedOpticalState = struct {
         return self.layers.len;
     }
 
+    pub fn computeSpectroscopyPlanKey(self: *const PreparedOpticalState) u64 {
+        var hash = std.hash.Wyhash.init(0x4f32_4132_7370_6c6e);
+        updateInt(&hash, self.spectroscopy_lines != null);
+        if (self.spectroscopy_lines) |line_list| {
+            updateLineListPlanInputs(&hash, line_list);
+        }
+        updateInt(&hash, self.line_absorbers.len);
+        for (self.line_absorbers) |line_absorber| {
+            updateLineListPlanInputs(&hash, line_absorber.line_list);
+        }
+        return hash.final();
+    }
+
+    pub fn computeSpectroscopyProfileCacheInputsKey(self: *const PreparedOpticalState) u64 {
+        var hash = std.hash.Wyhash.init(0x4f32_4132_7370_726f);
+        updateFloatSlice(&hash, self.spectroscopy_profile_altitudes_km);
+        updateFloatSlice(&hash, self.spectroscopy_profile_pressures_hpa);
+        updateFloatSlice(&hash, self.spectroscopy_profile_temperatures_k);
+        updateSpectroscopyCacheInputs(&hash, self);
+        return hash.final();
+    }
+
     pub fn intervalSemanticsUseReducedSharedRtmLayers(self: *const PreparedOpticalState) bool {
         if (self.interval_semantics == .none) return false;
         const sublayers = self.sublayers orelse return false;
@@ -155,6 +191,9 @@ pub const PreparedOpticalState = struct {
         self.shared_rtm_geometry = try @import("transport.zig").buildSharedRtmGeometry(allocator, self);
     }
 
+    // layout(64-bit):
+    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn resolvedParticleSingleScatterAlbedos(self: *const PreparedOpticalState) struct {
         aerosol: f64,
         cloud: f64,
@@ -467,3 +506,158 @@ pub const PreparedOpticalState = struct {
         );
     }
 };
+
+fn updateSpectroscopyCacheInputs(
+    hash: *std.hash.Wyhash,
+    prepared: *const PreparedOpticalState,
+) void {
+    updateInt(hash, prepared.spectroscopy_lines != null);
+    if (prepared.spectroscopy_lines) |line_list| updateFullLineListInputs(hash, line_list);
+    updateInt(hash, prepared.operational_o2_lut.enabled());
+    updateStrongLinePreparedStates(hash, prepared.spectroscopy_profile_strong_line_states);
+    updateWeakLinePreparedStates(hash, prepared.spectroscopy_profile_weak_line_states);
+}
+
+fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    updateInt(hash, states != null);
+    if (states) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |state| {
+            updateInt(hash, state.line_count);
+            updateFloat(hash, state.sig_moy_cm1);
+            updateFloatSlice(hash, state.population_t);
+            updateFloatSlice(hash, state.dipole_t);
+            updateFloatSlice(hash, state.mod_sig_cm1);
+            updateFloatSlice(hash, state.half_width_cm1_at_t);
+            updateFloatSlice(hash, state.line_mixing_coefficients);
+        }
+    }
+}
+
+fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    updateInt(hash, states != null);
+    if (states) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |state| {
+            updateInt(hash, state.line_count);
+            updateFloat(hash, state.safe_temperature);
+            updateFloat(hash, state.safe_pressure);
+            updateInt(hash, state.lines.len);
+            for (state.lines) |line| {
+                updateFloat(hash, line.shifted_center_wavenumber_cm1);
+                updateFloat(hash, line.cte);
+                updateFloat(hash, line.line_shape_y);
+                updateFloat(hash, line.prefactor_base);
+            }
+        }
+    }
+}
+
+fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
+    updateInt(hash, line_list.lines.len);
+    for (line_list.lines) |line| {
+        updateFloat(hash, line.center_wavelength_nm);
+        updateFloat(hash, line.line_strength_cm2_per_molecule);
+    }
+}
+
+fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    updateFloat(hash, line_list.strong_line_tolerance_nm);
+    updateInt(hash, line_list.lines_sorted_ascending);
+    updateInt(hash, line_list.preserve_anchor_weak_lines);
+    updateInt(hash, line_list.vendor_strong_line_partition);
+    updateOptionalIntSlice(hash, line_list.strong_line_match_by_line);
+    updateFullRuntimeControls(hash, line_list.runtime_controls);
+
+    updateInt(hash, line_list.lines.len);
+    for (line_list.lines) |line| {
+        updateInt(hash, line.gas_index);
+        updateInt(hash, line.isotope_number);
+        updateFloat(hash, line.abundance_fraction);
+        updateInt(hash, line.vendor_filter_metadata_from_source);
+        updateFloat(hash, line.center_wavelength_nm);
+        updateFloat(hash, line.center_wavenumber_cm1);
+        updateFloat(hash, line.line_strength_cm2_per_molecule);
+        updateFloat(hash, line.air_half_width_nm);
+        updateFloat(hash, line.air_half_width_cm1);
+        updateFloat(hash, line.temperature_exponent);
+        updateFloat(hash, line.lower_state_energy_cm1);
+        updateFloat(hash, line.pressure_shift_nm);
+        updateFloat(hash, line.pressure_shift_cm1);
+        updateFloat(hash, line.line_mixing_coefficient);
+        updateOptionalInt(hash, line.branch_ic1);
+        updateOptionalInt(hash, line.branch_ic2);
+        updateOptionalInt(hash, line.rotational_nf);
+    }
+
+    updateInt(hash, line_list.strong_lines != null);
+    if (line_list.strong_lines) |strong_lines| {
+        updateInt(hash, strong_lines.len);
+        for (strong_lines) |line| {
+            updateFloat(hash, line.center_wavenumber_cm1);
+            updateFloat(hash, line.center_wavelength_nm);
+            updateFloat(hash, line.population_t0);
+            updateFloat(hash, line.dipole_ratio);
+            updateFloat(hash, line.dipole_t0);
+            updateFloat(hash, line.lower_state_energy_cm1);
+            updateFloat(hash, line.air_half_width_cm1);
+            updateFloat(hash, line.air_half_width_nm);
+            updateFloat(hash, line.temperature_exponent);
+            updateFloat(hash, line.pressure_shift_cm1);
+            updateFloat(hash, line.pressure_shift_nm);
+            updateInt(hash, line.rotational_index_m1);
+        }
+    }
+
+    updateInt(hash, line_list.relaxation_matrix != null);
+    if (line_list.relaxation_matrix) |matrix| {
+        updateInt(hash, matrix.line_count);
+        updateFloatSlice(hash, matrix.wt0);
+        updateFloatSlice(hash, matrix.bw);
+    }
+}
+
+fn updateFullRuntimeControls(hash: *std.hash.Wyhash, controls: anytype) void {
+    updateOptionalInt(hash, controls.gas_index);
+    updateInt(hash, controls.active_isotopes.len);
+    hash.update(controls.active_isotopes);
+    updateOptionalFloat(hash, controls.threshold_line_scale);
+    updateOptionalFloat(hash, controls.cutoff_cm1);
+    updateFloatSlice(hash, controls.cutoff_grid_wavelengths_nm);
+    updateFloatSlice(hash, controls.cutoff_grid_wavenumbers_cm1);
+    updateFloat(hash, controls.line_mixing_factor);
+}
+
+fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| updateInt(hash, resolved);
+}
+
+fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |item| updateOptionalInt(hash, item);
+    }
+}
+
+fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| updateFloat(hash, resolved);
+}
+
+fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
+    updateInt(hash, values.len);
+    hash.update(std.mem.sliceAsBytes(values));
+}
+
+fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
+    var bits = @as(u64, @bitCast(value));
+    hash.update(std.mem.asBytes(&bits));
+}
+
+fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
+    var bits = value;
+    hash.update(std.mem.asBytes(&bits));
+}

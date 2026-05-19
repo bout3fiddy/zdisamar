@@ -9,6 +9,11 @@ const State = @import("state.zig");
 const Allocator = std.mem.Allocator;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
+// hot path:
+//   when: absorber preparation resolves line-by-line spectroscopy participants
+//   work: scans scene absorbers and materializes active line absorber descriptors
+//   data: scene absorber list, species metadata, line gas controls
+//   follow: absorbers.buildLineAbsorbers and line-list preparation
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
     var active = std.ArrayList(State.ActiveLineAbsorber).empty;
     defer active.deinit(allocator);
@@ -26,6 +31,11 @@ pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]
     return active.toOwnedSlice(allocator);
 }
 
+// hot path:
+//   when: absorber preparation resolves cross-section spectroscopy participants
+//   work: scans scene absorbers and materializes active cross-section absorber descriptors
+//   data: scene absorber list, cross-section fit controls, fallback cross-section table
+//   follow: absorbers.buildCrossSectionAbsorbers and carrier_eval cross-section loops
 pub fn collectActiveCrossSectionAbsorbers(
     allocator: Allocator,
     scene: *const Scene,
@@ -114,6 +124,11 @@ pub fn operationalO2EvaluationAtWavelength(
     );
 }
 
+// hot path:
+//   when: absorber preparation samples species volume-mixing-ratio profiles
+//   work: resolves profile interpolation or default species mixing ratio at pressure
+//   data: optional VMR profile, pressure, species, scene fallback
+//   follow: profile line-state preparation and layer accumulation density fields
 pub fn speciesMixingRatioAtPressure(
     scene: *const Scene,
     species: AbsorberModel.AbsorberSpecies,

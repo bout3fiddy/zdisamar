@@ -5,6 +5,12 @@ const Allocator = std.mem.Allocator;
 
 const max_spline_window_points: usize = 256;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: wavelength_nm=8 B, a0=8 B, a1=8 B, a2=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const CollisionInducedAbsorptionPoint = struct {
     wavelength_nm: f64,
     a0: f64,
@@ -12,6 +18,13 @@ pub const CollisionInducedAbsorptionPoint = struct {
     a2: f64,
 };
 
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: scale_factor_cm5_per_molecule2=8 B, points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
     points: []const CollisionInducedAbsorptionPoint,
@@ -28,6 +41,11 @@ pub const CollisionInducedAbsorptionTable = struct {
         };
     }
 
+    // hot path:
+    //   when: support-row carrier evaluation includes O2-O2 CIA absorption
+    //   work: interpolates CIA coefficients and evaluates temperature polynomial sigma
+    //   data: CIA coefficient points, wavelength, temperature, scale factor
+    //   follow: interpolateCoefficients and collisionComplexPairDensityCm6
     pub fn sigmaAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
@@ -66,6 +84,11 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.sigmaAt((start_nm + end_nm) * 0.5, temperature_k);
     }
 
+    // hot path:
+    //   when: CIA sigma or dSigmaDTemperature samples the table for a wavelength
+    //   work: brackets CIA points and interpolates coefficient triplets
+    //   data: CIA wavelength points, spline window, coefficient fields a0/a1/a2
+    //   follow: sampleCoefficientSpline and lowerBoundPointIndex
     pub fn interpolateCoefficients(self: CollisionInducedAbsorptionTable, wavelength_nm: f64) CollisionInducedAbsorptionPoint {
         if (self.points.len == 0) {
             return .{
@@ -95,6 +118,13 @@ pub const CollisionInducedAbsorptionTable = struct {
 
 const CoefficientKind = enum { a0, a1, a2 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: start=8 B, count=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   metadata fields: count=8 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const SplineWindow = struct {
     start: usize,
     count: usize,
@@ -110,6 +140,11 @@ fn splineWindow(point_count: usize, right_index: usize) SplineWindow {
     return .{ .start = start, .count = count };
 }
 
+// hot path:
+//   when: CIA interpolation uses the local spline window for coefficient smoothing
+//   work: copies point coordinates into stack arrays and samples endpoint-secant spline
+//   data: CIA spline window points, coefficient selector, stack x/y arrays
+//   follow: spline.sampleEndpointSecant and window size
 fn sampleCoefficientSpline(
     points: []const CollisionInducedAbsorptionPoint,
     wavelength_nm: f64,
@@ -158,6 +193,11 @@ fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelen
     return low;
 }
 
+// hot path:
+//   when: output or preprocessing builds effective CIA sigma over instrument samples
+//   work: evaluates sigma at sample wavelengths and removes weighted polynomial baseline
+//   data: wavelength sample array, weights, sigma scratch array, polynomial order
+//   follow: cross_sections.differentialVector and weighted sampling order
 pub fn effectiveSigmaAtSamples(
     allocator: Allocator,
     table: CollisionInducedAbsorptionTable,

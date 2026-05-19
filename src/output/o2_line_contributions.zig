@@ -26,6 +26,13 @@ pub const O2LineStatus = enum(u32) {
     weak_zero_after_cutoff = 3,
 };
 
+// layout(64-bit):
+//   size: 160 B, align: 8 B
+//   field storage: 159 B across 25 fields; largest: temperature_k=8 B, altitude_km=8 B, center_wavenumber_cm1=8 B; padding: 1 B (8 bits)
+//   unused bits: 8 padding + 0 bool-storage slack = 8 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count
 pub const O2LineContributionRow = struct {
     wavelength_nm: f64,
     profile_node_index: u32,
@@ -54,6 +61,12 @@ pub const O2LineContributionRow = struct {
     abs_total_sigma_cm2_per_molecule: f64,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: altitude_km=8 B, temperature_k=8 B, pressure_hpa=8 B, profile_node_index=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const ThermodynamicState = struct {
     profile_node_index: u32,
     altitude_km: f64,
@@ -61,6 +74,13 @@ const ThermodynamicState = struct {
     pressure_hpa: f64,
 };
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: rows=16 B, total_row_count=8 B, truncated=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 pub const O2LineContributionTable = struct {
     rows: []O2LineContributionRow,
     total_row_count: usize,
@@ -72,6 +92,11 @@ pub const O2LineContributionTable = struct {
     }
 };
 
+// hot path:
+//   when: O2 line-contribution diagnostics are requested over wavelengths and profile nodes
+//   work: iterates wavelengths/profile nodes and appends weak/strong line contribution rows
+//   data: prepared spectroscopy state, primary O2 line list, row list, max-row limit
+//   follow: appendRowsForWavelength and line-list relevant-window selection
 pub fn build(
     allocator: Allocator,
     prepared: *const PreparedOpticalState,
@@ -152,6 +177,11 @@ fn strongLineCount(line_list: SpectroscopyLineList) usize {
     return @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars);
 }
 
+// hot path:
+//   when: O2 line diagnostics expand one wavelength/profile-node pair
+//   work: appends relevant weak-line rows and active strong-line sidecar rows
+//   data: relevant line window, strong-line anchors, thermodynamic state, output row list
+//   follow: weakLineRow, strongLineRow, and strong-line ConvTP state preparation
 fn appendRowsForWavelength(
     allocator: Allocator,
     rows: *std.ArrayList(O2LineContributionRow),
@@ -168,10 +198,12 @@ fn appendRowsForWavelength(
     const safe_temperature = @max(thermodynamic_state.temperature_k, 150.0);
     const relevant_window = LineListOps.relevantLineWindowForWavelength(line_list, wavelength_nm);
     const relevant_lines = relevant_window.lines;
+    var anchor_storage: [SpectroscopyTypes.max_strong_line_sidecars]SpectroscopyTypes.StrongLineAnchorIndex = undefined;
     const strong_line_anchors = LineListOps.selectStrongLineAnchors(
         line_list,
         relevant_lines,
         relevant_window.start_index,
+        &anchor_storage,
     );
 
     for (relevant_lines, 0..) |line, line_index| {
@@ -188,7 +220,7 @@ fn appendRowsForWavelength(
                 relevant_window.start_index,
                 line,
                 line_index,
-                &strong_line_anchors,
+                strong_line_anchors,
             ),
         );
     }
@@ -215,10 +247,10 @@ fn appendRowsForWavelength(
                     strong_lines,
                     strong_line,
                     strong_index,
-                    &strong_line_anchors,
+                    strong_line_anchors,
                     relevant_lines,
                     relevant_window.start_index,
-                    strong_state,
+                    &strong_state,
                 ),
             );
         }
@@ -234,7 +266,7 @@ fn weakLineRow(
     start_index: usize,
     line: SpectroscopyLine,
     line_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
 ) O2LineContributionRow {
     const matched_strong_index = LineListOps.matchedStrongIndexForRelevantLine(
         line_list,
@@ -304,10 +336,10 @@ fn strongLineRow(
     strong_lines: []const SpectroscopyStrongLine,
     strong_line: SpectroscopyStrongLine,
     strong_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
-    strong_state: Physics.StrongLineConvTPState,
+    strong_state: *const Physics.StrongLineConvTPState,
 ) O2LineContributionRow {
     const pressure_atm = @max(
         thermodynamic_state.pressure_hpa / 1013.25,
@@ -363,20 +395,25 @@ fn strongLineRow(
 }
 
 fn strongAnchorLine(
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]?usize,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_index: usize,
 ) ?struct {
+    // layout(64-bit):
+    //   anonymous optional payload: size 112 B, align 8 B; padding is included in payload size
+    //   footprint: per present payload = 112 B (0.109 KiB)
     line: SpectroscopyLine,
     line_index: u32,
 } {
     if (strong_index >= strong_line_anchors.len) return null;
-    const relevant_index = strong_line_anchors[strong_index] orelse return null;
-    if (relevant_index >= relevant_lines.len) return null;
+    const relevant_index = strong_line_anchors[strong_index];
+    if (relevant_index == SpectroscopyTypes.missing_strong_line_anchor_index) return null;
+    const relevant_index_usize: usize = @intCast(relevant_index);
+    if (relevant_index_usize >= relevant_lines.len) return null;
     return .{
-        .line = relevant_lines[relevant_index],
-        .line_index = @intCast(relevant_start_index + relevant_index),
+        .line = relevant_lines[relevant_index_usize],
+        .line_index = @intCast(relevant_start_index + relevant_index_usize),
     };
 }
 

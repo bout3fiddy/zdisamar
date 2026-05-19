@@ -4,10 +4,19 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const Scene = @import("../../../input/Scene.zig").Scene;
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const State = @import("state.zig");
+const PhaseFunctions = @import("../shared/phase_functions.zig");
 const VerticalGrid = @import("vertical_grid.zig");
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: profile, spectroscopy_profile, cross_sections, lut, collision_induced_absorption, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
     spectroscopy_profile: ?*const ReferenceData.ClimatologyProfile = null,
@@ -19,6 +28,15 @@ pub const PreparationInputs = struct {
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
 };
 
+// layout(64-bit):
+//   size: 3392 B, align: 8 B
+//   field storage: 3392 B across 22 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +7 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 53 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3392 B (3.312 KiB); total also includes referenced storage above
 pub const PreparationContext = struct {
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
@@ -37,6 +55,8 @@ pub const PreparationContext = struct {
     spectroscopy_profile_temperatures_k: []f64 = &.{},
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
     cloud_fraction_control: AtmosphereModel.FractionControl = .{},
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
     midpoint_nm: f64 = 0.0,

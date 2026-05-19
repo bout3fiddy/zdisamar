@@ -30,6 +30,7 @@ test {
     _ = @import("forward_model/radiative_transfer/derivatives_test.zig");
     _ = @import("forward_model/radiative_transfer/dispatcher_test.zig");
     _ = @import("forward_model/radiative_transfer/common_route_test.zig");
+    _ = @import("forward_model/radiative_transfer/labos/workspace_test.zig");
     _ = @import("forward_model/radiative_transfer/labos/orders_test.zig");
     _ = @import("forward_model/radiative_transfer/labos/reflectance_test.zig");
     _ = @import("forward_model/instrument_grid/grid_calculation/spectral_eval_test.zig");

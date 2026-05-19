@@ -15,6 +15,12 @@ pub const Mode = enum {
     }
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: surface_albedo=8 B, reflectance_mode=1 B, correction_mode=1 B, use_chandra_formula=1 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 7 bool-storage slack = 47 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const ReflectanceControls = struct {
     reflectance_mode: Mode = .direct,
     correction_mode: Mode = .direct,
@@ -39,6 +45,12 @@ pub const ReflectanceControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: 37 B across 9 fields; largest: min_temperature_k=8 B, max_temperature_k=8 B, min_pressure_hpa=8 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
 pub const XsecControls = struct {
     mode: Mode = .direct,
     min_temperature_k: f64 = 0.0,
@@ -104,6 +116,12 @@ pub const XsecControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: reflectance=16 B, xsec=40 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 pub const Controls = struct {
     reflectance: ReflectanceControls = .{},
     xsec: XsecControls = .{},
@@ -122,6 +140,13 @@ pub const Controls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 152 B, align: 8 B
+//   field storage: 148 B across 13 fields; largest: controls=56 B, spectral_start_nm=8 B, spectral_end_nm=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
 pub const CompatibilityKey = struct {
     controls: Controls = .{},
     spectral_start_nm: f64 = 0.0,

@@ -56,14 +56,16 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
 }
 
 test "source interface builder preserves the top boundary weight and halves the bottom boundary weight" {
+    const layer0_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 });
+    const layer1_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 });
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.20,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 }),
+            .phase = common.LayerPhase.fromUnitPhase(&layer0_phase),
         },
         .{
             .scattering_optical_depth = 0.40,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 }),
+            .phase = common.LayerPhase.fromUnitPhase(&layer1_phase),
         },
     };
     var source_interfaces: [3]common.SourceInterfaceInput = undefined;
@@ -75,10 +77,13 @@ test "source interface builder preserves the top boundary weight and halves the 
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].rtm_weight, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[1].rtm_weight, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[2].rtm_weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[0].phase_coefficients_above[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[1].phase_coefficients_above[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_above[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].phase_coefficients_below[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[1].phase_coefficients_below[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_below[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[0].phase_above.coefficient(1), 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[1].phase_above.coefficient(1), 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_above.coefficient(1), 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[0].phase_max_index_above);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[1].phase_max_index_above);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[2].phase_max_index_above);
+    try std.testing.expectEqual(@as(usize, 0), source_interfaces[0].phase_max_index_below);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[1].phase_max_index_below);
+    try std.testing.expectEqual(@as(usize, 1), source_interfaces[2].phase_max_index_below);
 }

@@ -41,6 +41,11 @@ pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
     return 6.0 * (king_factor_air - 1.0) / (3.0 + 7.0 * king_factor_air);
 }
 
+// hot path:
+//   when: support-row carrier or budget evaluation computes gas scattering
+//   work: evaluates Rayleigh cross section from wavelength-dependent refractive index and King factor
+//   data: wavelength, refractive-index terms, depolarization/King factors
+//   follow: phase_functions.combinePhaseCoefficients and layer accumulation gas scattering
 pub fn crossSectionCm2(wavelength_nm: f64) f64 {
     const safe_wavelength_nm = @max(wavelength_nm, 1.0);
     const refractive_index = refractiveIndexDryAir(safe_wavelength_nm);

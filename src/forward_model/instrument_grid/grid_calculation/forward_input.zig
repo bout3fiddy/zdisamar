@@ -5,28 +5,40 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Trace = @import("../../performance_trace.zig");
 const common = @import("../../radiative_transfer/root.zig");
 
+// hot path:
+//   when: once per high-resolution wavelength before LABOS transport
+//   work: fills optical depth layers, source interfaces, RTM quadrature, and pseudo-spherical samples
+//   data: wavelength carrier cache, layer input arrays, quadrature/source-interface buffers
+//   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
 pub fn configuredForwardInput(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
     layer_inputs: []common.LayerInput,
-    pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     support_carrier_valid: []bool,
-    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
+    const compute_jacobian = route.derivative_mode != .none;
+    var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
+    const resolved_profile_cache = if (profile_spectroscopy_cache) |cache|
+        cache
+    else cache: {
+        local_profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
+        break :cache &local_profile_cache;
+    };
     var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
         prepared,
         wavelength_nm,
         support_carrier_valid,
-        support_carriers,
-        profile_spectroscopy_cache,
+        support_carrier_scalars,
+        resolved_profile_cache,
     );
     const optical_depths = optical_depths: {
         const zone = Trace.deepStaticZone(@src(), "forward_input.layers");
@@ -37,6 +49,7 @@ pub fn configuredForwardInput(
             wavelength_nm,
             layer_inputs,
             &wavelength_cache,
+            compute_jacobian,
         );
     };
     var input = OpticsPreparation.transport.forwardInputFromOpticalDepths(
@@ -46,7 +59,6 @@ pub fn configuredForwardInput(
         optical_depths,
         layer_inputs,
     );
-    const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     var has_rtm_quadrature = false;
     if (route.rtm_controls.integrate_source_function) {
         // DECISION:
@@ -61,11 +73,14 @@ pub fn configuredForwardInput(
                 input.layers,
                 rtm_quadrature_levels[0 .. input.layers.len + 1],
                 &wavelength_cache,
+                compute_jacobian,
             );
         }
         if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
                 .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
+                .aerosol_phase_coefficients = &prepared.aerosol_phase_coefficients,
+                .cloud_phase_coefficients = &prepared.cloud_phase_coefficients,
             };
         } else if (prepared.interval_semantics != .none) {
             // INVARIANT:
@@ -75,7 +90,8 @@ pub fn configuredForwardInput(
             return error.MissingExplicitRtmQuadrature;
         }
     }
-    if (!has_rtm_quadrature) {
+    if (route.rtm_controls.integrate_source_function and !has_rtm_quadrature) {
+        const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
         {
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");
             defer zone.end();
@@ -103,7 +119,6 @@ pub fn configuredForwardInput(
                 scene,
                 wavelength_nm,
                 input.layers.len,
-                pseudo_spherical_layers,
                 pseudo_spherical_samples,
                 pseudo_spherical_level_starts,
                 pseudo_spherical_level_altitudes,

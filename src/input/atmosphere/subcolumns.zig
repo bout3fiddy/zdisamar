@@ -6,6 +6,13 @@ const types = @import("types.zig");
 
 pub const PartitionLabel = types.PartitionLabel;
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 54 B across 7 fields; largest: gaussian_nodes=16 B, gaussian_weights=16 B, bottom_altitude_km=8 B; padding: 2 B (16 bits)
+//   unused bits: 16 padding + 7 bool-storage slack = 23 bits
+//   out-of-line: gaussian_nodes, gaussian_weights carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
 pub const Subcolumn = struct {
     index_1based: u32 = 0,
     label: PartitionLabel = .unspecified,
@@ -39,6 +46,13 @@ pub const Subcolumn = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 50 B across 7 fields; largest: subcolumns=16 B, boundary_layer_top_pressure_hpa=8 B, boundary_layer_top_altitude_km=8 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   out-of-line: subcolumns carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
 pub const SubcolumnLayout = struct {
     enabled: bool = false,
     boundary_layer_top_pressure_hpa: f64 = 0.0,

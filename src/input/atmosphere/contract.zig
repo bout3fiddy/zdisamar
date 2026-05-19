@@ -5,6 +5,13 @@ const Allocator = std.mem.Allocator;
 const IntervalGrid = @import("interval_grid.zig").IntervalGrid;
 const SubcolumnLayout = @import("subcolumns.zig").SubcolumnLayout;
 
+// layout(64-bit):
+//   size: 152 B, align: 8 B
+//   field storage: 151 B across 8 fields; largest: profile_source=56 B, subcolumns=56 B, interval_grid=24 B; padding: 1 B (8 bits)
+//   unused bits: 8 padding + 14 bool-storage slack = 22 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
 pub const Atmosphere = struct {
     layer_count: u32 = 0,
     sublayer_divisions: u8 = 3,

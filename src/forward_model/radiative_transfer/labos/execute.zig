@@ -6,14 +6,12 @@ const attenuation = @import("attenuation.zig");
 const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
-const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 const workspace_mod = @import("workspace.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const math = std.math;
 const Geometry = basis.Geometry;
 const LayerRT = basis.LayerRT;
-const fillAttenuation = attenuation.fillAttenuation;
 const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 const fillAttenuationTangentDynamic = attenuation.fillAttenuationTangentDynamic;
 const fillSurface = layers_mod.fillSurface;
@@ -31,11 +29,24 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: reflectance=8 B, jacobian=24 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: jacobian:[3]f64=24 B
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 const LabosComputation = struct {
     reflectance: f64,
     jacobian: jacobian.Vector = jacobian.zero(),
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: reflectance=8 B, surface_albedo_tangent=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const DirectSurfaceOnlyComputation = struct {
     reflectance: f64,
     surface_albedo_tangent: f64,
@@ -120,6 +131,11 @@ pub fn execute(
     return executeWithWorkspace(allocator, route, input, null);
 }
 
+// hot path:
+//   when: once per high-resolution forward sample after input construction
+//   work: dispatches direct, single-layer, or layer-resolved LABOS transport
+//   data: route controls, forward input layers, derivative mask, labos workspace
+//   follow: layerResolvedLabosWithWorkspace, singleLayerLabos, and directSurfaceOnlyResolvedWithWorkspace
 pub fn executeWithWorkspace(
     allocator: std.mem.Allocator,
     route: common.Route,
@@ -166,6 +182,11 @@ pub fn executeWithWorkspace(
     };
 }
 
+// hot path:
+//   when: for each high-resolution wavelength using layer-resolved LABOS transport
+//   work: loops Fourier terms through phase basis, RT layer build, scattering orders, reflectance, and Jacobians
+//   data: layer inputs, attenuation arrays, RT matrices, order workspace, reflectance/Jacobian buffers
+//   follow: labos.fourier_loop trace zones and calcRTlayers/ordersScat/calcIntegratedReflectance calls
 fn layerResolvedLabosWithWorkspace(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -194,23 +215,34 @@ fn layerResolvedLabosWithWorkspace(
         owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
         break :blk &owned_geo;
     };
-    const owned_atten = workspace == null;
-    var atten = if (workspace) |scratch|
-        try scratch.attenuation(
-            input.layers,
-            input.pseudo_spherical_grid,
-            geo,
-            controls.use_spherical_correction,
-        )
-    else
-        try fillAttenuationDynamicWithGrid(
+    var runtime_atten: ?attenuation.RuntimeAttenArray = null;
+    var dynamic_atten: ?attenuation.DynamicAttenArray = null;
+    if (workspace) |scratch| {
+        if (use_integrated_source) {
+            runtime_atten = try scratch.runtimeAttenuation(
+                input.layers,
+                input.pseudo_spherical_grid,
+                geo,
+                controls.use_spherical_correction,
+            );
+        } else {
+            dynamic_atten = try scratch.attenuation(
+                input.layers,
+                input.pseudo_spherical_grid,
+                geo,
+                controls.use_spherical_correction,
+            );
+        }
+    } else {
+        dynamic_atten = try fillAttenuationDynamicWithGrid(
             allocator,
             input.layers,
             input.pseudo_spherical_grid,
             geo,
             controls.use_spherical_correction,
         );
-    defer if (owned_atten) atten.deinit();
+    }
+    defer if (workspace == null) if (dynamic_atten) |*atten| atten.deinit();
     const rt = if (workspace) |scratch|
         try scratch.layerRt(nlayer + 1)
     else blk: {
@@ -222,6 +254,8 @@ fn layerResolvedLabosWithWorkspace(
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
+    const plm_cache_max = @min(phase_max, fourier_max);
+    const phase_suffix_stride = plm_cache_max + 1;
     const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
     const wants_aerosol_optical_depth = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
     const wants_aerosol_layer_mid_pressure = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
@@ -229,24 +263,25 @@ fn layerResolvedLabosWithWorkspace(
     var surface_albedo_tangent: f64 = 0.0;
     var aerosol_optical_depth_tangent: f64 = 0.0;
     var aerosol_layer_mid_pressure_tangent: f64 = 0.0;
+    const needs_order_local_sum = use_integrated_source and compute_jacobian;
     var owned_orders_workspace: ?orders_mod.OrdersWorkspace = null;
     defer if (owned_orders_workspace) |*orders_workspace| orders_workspace.deinit();
     const orders_workspace = if (workspace) |scratch|
-        try scratch.ordersWorkspace(nlayer + 1)
+        try scratch.ordersWorkspace(nlayer + 1, needs_order_local_sum)
     else blk: {
-        owned_orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, nlayer + 1);
+        owned_orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, nlayer + 1, needs_order_local_sum);
         break :blk &(owned_orders_workspace.?);
     };
-    const layer_phase_kernels: ?[]basis.PhaseKernel = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseKernelCache(nlayer + 1) else try allocator.alloc(basis.PhaseKernel, nlayer + 1)
+    const layer_phase_rows: ?[]basis.PhaseKernelRow = if (use_integrated_source)
+        if (workspace) |scratch| try scratch.phaseRowCache(nlayer + 1) else try allocator.alloc(basis.PhaseKernelRow, nlayer + 1)
     else
         null;
-    defer if (workspace == null) if (layer_phase_kernels) |cache| allocator.free(cache);
-    const layer_phase_kernel_valid: ?[]bool = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseKernelValid(nlayer + 1) else try allocator.alloc(bool, nlayer + 1)
+    defer if (workspace == null) if (layer_phase_rows) |cache| allocator.free(cache);
+    const layer_phase_row_valid: ?[]bool = if (use_integrated_source)
+        if (workspace) |scratch| try scratch.phaseRowValid(nlayer + 1) else try allocator.alloc(bool, nlayer + 1)
     else
         null;
-    defer if (workspace == null) if (layer_phase_kernel_valid) |valid| allocator.free(valid);
+    defer if (workspace == null) if (layer_phase_row_valid) |valid| allocator.free(valid);
 
     const layer_phase_max_indices = if (workspace) |scratch| blk: {
         const indices = try scratch.layerPhaseMaxIndices(nlayer);
@@ -255,8 +290,8 @@ fn layerResolvedLabosWithWorkspace(
     } else null;
     const layer_effective_scattering_suffixes = if (workspace) |scratch| blk: {
         if (layer_phase_max_indices) |indices| {
-            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer);
-            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices);
+            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer, phase_suffix_stride);
+            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices, phase_suffix_stride);
             break :blk suffixes;
         }
         break :blk null;
@@ -282,7 +317,7 @@ fn layerResolvedLabosWithWorkspace(
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
                 break :plm_basis if (workspace) |scratch| blk: {
-                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
+                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, plm_cache_max, geo);
                 } else blk: {
                     owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
                     break :blk &owned_plm_basis;
@@ -300,8 +335,9 @@ fn layerResolvedLabosWithWorkspace(
                     plm_basis,
                     layer_phase_max_indices,
                     layer_effective_scattering_suffixes,
-                    layer_phase_kernels,
-                    layer_phase_kernel_valid,
+                    phase_suffix_stride,
+                    layer_phase_rows,
+                    layer_phase_row_valid,
                     if (workspace != null) orders_workspace.rt_active else null,
                 );
             }
@@ -310,57 +346,63 @@ fn layerResolvedLabosWithWorkspace(
             const orders_result = orders_result: {
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
-                break :orders_result if (use_integrated_source)
-                    if (compute_jacobian)
-                        if (workspace != null) orders_mod.ordersScatIntoWithActiveLocalSum(
+                break :orders_result if (use_integrated_source) blk: {
+                    if (runtime_atten) |*atten| {
+                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithActiveLocalSum(
                             orders_workspace,
                             0,
                             nlayer,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             num_orders_max,
-                        ) else orders_mod.ordersScatIntoWithLocalSum(
+                        ) else orders_mod.ordersScatIntoWithActive(
                             orders_workspace,
                             0,
                             nlayer,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             num_orders_max,
-                        )
-                    else if (workspace != null) orders_mod.ordersScatIntoWithActive(
+                        );
+                    }
+                    if (dynamic_atten) |*atten| {
+                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithLocalSum(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        ) else orders_mod.ordersScatInto(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        );
+                    }
+                    unreachable;
+                } else blk: {
+                    if (dynamic_atten) |*atten| break :blk orders_mod.ordersScatTransportInto(
                         orders_workspace,
                         0,
                         nlayer,
                         geo,
-                        &atten,
-                        rt,
-                        controls,
-                        num_orders_max,
-                    ) else orders_mod.ordersScatInto(
-                        orders_workspace,
-                        0,
-                        nlayer,
-                        geo,
-                        &atten,
-                        rt,
-                        controls,
-                        num_orders_max,
-                    )
-                else
-                    orders_mod.ordersScatTransportInto(
-                        orders_workspace,
-                        0,
-                        nlayer,
-                        geo,
-                        &atten,
+                        atten,
                         rt,
                         controls,
                         num_orders_max,
                     );
+                    unreachable;
+                };
             };
             const refl_fc = refl_fc: {
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
@@ -376,8 +418,8 @@ fn layerResolvedLabosWithWorkspace(
                         geo,
                         plm_basis,
                         adjacent_layer_phase_max_indices,
-                        layer_phase_kernels,
-                        layer_phase_kernel_valid,
+                        layer_phase_rows,
+                        layer_phase_row_valid,
                     )
                 else
                     calcReflectance(orders_result.ud, nlayer, geo);
@@ -409,19 +451,21 @@ fn layerResolvedLabosWithWorkspace(
                             plm_basis,
                             adjacent_layer_phase_max_indices,
                         )
-                    else
-                        try nonIntegratedReflectanceTangent(
+                    else blk: {
+                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
                             allocator,
                             input.layers,
                             .aerosol_optical_depth,
                             i_fourier,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             plm_basis,
                             num_orders_max,
                         );
+                        unreachable;
+                    };
                 };
                 const weighted_tangent_refl_fc = if (i_fourier == 0)
                     tangent_refl_fc
@@ -445,18 +489,19 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     ) else blk: {
                         if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
-                        break :blk try nonIntegratedReflectanceTangent(
+                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
                             allocator,
                             input.layers,
                             .aerosol_layer_mid_pressure_hpa,
                             i_fourier,
                             geo,
-                            &atten,
+                            atten,
                             rt,
                             controls,
                             plm_basis,
                             num_orders_max,
                         );
+                        unreachable;
                     };
                 };
                 const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
@@ -492,6 +537,11 @@ fn layerResolvedLabosWithWorkspace(
     };
 }
 
+// hot path:
+//   when: derivative routes request non-integrated reflectance tangents
+//   work: builds derivative attenuation, RT layers, scattering orders, and reflectance outputs
+//   data: tangent work arrays, base layers, derivative layers, attenuation tangent storage
+//   follow: calcRTlayersTangentIntoWithBasis and ordersScatTangent
 fn nonIntegratedReflectanceTangent(
     allocator: std.mem.Allocator,
     layers: []const common.LayerInput,
@@ -540,6 +590,11 @@ fn nonIntegratedReflectanceTangent(
     return reflectance_mod.calcReflectanceTangent(tangent_orders.ud, layers.len, geo);
 }
 
+// hot path:
+//   when: single-layer route is selected for a high-resolution wavelength
+//   work: runs Fourier phase setup, single-layer scattering orders, and reflectance integration
+//   data: one-layer input, phase basis workspace, order buffers, reflectance result
+//   follow: phase_basis row/matrix builders and ordersScat single-layer path
 fn singleLayerLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -556,17 +611,26 @@ fn singleLayerLabos(
         .single_scatter_albedo = input.single_scatter_albedo,
         .solar_mu = mu0,
         .view_mu = muv,
-        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
+        .phase = .{},
     };
     const layers = [_]common.LayerInput{layer};
-    const atten = fillAttenuation(&layers, &geo, controls.use_spherical_correction);
+    var layer_transmittance: [basis.max_nmutot]f64 = undefined;
+    var top_to_level: [basis.max_nmutot * 2]f64 = undefined;
+    const atten = attenuation.fillRuntimeAttenuationWithGridInBuffers(
+        &layer_transmittance,
+        &top_to_level,
+        &layers,
+        .{},
+        &geo,
+        controls.use_spherical_correction,
+    );
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(layer.scattering_optical_depth));
     const fourier_max = resolvedFourierMax(input, controls);
     const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
 
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
-    var orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, 2);
+    var orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, 2, false);
     defer orders_workspace.deinit();
     for (0..fourier_max + 1) |i_fourier| {
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);

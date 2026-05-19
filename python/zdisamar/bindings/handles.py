@@ -92,6 +92,7 @@ class RtmHandle:
         self._lib = configure(load_library())
         self._ctx = self._lib.zds_context_create()
         self._case: O2AInput | None = None
+        self._solar_mu0: float | None = None
 
         if not self._ctx:
             raise RuntimeError("failed to start zdisamar RTM handle")
@@ -119,7 +120,7 @@ class RtmHandle:
 
         return O2AInput.from_json(buffer.value[: size.value])
 
-    def load_o2a_case(self, case: O2AInput) -> None:
+    def load_o2a_case(self, case: O2AInput, *, copy_case: bool = True) -> None:
         """Load one O2 A wavelength-band case into the RTM handle."""
 
         resolved = case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
@@ -131,7 +132,8 @@ class RtmHandle:
                 len(payload),
             )
         )
-        self._case = copy.deepcopy(case)
+        self._case = copy.deepcopy(case) if copy_case else None
+        self._solar_mu0 = case.geometry.solar_mu0
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
@@ -143,6 +145,7 @@ class RtmHandle:
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
+        include_case: bool = False,
     ) -> Spectrum:
         """Run the loaded wavelength-band case and return copied spectral arrays."""
 
@@ -165,12 +168,16 @@ class RtmHandle:
                 )
             )
 
-            return self._copied_spectrum(raw, jacobian_state_names=jacobian_state_names)
+            return self._copied_spectrum(
+                raw,
+                jacobian_state_names=jacobian_state_names,
+                include_case=include_case,
+            )
 
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
 
-        return self._copied_spectrum(raw)
+        return self._copied_spectrum(raw, include_case=include_case)
 
     def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
         """Return copied atmospheric optical-depth rows."""
@@ -286,12 +293,14 @@ class RtmHandle:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
             self._case = None
+            self._solar_mu0 = None
 
     def _copied_spectrum(
         self,
         raw: CSpectrum,
         *,
         jacobian_state_names: tuple[str, ...] | None = None,
+        include_case: bool = True,
     ) -> Spectrum:
 
         import numpy as np
@@ -320,7 +329,8 @@ class RtmHandle:
             radiance_quantity=Radiance(radiance),
             irradiance_quantity=Irradiance(irradiance),
             reflectance_quantity=Reflectance(reflectance),
-            case=self.input,
+            case=self.input if include_case else None,
+            solar_mu0_value=self._solar_mu0,
             diagnostic_report=report,
             radiance_jacobian_quantity=(
                 None

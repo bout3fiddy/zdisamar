@@ -9,12 +9,25 @@ const Types = @import("types.zig");
 
 const SpectroscopyLineList = LineList.SpectroscopyLineList;
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: lines=16 B, start_index=8 B, anchors=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: lines and anchors carry slice descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const StrongLineWavelengthWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,
-    anchors: [Types.max_strong_line_sidecars]?usize,
+    anchors: []const Types.StrongLineAnchorIndex,
 };
 
+// hot path:
+//   when: support-row spectroscopy evaluates an active line absorber
+//   work: computes base sigma and finite-temperature derivative sigma samples
+//   data: line list, wavelength, pressure/temperature state, optional prepared line state
+//   follow: totalSigma* variants and prepared strong-line windows
 pub fn evaluateAt(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -47,6 +60,11 @@ pub fn totalSigmaAt(
     return totalSigmaFromLineListOnly(self, wavelength_nm, temperature_k, pressure_hpa);
 }
 
+// hot path:
+//   when: a non-strong line list evaluates sigma for a wavelength/support row
+//   work: scans the relevant weak-line window and sums weak-line contributions
+//   data: line window, line thermodynamic state, wavelength state, sigma accumulator
+//   follow: relevantLineWindowForWavelength and weakLineContributionWithWavelengthState
 pub fn totalSigmaFromLineListOnly(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -80,6 +98,11 @@ pub fn totalSigmaFromLineListOnly(
     };
 }
 
+// hot path:
+//   when: line-mixing sidecars are enabled for a wavelength/support row
+//   work: sums weak-line contributions plus strong-line sidecar contributions
+//   data: relevant weak lines, strong-line sidecars, relaxation matrix, anchor matches
+//   follow: selectStrongLineAnchors and strongLineContributionPrepared
 pub fn totalSigmaWithStrongLineSidecars(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -100,14 +123,20 @@ pub fn totalSigmaWithStrongLineSidecars(
     );
     const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
     const relevant_lines = relevant_window.lines;
-    const strong_line_anchors = Ops.selectStrongLineAnchors(self, relevant_lines, relevant_window.start_index);
+    var anchor_storage: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex = undefined;
+    const strong_line_anchors = Ops.selectStrongLineAnchors(
+        self,
+        relevant_lines,
+        relevant_window.start_index,
+        &anchor_storage,
+    );
 
     var weak_line_sigma: f64 = 0.0;
     var strong_line_sigma: f64 = 0.0;
     var line_mixing_sigma: f64 = 0.0;
 
     for (relevant_lines, 0..) |line, line_index| {
-        if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, &strong_line_anchors)) continue;
+        if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, strong_line_anchors)) continue;
         const contribution = Physics.weakLineContribution(
             wavelength_nm,
             line,
@@ -124,7 +153,7 @@ pub fn totalSigmaWithStrongLineSidecars(
             wavelength_nm,
             strong_lines,
             strong_index,
-            convtp_state,
+            &convtp_state,
             safe_temperature,
             pressure_scale,
         );
@@ -152,7 +181,8 @@ pub fn totalSigmaWithPreparedStrongLineState(
 ) Types.SpectroscopyEvaluation {
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
-    const window = prepareStrongLineWavelengthWindow(self, wavelength_nm);
+    var anchor_storage: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex = undefined;
+    const window = prepareStrongLineWavelengthWindow(self, wavelength_nm, &anchor_storage);
     return totalSigmaWithPreparedStrongLineStateAndWindow(
         self,
         wavelength_nm,
@@ -167,15 +197,26 @@ pub fn totalSigmaWithPreparedStrongLineState(
 pub fn prepareStrongLineWavelengthWindow(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
+    anchor_storage: []Types.StrongLineAnchorIndex,
 ) StrongLineWavelengthWindow {
     const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
     return .{
         .lines = relevant_window.lines,
         .start_index = relevant_window.start_index,
-        .anchors = Ops.selectStrongLineAnchors(self, relevant_window.lines, relevant_window.start_index),
+        .anchors = Ops.selectStrongLineAnchors(
+            self,
+            relevant_window.lines,
+            relevant_window.start_index,
+            anchor_storage,
+        ),
     };
 }
 
+// hot path:
+//   when: prepared spectroscopy state is available for a wavelength/support row
+//   work: sums prepared weak-line and prepared strong-line sigma contributions
+//   data: prepared weak-line state, prepared strong-line state, relevant window, wavelength state
+//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -196,14 +237,19 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     var line_mixing_sigma: f64 = 0.0;
     const weak_line_wavelength_state = Physics.prepareWeakLineWavelengthState(wavelength_nm, self.runtime_controls);
 
-    const weak_line_states = if (prepared_weak_state) |state|
-        if (state.line_count == self.lines.len) state.lines else null
+    const weak_line_state = if (prepared_weak_state) |state|
+        if (state.line_count == self.lines.len) state else null
     else
         null;
-    const weak_line_stimulated_emission_scale = if (weak_line_states) |states|
-        if (states.len > 0) Physics.weakLinePreparedStimulatedEmissionScale(weak_line_wavelength_state, states[0]) else null
+    const weak_line_states = if (weak_line_state) |state| state.lines else null;
+    const weak_line_stimulated_emission_scale = if (weak_line_state) |state|
+        Physics.weakLinePreparedStimulatedEmissionScale(weak_line_wavelength_state, state.safe_temperature)
     else
-        null;
+        0.0;
+    const weak_line_thermodynamic_scale = if (weak_line_state) |state|
+        Physics.weakLinePreparedThermodynamicScale(state.safe_temperature, state.safe_pressure)
+    else
+        0.0;
     const vendor_weak_exclusions = if (Ops.usesVendorStrongLinePartition(self) and !self.preserve_anchor_weak_lines)
         self.strong_line_match_by_line
     else
@@ -213,13 +259,14 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
         if (vendor_weak_exclusions) |matches| {
             const global_index = window.start_index + line_index;
             if (global_index < matches.len and matches[global_index] != null) continue;
-        } else if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, &window.anchors)) continue;
+        } else if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, window.anchors)) continue;
         if (weak_line_states) |states| {
             weak_line_sigma += Physics.weakLineSigmaPreparedWithStimulatedEmissionScale(
                 weak_line_wavelength_state,
                 states[window.start_index + line_index],
                 self.runtime_controls,
-                weak_line_stimulated_emission_scale.?,
+                weak_line_stimulated_emission_scale,
+                weak_line_thermodynamic_scale,
             );
         } else {
             const contribution = Physics.weakLineContributionWithWavelengthState(

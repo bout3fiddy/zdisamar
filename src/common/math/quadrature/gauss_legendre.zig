@@ -1,9 +1,23 @@
+// layout(64-bit):
+//   size: 168 B, align: 8 B
+//   field storage: nodes=80 B, weights=80 B, count=4 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   metadata fields: count=4 B
+//   inline arrays: nodes:[10]f64=80 B, weights:[10]f64=80 B
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
 pub const Rule = struct {
     count: u32,
     nodes: [10]f64,
     weights: [10]f64,
 };
 
+// hot path:
+//   when: dynamic Gauss quadrature is built for integration or RTM subgrids
+//   work: solves Legendre roots and weights for the requested order
+//   data: output node/weight slices, Legendre polynomial recurrence state
+//   follow: fixed-rule callers and dynamic node rebuild boundaries
 pub fn fillNodesAndWeights(
     order: u32,
     nodes_out: []f64,
@@ -44,6 +58,11 @@ pub fn fillNodesAndWeights(
 
 const max_disamar_division_points: usize = 256;
 
+// hot path:
+//   when: adaptive instrument sampling needs DISAMAR-style unit interval division points
+//   work: computes quadrature nodes and squared first-row weights via the DISAMAR eigen routine
+//   data: diagonal/off-diagonal work arrays, first-row weights, output node/weight slices
+//   follow: adaptive_plan.fillAdaptiveUnitGauss and interval sample generation
 pub fn fillDisamarDivPoints01(
     order: u32,
     nodes_out: []f64,
@@ -86,6 +105,11 @@ pub fn fillDisamarDivPoints01(
     }
 }
 
+// hot path:
+//   when: RTM shared geometry or adaptive sampling builds interval quadrature points
+//   work: computes DISAMAR division points and scales them to a target interval
+//   data: diagonal/off-diagonal work arrays, interval bounds, output node/weight slices
+//   follow: shared_geometry.resolveGaussRule and adaptive interval consumers
 pub fn fillDisamarDivPointsInterval(
     order: u32,
     a0: f64,
@@ -131,6 +155,11 @@ pub fn fillDisamarDivPointsInterval(
     }
 }
 
+// hot path:
+//   when: DISAMAR-style division points are computed for dynamic quadrature
+//   work: diagonalizes the tridiagonal quadrature system and sorts eigenvalues
+//   data: diagonal, off-diagonal, and first-row work arrays
+//   follow: fillDisamarDivPoints01 and fillDisamarDivPointsInterval
 fn gausq2Disamar(
     diagonal: []f64,
     off_diagonal: []f64,
@@ -346,6 +375,12 @@ pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     };
 }
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: value=8 B, previous_value=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 const PolynomialState = struct {
     value: f64,
     previous_value: f64,

@@ -68,7 +68,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .interval_index_1based = 2,
         },
     };
-    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
     const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
     const cloud_phase = PhaseFunctions.hgPhaseCoefficients(0.25);
     var sublayers = [_]State.PreparedSublayer{
@@ -97,9 +96,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
         },
         .{
             .parent_layer_index = 0,
@@ -126,9 +122,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = aerosol_phase,
         },
         .{
             .parent_layer_index = 0,
@@ -155,9 +148,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
         },
         .{
             .parent_layer_index = 1,
@@ -184,9 +174,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.0,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = aerosol_phase,
         },
         .{
             .parent_layer_index = 1,
@@ -213,9 +200,6 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
             .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
             .cloud_single_scatter_albedo = 0.5,
-            .aerosol_phase_coefficients = aerosol_phase,
-            .cloud_phase_coefficients = cloud_phase,
-            .combined_phase_coefficients = zero_phase,
         },
     };
     var prepared = State.PreparedOpticalState{
@@ -228,6 +212,8 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
         .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
+        .aerosol_phase_coefficients = aerosol_phase,
+        .cloud_phase_coefficients = cloud_phase,
         .effective_temperature_k = 270.0,
         .effective_pressure_hpa = 800.0,
         .column_density_factor = 0.0,
@@ -256,18 +242,9 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
     const gas_middle = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[2].number_density_cm3 * 1.0e5;
     const gas_top = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[4].number_density_cm3 * 1.0e5;
 
-    try std.testing.expectApproxEqAbs(gas_bottom, source_interfaces[0].gas_ksca, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.2, source_interfaces[0].particle_ksca_above, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.0, source_interfaces[0].particle_ksca_below, 1.0e-12);
-    try std.testing.expectApproxEqAbs(gas_middle, source_interfaces[1].gas_ksca, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.2, source_interfaces[1].particle_ksca_below, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.4, source_interfaces[1].particle_ksca_above, 1.0e-12);
-    try std.testing.expectApproxEqAbs(gas_top, source_interfaces[2].gas_ksca, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.4, source_interfaces[2].particle_ksca_below, 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.0, source_interfaces[2].particle_ksca_above, 1.0e-12);
-
+    try std.testing.expectApproxEqAbs(gas_bottom + 0.2, source_interfaces[0].ksca_above, 1.0e-12);
     try std.testing.expectApproxEqAbs(gas_middle + 0.4, source_interfaces[1].ksca_above, 1.0e-12);
-    try std.testing.expectApproxEqAbs(gas_middle + 0.2, source_interfaces[1].ksca_below, 1.0e-12);
-    try std.testing.expect(@abs(source_interfaces[1].gas_ksca -
-        (Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[3].number_density_cm3 * 1.0e5)) > 1.0e-6);
+    try std.testing.expectApproxEqAbs(gas_top, source_interfaces[2].ksca_above, 1.0e-12);
+    try std.testing.expect(@abs(source_interfaces[1].ksca_above -
+        (Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[3].number_density_cm3 * 1.0e5 + 0.4)) > 1.0e-6);
 }

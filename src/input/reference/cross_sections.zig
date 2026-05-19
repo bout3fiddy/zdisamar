@@ -3,11 +3,24 @@ const cholesky = @import("../../common/math/linalg/cholesky.zig");
 const dense = @import("../../common/math/linalg/small_dense.zig");
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wavelength_nm=8 B, sigma_cm2_per_molecule=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
 pub const CrossSectionPoint = struct {
     wavelength_nm: f64,
     sigma_cm2_per_molecule: f64,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: points=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: points carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const CrossSectionTable = struct {
     points: []CrossSectionPoint,
 
@@ -29,6 +42,11 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma((start_nm + end_nm) * 0.5);
     }
 
+    // hot path:
+    //   when: carrier evaluation samples table-backed cross sections at a wavelength
+    //   work: brackets wavelength and linearly interpolates sigma
+    //   data: cross-section points, wavelength, bracket indexes
+    //   follow: bracketForWavelength and point array ordering
     pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
         if (self.points.len == 0) return 0.0;
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
@@ -47,6 +65,9 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma(wavelength_nm);
     }
 
+    // layout(64-bit):
+    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per present payload = 16 B (0.016 KiB)
     pub fn bracketForWavelength(
         self: CrossSectionTable,
         wavelength_nm: f64,
@@ -82,6 +103,11 @@ pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     return numerator / @max(denominator, 1.0e-12);
 }
 
+// hot path:
+//   when: effective cross-section or CIA output builds a differential spectrum
+//   work: assembles and solves a small weighted polynomial fit, then subtracts the fitted baseline
+//   data: wavelength/value/weight arrays, dense normal matrix, Cholesky factor storage
+//   follow: cholesky.factorInPlace and dense.index layout
 pub fn differentialVector(
     allocator: Allocator,
     wavelengths_nm: []const f64,

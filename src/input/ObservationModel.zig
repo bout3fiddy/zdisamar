@@ -21,6 +21,13 @@ pub const ObservationRegime = enum {
     occultation,
 };
 
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: xsec_strong_absorption_bands=16 B, polynomial_degree_bands=16 B, use_effective_cross_section_oe=1 B, use_polynomial_expansion=1 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   out-of-line: xsec_strong_absorption_bands, polynomial_degree_bands carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const CrossSectionFitControls = struct {
     use_effective_cross_section_oe: bool = false,
     use_polynomial_expansion: bool = false,
@@ -89,6 +96,14 @@ pub const CrossSectionFitControls = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 1864 B, align: 8 B
+//   field storage: 1861 B across 29 fields; largest: measurement_pipeline=1232 B, o2o2_operational_lut=72 B, o2_operational_lut=72 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 21 bool-storage slack = 45 bits
+//   out-of-line: ingested_noise_sigma, reference_radiance, measured_wavelengths_nm, operational_band_support carry references/descriptors; referenced storage is not included in size
+//   cache span: 30 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 1864 B (1.820 KiB); total also includes referenced storage above
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,

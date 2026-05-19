@@ -40,6 +40,14 @@ pub const ResolvedVendorO2ACase = reference_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
 pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
+// layout(64-bit):
+//   size: 3824 B, align: 8 B
+//   field storage: reference=16 B, scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
+//   cache span: 60 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
 pub const PreparedRuntimeCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -483,6 +491,9 @@ pub fn runResolvedVendorO2AReflectanceCase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !struct {
+    // layout(64-bit):
+    //   anonymous success payload: size 4144 B, align 8 B; padding is included in payload size
+    //   footprint: per successful return payload = 4144 B (4.047 KiB)
     reference: []ReferenceSample,
     scene: Scene,
     route: Route,
@@ -684,6 +695,9 @@ fn sharedParityMeasurementSupport(
     scene: *const Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !?struct { start_nm: f64, end_nm: f64 } {
+    // layout(64-bit):
+    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
+    //   footprint: per present payload = 16 B (0.016 KiB)
     var radiance_start: instrument_types.IntegrationKernel = undefined;
     var radiance_end: instrument_types.IntegrationKernel = undefined;
     var irradiance_start: instrument_types.IntegrationKernel = undefined;

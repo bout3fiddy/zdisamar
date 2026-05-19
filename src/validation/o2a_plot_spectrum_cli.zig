@@ -3,6 +3,13 @@ const zdisamar = @import("zdisamar");
 
 const report = zdisamar.report;
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: output_dir=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 const Config = struct {
     output_dir: []const u8 = "out/analysis/o2a/plot_bundle_tmp",
 };

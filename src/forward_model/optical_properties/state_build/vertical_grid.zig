@@ -7,6 +7,14 @@ const gauss_legendre = @import("../../../common/math/quadrature/gauss_legendre.z
 
 const Allocator = std.mem.Allocator;
 
+// layout(64-bit):
+//   size: 256 B, align: 8 B
+//   field storage: 256 B across 16 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_top_pressures_hpa=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_top_pressures_hpa, layer_bottom_pressures_hpa, layer_interval_indices_1based, +11 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 256 B (0.250 KiB); total also includes referenced storage above
 pub const OwnedVerticalGrid = struct {
     layer_top_altitudes_km: []f64,
     layer_bottom_altitudes_km: []f64,
@@ -59,6 +67,11 @@ pub const OwnedVerticalGrid = struct {
     }
 };
 
+// hot path:
+//   when: optical-state preparation builds the vertical grid before layer accumulation
+//   work: selects explicit interval or legacy grid construction
+//   data: scene atmosphere controls, climatology profile, owned vertical-grid storage
+//   follow: buildExplicit, buildExplicitDisamarParity, and buildLegacy
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -70,6 +83,11 @@ pub fn build(
     return buildLegacy(allocator, scene, profile);
 }
 
+// hot path:
+//   when: explicit interval grids define layer and sublayer geometry
+//   work: allocates grid arrays and fills layer/sublayer altitude, pressure, interval, and label fields
+//   data: interval definitions, climatology profile interpolation, grid output arrays
+//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildExplicit(
     allocator: Allocator,
     scene: *const Scene,
@@ -171,6 +189,11 @@ fn buildExplicit(
     return grid;
 }
 
+// hot path:
+//   when: explicit interval grids use DISAMAR parity support geometry
+//   work: builds RTM support nodes and sublayer support weights from quadrature division points
+//   data: interval bounds, Gauss nodes/weights, climatology interpolation, grid output arrays
+//   follow: shared_geometry.buildSharedRtmGeometry and parity support-row accumulation
 fn buildExplicitDisamarParity(
     allocator: Allocator,
     scene: *const Scene,
@@ -298,6 +321,11 @@ fn buildExplicitDisamarParity(
     return grid.*;
 }
 
+// hot path:
+//   when: legacy atmosphere controls define evenly divided vertical layers
+//   work: fills layer and sublayer altitude/pressure/weight arrays
+//   data: layer count, sublayer divisions, climatology profile, grid output arrays
+//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildLegacy(
     allocator: Allocator,
     scene: *const Scene,

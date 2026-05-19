@@ -38,6 +38,9 @@ def build_results(
     run_id: str,
     *,
     total_benchmark_wall_s: float,
+    total_benchmark_process_cpu_s: float,
+    memory: dict[str, Any],
+    memory_layout: dict[str, Any],
 ) -> dict[str, Any]:
 
     run = db.run_payload(run_id)
@@ -68,6 +71,13 @@ def build_results(
         "created_at_unix_s": run["started_at_unix_s"],
         "finished_at_unix_s": run["finished_at_unix_s"] or time.time(),
         "total_benchmark_wall_s": total_benchmark_wall_s,
+        "total_benchmark_process_cpu_s": total_benchmark_process_cpu_s,
+        "total_benchmark_average_active_cores": active_cores(
+            total_benchmark_process_cpu_s,
+            total_benchmark_wall_s,
+        ),
+        "memory": memory,
+        "memory_layout": memory_layout,
         "command": config.COMMAND,
         "output": "benchmark/results.json",
         "scratch_db": "benchmark/.runs/benchmark.sqlite",
@@ -86,13 +96,15 @@ def build_results(
             "retrieval_fast_minus_session_single_case": retrieval["single"]["fast_minus_session"],
             "retrieval_sweep_fast_minus_session": retrieval["sweep"]["fast_minus_session"],
         },
-        "report": build_compact_report(forward, retrieval),
+        "report": build_compact_report(forward, retrieval, memory, memory_layout),
     }
 
 
 def build_compact_report(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
+    memory: dict[str, Any],
+    memory_layout: dict[str, Any],
 ) -> dict[str, list[dict[str, str]]]:
 
     no_session = forward["no_session"]
@@ -102,6 +114,7 @@ def build_compact_report(
     retrieval_fast = retrieval["single"]["fast_mode"]
     retrieval_sweep = retrieval["sweep"]
     fast_sweep_timing = retrieval_sweep["fast_mode"]["timing_s"]["first_use_total_s"]
+    sweep_count = retrieval_sweep["fast_mode"]["run_count"]
 
     return {
         "case_rows": [
@@ -142,7 +155,7 @@ def build_compact_report(
             {
                 "case": "OE, fast mode",
                 "timing": (
-                    "100-case median "
+                    f"{sweep_count}-case median "
                     f"{fast_sweep_timing['median']:.6f}s; "
                     f"mean {fast_sweep_timing['mean']:.6f}s; "
                     f"range {fast_sweep_timing['min']:.6f}-"
@@ -155,7 +168,57 @@ def build_compact_report(
             },
         ],
         "total_wall_clock_rows": total_wall_rows(forward, retrieval),
+        "resource_rows": resource_rows(forward, retrieval, memory),
+        "memory_layout_rows": memory_layout_rows(memory_layout),
     }
+
+
+def memory_layout_rows(memory_layout: dict[str, Any]) -> list[dict[str, str]]:
+
+    instrument = memory_layout["instrument_sampling"]
+    optical = memory_layout["optical_accumulation"]
+    support = instrument["support_count_stats"]
+
+    return [
+        {
+            "area": "Instrument sampling plan",
+            "shape": (
+                f"{instrument['nominal_sample_count']} wavelengths, "
+                f"{instrument['kernel_count']} channel kernels, "
+                f"support count median {support['median']:.1f}, max {support['max']}"
+            ),
+            "memory": (
+                f"current owned plan {instrument['current_owned_wavelength_sampling_bytes']} B; "
+                "estimated row payload saved "
+                f"{instrument['estimated_row_payload_saved_mib']:.2f} MiB"
+            ),
+        },
+        {
+            "area": "Integration kernel scratch",
+            "shape": (
+                f"{instrument['estimated_sampling_worker_count']} sampling worker(s), "
+                f"{instrument['integration_kernel_scratch_bytes_per_worker']} B each"
+            ),
+            "memory": (
+                f"{instrument['integration_kernel_scratch_bytes_at_worker_count']} B transient"
+            ),
+        },
+        {
+            "area": "Collision-complex profile cache",
+            "shape": (
+                f"{optical['benchmark_profile_node_count']} profile nodes, "
+                f"capacity {optical['collision_complex_profile_cache_capacity']}"
+            ),
+            "memory": (
+                "request cache "
+                f"{optical['previous_collision_complex_profile_cache_bytes']} -> "
+                f"{optical['current_collision_complex_profile_cache_bytes']} B; "
+                "sample spline scratch "
+                f"{optical['previous_collision_complex_sample_spline_scratch_bytes']} -> "
+                f"{optical['current_collision_complex_sample_spline_scratch_bytes']} B"
+            ),
+        },
+    ]
 
 
 def format_forward_residuals(case: dict[str, Any]) -> str:
@@ -222,6 +285,8 @@ def total_wall_rows(
 ) -> list[dict[str, str]]:
 
     sweep = retrieval["sweep"]
+    session_count = sweep["session"]["run_count"]
+    fast_count = sweep["fast_mode"]["run_count"]
 
     return [
         {
@@ -245,20 +310,119 @@ def total_wall_rows(
         },
         {
             "benchmark": "OE, no fast mode",
-            "total": f"{sweep['session']['timing_s']['total_wall_s']:.3f}s over 100 retrievals",
+            "total": (
+                f"{sweep['session']['timing_s']['total_wall_s']:.3f}s "
+                f"over {session_count} retrievals"
+            ),
         },
         {
             "benchmark": "OE, fast mode",
-            "total": f"{sweep['fast_mode']['timing_s']['total_wall_s']:.3f}s over 100 retrievals",
+            "total": (
+                f"{sweep['fast_mode']['timing_s']['total_wall_s']:.3f}s "
+                f"over {fast_count} retrievals"
+            ),
         },
         {
             "benchmark": "OE fast-mode savings",
             "total": (
                 f"{sweep['fast_minus_session']['total_retrieval_wall_s_saved']:.3f}s "
-                "over 100 retrievals"
+                f"over {min(session_count, fast_count)} retrievals"
             ),
         },
     ]
+
+
+def resource_rows(
+    forward: dict[str, Any],
+    retrieval: dict[str, Any],
+    memory: dict[str, Any],
+) -> list[dict[str, str]]:
+
+    return [
+        {
+            "benchmark": "Full benchmark process",
+            "process_cpu": "see top-level totals",
+            "process_memory": format_peak_memory(memory),
+        },
+        {
+            "benchmark": "Forward, no session",
+            "process_cpu": format_cpu_summary(forward["no_session"]),
+            "process_memory": "included in full benchmark process peak RSS",
+        },
+        {
+            "benchmark": "Forward, session cached run",
+            "process_cpu": format_nested_cpu_summary(forward["session"], "cached_run_s"),
+            "process_memory": "included in full benchmark process peak RSS",
+        },
+        {
+            "benchmark": "Forward, fast mode",
+            "process_cpu": format_nested_cpu_summary(
+                forward["fast_mode"],
+                "four_scene_fast_total_s",
+                core_key="four_scene_fast_total",
+            ),
+            "process_memory": "included in full benchmark process peak RSS",
+        },
+        {
+            "benchmark": "OE, no fast mode sweep",
+            "process_cpu": format_sweep_cpu_summary(retrieval["sweep"]["session"]),
+            "process_memory": "included in full benchmark process peak RSS",
+        },
+        {
+            "benchmark": "OE, fast mode sweep",
+            "process_cpu": format_sweep_cpu_summary(retrieval["sweep"]["fast_mode"]),
+            "process_memory": "included in full benchmark process peak RSS",
+        },
+    ]
+
+
+def format_peak_memory(memory: dict[str, Any]) -> str:
+
+    if not memory["peak_rss_supported"]:
+        return "peak RSS unavailable"
+
+    return (
+        f"peak RSS {memory['peak_rss_mib']:.1f} MiB; "
+        f"delta since benchmark start {memory['peak_rss_delta_mib']:.1f} MiB"
+    )
+
+
+def format_cpu_summary(case: dict[str, Any]) -> str:
+
+    cpu = case["process_cpu_s"]
+    cores = case["average_active_cores"]
+
+    return f"median CPU {cpu['median']:.3f}s; median active cores {cores['median']:.2f}"
+
+
+def format_nested_cpu_summary(
+    case: dict[str, Any],
+    key: str,
+    *,
+    core_key: str | None = None,
+) -> str:
+
+    core_key = key.removesuffix("_s") if core_key is None else core_key
+    cpu = case["process_cpu_s"][key]
+    cores = case["average_active_cores"][core_key]
+
+    return f"median CPU {cpu['median']:.3f}s; median active cores {cores['median']:.2f}"
+
+
+def format_sweep_cpu_summary(case: dict[str, Any]) -> str:
+
+    cpu = case["process_cpu_s"]
+    cores = case["average_active_cores"]["first_use_total"]
+
+    return f"total CPU {cpu['total_process_cpu_s']:.3f}s; median active cores {cores['median']:.2f}"
+
+
+def active_cores(process_cpu_s: float, wall_s: float) -> float:
+
+    if wall_s <= 0.0:
+        return 0.0
+
+    return process_cpu_s / wall_s
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:

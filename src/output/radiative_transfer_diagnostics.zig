@@ -7,12 +7,26 @@ const Scene = @import("../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: wavelength_nm=16 B, reflectance=16 B, radiance=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelength_nm, reflectance, radiance carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const SpectrumView = struct {
     wavelength_nm: []const f64,
     reflectance: []const f64,
     radiance: []const f64,
 };
 
+// layout(64-bit):
+//   size: 136 B, align: 8 B
+//   field storage: 133 B across 20 fields; largest: wavelength_nm=8 B, altitude_km=8 B, total_optical_depth=8 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   cache span: 3 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
 pub const RadiativeTransferDiagnosticRow = struct {
     wavelength_nm: f64,
     layer_index: u32,
@@ -36,6 +50,11 @@ pub const RadiativeTransferDiagnosticRow = struct {
     final_radiance: f64,
 };
 
+// hot path:
+//   when: radiative-transfer diagnostics are requested after a forward run
+//   work: builds atmospheric budget rows and derives per-wavelength transmission/source proxies
+//   data: budget rows, route controls, optional spectrum view, diagnostic rows
+//   follow: atmospheric_budget.build and fillWavelengthRows
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -69,6 +88,11 @@ pub fn build(
     return rows;
 }
 
+// hot path:
+//   when: radiative-transfer diagnostics process one wavelength group
+//   work: walks vertical rows, accumulates optical depth, and writes derived proxy fields
+//   data: wavelength budget slice, cumulative optical depth, route controls, output rows
+//   follow: interpolateSpectrum calls for final radiance/reflectance columns
 fn fillWavelengthRows(
     budget: []const atmospheric_budget.AtmosphericBudgetRow,
     rows: []RadiativeTransferDiagnosticRow,

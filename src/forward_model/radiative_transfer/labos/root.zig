@@ -20,10 +20,11 @@ pub const LayerRT = basis.LayerRT;
 pub const UDField = basis.UDField;
 pub const UDLocal = basis.UDLocal;
 pub const PhaseKernel = basis.PhaseKernel;
+pub const PhaseKernelRow = basis.PhaseKernelRow;
 pub const FourierPlmBasis = basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = basis.fillZplusZminFromBasis;
-pub const AttenArray = attenuation.AttenArray;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;
+pub const max_attenuation_levels = attenuation.max_levels;
 pub const Workspace = workspace_mod.Workspace;
 
 pub const smul = basis.smul;
@@ -33,7 +34,6 @@ pub const matAdd = basis.matAdd;
 pub const qseries = basis.qseries;
 pub const fillZplusZmin = basis.fillZplusZmin;
 
-pub const fillAttenuation = attenuation.fillAttenuation;
 pub const fillAttenuationDynamic = attenuation.fillAttenuationDynamic;
 pub const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 

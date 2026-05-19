@@ -13,17 +13,35 @@ const work_partition = @import("../../work_partition.zig");
 const Allocator = std.mem.Allocator;
 const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
+const max_profile_spectroscopy_cache_nodes: usize = 64;
 
+// layout(64-bit):
+//   size: 304 B, align: 8 B
+//   field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weights: []f64,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
 
+// layout(64-bit):
+//   size: 568 B, align: 8 B
+//   field storage: 565 B across 20 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B, active_line_absorbers=16 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 7 bool-storage slack = 31 bits
+//   out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers, owned_line_absorbers carry references/descriptors; referenced storage is not included in size
+//   cache span: 9 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
 pub const AbsorberBuildState = struct {
     active_line_absorbers: []State.ActiveLineAbsorber = &.{},
     active_cross_section_absorbers: []State.ActiveCrossSectionAbsorber = &.{},
@@ -81,6 +99,11 @@ pub const AbsorberBuildState = struct {
     }
 };
 
+// hot path:
+//   when: once per optical-state preparation
+//   work: builds active cross-section and line absorbers for repeated wavelength evaluation
+//   data: reference absorber tables, spectroscopy line lists, profile line-state storage
+//   follow: buildCrossSectionAbsorbers, buildLineAbsorbers, and prepareProfileLineStates
 pub fn build(
     allocator: Allocator,
     context: *Context,
@@ -116,6 +139,13 @@ pub fn build(
 
     try buildCrossSectionAbsorbers(allocator, context, &state);
     try buildLineAbsorbers(allocator, context, &state, &owned_lines, operational_o2_lut);
+    if (state.owned_line_absorbers.len == 0 and
+        state.owned_lines != null and
+        !operational_o2_lut.enabled() and
+        context.spectroscopy_profile_altitudes_km.len > max_profile_spectroscopy_cache_nodes)
+    {
+        return error.InvalidRequest;
+    }
 
     state.strong_line_states = if (state.owned_line_absorbers.len == 0)
         if (state.owned_lines) |line_list|
@@ -223,6 +253,11 @@ pub fn build(
     return state;
 }
 
+// hot path:
+//   when: during spectroscopy absorber preparation for profile-resolved scenes
+//   work: allocates prepared weak and strong line-state arrays for all profile nodes
+//   data: spectroscopy profile nodes, weak-line state slices, strong-line state slices
+//   follow: fillProfileLineStates and profile-node indexing into prepared state arrays
 fn prepareProfileLineStates(
     allocator: Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -261,21 +296,39 @@ fn prepareProfileLineStates(
         }
     }
 
+    const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
+    const strong_weight_count = if (strong_states != null) line_list.strongLinePreparedWeightCount() else 0;
+    var empty_strong_relaxation_weight_scratch: [0]f64 = .{};
+    const strong_relaxation_weight_scratch: []f64 = if (strong_weight_count != 0)
+        try allocator.alloc(f64, worker_count * strong_weight_count)
+    else
+        empty_strong_relaxation_weight_scratch[0..];
+    defer if (strong_relaxation_weight_scratch.len != 0) allocator.free(strong_relaxation_weight_scratch);
+
     fillProfileLineStates(
         line_list,
         temperatures_k,
         pressures_hpa,
         weak_states,
         strong_states,
+        strong_relaxation_weight_scratch,
+        strong_weight_count,
     );
 }
 
+// hot path:
+//   when: during profile spectroscopy preparation, often across worker chunks
+//   work: fills prepared weak and strong line states per thermodynamic profile node
+//   data: profile pressure/temperature arrays, line absorber arrays, prepared state arrays
+//   follow: profileLineStateWorkerMain and fillProfileLineStateRange
 fn fillProfileLineStates(
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weight_scratch: []f64,
+    strong_weight_count: usize,
 ) void {
     const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
     if (worker_count == 1) {
@@ -285,6 +338,7 @@ fn fillProfileLineStates(
             pressures_hpa,
             weak_states,
             strong_states,
+            strong_relaxation_weight_scratch[0..strong_weight_count],
             0,
             temperatures_k.len,
         );
@@ -292,8 +346,8 @@ fn fillProfileLineStates(
     }
 
     var queue = work_partition.ChunkQueue.init(temperatures_k.len, profile_line_state_chunk_size);
-    var worker_buffer: [Trace.max_workers]ProfileLineStateWorker = undefined;
-    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    var worker_buffer: [work_partition.max_workers]ProfileLineStateWorker = undefined;
+    var thread_buffer: [work_partition.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
     const threads = thread_buffer[0 .. worker_count - 1];
     var started_thread_count: usize = 0;
@@ -305,6 +359,10 @@ fn fillProfileLineStates(
             .pressures_hpa = pressures_hpa,
             .weak_states = weak_states,
             .strong_states = strong_states,
+            .strong_relaxation_weights = if (strong_weight_count != 0)
+                strong_relaxation_weight_scratch[worker_index * strong_weight_count ..][0..strong_weight_count]
+            else
+                &.{},
             .queue = &queue,
             .worker_index = worker_index,
         };
@@ -350,6 +408,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
                 worker.pressures_hpa,
                 worker.weak_states,
                 worker.strong_states,
+                worker.strong_relaxation_weights,
                 chunk.start,
                 chunk.end,
             );
@@ -363,6 +422,7 @@ fn fillProfileLineStateRange(
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_relaxation_weights: []f64,
     start: usize,
     end: usize,
 ) void {
@@ -375,8 +435,9 @@ fn fillProfileLineStateRange(
             );
         }
         if (strong_states) |states| {
-            line_list.prepareStrongLineStateInto(
+            line_list.prepareStrongLineStateIntoWithScratch(
                 &states[index],
+                strong_relaxation_weights,
                 temperatures_k[index],
                 pressures_hpa[index],
             );
@@ -388,6 +449,11 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
     return work_partition.preferredWorkerCount(profile_count, min_parallel_profile_line_state_count);
 }
 
+// hot path:
+//   when: once while preparing cross-section absorbers
+//   work: collects LUT/table-backed absorbers used by wavelength carrier evaluation
+//   data: absorber configs, cross-section tables, operational LUT handles
+//   follow: carrier_eval cross-section loops that consume the resulting active set
 fn buildCrossSectionAbsorbers(
     allocator: Allocator,
     context: *Context,
@@ -447,6 +513,11 @@ fn buildCrossSectionAbsorbers(
     }
 }
 
+// hot path:
+//   when: once while preparing spectroscopy line absorbers
+//   work: applies line controls, partitions strong/weak lines, and prepares match indexes
+//   data: line lists, strong-line sidecars, runtime controls, prepared line-state slices
+//   follow: layer_spectroscopy and line_list_eval relevant-window loops
 fn buildLineAbsorbers(
     allocator: Allocator,
     context: *Context,
@@ -559,6 +630,9 @@ fn sortLineList(line_list: *ReferenceData.SpectroscopyLineList) void {
         ReferenceData.SpectroscopyLine,
         line_list.lines,
         {},
+        // layout(64-bit):
+        //   anonymous comparator namespace: size 0 B, align 1 B
+        //   footprint: no runtime field storage; function declaration only
         struct {
             fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
                 return left.center_wavelength_nm < right.center_wavelength_nm;

@@ -42,11 +42,14 @@ pub const esmulSemulAddProductKnownNonzeroInto = matrix.esmulSemulAddProductKnow
 pub const esmulSemulSelfAddProductKnownNonzeroInto = matrix.esmulSemulSelfAddProductKnownNonzeroInto;
 pub const qseries = matrix.qseries;
 pub const qseriesKnownNonzeroProduct = matrix.qseriesKnownNonzeroProduct;
+pub const qseriesKnownNonzeroProductInto = matrix.qseriesKnownNonzeroProductInto;
 
 pub const PhaseKernel = phase_basis.PhaseKernel;
 pub const PhaseKernelRow = phase_basis.PhaseKernelRow;
 pub const FourierPlmBasis = phase_basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = phase_basis.fillZplusZminFromBasis;
 pub const fillZplusZminFromBasisLimited = phase_basis.fillZplusZminFromBasisLimited;
+pub const fillZplusZminFromWeightedPhaseLimited = phase_basis.fillZplusZminFromWeightedPhaseLimited;
 pub const fillZplusZminRowFromBasisLimited = phase_basis.fillZplusZminRowFromBasisLimited;
+pub const fillZplusZminRowFromWeightedPhaseLimited = phase_basis.fillZplusZminRowFromWeightedPhaseLimited;
 pub const fillZplusZmin = phase_basis.fillZplusZmin;

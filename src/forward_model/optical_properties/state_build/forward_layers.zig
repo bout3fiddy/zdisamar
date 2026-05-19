@@ -78,6 +78,7 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
             wavelength_nm,
             owned_layers,
             profile_cache,
+            true,
         )
     else
         prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
@@ -141,15 +142,22 @@ pub fn fillForwardLayersAtWavelength(
         wavelength_nm,
         layer_inputs,
         &profile_cache,
+        true,
     );
 }
 
+// hot path:
+//   when: forward input construction fills transport layers without a wavelength carrier cache
+//   work: reduces prepared layers or support rows into layer input optical-depth fields
+//   data: prepared layers/sublayers, profile spectroscopy cache, layer input array
+//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
     wavelength_nm: f64,
     layer_inputs: []transport_common.LayerInput,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    compute_jacobian: bool,
 ) OpticalDepthBreakdown {
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
 
@@ -173,7 +181,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     //   `RTMweightSub` values. Re-integrating a new Gauss
                     //   subgrid here changes line-shoulder absorption even
                     //   when the support grid itself matches.
-                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
+                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                         self,
                         scene,
                         wavelength_nm,
@@ -181,10 +189,11 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         support.strong_line_states,
                         layer_geometry,
                         profile_cache,
+                        layer_input,
+                        compute_jacobian,
                     );
-                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
-                    attachAerosolOpticalDepthJacobian(scene, layer_input);
-                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                    if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
+                    Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
             }
@@ -195,7 +204,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
                 const support = shared_geometry.sharedSupportSlices(self, sublayers, start_index, count);
-                const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
+                const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                     self,
                     scene,
                     wavelength_nm,
@@ -210,10 +219,11 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         .support_count = layer.sublayer_count,
                     },
                     profile_cache,
+                    layer_input,
+                    compute_jacobian,
                 );
-                layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
-                attachAerosolOpticalDepthJacobian(scene, layer_input);
-                Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
+                Evaluation.accumulateBreakdown(&totals, breakdown);
             }
             return totals;
         }
@@ -231,7 +241,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     profile_cache,
                 );
                 layer_inputs[sublayer_index] = Evaluation.layerInputFromEvaluated(evaluated);
-                attachAerosolOpticalDepthJacobian(scene, &layer_inputs[sublayer_index]);
+                if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, &layer_inputs[sublayer_index]);
                 Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
             }
             return totals;
@@ -251,7 +261,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 profile_cache,
             );
             layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
-            attachAerosolOpticalDepthJacobian(scene, layer_input);
+            if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
             Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
         }
         return totals;
@@ -312,9 +322,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 0.0,
             .solar_mu = scene.geometry.solarCosineAtAltitude(layer.altitude_km),
             .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
-            .phase_coefficients = PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor),
+            .phase = PhaseFunctions.PhaseMixture.fromUnitPhase(&self.aerosol_phase_coefficients),
         };
-        attachAerosolOpticalDepthJacobian(scene, layer_input);
+        if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
         totals.gas_absorption_optical_depth += gas_absorption_optical_depth;
         totals.gas_scattering_optical_depth += gas_scattering_optical_depth;
         totals.cia_optical_depth += layer.cia_optical_depth;
@@ -326,12 +336,18 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     return totals;
 }
 
+// hot path:
+//   when: forward input construction fills transport layers for a cached wavelength solve
+//   work: reduces shared support rows through WavelengthCarrierCache and writes layer inputs
+//   data: shared RTM geometry, support sublayers, carrier cache, layer input array
+//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache
 pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
     wavelength_nm: f64,
     layer_inputs: []transport_common.LayerInput,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    compute_jacobian: bool,
 ) OpticalDepthBreakdown {
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
 
@@ -348,7 +364,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         support_start_index,
                         support_count,
                     );
-                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithCarrierCache(
+                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache(
                         self,
                         scene,
                         wavelength_nm,
@@ -356,10 +372,11 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         support.strong_line_states,
                         layer_geometry,
                         wavelength_cache,
+                        layer_input,
+                        compute_jacobian,
                     );
-                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
-                    attachAerosolOpticalDepthJacobian(scene, layer_input);
-                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                    if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
+                    Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
             }
@@ -371,7 +388,8 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
         scene,
         wavelength_nm,
         layer_inputs,
-        &wavelength_cache.profile_cache,
+        wavelength_cache.profile_cache,
+        compute_jacobian,
     );
 }
 

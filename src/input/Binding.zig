@@ -12,6 +12,13 @@ pub const BindingKind = enum {
     external_observation,
 };
 
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: name=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: name carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const NamedRef = struct {
     name: []const u8,
 
@@ -28,6 +35,13 @@ pub const NamedRef = struct {
     }
 };
 
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: full_name=16 B, ingest_name=16 B, output_name=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in size
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const IngestRef = struct {
     full_name: []const u8,
     ingest_name: []const u8,

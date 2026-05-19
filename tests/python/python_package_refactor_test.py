@@ -259,7 +259,7 @@ def assert_reference_data_and_rtm_tables() -> None:
             with rtm.SessionCache() as cache:
                 cache.load(mutable_case)
                 mutable_case.geometry.solar_zenith_deg = 0.0
-                spectrum = cache.spectrum()
+                spectrum = cache.spectrum(include_case=True)
                 assert spectrum.case is not None
                 assert spectrum.case.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
 

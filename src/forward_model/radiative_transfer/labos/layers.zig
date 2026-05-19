@@ -1,6 +1,5 @@
 const std = @import("std");
 const math = std.math;
-const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
@@ -43,6 +42,11 @@ pub fn zeroFourierIntegral(
 }
 
 // PUB FOR TEST: re-exported via labos/internal.zig.
+// hot path:
+//   when: during zero-Fourier phase preparation before RT layer construction
+//   work: normalizes phase coefficients across layers and scattering streams
+//   data: layer phase coefficients, Gaussian stream geometry, normalization factors
+//   follow: phase coefficient order consumed by fillZplusZmin and layer-doubling
 pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
@@ -117,60 +121,71 @@ pub fn renormalizeZeroFourierPhaseKernel(
 }
 
 // Rsingle: single-scattering reflection for a homogeneous layer.
-fn singleScatterR(
+// hot path:
+//   when: RT layer construction builds single-scatter reflection matrices
+//   work: fills R matrix entries from attenuation, Z- phase matrix, and scattering albedo
+//   data: output matrix, E attenuation vector, Zmin phase matrix, stream geometry
+//   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+fn fillSingleScatterR(
+    out: *basis.Mat,
     a: f64,
     E: *const basis.Vec,
     Zmin: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     const n = geo.nmutot;
-    if (n == 12) return singleScatterR12(a, E, Zmin, geo);
-    var result = basis.Mat.zero(n);
+    if (n == 12) return fillSingleScatterR12(out, a, E, Zmin, geo);
+    out.* = basis.Mat.zero(n);
 
     for (0..n) |j| {
         const ej = E.data[j];
         var idx = j;
         for (0..n) |i| {
             const eer = E.data[i] * ej;
-            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            out.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
             idx += n;
         }
     }
-    return result;
 }
 
-fn singleScatterR12(
+fn fillSingleScatterR12(
+    out: *basis.Mat,
     a: f64,
     E: *const basis.Vec,
     Zmin: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     // INVARIANT: the fixed 12x12 loops assign every active matrix element.
-    var result = basis.Mat{ .data = undefined, .n = 12 };
+    out.* = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
         var idx = j;
         inline for (0..12) |i| {
             const eer = E.data[i] * ej;
-            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            out.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
             idx += 12;
         }
     }
-    return result;
 }
 
 // Tsingle: single-scattering transmission for a homogeneous layer.
-fn singleScatterT(
+// hot path:
+//   when: RT layer construction builds single-scatter transmission matrices
+//   work: fills T matrix entries from attenuation, Z+ phase matrix, optical depth, and scattering albedo
+//   data: output matrix, E attenuation vector, Zplus phase matrix, stream geometry
+//   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+fn fillSingleScatterT(
+    out: *basis.Mat,
     a: f64,
     b: f64,
     E: *const basis.Vec,
     Zplus: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     const n = geo.nmutot;
-    if (n == 12) return singleScatterT12(a, b, E, Zplus, geo);
-    var result = basis.Mat.zero(n);
+    if (n == 12) return fillSingleScatterT12(out, a, b, E, Zplus, geo);
+    out.* = basis.Mat.zero(n);
 
     for (0..n) |j| {
         const ej = E.data[j];
@@ -182,22 +197,22 @@ fn singleScatterT(
             } else {
                 eet = E.data[i] - ej;
             }
-            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            out.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += n;
         }
     }
-    return result;
 }
 
-fn singleScatterT12(
+fn fillSingleScatterT12(
+    out: *basis.Mat,
     a: f64,
     b: f64,
     E: *const basis.Vec,
     Zplus: *const basis.Mat,
     geo: *const basis.Geometry,
-) basis.Mat {
+) void {
     // INVARIANT: the fixed 12x12 loops assign every active matrix element.
-    var result = basis.Mat{ .data = undefined, .n = 12 };
+    out.* = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
@@ -209,11 +224,10 @@ fn singleScatterT12(
             } else {
                 eet = E.data[i] - ej;
             }
-            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            out.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += 12;
         }
     }
-    return result;
 }
 
 fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
@@ -252,18 +266,25 @@ inline fn squareAttenuation12(E: *basis.Vec) void {
 }
 
 // Perform ndouble doubling steps on R, T, E for a layer.
+// hot path:
+//   when: dynamic-shape LABOS layer doubling is used for a layer/Fourier term
+//   work: updates reflection/transmission matrices through q-series products
+//   data: R/T matrices, q-series temporaries, stream counts, thresholded matrix products
+//   follow: qseriesKnownNonzeroProductInto and smul matrix helpers
 fn doDouble(
     ndouble: usize,
     n: usize,
     n_gauss: usize,
     threshold_mul: f64,
-    geo: *const basis.Geometry,
-    b_start: f64,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
 ) void {
-    var b = b_start;
+    if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
+        doDouble12x10(ndouble, threshold_mul, R, T, E);
+        return;
+    }
+
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
     var current_r = R;
@@ -287,7 +308,8 @@ fn doDouble(
             Trace.plotU("matrix_qseries", 1);
             Trace.plotU("matrix_smul_q_product", 1);
             Trace.plotU("matrix_smul_add_semul3", 1);
-            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, current_r, current_r);
+            var Q: basis.Mat = undefined;
+            basis.qseriesKnownNonzeroProductInto(&Q, n, n_gauss, current_r, current_r);
             basis.smulAddSemul3KnownRightTraceInto(&d_storage, n, n_gauss, threshold_mul, &Q, E, current_t, trace_t);
             break :blk &d_storage;
         };
@@ -347,15 +369,8 @@ fn doDouble(
         next_t = previous_t;
         final_in_scratch = !final_in_scratch;
 
-        b *= 2.0;
-        if (b < 0.001) {
-            for (0..geo.nmutot) |imu| {
-                E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
-            }
-        } else {
-            Trace.plotU("doubling_square_evals", @intCast(n));
-            squareAttenuation(n, E);
-        }
+        Trace.plotU("doubling_square_evals", @intCast(n));
+        squareAttenuation(n, E);
     }
 
     if (final_in_scratch) {
@@ -364,45 +379,179 @@ fn doDouble(
     }
 }
 
+// hot path:
+//   when: fixed 12x10 LABOS layer doubling is used for the O2 A route
+//   work: updates reflection/transmission matrices through fixed-shape q-series products
+//   data: fixed matrix cells, q-series temporaries, precomputed stream geometry
+//   follow: doDouble12x10Step and qseriesFromProduct12x10Into
+fn doDouble12x10(
+    ndouble: usize,
+    threshold_mul: f64,
+    R: *basis.Mat,
+    T: *basis.Mat,
+    E: *basis.Vec,
+) void {
+    var r_storage: basis.Mat = undefined;
+    var t_storage: basis.Mat = undefined;
+    var current_r = R;
+    var current_t = T;
+    var next_r = &r_storage;
+    var next_t = &t_storage;
+    var final_in_scratch = false;
+
+    for (0..ndouble) |_| {
+        Trace.plotU("doubling_steps", 1);
+        doDouble12x10Step(threshold_mul, current_r, current_t, E, next_r, next_t);
+
+        const previous_r = current_r;
+        const previous_t = current_t;
+        current_r = next_r;
+        current_t = next_t;
+        next_r = previous_r;
+        next_t = previous_t;
+        final_in_scratch = !final_in_scratch;
+
+        Trace.plotU("doubling_square_evals", basis.max_nmutot);
+        squareAttenuation12(E);
+    }
+
+    if (final_in_scratch) {
+        R.* = current_r.*;
+        T.* = current_t.*;
+    }
+}
+
+inline fn doDouble12x10Step(
+    threshold_mul: f64,
+    current_r: *const basis.Mat,
+    current_t: *const basis.Mat,
+    E: *const basis.Vec,
+    next_r: *basis.Mat,
+    next_t: *basis.Mat,
+) void {
+    const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
+    const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
+    const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+
+    var d_storage: basis.Mat = undefined;
+    const D = if (q_is_zero) blk: {
+        Trace.plotU("doubling_qseries_skipped", 1);
+        break :blk current_t;
+    } else blk: {
+        Trace.plotU("doubling_qseries_nonzero", 1);
+        Trace.plotU("matrix_qseries", 1);
+        Trace.plotU("matrix_smul_q_product", 1);
+        Trace.plotU("matrix_smul_add_semul3", 1);
+        var Q: basis.Mat = undefined;
+        basis.qseriesKnownNonzeroProductInto(&Q, basis.max_nmutot, basis.max_gauss, current_r, current_r);
+        basis.smulAddSemul3KnownRightTraceInto(&d_storage, basis.max_nmutot, basis.max_gauss, threshold_mul, &Q, E, current_t, trace_t);
+        break :blk &d_storage;
+    };
+    const trace_d = if (q_is_zero) trace_t else gaussTrace(basis.max_nmutot, basis.max_gauss, D);
+
+    Trace.plotU("matrix_smul_rd", 1);
+    const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+
+    var U: basis.Mat = undefined;
+    if (rd_nonzero) {
+        Trace.plotU("matrix_smul_rd_nonzero", 1);
+        Trace.plotU("matrix_semul_add", 1);
+        basis.semulAddProductKnownNonzeroInto(&U, basis.max_nmutot, basis.max_gauss, current_r, E, D);
+    } else {
+        Trace.plotU("matrix_semul", 1);
+        basis.semulInto(&U, basis.max_nmutot, current_r, E);
+    }
+    const trace_u = gaussTrace(basis.max_nmutot, basis.max_gauss, &U);
+
+    Trace.plotU("matrix_smul_tu", 1);
+    const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+
+    if (tu_nonzero) {
+        Trace.plotU("matrix_smul_tu_nonzero", 1);
+        Trace.plotU("matrix_mat_add_esmul3", 1);
+        basis.matAddEsmul3ProductKnownNonzeroInto(next_r, basis.max_nmutot, basis.max_gauss, current_r, E, &U, current_t);
+    } else {
+        Trace.plotU("matrix_mat_add_esmul", 1);
+        basis.matAddEsmulInto(next_r, basis.max_nmutot, current_r, E, &U);
+    }
+
+    Trace.plotU("matrix_smul_td", 1);
+    const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+
+    if (td_nonzero) {
+        Trace.plotU("matrix_smul_td_nonzero", 1);
+        Trace.plotU("matrix_esmul_semul_add", 1);
+        if (q_is_zero) {
+            basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, current_t);
+        } else {
+            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
+        }
+    } else {
+        Trace.plotU("matrix_esmul_semul", 1);
+        if (q_is_zero) {
+            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
+        } else {
+            basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
+        }
+    }
+}
+
 fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
-    for (layers) |layer| {
-        max_index = @max(max_index, phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients));
+    for (layers) |*layer| {
+        max_index = @max(max_index, layer.phase.maxIndex());
     }
     return max_index;
 }
 
+// hot path:
+//   when: LABOS workspace precomputes per-layer phase coefficient limits
+//   work: scans phase coefficient arrays and records the highest active coefficient per layer
+//   data: layer phase coefficient arrays and phase-max-index output
+//   follow: calcRTlayersIntoWithBasis Fourier-term skip decisions
 pub fn fillLayerPhaseMaxIndices(
     layer_phase_max_indices: []usize,
     layers: []const common.LayerInput,
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
-    for (layers, layer_phase_max_indices[0..layers.len]) |layer, *max_index| {
-        max_index.* = phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients);
+    for (layers, layer_phase_max_indices[0..layers.len]) |*layer, *max_index| {
+        max_index.* = layer.phase.maxIndex();
     }
 }
 
+// hot path:
+//   when: LABOS workspace precomputes effective scattering suffixes by layer
+//   work: scans phase coefficients in reverse order and writes suffix maxima
+//   data: layer phase coefficient arrays, phase max indexes, suffix output array
+//   follow: calcRTlayersIntoWithBasis effective-scattering lookup
 pub fn fillLayerEffectiveScatteringSuffixes(
     suffixes: []f64,
     layers: []const common.LayerInput,
     layer_phase_max_indices: []const usize,
+    phase_stride: usize,
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
-    std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
-    for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_phase_index, layer_idx| {
-        const layer_suffixes = suffixes[layer_idx * basis.max_phase_coef ..][0..basis.max_phase_coef];
+    std.debug.assert(phase_stride > 0 and phase_stride <= basis.max_phase_coef);
+    std.debug.assert(suffixes.len >= layers.len * phase_stride);
+    for (layers, layer_phase_max_indices[0..layers.len], 0..) |*layer, max_phase_index, layer_idx| {
+        const layer_suffixes = suffixes[layer_idx * phase_stride ..][0..phase_stride];
         @memset(layer_suffixes, 0.0);
         var suffix: f64 = 0.0;
-        var reverse_index = @min(max_phase_index + 1, basis.max_phase_coef);
+        var reverse_index = max_phase_index + 1;
         while (reverse_index > 0) {
             reverse_index -= 1;
-            const beta_eff = @abs(layer.phase_coefficients[reverse_index]) * phase_odd_reciprocal[reverse_index];
+            const beta_eff = @abs(layer.phase.coefficient(reverse_index)) * phase_odd_reciprocal[reverse_index];
             suffix = @max(suffix, beta_eff);
-            layer_suffixes[reverse_index] = suffix;
+            if (reverse_index < phase_stride) layer_suffixes[reverse_index] = suffix;
         }
     }
 }
 
+// hot path:
+//   when: for each layer inside each LABOS Fourier term
+//   work: builds phase matrices, effective scattering suffixes, exponentials, single scatter, and doubled RT layers
+//   data: layer optical properties, phase basis, RT layer outputs, doubling workspace
+//   follow: labos.rt_layer trace zones and fixed 12x10 versus dynamic doubling branches
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -412,19 +561,20 @@ pub fn calcRTlayersIntoWithBasis(
     plm_basis: *const basis.FourierPlmBasis,
     layer_phase_max_indices: ?[]const usize,
     layer_effective_scattering_suffixes: ?[]const f64,
-    phase_kernel_cache: ?[]basis.PhaseKernel,
-    phase_kernel_valid: ?[]bool,
+    layer_effective_scattering_suffix_stride: usize,
+    phase_row_cache: ?[]basis.PhaseKernelRow,
+    phase_row_valid: ?[]bool,
     rt_active: ?[]bool,
 ) void {
     const nlayer = layers.len;
     rt[0] = zeroLayerRt(geo.nmutot);
     if (rt_active) |active| active[0] = false;
-    if (phase_kernel_valid) |valid| @memset(valid, false);
+    if (phase_row_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
         Trace.plotU("layer_visits", 1);
         const rt_idx = layer_idx + 1;
-        const layer = layers[layer_idx];
+        const layer = &layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             if (rt_active) |active| active[rt_idx] = false;
@@ -432,11 +582,11 @@ pub fn calcRTlayersIntoWithBasis(
             continue;
         }
 
-        const phase_coefs = layer.phase_coefficients;
+        const phase = layer.phase;
         const max_phase_index = if (layer_phase_max_indices) |indices|
             indices[layer_idx]
         else
-            phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+            phase.maxIndex();
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             if (rt_active) |active| active[rt_idx] = false;
@@ -453,18 +603,22 @@ pub fn calcRTlayersIntoWithBasis(
         var z = z: {
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_matrix");
             defer zone.end();
-            break :z basis.fillZplusZminFromBasisLimited(
+            break :z basis.fillZplusZminFromWeightedPhaseLimited(
                 i_fourier,
-                phase_coefs,
+                phase.aerosol_weight,
+                phase.cloud_weight,
+                phase.rayleigh2_weight,
+                phase.aerosol_phase_coefficients,
+                phase.cloud_phase_coefficients,
                 max_phase_index,
                 geo,
                 plm_basis,
             );
         };
         Trace.plotU("phase_matrix_builds", 1);
-        if (phase_kernel_cache) |cache| {
-            cache[rt_idx] = z;
-            if (phase_kernel_valid) |valid| valid[rt_idx] = true;
+        if (phase_row_cache) |cache| {
+            cachePhaseKernelViewRow(cache, rt_idx, &z, geo.viewIdx());
+            if (phase_row_valid) |valid| valid[rt_idx] = true;
         }
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
@@ -473,16 +627,18 @@ pub fn calcRTlayersIntoWithBasis(
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.effective_scattering");
             defer zone.end();
             if (layer_effective_scattering_suffixes) |suffixes| {
-                std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
-                break :max_beta_eff suffixes[layer_idx * basis.max_phase_coef + i_fourier];
+                std.debug.assert(layer_effective_scattering_suffix_stride > i_fourier);
+                std.debug.assert(suffixes.len >= layers.len * layer_effective_scattering_suffix_stride);
+                break :max_beta_eff suffixes[layer_idx * layer_effective_scattering_suffix_stride + i_fourier];
             }
             var suffix: f64 = 0.0;
             var scanned_terms: usize = 0;
             var nonzero_terms: usize = 0;
             for (i_fourier..max_phase_index + 1) |ic| {
                 scanned_terms += 1;
-                if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
-                const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
+                const phase_coefficient = phase.coefficient(ic);
+                if (phase_coefficient != 0.0) nonzero_terms += 1;
+                const beta_eff = @abs(phase_coefficient) * phase_odd_reciprocal[ic];
                 if (beta_eff > suffix) suffix = beta_eff;
             }
             Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));
@@ -508,6 +664,8 @@ pub fn calcRTlayersIntoWithBasis(
             }
             b_start = bd;
         }
+        const needs_renormalized_phase =
+            use_doubling and i_fourier == 0 and controls.renorm_phase_function;
 
         var E = basis.Vec.zero(geo.nmutot);
         {
@@ -519,48 +677,63 @@ pub fn calcRTlayersIntoWithBasis(
         }
         Trace.plotU("initial_exp_evals", @intCast(geo.nmutot));
 
-        var R: basis.Mat = undefined;
-        var T: basis.Mat = undefined;
+        if (needs_renormalized_phase) {
+            {
+                const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
+                defer zone.end();
+                renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
+            }
+            Trace.plotU("phase_renormalizations", 1);
+        }
+
+        const layer_rt = &rt[rt_idx];
         {
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
             defer zone.end();
-            R = singleScatterR(a, &E, &z.Zmin, geo);
-            T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+            fillSingleScatterR(&layer_rt.R, a, &E, &z.Zmin, geo);
+            fillSingleScatterT(&layer_rt.T, a, b_start, &E, &z.Zplus, geo);
         }
         Trace.plotU("single_scatter_r", 1);
         Trace.plotU("single_scatter_t", 1);
 
         if (use_doubling) {
             Trace.plotU("doubled_layers", 1);
-            if (i_fourier == 0 and controls.renorm_phase_function) {
-                {
-                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
-                    defer zone.end();
-                    renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
-                }
-                Trace.plotU("phase_renormalizations", 1);
-                {
-                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
-                    defer zone.end();
-                    R = singleScatterR(a, &E, &z.Zmin, geo);
-                    T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
-                }
-                Trace.plotU("single_scatter_r", 1);
-                Trace.plotU("single_scatter_t", 1);
-            }
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
-                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, geo, b_start, &R, &T, &E);
+                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, &layer_rt.R, &layer_rt.T, &E);
             }
         }
 
-        rt[rt_idx].R = R;
-        rt[rt_idx].T = T;
         if (rt_active) |active| active[rt_idx] = a != 0.0;
     }
 }
 
+fn cachePhaseKernelViewRow(
+    phase_row_cache: []basis.PhaseKernelRow,
+    rt_idx: usize,
+    z: *const basis.PhaseKernel,
+    row_index: usize,
+) void {
+    const n = z.Zplus.n;
+    const row_offset = row_index * n;
+    var row = basis.PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = n,
+    };
+    for (0..n) |col| {
+        row.zplus[col] = z.Zplus.data[row_offset + col];
+        row.zmin[col] = z.Zmin.data[row_offset + col];
+    }
+    phase_row_cache[rt_idx] = row;
+}
+
+// hot path:
+//   when: tangent transport derivatives are requested for LABOS layers
+//   work: builds derivative RT layers alongside the base layer matrix path
+//   data: base layer inputs, derivative layer inputs, tangent RT outputs, phase basis
+//   follow: calcRTlayersIntoWithBasis and derivative workspace consumers
 pub fn calcRTlayersTangentIntoWithBasis(
     rt_tangent: []LayerRT,
     layers: []const common.LayerInput,
@@ -603,6 +776,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             plm_basis,
             null,
             null,
+            0,
             null,
             null,
             null,
@@ -616,6 +790,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             plm_basis,
             null,
             null,
+            0,
             null,
             null,
             null,
@@ -667,6 +842,7 @@ pub fn calcRTlayersInto(
         &plm_basis,
         null,
         null,
+        0,
         null,
         null,
         null,
@@ -678,8 +854,8 @@ pub fn calcRTlayers(
     i_fourier: usize,
     geo: *const basis.Geometry,
     controls: common.RadiativeTransferControls,
-) [attenuation.AttenArray.max_levels]LayerRT {
-    var rt: [attenuation.AttenArray.max_levels]LayerRT = undefined;
+) [attenuation.max_levels]LayerRT {
+    var rt: [attenuation.max_levels]LayerRT = undefined;
     calcRTlayersInto(rt[0 .. layers.len + 1], layers, i_fourier, geo, controls);
     return rt;
 }
