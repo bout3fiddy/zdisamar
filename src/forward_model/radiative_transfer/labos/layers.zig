@@ -529,14 +529,16 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     suffixes: []f64,
     layers: []const common.LayerInput,
     layer_phase_max_indices: []const usize,
+    phase_stride: usize,
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
-    std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
+    std.debug.assert(phase_stride > 0 and phase_stride <= basis.max_phase_coef);
+    std.debug.assert(suffixes.len >= layers.len * phase_stride);
     for (layers, layer_phase_max_indices[0..layers.len], 0..) |*layer, max_phase_index, layer_idx| {
-        const layer_suffixes = suffixes[layer_idx * basis.max_phase_coef ..][0..basis.max_phase_coef];
+        const layer_suffixes = suffixes[layer_idx * phase_stride ..][0..phase_stride];
         @memset(layer_suffixes, 0.0);
         var suffix: f64 = 0.0;
-        var reverse_index = @min(max_phase_index + 1, basis.max_phase_coef);
+        var reverse_index = @min(max_phase_index + 1, phase_stride);
         while (reverse_index > 0) {
             reverse_index -= 1;
             const beta_eff = @abs(layer.phase_coefficients[reverse_index]) * phase_odd_reciprocal[reverse_index];
@@ -560,6 +562,7 @@ pub fn calcRTlayersIntoWithBasis(
     plm_basis: *const basis.FourierPlmBasis,
     layer_phase_max_indices: ?[]const usize,
     layer_effective_scattering_suffixes: ?[]const f64,
+    layer_effective_scattering_suffix_stride: usize,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
     rt_active: ?[]bool,
@@ -621,8 +624,9 @@ pub fn calcRTlayersIntoWithBasis(
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.effective_scattering");
             defer zone.end();
             if (layer_effective_scattering_suffixes) |suffixes| {
-                std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
-                break :max_beta_eff suffixes[layer_idx * basis.max_phase_coef + i_fourier];
+                std.debug.assert(layer_effective_scattering_suffix_stride > i_fourier);
+                std.debug.assert(suffixes.len >= layers.len * layer_effective_scattering_suffix_stride);
+                break :max_beta_eff suffixes[layer_idx * layer_effective_scattering_suffix_stride + i_fourier];
             }
             var suffix: f64 = 0.0;
             var scanned_terms: usize = 0;
@@ -748,6 +752,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             plm_basis,
             null,
             null,
+            0,
             null,
             null,
             null,
@@ -761,6 +766,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             plm_basis,
             null,
             null,
+            0,
             null,
             null,
             null,
@@ -812,6 +818,7 @@ pub fn calcRTlayersInto(
         &plm_basis,
         null,
         null,
+        0,
         null,
         null,
         null,

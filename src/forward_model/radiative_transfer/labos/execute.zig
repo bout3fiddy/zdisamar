@@ -255,6 +255,7 @@ fn layerResolvedLabosWithWorkspace(
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
+    const phase_suffix_stride = phase_max + 1;
     const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
     const wants_aerosol_optical_depth = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
     const wants_aerosol_layer_mid_pressure = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
@@ -288,8 +289,8 @@ fn layerResolvedLabosWithWorkspace(
     } else null;
     const layer_effective_scattering_suffixes = if (workspace) |scratch| blk: {
         if (layer_phase_max_indices) |indices| {
-            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer);
-            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices);
+            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer, phase_suffix_stride);
+            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices, phase_suffix_stride);
             break :blk suffixes;
         }
         break :blk null;
@@ -333,6 +334,7 @@ fn layerResolvedLabosWithWorkspace(
                     plm_basis,
                     layer_phase_max_indices,
                     layer_effective_scattering_suffixes,
+                    phase_suffix_stride,
                     layer_phase_kernels,
                     layer_phase_kernel_valid,
                     if (workspace != null) orders_workspace.rt_active else null,

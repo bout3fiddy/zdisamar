@@ -151,8 +151,8 @@ pub const Workspace = struct {
         return self.layer_phase_max_indices[0..nlayer];
     }
 
-    pub fn layerEffectiveScatteringSuffix(self: *Workspace, nlayer: usize) ![]f64 {
-        const required_len = nlayer * basis.max_phase_coef;
+    pub fn layerEffectiveScatteringSuffix(self: *Workspace, nlayer: usize, phase_stride: usize) ![]f64 {
+        const required_len = nlayer * phase_stride;
         try ensureCapacity(f64, self.allocator, &self.layer_effective_scattering_suffix, required_len);
         return self.layer_effective_scattering_suffix[0..required_len];
     }

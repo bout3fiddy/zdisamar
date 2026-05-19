@@ -1894,6 +1894,73 @@ Conclusion:
 - forward session setup is 8.6 ms slower in this run, so treat that single row
   as benchmark noise to watch rather than a claimed setup speedup
 
+### Experiment 30: cap layer effective-scattering suffix stride by phase support
+
+Changed:
+- `Workspace.layerEffectiveScatteringSuffix` now allocates `nlayer *
+  phase_stride` values, where `phase_stride = phase_max + 1`
+- `fillLayerEffectiveScatteringSuffixes` fills only that active stride per
+  layer instead of clearing and filling 151 slots per layer
+- `calcRTlayersIntoWithBasis` receives the stride explicitly and indexes
+  suffixes as `layer_idx * stride + i_fourier`
+
+Memory traffic result:
+
+| item | before | after for current `nlayer=116`, `phase_stride=40` | change |
+| --- | ---: | ---: | ---: |
+| suffix columns per layer | 151 | 40 | -111 columns |
+| retained suffix storage per workspace | 136.8 KiB | 36.3 KiB | -100.6 KiB |
+| 301-output-sample lower-bound write surface | 42.2 MB (40.2 MiB) | 11.2 MB (10.7 MiB) | -31.0 MB (-29.6 MiB) |
+| worst-case `phase_max=150` | 151 columns | 151 columns | 0 B |
+
+Interpretation:
+- suffix lookup is only needed for Fourier indexes that the current phase
+  support can reach, so columns above `phase_max` are unreachable in the LABOS
+  Fourier loop
+- this keeps the precomputed suffix lookup, but shrinks its retained backing
+  storage and the per-solve fill/clear work
+- high-order phase cases keep the original shape because `phase_stride` grows
+  to 151 when `phase_max=150`
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `944608c18d4a43f1aa3184983f9441ff`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi`, the
+  plotting worktree `ruff server`, and the process-check command itself were
+  present
+- benchmark residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.600`; session-vs-no-session reflectance residual `0.0`; OE session AOD
+  diff `8.699e-08`; fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against Experiment 29:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 144.806837 s | 144.783458 s | 0.9998 |
+| total benchmark CPU | 279.384573 s | 279.261029 s | 0.9996 |
+| forward no-session median | 0.985431 s | 0.985769 s | 1.0003 |
+| forward session setup | 0.719042 s | 0.710595 s | 0.9883 |
+| forward session first cached | 0.277250 s | 0.281500 s | 1.0153 |
+| forward session cached median | 0.278131 s | 0.277718 s | 0.9985 |
+| forward fast four-scene median | 4.727819 s | 4.724862 s | 0.9994 |
+| OE session retrieval median | 1.158920 s | 1.157562 s | 0.9988 |
+| OE fast retrieval median | 0.900045 s | 0.897334 s | 0.9970 |
+| OE sweep session total wall | 19.893846 s | 19.917845 s | 1.0012 |
+| OE sweep fast total wall | 10.890247 s | 10.925058 s | 1.0032 |
+
+Conclusion:
+- this removes about 100.6 KiB of retained suffix storage per LABOS workspace
+  for the current O2A benchmark phase support
+- total benchmark wall and CPU are flat-to-slightly faster, with steady-state
+  cached forward and single-case retrieval medians flat-to-faster
+- the isolated first cached forward and sweep totals are slightly slower in
+  this run, so this should be watched in the next benchmark rather than counted
+  as a latency win
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
