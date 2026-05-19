@@ -39,6 +39,7 @@ def build_results(
     *,
     total_benchmark_wall_s: float,
     total_benchmark_process_cpu_s: float,
+    memory: dict[str, Any],
 ) -> dict[str, Any]:
 
     run = db.run_payload(run_id)
@@ -74,6 +75,7 @@ def build_results(
             total_benchmark_process_cpu_s,
             total_benchmark_wall_s,
         ),
+        "memory": memory,
         "command": config.COMMAND,
         "output": "benchmark/results.json",
         "scratch_db": "benchmark/.runs/benchmark.sqlite",
@@ -92,13 +94,14 @@ def build_results(
             "retrieval_fast_minus_session_single_case": retrieval["single"]["fast_minus_session"],
             "retrieval_sweep_fast_minus_session": retrieval["sweep"]["fast_minus_session"],
         },
-        "report": build_compact_report(forward, retrieval),
+        "report": build_compact_report(forward, retrieval, memory),
     }
 
 
 def build_compact_report(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
+    memory: dict[str, Any],
 ) -> dict[str, list[dict[str, str]]]:
 
     no_session = forward["no_session"]
@@ -162,7 +165,7 @@ def build_compact_report(
             },
         ],
         "total_wall_clock_rows": total_wall_rows(forward, retrieval),
-        "resource_rows": resource_rows(forward, retrieval),
+        "resource_rows": resource_rows(forward, retrieval, memory),
     }
 
 
@@ -280,16 +283,24 @@ def total_wall_rows(
 def resource_rows(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
+    memory: dict[str, Any],
 ) -> list[dict[str, str]]:
 
     return [
         {
+            "benchmark": "Full benchmark process",
+            "process_cpu": "see top-level totals",
+            "process_memory": format_peak_memory(memory),
+        },
+        {
             "benchmark": "Forward, no session",
             "process_cpu": format_cpu_summary(forward["no_session"]),
+            "process_memory": "included in full benchmark process peak RSS",
         },
         {
             "benchmark": "Forward, session cached run",
             "process_cpu": format_nested_cpu_summary(forward["session"], "cached_run_s"),
+            "process_memory": "included in full benchmark process peak RSS",
         },
         {
             "benchmark": "Forward, fast mode",
@@ -298,16 +309,30 @@ def resource_rows(
                 "four_scene_fast_total_s",
                 core_key="four_scene_fast_total",
             ),
+            "process_memory": "included in full benchmark process peak RSS",
         },
         {
             "benchmark": "OE, no fast mode sweep",
             "process_cpu": format_sweep_cpu_summary(retrieval["sweep"]["session"]),
+            "process_memory": "included in full benchmark process peak RSS",
         },
         {
             "benchmark": "OE, fast mode sweep",
             "process_cpu": format_sweep_cpu_summary(retrieval["sweep"]["fast_mode"]),
+            "process_memory": "included in full benchmark process peak RSS",
         },
     ]
+
+
+def format_peak_memory(memory: dict[str, Any]) -> str:
+
+    if not memory["peak_rss_supported"]:
+        return "peak RSS unavailable"
+
+    return (
+        f"peak RSS {memory['peak_rss_mib']:.1f} MiB; "
+        f"delta since benchmark start {memory['peak_rss_delta_mib']:.1f} MiB"
+    )
 
 
 def format_cpu_summary(case: dict[str, Any]) -> str:

@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from suite import config, native, report  # noqa: E402
+from suite import config, memory, native, report  # noqa: E402
 from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
@@ -43,6 +43,7 @@ def main() -> int:
 
     db = BenchmarkDb(config.DB_PATH)
     run_id = db.create_run(git=report.git_metadata(), command=config.COMMAND)
+    memory_probe = memory.start_peak_rss_probe()
     progress = Progress(db, run_id)
     progress.log("benchmark", f"run {run_id} start")
     progress.log(
@@ -68,6 +69,7 @@ def main() -> int:
             run_id,
             total_benchmark_wall_s=total_timing.wall_s,
             total_benchmark_process_cpu_s=total_timing.process_cpu_s,
+            memory=memory_probe.finish(),
         )
         report.write_json_atomic(config.RESULTS_PATH, results)
         progress.log("benchmark", f"wrote {config.RESULTS_PATH.relative_to(config.REPO_ROOT)}")

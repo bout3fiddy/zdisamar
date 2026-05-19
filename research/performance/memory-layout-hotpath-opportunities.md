@@ -2850,6 +2850,71 @@ Conclusion:
   and the main OE session/sweep timings improved on the retained benchmark
   boundary
 
+### Experiment 44: record peak RSS in the retained benchmark artifact
+
+Changed:
+- `uv run benchmark/run_benchmark.py` now samples process peak RSS with
+  `resource.getrusage(RUSAGE_SELF).ru_maxrss`
+- benchmark JSON schema moved to version 3 and includes a top-level `memory`
+  object with peak RSS, benchmark-start RSS, and delta since benchmark start
+- compact report resource rows now include the full-process peak RSS alongside
+  CPU/active-core summaries
+
+Memory result:
+
+| item | result |
+| --- | ---: |
+| full benchmark process peak RSS | 101.0 MiB |
+| peak RSS at benchmark start | 34.9 MiB |
+| peak RSS delta since benchmark start | 66.1 MiB |
+
+Interpretation:
+- this is measurement instrumentation, not an optimization
+- the number is a whole benchmark-process high-water mark, so it includes
+  Python harness state, the native binding, retained reference data, benchmark
+  case construction, and the Zig forward/retrieval work in one process
+- this is the first retained artifact that answers the process-footprint
+  question directly; previous experiment entries tracked modeled struct and
+  workspace payload reductions but did not record peak RSS
+- future experiments can now report both layout-accounting wins and the actual
+  process high-water mark from the same benchmark/residual gate
+
+Validation and benchmark evidence:
+- `uv run python -m compileall benchmark/run_benchmark.py benchmark/suite`:
+  passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; idle `takopi`, `zls`, and `ruff server` were present
+- `uv run benchmark/run_benchmark.py`: run
+  `b618594fdca14ce9be00190a3c3d89b9`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode spectra worst
+  max_abs_over_noise `1.59985574045`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `0.00377768945481`, pressure delta
+  `5.09865532685 hPa`
+
+Benchmark comparison against Experiment 43:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.800297 s | 140.562587 s | 0.9983 |
+| total benchmark CPU | 271.610686 s | 271.285864 s | 0.9988 |
+| forward no-session median | 0.954210 s | 0.942316 s | 0.9875 |
+| forward session setup | 0.702091 s | 0.693180 s | 0.9873 |
+| forward session cached median | 0.257157 s | 0.255806 s | 0.9947 |
+| forward fast four-scene median | 4.638714 s | 4.644536 s | 1.0013 |
+| OE session retrieval median | 1.081918 s | 1.080792 s | 0.9990 |
+| OE fast retrieval median | 0.836366 s | 0.836084 s | 0.9997 |
+| OE sweep session total wall | 19.484989 s | 19.468969 s | 0.9992 |
+| OE sweep fast total wall | 10.630680 s | 10.612415 s | 0.9983 |
+
+Conclusion:
+- accepted
+- this gives the memory-layout pass a retained process-level footprint number:
+  the current O2 A benchmark high-water mark is 101.0 MiB
+- timing/residuals stayed clean, so the measurement can remain part of the
+  benchmark gate for future memory experiments
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

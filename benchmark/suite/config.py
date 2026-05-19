@@ -19,7 +19,7 @@ REFERENCE_OE_PATH = (
     / "disamar_o2a_two_state_reference.json"
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BENCHMARK_NAME = "zdisamar_current"
 COMMAND = "uv run benchmark/run_benchmark.py"
 
