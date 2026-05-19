@@ -684,7 +684,6 @@ fn fillSourceInterfaceFromBoundaryParts(
     source_interface: *transport_common.SourceInterfaceInput,
 ) void {
     const particle_above_total = particle_above.totalScatteringOpticalDepthPerKm();
-    const particle_below_total = particle_below.totalScatteringOpticalDepthPerKm();
     const rayleigh_coef2 = rayleigh_phase_coefficient2 orelse
         PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
     const phase_above = PhaseFunctions.PhaseMixture.fromScatteringMix(
@@ -706,11 +705,7 @@ fn fillSourceInterfaceFromBoundaryParts(
     source_interface.* = .{
         .source_weight = 0.0,
         .rtm_weight = rtm_weight,
-        .gas_ksca = gas_scattering_optical_depth_per_km,
-        .particle_ksca_above = particle_above_total,
-        .particle_ksca_below = particle_below_total,
         .ksca_above = gas_scattering_optical_depth_per_km + particle_above_total,
-        .ksca_below = gas_scattering_optical_depth_per_km + particle_below_total,
         .phase_above = phase_above,
         .phase_max_index_above = phase_above.maxIndex(),
         .phase_max_index_below = phase_below.maxIndex(),

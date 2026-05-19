@@ -26,16 +26,7 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
 
     return .{
         .source_weight = source_weight,
-        .particle_ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
-        .particle_ksca_below = if (ilevel > 0)
-            @max(layers[below_index].scattering_optical_depth, 0.0)
-        else
-            0.0,
         .ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
-        .ksca_below = if (ilevel > 0)
-            @max(layers[below_index].scattering_optical_depth, 0.0)
-        else
-            0.0,
         .phase_above = layers[above_index].phase,
         .phase_max_index_above = layers[above_index].phase.maxIndex(),
         .phase_max_index_below = if (ilevel > 0)

@@ -3491,6 +3491,75 @@ Conclusion:
   improve latency; larger traffic cuts or direct latency wins remain higher
   priority
 
+### Experiment 53: remove unused source-interface scattering breakdown fields
+
+Changed:
+- removed four unused scalar fields from `SourceInterfaceInput`:
+  `gas_ksca`, `particle_ksca_above`, `particle_ksca_below`, and `ksca_below`
+- kept `source_weight`, `rtm_weight`, `ksca_above`, the encoded above-phase
+  mixture, and both phase max indexes because integrated-source transport reads
+  those fields
+- changed source-interface construction to stop computing and storing the
+  below-particle total when it only existed to populate the removed field
+- updated the source-interface unit test to assert the retained solver payload
+  instead of diagnostic-only breakdown fields
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SourceInterfaceInput` row | 112 B | 80 B | -32 B (-28.57%) |
+| current 117-level O2 A source-interface workspace | 13,104 B | 9,360 B | -3.66 KiB |
+| current 701-miss no-session forward solve lower bound | 9,185,904 B | 6,561,360 B | -2.50 MiB/write traffic |
+| 10 no-session benchmark repeats lower bound | 91,859,040 B | 65,613,600 B | -25.03 MiB/write traffic |
+
+Interpretation:
+- this reduces both retained row size and hot fill-store traffic without adding
+  recomputation, branches, or a side memory stream
+- the removed values were object-style breakdown fields embedded in every
+  source-interface row, but no production transport code read them
+- the source-interface array still streams as an AoS row, but the row density is
+  higher and the repeated no-session fill writes 32 fewer bytes per level
+- the lower-bound count excludes session first-use and fast-mode no-derivative
+  surfaces, which also fill source-interface rows
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `b775b5977e0a4b9e8ea2e496af8400da`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.59985574045`; OE session AOD diff `8.699e-08`; fast-vs-session sweep max
+  AOD delta `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 51:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.029479 s | 140.038678 s | 1.0001 |
+| total benchmark CPU | 270.156206 s | 270.167662 s | 1.0000 |
+| peak RSS high-water mark | 78.75 MiB | 79.59 MiB | 1.0107 |
+| forward no-session median | 0.954903 s | 0.950625 s | 0.9955 |
+| forward session cached median | 0.254594 s | 0.255628 s | 1.0041 |
+| forward fast four-scene median | 4.620401 s | 4.619134 s | 0.9997 |
+| OE session retrieval median | 1.073463 s | 1.073290 s | 0.9998 |
+| OE fast retrieval median | 0.830158 s | 0.829583 s | 0.9993 |
+| OE sweep session total wall | 19.275704 s | 19.293402 s | 1.0009 |
+| OE sweep fast total wall | 10.550308 s | 10.535349 s | 0.9986 |
+
+Conclusion:
+- accepted
+- the retained source-interface row is smaller and the repeated fill path moves
+  fewer bytes while benchmark latency stays flat on the retained 2-worker
+  boundary
+- total wall/CPU are effectively unchanged; forward no-session, fast-mode
+  forward, single-case OE, and fast sweep moved slightly faster in this run
+- peak RSS high-water mark moved up slightly, so this result is justified by
+  lower hot-path memory traffic and flat latency, not by RSS
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

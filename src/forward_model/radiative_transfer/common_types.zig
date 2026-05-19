@@ -243,21 +243,17 @@ pub const LayerInput = struct {
 };
 
 // layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 112 B across 10 fields; largest: phase_above=40 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0 bits)
+//   size: 80 B, align: 8 B
+//   field storage: 80 B across 6 fields; largest: phase_above=40 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   encoded fields: phase_above stores gas/aerosol/cloud phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced phase storage above
+//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced phase storage above
 pub const SourceInterfaceInput = struct {
     source_weight: f64 = 0.0,
     rtm_weight: f64 = 0.0,
-    gas_ksca: f64 = 0.0,
-    particle_ksca_above: f64 = 0.0,
-    particle_ksca_below: f64 = 0.0,
     ksca_above: f64 = 0.0,
-    ksca_below: f64 = 0.0,
     phase_above: LayerPhase = .{},
     phase_max_index_above: usize = 0,
     phase_max_index_below: usize = 0,
