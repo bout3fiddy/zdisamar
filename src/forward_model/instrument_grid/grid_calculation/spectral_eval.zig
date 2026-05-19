@@ -78,6 +78,7 @@ pub fn integrateForwardAtNominal(
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian.zero();
+    const wants_jacobian = route.derivative_mode != .none and jacobian.activeStateCount(route.derivative_state_mask) != 0;
     const samples = integration.samples(kernel_storage);
     for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
@@ -98,7 +99,9 @@ pub fn integrateForwardAtNominal(
             cache,
         );
         radiance_sum += weight * sample.radiance;
-        jacobian.addScaled(&jacobian_sum, sample.jacobian, weight);
+        if (wants_jacobian) {
+            jacobian.addScaledMasked(&jacobian_sum, sample.jacobian, weight, route.derivative_state_mask);
+        }
     }
 
     return .{

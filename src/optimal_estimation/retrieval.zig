@@ -457,27 +457,40 @@ fn evaluateO2AState(
     state: Vector,
     derivative_state_mask: jacobian.StateMask,
 ) !ForwardEvaluation {
-    var working_input = base_input.*;
-    @memcpy(mutable_intervals, base_input.intervals);
-    working_input.intervals = mutable_intervals;
-    try writeStateToInput(&working_input, mutable_intervals, state_specs, state);
+    var working_input: o2a_types.ResolvedVendorO2ACase = undefined;
+    {
+        const zone = Trace.staticZone(@src(), "optimal_estimation.state_application");
+        defer zone.end();
+        working_input = base_input.*;
+        @memcpy(mutable_intervals, base_input.intervals);
+        working_input.intervals = mutable_intervals;
+        try writeStateToInput(&working_input, mutable_intervals, state_specs, state);
+    }
 
-    var runtime_case = try o2a_runtime.prepareResolvedVendorO2AEvaluationWithInputs(
-        allocator,
-        &working_input,
-        inputs,
-    );
+    var runtime_case = runtime_case: {
+        const zone = Trace.staticZone(@src(), "optimal_estimation.prepare_evaluation");
+        defer zone.end();
+        break :runtime_case try o2a_runtime.prepareResolvedVendorO2AEvaluationWithInputs(
+            allocator,
+            &working_input,
+            inputs,
+        );
+    };
     errdefer runtime_case.deinit(allocator);
     runtime_case.route.derivative_mode = .semi_analytical;
     runtime_case.route.derivative_state_mask = derivative_state_mask;
-    const view = try InstrumentGrid.simulateProductWithWorkspace(
-        allocator,
-        forward_storage,
-        &runtime_case.scene,
-        runtime_case.route,
-        &runtime_case.prepared,
-        implementations.exact(),
-    );
+    const view = view: {
+        const zone = Trace.staticZone(@src(), "optimal_estimation.forward_jacobian_product");
+        defer zone.end();
+        break :view try InstrumentGrid.simulateProductWithWorkspace(
+            allocator,
+            forward_storage,
+            &runtime_case.scene,
+            runtime_case.route,
+            &runtime_case.prepared,
+            implementations.exact(),
+        );
+    };
     return .{
         .runtime_case = runtime_case,
         .view = view,
@@ -530,12 +543,12 @@ const Accumulation = struct {
 // Per-iteration projection from active native RTM Jacobian columns into the OE state vector.
 // layout(64-bit):
 //   size: 48 B, align: 8 B
-//   field storage: source_index=24 B, state_scale=24 B; padding: 0 B
+//   field storage: source_offset=24 B, state_scale=24 B; padding: 0 B
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   count: one stack value per OE iteration
 //   footprint: per instance = 48 B (0.047 KiB)
 const JacobianProjection = struct {
-    source_index: [max_state_count]usize = [_]usize{0} ** max_state_count,
+    source_offset: [max_state_count]usize = [_]usize{0} ** max_state_count,
     state_scale: Vector = algebra.zeroVector(),
 };
 
@@ -562,8 +575,9 @@ fn accumulateNormalSystem(
     for (0..state_specs.len) |index| {
         scratch.dx_white[index] = (previous[index] - prior[index]) / sqrt_sa[index];
         const spec = state_specs[index];
-        projection.source_index[index] = jacobian.activeStateIndex(view.jacobian_state_mask, spec.state) orelse
+        const active_index = jacobian.activeStateIndex(view.jacobian_state_mask, spec.state) orelse
             return error.MissingJacobian;
+        projection.source_offset[index] = active_index * measurement.wavelength_nm.len;
         projection.state_scale[index] = if (spec.state == .aerosol_layer_mid_pressure_hpa)
             try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[index])
         else
@@ -572,14 +586,15 @@ fn accumulateNormalSystem(
 
     var chi2_reflectance: f64 = 0.0;
     var column_values = algebra.zeroVector();
+    const reflectance_scale_numerator = std.math.pi / solar_mu0;
     for (measurement.wavelength_nm, 0..) |wavelength_nm, sample_index| {
         if (view.wavelengths[sample_index] != wavelength_nm) return error.WavelengthGridMismatch;
         const residual = measurement.reflectance[sample_index] - view.reflectance[sample_index];
         const inv_variance = measurement.inv_variance[sample_index];
         chi2_reflectance += residual * residual * inv_variance;
-        const reflectance_scale = std.math.pi / (solar_mu0 * @max(view.irradiance[sample_index], 1.0e-300));
+        const reflectance_scale = reflectance_scale_numerator / @max(view.irradiance[sample_index], 1.0e-300);
         for (0..state_specs.len) |state_index| {
-            const source_index = projection.source_index[state_index] * measurement.wavelength_nm.len + sample_index;
+            const source_index = projection.source_offset[state_index] + sample_index;
             column_values[state_index] =
                 raw_jacobian[source_index] * reflectance_scale * projection.state_scale[state_index];
         }

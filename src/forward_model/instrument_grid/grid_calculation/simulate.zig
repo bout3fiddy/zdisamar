@@ -63,6 +63,36 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
+// Active Jacobian states resolved once per simulation from the route/storage mask.
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: count=8 B, states=3 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
+//   inline arrays: states:[3]jacobian.State=3 B
+//   count: one stack value in Jacobian-producing simulations
+//   footprint: per instance = 16 B (0.016 KiB)
+const ActiveJacobianStates = struct {
+    count: usize = 0,
+    states: [jacobian.state_count]jacobian.State = undefined,
+
+    fn init(mask: jacobian.StateMask) ActiveJacobianStates {
+        const active_mask = jacobian.sanitizedMask(mask);
+        var result = ActiveJacobianStates{};
+        for (0..jacobian.state_count) |state_index| {
+            const state: jacobian.State = @enumFromInt(state_index);
+            if (!jacobian.includes(active_mask, state)) continue;
+            result.states[result.count] = state;
+            result.count += 1;
+        }
+        return result;
+    }
+
+    fn at(self: ActiveJacobianStates, active_index: usize) ?jacobian.State {
+        if (active_index >= self.count) return null;
+        return self.states[active_index];
+    }
+};
+
 // layout(64-bit):
 //   size: 56 B, align: 8 B
 //   field storage: 56 B across 5 fields; largest: jacobian_sum=24 B, radiance_sum=8 B, irradiance_sum=8 B; padding: 0 B (0 bits)
@@ -95,10 +125,6 @@ const RunningSummary = struct {
 
     fn addNoiseSigma(self: *RunningSummary, values: []const f64) void {
         for (values) |value| self.noise_sum += value;
-    }
-
-    fn addJacobianRow(self: *RunningSummary, values: jacobian.Vector) void {
-        jacobian.addScaled(&self.jacobian_sum, values, 1.0);
     }
 
     fn toInstrumentGridSummary(
@@ -626,6 +652,10 @@ fn fillRadianceSamples(
         buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1]
     else
         @constCast(&[_]f64{});
+    const active_jacobians = if (buffers.jacobian != null)
+        ActiveJacobianStates.init(buffers.jacobian_state_mask)
+    else
+        ActiveJacobianStates{};
 
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
@@ -656,7 +686,7 @@ fn fillRadianceSamples(
             if (buffers.jacobian) |jacobian_buffer| {
                 writeJacobianSample(
                     jacobian_buffer,
-                    buffers.jacobian_state_mask,
+                    active_jacobians,
                     setup.sample_count,
                     index,
                     integrated.jacobian,
@@ -884,19 +914,19 @@ fn processJacobianSamples(
         {
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
-            const active_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
-            if (active_count == 0 or jacobian_buffer.len != setup.sample_count * active_count) return error.ShapeMismatch;
+            const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
+            if (active_jacobians.count == 0 or jacobian_buffer.len != setup.sample_count * active_jacobians.count) return error.ShapeMismatch;
             if (!setup.uses_integrated_radiance_sampling) {
-                for (0..active_count) |active_index| {
-                    const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+                for (0..active_jacobians.count) |active_index| {
+                    const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                     if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                     const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                     try convolution.apply(column, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
                     @memcpy(column, buffers.scratch_aux);
                 }
             }
-            for (0..active_count) |active_index| {
-                const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+            for (0..active_jacobians.count) |active_index| {
+                const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 try Postprocess.applyChannelJacobianCorrections(
@@ -912,8 +942,8 @@ fn processJacobianSamples(
             // DECISION:
             //   Ring synthesis uses the irradiance-only basis from the current
             //   forward model, so it does not change the routed radiance Jacobian.
-            for (0..active_count) |active_index| {
-                const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+            for (0..active_jacobians.count) |active_index| {
+                const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 const state_index = jacobian.stateIndex(state);
                 for (column) |value| summary.jacobian_sum[state_index] += value;
@@ -1024,14 +1054,13 @@ fn jacobianColumn(buffer: []f64, sample_count: usize, active_index: usize) []f64
 
 fn writeJacobianSample(
     buffer: []f64,
-    active_mask: jacobian.StateMask,
+    active_jacobians: ActiveJacobianStates,
     sample_count: usize,
     sample_index: usize,
     values: jacobian.Vector,
 ) void {
-    const active_count = jacobian.activeStateCount(active_mask);
-    for (0..active_count) |active_index| {
-        const state = jacobian.activeStateAt(active_mask, active_index) orelse unreachable;
+    for (0..active_jacobians.count) |active_index| {
+        const state = active_jacobians.at(active_index) orelse unreachable;
         buffer[active_index * sample_count + sample_index] = values[jacobian.stateIndex(state)];
     }
 }

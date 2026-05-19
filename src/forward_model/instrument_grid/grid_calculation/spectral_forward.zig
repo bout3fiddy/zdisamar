@@ -172,19 +172,6 @@ const ForwardPrefetchWorker = struct {
     worker_index: usize = 0,
 };
 
-pub fn radianceFromForward(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
-    wavelength_nm: f64,
-    safe_span: f64,
-    phase: f64,
-    forward: common.ForwardResult,
-) f64 {
-    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
-    return forward.toa_reflectance_factor * scale;
-}
-
 fn radianceScaleFromForward(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -207,22 +194,9 @@ fn radianceScaleFromForward(
     return solar_cosine * surface_gain * solar_irradiance / std.math.pi;
 }
 
-fn radianceJacobianFromForward(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
-    wavelength_nm: f64,
-    safe_span: f64,
-    phase: f64,
-    forward: common.ForwardResult,
-) jacobian.Vector {
-    const reflectance_jacobian = forward.jacobian orelse return jacobian.zero();
-    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
-    return jacobian.scale(reflectance_jacobian, scale);
-}
-
 fn integratedSampleFromForward(
     scene: *const Scene,
+    route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
     wavelength_nm: f64,
@@ -234,7 +208,7 @@ fn integratedSampleFromForward(
     return .{
         .radiance = forward.toa_reflectance_factor * scale,
         .jacobian = if (forward.jacobian) |reflectance_jacobian|
-            jacobian.scale(reflectance_jacobian, scale)
+            jacobian.scaleMasked(reflectance_jacobian, scale, route.derivative_state_mask)
         else
             jacobian.zero(),
     };
@@ -345,7 +319,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
         else
             try implementations.transport.executePrepared(allocator, effective_route, input);
     };
-    return integratedSampleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
+    return integratedSampleFromForward(scene, route, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
 }
 
 // hot path:

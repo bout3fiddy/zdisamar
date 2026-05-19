@@ -81,12 +81,16 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
 }
 
 // hot path:
-//   when: integrated forward samples accumulate active Jacobian vectors
-//   work: adds a scaled fixed-size derivative vector into an accumulator
-//   data: jacobian vector cells, accumulator cells, scalar factor
-//   follow: spectral_eval.integrateForwardAtNominal and reflectance assembly
-pub fn addScaled(accumulator: *Vector, vector: Vector, factor: f64) void {
-    for (0..state_count) |index| accumulator[index] += factor * vector[index];
+//   when: active derivative routes integrate high-resolution forward samples
+//   work: adds only requested derivative lanes into a fixed-size accumulator
+//   data: route state mask, jacobian vector cells, accumulator cells, scalar factor
+//   follow: spectral_eval.integrateForwardAtNominal and active-state product buffers
+pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: StateMask) void {
+    const active_mask = sanitizedMask(mask);
+    for (0..state_count) |index| {
+        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
+        accumulator[index] += factor * vector[index];
+    }
 }
 
 // hot path:
@@ -97,5 +101,20 @@ pub fn addScaled(accumulator: *Vector, vector: Vector, factor: f64) void {
 pub fn scale(vector: Vector, factor: f64) Vector {
     var result = vector;
     for (&result) |*value| value.* *= factor;
+    return result;
+}
+
+// hot path:
+//   when: spectral forward samples convert active reflectance derivatives to radiance derivatives
+//   work: scales requested lanes and leaves inactive lanes zero for downstream active-column writers
+//   data: route state mask, jacobian vector cells, scalar factor
+//   follow: spectral_forward.integratedSampleFromForward
+pub fn scaleMasked(vector: Vector, factor: f64, mask: StateMask) Vector {
+    const active_mask = sanitizedMask(mask);
+    var result = zero();
+    for (0..state_count) |index| {
+        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
+        result[index] = vector[index] * factor;
+    }
     return result;
 }
