@@ -2998,6 +2998,81 @@ Conclusion:
 - next experiments should use the measured 151-518 support-count range before
   attempting to shrink or encode remaining integration sample storage
 
+### Experiment 46: reject exact radiance/irradiance kernel side-storage sharing
+
+Changed:
+- prototype only; reverted after benchmark
+- `WavelengthSampling` construction tried to reuse the radiance
+  `IntegrationKernelRef` for irradiance when the second generated kernel had
+  byte-identical offsets and weights
+- benchmark layout diagnostics were temporarily extended to count exact
+  radiance/irradiance channel-kernel pairs and shared side samples
+
+Memory result:
+
+| item | before | prototype | change |
+| --- | ---: | ---: | ---: |
+| exact shared channel pairs | 0 | 69 of 301 | +69 |
+| side samples stored | 131,014 | 116,890 | -14,124 |
+| side storage bytes | 2,096,224 B | 1,870,240 B | -225,984 B |
+| owned wavelength sampling estimate | 2,156,472 B | 1,930,488 B | -225,984 B (-220.69 KiB) |
+| estimated row-payload saving vs old full rows | 16.77 MiB | 16.99 MiB | +0.22 MiB |
+
+Interpretation:
+- the measured support-count distributions were identical by channel, but exact
+  offset/weight equality was much rarer: only 69 of 301 nominal-wavelength pairs
+  could share the side-storage range
+- the prototype initially compared against shared side-storage slices without
+  holding the builder lock and crashed during a benchmark run; after moving the
+  comparison under the builder lock, the benchmark completed cleanly
+- the final memory win is only about 220.69 KiB of retained sampling-plan side
+  storage, far smaller than the remaining 1.84 MiB of support offset/weight
+  storage
+- the added mutex-protected comparison lives in the wavelength-plan construction
+  hot path; for this small win it does not pay for itself on the retained timing
+  boundary
+
+Validation and benchmark evidence:
+- `zig build check`: passed after the lock fix
+- `zig build test-fast`: passed after the lock fix
+- first full benchmark attempt crashed with exit code 139; root cause was the
+  unsafe comparison against `KernelStorageBuilder` slices while other workers
+  could append and reallocate them
+- second full benchmark run `8a5a79b35934460eaf710987b0e2a7dc` completed but is
+  discarded because the user reported a parallel `zig build` during the run
+- clean full benchmark run
+  `b36baa70433c48dcb917a1d746a58a61`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process-noise check before the clean run showed no active zdisamar, benchmark,
+  validation, forward-model, plotting, or `zig build` process; only idle `ruff`
+  and `zls` were present
+- benchmark residual rows unchanged: fast-mode spectra worst
+  max_abs_over_noise `1.59985574045`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `0.00376644268234`
+
+Benchmark comparison against Experiment 45:
+
+| metric | before | prototype | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.656352 s | 141.337908 s | 1.0048 |
+| total benchmark CPU | 271.331560 s | 272.884034 s | 1.0057 |
+| forward no-session median | 0.937861 s | 0.972565 s | 1.0370 |
+| forward session setup | 0.691194 s | 0.711962 s | 1.0300 |
+| forward session cached median | 0.254400 s | 0.260397 s | 1.0236 |
+| forward fast four-scene median | 4.637128 s | 4.656994 s | 1.0043 |
+| OE session retrieval median | 1.083199 s | 1.083888 s | 1.0006 |
+| OE fast retrieval median | 0.838982 s | 0.838557 s | 0.9995 |
+| OE sweep session total wall | 19.489018 s | 19.538626 s | 1.0025 |
+| OE sweep fast total wall | 10.642678 s | 10.644292 s | 1.0002 |
+
+Conclusion:
+- rejected and reverted
+- the retained memory reduction is too small for the observed forward-path
+  slowdown
+- do not retry exact per-row channel sharing in this form; larger sampling-plan
+  wins would need an encoding of the support grid or weights that avoids adding
+  extra mutex work to plan construction
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

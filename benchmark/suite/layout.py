@@ -3,7 +3,6 @@
 from typing import Any
 
 import numpy as np
-
 from zdisamar import rtm
 
 from . import cases, config
@@ -99,6 +98,7 @@ def instrument_sampling_layout() -> dict[str, Any]:
 def channel_stats(kernel_rows: np.ndarray) -> dict[str, Any]:
 
     result = {}
+
     for channel_code, label in CHANNEL_LABELS.items():
         rows = kernel_rows[kernel_rows["channel"] == channel_code]
         counts = rows["support_count"].astype(np.int64)
@@ -110,6 +110,7 @@ def channel_stats(kernel_rows: np.ndarray) -> dict[str, Any]:
             "side_kernel_count": int(side_counts.size),
             "side_sample_count": int(side_counts.sum()),
         }
+
     return result
 
 
@@ -120,6 +121,7 @@ def preferred_sampling_worker_count(sample_count: int) -> int:
 
     count_from_work = max(1, sample_count // MIN_PARALLEL_WAVELENGTH_SAMPLE_COUNT)
     worker_cap = config.EFFECTIVE_WORKER_CAP or 1
+
     return min(MAX_WORKERS, worker_cap, count_from_work)
 
 
@@ -151,16 +153,15 @@ def int_histogram(values: np.ndarray) -> dict[str, int]:
         return {}
 
     unique, counts = np.unique(values.astype(np.int64), return_counts=True)
+
     return {str(int(value)): int(count) for value, count in zip(unique, counts, strict=True)}
 
 
 def labeled_histogram(values: np.ndarray, labels: dict[int, str]) -> dict[str, int]:
 
     histogram = int_histogram(values)
-    return {
-        labels.get(int(key), str(key)): count
-        for key, count in histogram.items()
-    }
+
+    return {labels.get(int(key), str(key)): count for key, count in histogram.items()}
 
 
 def ratio(numerator: int, denominator: int) -> float:
