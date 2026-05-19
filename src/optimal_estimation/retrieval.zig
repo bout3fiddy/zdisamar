@@ -325,7 +325,7 @@ pub fn runO2A(
         iteration_zone.value(@intCast(iteration_offset + 1));
 
         const previous = state;
-        var evaluation = evaluation: {
+        const evaluation = evaluation: {
             const zone = Trace.staticZone(@src(), "optimal_estimation.rtm_jacobian");
             defer zone.end();
             break :evaluation try evaluateO2AState(
@@ -339,7 +339,6 @@ pub fn runO2A(
                 derivative_state_mask,
             );
         };
-        defer evaluation.runtime_case.deinit(allocator);
 
         const accumulation = accumulation: {
             const zone = Trace.staticZone(@src(), "optimal_estimation.normal_system");
@@ -434,15 +433,14 @@ fn validateStateSpec(spec: StateSpec) !void {
 
 // Borrowed forward evaluation consumed immediately by the OE accumulation loop.
 // layout(64-bit):
-//   size: 4128 B, align: 8 B
-//   field storage: runtime_case=3808 B, view=320 B; padding: 0 B
+//   size: 328 B, align: 8 B
+//   field storage: view=320 B, solar_mu0=8 B; padding: 0 B
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: runtime_case owns scene/prepared arrays; view borrows ProductStorage arrays
-//   cache span: 65 cache line(s) at 64 B per line
+//   out-of-line: view borrows ProductStorage arrays; runtime case storage is consumed before return
+//   cache span: 6 cache line(s) at 64 B per line
 //   count: one live value inside an iteration
-//   footprint: per instance = 4128 B (4.031 KiB); borrowed product buffers live in ProductStorage
+//   footprint: per instance = 328 B (0.320 KiB); borrowed product buffers live in ProductStorage
 const ForwardEvaluation = struct {
-    runtime_case: o2a_runtime.PreparedRuntimeEvaluation,
     view: InstrumentGrid.InstrumentGridProductView,
     solar_mu0: f64,
 };
@@ -476,7 +474,7 @@ fn evaluateO2AState(
             inputs,
         );
     };
-    errdefer runtime_case.deinit(allocator);
+    defer runtime_case.deinit(allocator);
     runtime_case.route.derivative_mode = .semi_analytical;
     runtime_case.route.derivative_state_mask = derivative_state_mask;
     const view = view: {
@@ -492,7 +490,6 @@ fn evaluateO2AState(
         );
     };
     return .{
-        .runtime_case = runtime_case,
         .view = view,
         .solar_mu0 = runtime_case.scene.geometry.solarCosineAtAltitude(0.0),
     };
