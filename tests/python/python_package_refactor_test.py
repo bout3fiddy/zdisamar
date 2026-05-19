@@ -286,6 +286,13 @@ def assert_reference_data_and_rtm_tables() -> None:
             output = Path(tmpdir) / "reflectance"
             chart = spectrum.plot.reflectance(save=output)
             assert chart is not None
+            reflectance_spec = chart.to_dict()
+            reflectance_panels = cast(list[dict[str, object]], reflectance_spec["panels"])
+            reflectance_series = cast(list[dict[str, object]], reflectance_panels[0]["series"])
+            assert any(
+                series["kind"] == "points" and series["name"] == "Minimum reflectance"
+                for series in reflectance_series
+            )
             assert output.with_suffix(".svg").exists()
         finally:
             os.chdir(old_cwd)

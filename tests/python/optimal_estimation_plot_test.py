@@ -84,6 +84,7 @@ def main() -> int:
     assert "residual_scaled" not in fit_spec
     assert fit["panels"][1]["width"] == PLOT.diagnostic_width
     assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    assert fit["panels"][1]["marker_x"] == []
     fit_residual_domain = fit["panels"][1]["y_domain"]
     assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
 
@@ -91,6 +92,7 @@ def main() -> int:
     residual_spec = json.dumps(residual)
     assert residual["title"]["text"] == "Final residual"
     assert "residual_scaled" not in residual_spec
+    assert residual["panels"][0]["marker_x"] == []
     residual_domain = residual["panels"][0]["y_domain"]
     assert residual_domain[0] <= 0.0 <= residual_domain[1]
 

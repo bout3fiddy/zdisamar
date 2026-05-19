@@ -255,6 +255,7 @@ def measurement_fit_figure(result) -> SvgFigure:
         color=PLOT.colors["red"],
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_RESIDUAL_HEIGHT,
+        marker_x=False,
         rule_y=(0.0,),
     )
 
@@ -280,6 +281,7 @@ def residual_figure(result) -> SvgFigure:
         color=PLOT.colors["red"],
         width=PLOT.diagnostic_width,
         height=PLOT.height,
+        marker_x=False,
         rule_y=(0.0,),
     )
 

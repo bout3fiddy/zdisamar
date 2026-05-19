@@ -1,11 +1,13 @@
 """Spectrum plot accessors."""
 
+from dataclasses import replace
+from math import isfinite
 from pathlib import Path
 
 from . import fields
 from .data import column_values, spectrum_frame
 from .properties import PLOT, PlotAccessor
-from .svg import SvgFigure, line_panel
+from .svg import SvgFigure, SvgSeries, line_panel
 
 
 class SpectrumPlot(PlotAccessor):
@@ -85,4 +87,37 @@ def quantity_chart(
         color=PLOT.colors.get(quantity, PLOT.colors["blue"]),
     )
 
+    if quantity == fields.REFLECTANCE:
+        minimum = minimum_sample(x, y)
+
+        if minimum is not None:
+            panel = replace(
+                panel,
+                series=(
+                    *panel.series,
+                    SvgSeries.points(
+                        "Minimum reflectance",
+                        (minimum[0],),
+                        (minimum[1],),
+                        color=PLOT.colors["black"],
+                        point_size=PLOT.minimum_point_size,
+                    ),
+                ),
+            )
+
     return SvgFigure(title=title, panels=(panel,))
+
+
+def minimum_sample(x: list[float], y: list[float]) -> tuple[float, float] | None:
+
+    samples = [(x_value, y_value) for x_value, y_value in zip(x, y, strict=True)]
+    finite_samples = [
+        (x_value, y_value)
+        for x_value, y_value in samples
+        if isfinite(x_value) and isfinite(y_value)
+    ]
+
+    if not finite_samples:
+        return None
+
+    return min(finite_samples, key=lambda item: item[1])
