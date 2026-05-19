@@ -2462,6 +2462,77 @@ Conclusion:
   capacity rather than retained footprint, and the final benchmark shape did not
   satisfy the "no worsening performance" bar for the forward path
 
+### Experiment 38: reject RTM-quadrature phase-row cache gating
+
+Changed during experiment:
+- `layerResolvedLabosWithWorkspace` was changed to allocate
+  `layer_phase_rows` and `layer_phase_row_valid` only for integrated-source
+  routes that use source-interface integration
+- RTM-quadrature integrated-source routes would pass `null` for the row cache,
+  because `calcIntegratedReflectanceWithBasis` only reads that cache on the
+  source-interface path
+- the attempted code was limited to `execute.zig`; no numerical formulas or
+  transport data structures were changed
+
+Memory result:
+
+| item | before | attempted | change |
+| --- | ---: | ---: | ---: |
+| RTM-quadrature layer phase-row backing | `nlevel * 200 B` | 0 B | -100.00% |
+| RTM-quadrature layer phase-row valid backing | `nlevel * 1 B` | 0 B | -100.00% |
+| current 117-level O2 A row-cache storage | 23,517 B | 0 B | -23.0 KiB per LABOS workspace |
+| row-cache writes per fast 6-Fourier sample | about 139,200 B | 0 B | active-layer dependent |
+
+Interpretation:
+- `PhaseKernelRow` is 200 B and stores the view row of a layer phase matrix
+- RTM-quadrature integrated-source reflectance builds source rows from
+  `RtmQuadratureLevel` phase weights, not from `layer_phase_rows`
+- the retained memory win is small per worker, but the removed row writes can
+  become multi-megabyte traffic when multiplied by high-resolution forward
+  misses
+- the candidate is therefore a memory-traffic cleanup, not a large retained
+  footprint reduction
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- completed benchmark attempt `149515c1d55a4ca4baf36e7a6ed9e4fb` had unchanged
+  benchmark residual rows but moved slower across most retained timings
+- second benchmark attempt `9c631b0214214a2da117fab0f4e18b44` was killed after
+  fast-mode repeats jumped to 8-10 s, so it was not used as evidence
+- final completed attempt `b4ed99d2e27d4439a75d0e476ceba2db` also had
+  unchanged residual rows, but broad host-process inspection showed Spotlight
+  CPU load around the timing window
+- `benchmark/results.json` was restored to the accepted Experiment 36 run after
+  rejecting the attempted code
+
+Benchmark comparison against Experiment 36, using final completed attempt
+`b4ed99d2e27d4439a75d0e476ceba2db`:
+
+| metric | before | attempted | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.762322 s | 145.698930 s | 1.0135 |
+| total benchmark CPU | 277.189873 s | 280.250053 s | 1.0110 |
+| forward no-session median | 0.969912 s | 0.984802 s | 1.0154 |
+| forward session setup | 0.712534 s | 0.711989 s | 0.9992 |
+| forward session first cached | 0.267561 s | 0.271706 s | 1.0155 |
+| forward session cached median | 0.271549 s | 0.273141 s | 1.0059 |
+| forward fast four-scene median | 4.730962 s | 4.747084 s | 1.0034 |
+| OE session retrieval median | 1.137109 s | 1.157475 s | 1.0179 |
+| OE fast retrieval median | 0.879721 s | 0.896714 s | 1.0193 |
+| OE sweep session total wall | 19.677212 s | 20.040044 s | 1.0184 |
+| OE sweep fast total wall | 10.812318 s | 11.044784 s | 1.0215 |
+
+Conclusion:
+- rejected and reverted
+- the source-level reasoning is still valid: the RTM-quadrature path does not
+  consume `layer_phase_rows`
+- the measured benefit did not appear under `run_benchmark.py`, and the
+  available completed timing evidence does not satisfy the no-regression bar
+- this should only be retried with a quieter host or with retained benchmark
+  telemetry that proves the row-cache write traffic is actually material in the
+  consolidated workload
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
