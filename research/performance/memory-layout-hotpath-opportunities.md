@@ -2583,6 +2583,119 @@ Conclusion:
   under a clean timing window, or until the benchmark suite includes an
   absorption-only direct-route case with stable evidence
 
+### Experiment 40: store current LABOS order fields as U/D-only rows
+
+Changed:
+- `OrdersWorkspace.ud_orde` now stores `[]UDLocal` instead of `[]UDField`
+- temporary `ordersScat` and `ordersScatTangent` current-order buffers use
+  `UDLocal`
+- initialization no longer writes current-order direct-beam `E` metadata or
+  direct-beam attenuation values; direct `E` remains stored in the returned
+  `ud` field
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| current-order row | 536 B (`UDField`) | 432 B (`UDLocal`) | -104 B (-19.40%) |
+| 117-level `OrdersWorkspace.ud_orde` backing | 62,712 B | 50,544 B | -12,168 B (-11.88 KiB) |
+| non-tangent temporary order buffer | 62,712 B | 50,544 B | -12,168 B |
+| tangent base + tangent order buffers | 125,424 B | 101,088 B | -24,336 B |
+| removed current-order `E` writes per 117-level, 12-stream solve | 11,232 B | 0 B | -100.00% |
+
+Interpretation:
+- current-order transport, convergence, and accumulation only read U/D fields
+- direct-beam `E` is initialized on the returned `ud` array and is not consumed
+  from `ud_orde`
+- this is a small retained-workspace reduction, but it also removes an
+  unconsumed direct-beam row write from every order solve
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; broader GUI/Codex load was present but the benchmark
+  repeats did not show outlier spikes
+- `uv run benchmark/run_benchmark.py`: run
+  `514a93d221214984befb3151c47d1425`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00376644268103`, pressure delta `5.08465488742 hPa`
+
+Benchmark comparison against Experiment 36:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.969912 s | 0.980726 s | 1.0111 |
+| forward session cached median | 0.271549 s | 0.271677 s | 1.0005 |
+| forward fast four-scene median | 4.730962 s | 4.711620 s | 0.9959 |
+| OE session retrieval median | 1.137109 s | 1.136909 s | 0.9998 |
+| OE fast retrieval median | 0.879721 s | 0.878925 s | 0.9991 |
+| OE sweep session total wall | 19.638677 s | 19.632331 s | 0.9997 |
+| OE sweep fast total wall | 10.758174 s | 10.753636 s | 0.9996 |
+| total benchmark wall | 143.762322 s | 143.585126 s | 0.9988 |
+| total benchmark CPU | 277.189873 s | 276.774470 s | 0.9985 |
+
+Conclusion:
+- accepted
+- the no-session forward median moved +1.1%, while every OE timing row and the
+  total benchmark wall/CPU moved flat-to-faster; the retained evidence does not
+  show a regression on the intended OE boundary
+
+### Experiment 41: skip source-interface buffers on non-integrated routes
+
+Changed:
+- `routeMayUseSourceInterfaces` now returns false when
+  `integrate_source_function` is disabled
+- `configuredForwardInput` fills source interfaces only when the route is
+  integrated-source and did not attach RTM quadrature
+- the storage unit test now expects non-integrated routes to keep
+  `source_interfaces` empty
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SourceInterfaceInput` row | 1,272 B | 0 B for non-integrated routes | route-gated |
+| 117-level source-interface buffer | 148,824 B | 0 B | -145.34 KiB |
+| 2-worker retained scratch surface | 297,648 B | 0 B | -290.67 KiB |
+| 701 forward misses if filled per miss | 104,325,624 B | 0 B | -99.49 MiB traffic surface |
+
+Interpretation:
+- non-integrated LABOS transport uses `calcReflectance` and ignores
+  `input.source_interfaces`
+- source interfaces are only read by integrated-source reflectance when RTM
+  quadrature is not available
+- the O2 A benchmark's explicit-interval integrated-source route already uses
+  RTM quadrature, so this change is expected to be neutral there while removing
+  unused source-interface storage from non-integrated routes
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; broader GUI/Codex load was present but the benchmark
+  repeats did not show outlier spikes
+- `uv run benchmark/run_benchmark.py`: run
+  `514a93d221214984befb3151c47d1425`, same combined benchmark as Experiment 40
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00376644268103`, pressure delta `5.08465488742 hPa`
+- the retained O2 A benchmark uses integrated-source RTM quadrature for the
+  explicit interval route, so this source-interface gating is primarily
+  validated for no-regression rather than as a directly exercised timing win
+
+Conclusion:
+- accepted
+- this is the larger memory-traffic candidate in the current pass because it
+  deletes a full phase-row source-interface buffer from routes that never read
+  it, while the benchmark/residual gate stayed clean
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

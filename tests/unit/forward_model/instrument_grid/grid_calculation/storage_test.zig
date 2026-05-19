@@ -169,7 +169,7 @@ test "measurement storage keeps route-inactive transport buffers empty" {
         source_route,
         implementations.exact(),
     );
-    try std.testing.expectEqual(layer_count + 1, source_buffers.source_interfaces.len);
+    try std.testing.expectEqual(@as(usize, 0), source_buffers.source_interfaces.len);
     try std.testing.expectEqual(@as(usize, 0), source_buffers.rtm_quadrature_levels.len);
     try std.testing.expect(source_buffers.pseudo_spherical_samples.len != 0);
     try std.testing.expectEqual(layer_count + 1, source_buffers.pseudo_spherical_level_starts.len);

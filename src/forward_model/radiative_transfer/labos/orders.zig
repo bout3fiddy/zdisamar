@@ -41,7 +41,7 @@ pub const OrdersResultView = struct {
 //   field storage: 96 B across 6 fields; largest: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: ud, ud_sum_local, ud_orde, ud_local, rt_active carry references/descriptors; referenced storage is not included in size
-//   storage shape: ud_sum_local is allocated only for routes that return local-source sums
+//   storage shape: ud carries direct E/U/D fields; ud_orde carries only transported U/D current-order terms; ud_sum_local is allocated only for routes that return local-source sums
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
@@ -49,7 +49,7 @@ pub const OrdersWorkspace = struct {
     allocator: Allocator,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
     ud_local: []basis.UDLocal,
     rt_active: []bool,
 
@@ -69,7 +69,7 @@ pub const OrdersWorkspace = struct {
         errdefer allocator.free(ud);
         const ud_sum_local = try allocator.alloc(basis.UDLocal, if (needs_local_sum) nlevel else 0);
         errdefer allocator.free(ud_sum_local);
-        const ud_orde = try allocator.alloc(basis.UDField, nlevel);
+        const ud_orde = try allocator.alloc(basis.UDLocal, nlevel);
         errdefer allocator.free(ud_orde);
         const ud_local = try allocator.alloc(basis.UDLocal, nlevel);
         errdefer allocator.free(ud_local);
@@ -112,7 +112,7 @@ fn transportToOtherLevels(
     nmutot: usize,
     atten: anytype,
     ud_local: []const basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
 ) void {
     if (nmutot == basis.max_nmutot) {
         if (comptime isDynamicAttenPointer(@TypeOf(atten))) {
@@ -183,7 +183,7 @@ fn transportToOtherLevelsDynamic12(
     end_level: usize,
     atten: *const attenuation_mod.DynamicAttenArray,
     ud_local: []const basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
 ) void {
     const nlevel = atten.nlevel;
     const stream_stride = nlevel * nlevel;
@@ -228,7 +228,7 @@ fn transportToOtherLevelsRuntime12(
     end_level: usize,
     atten: *const attenuation_mod.RuntimeAttenArray,
     ud_local: []const basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
 ) void {
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
@@ -268,7 +268,7 @@ fn transportToOtherLevels12(
     end_level: usize,
     atten: anytype,
     ud_local: []const basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
 ) void {
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
@@ -311,8 +311,8 @@ fn transportToOtherLevelsTangent(
     atten_tangent: anytype,
     _: []const basis.UDLocal,
     ud_local_tangent: []const basis.UDLocal,
-    ud_orde: []const basis.UDField,
-    ud_orde_tangent: []basis.UDField,
+    ud_orde: []const basis.UDLocal,
+    ud_orde_tangent: []basis.UDLocal,
 ) void {
     ud_orde_tangent[start_level].U = ud_local_tangent[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
@@ -467,7 +467,7 @@ fn refreshActiveLayerMask(rt: []const basis.LayerRT, rt_active: []bool, nmutot: 
 
 fn copyTransportedOrderIntoOutput(
     ud: []basis.UDField,
-    ud_orde: []const basis.UDField,
+    ud_orde: []const basis.UDLocal,
     start_level: usize,
     end_level: usize,
 ) void {
@@ -478,7 +478,7 @@ fn copyTransportedOrderIntoOutput(
 }
 
 fn maxOutgoingUpward(
-    ud_orde: []const basis.UDField,
+    ud_orde: []const basis.UDLocal,
     end_level: usize,
     n_gauss: usize,
     nmutot: usize,
@@ -503,7 +503,7 @@ fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
     ud_local: []basis.UDLocal,
     nmutot: usize,
 ) void {
@@ -523,7 +523,6 @@ fn initializeOrdersBuffers(
         }
 
         orde.* = undefined;
-        orde.E.n = nmutot;
         initVec2Metadata(&orde.U, nmutot);
         initVec2Metadata(&orde.D, nmutot);
 
@@ -547,7 +546,7 @@ fn accumulateOrderContribution(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
-    ud_orde: []const basis.UDField,
+    ud_orde: []const basis.UDLocal,
     ud_local: []const basis.UDLocal,
     start_level: usize,
     end_level: usize,
@@ -597,7 +596,7 @@ fn accumulateOrderContribution12(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
-    ud_orde: []const basis.UDField,
+    ud_orde: []const basis.UDLocal,
     ud_local: []const basis.UDLocal,
     start_level: usize,
     end_level: usize,
@@ -639,7 +638,7 @@ fn ordersScatInternal(
     comptime rt_active_ready: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
-    ud_orde: []basis.UDField,
+    ud_orde: []basis.UDLocal,
     ud_local: []basis.UDLocal,
     rt_active: []bool,
     start_level: usize,
@@ -676,10 +675,8 @@ fn ordersScatInternal(
         defer zone.end();
         for (start_level..end_level + 1) |ilevel| {
             const e_data = &ud_view[ilevel].E.data;
-            const orde_e_data = &ud_orde_view[ilevel].E.data;
             for (0..nmutot) |imu| {
                 const att = atten.get(imu, end_level, ilevel);
-                orde_e_data[imu] = att;
                 e_data[imu] = att;
             }
         }
@@ -1051,7 +1048,7 @@ pub fn ordersScat(
     ud_sum_local_owned_by_result = true;
     errdefer result.deinit();
 
-    const ud_orde = try allocator.alloc(basis.UDField, nlevel);
+    const ud_orde = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(ud_orde);
     const ud_local = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(ud_local);
@@ -1118,11 +1115,11 @@ pub fn ordersScatTangent(
     defer allocator.free(base_ud);
     const base_ud_sum_local = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(base_ud_sum_local);
-    const base_orde = try allocator.alloc(basis.UDField, nlevel);
+    const base_orde = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(base_orde);
     const base_local = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(base_local);
-    const tangent_orde = try allocator.alloc(basis.UDField, nlevel);
+    const tangent_orde = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(tangent_orde);
     const tangent_local = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(tangent_local);
@@ -1136,15 +1133,11 @@ pub fn ordersScatTangent(
 
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &base_ud[ilevel].E.data;
-        const orde_e_data = &base_orde[ilevel].E.data;
         const tangent_e_data = &result.ud[ilevel].E.data;
-        const tangent_orde_e_data = &tangent_orde[ilevel].E.data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, end_level, ilevel);
-            orde_e_data[imu] = att;
             e_data[imu] = att;
             tangent_e_data[imu] = 0.0;
-            tangent_orde_e_data[imu] = 0.0;
         }
     }
 

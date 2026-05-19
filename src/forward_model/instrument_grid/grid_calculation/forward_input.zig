@@ -87,7 +87,7 @@ pub fn configuredForwardInput(
             return error.MissingExplicitRtmQuadrature;
         }
     }
-    if (!has_rtm_quadrature) {
+    if (route.rtm_controls.integrate_source_function and !has_rtm_quadrature) {
         const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
         {
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");

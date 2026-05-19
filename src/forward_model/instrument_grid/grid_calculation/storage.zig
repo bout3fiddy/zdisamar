@@ -56,7 +56,7 @@ pub const Buffers = struct {
 };
 
 pub fn routeMayUseSourceInterfaces(scene: *const Scene, route: common.Route) bool {
-    if (!route.rtm_controls.integrate_source_function) return true;
+    if (!route.rtm_controls.integrate_source_function) return false;
     return scene.atmosphere.interval_grid.semantics == .none;
 }
 
