@@ -2915,6 +2915,89 @@ Conclusion:
 - timing/residuals stayed clean, so the measurement can remain part of the
   benchmark gate for future memory experiments
 
+### Experiment 45: record instrument sampling layout diagnostics
+
+Changed:
+- `uv run benchmark/run_benchmark.py` now writes a top-level `memory_layout`
+  object after the timed benchmark and after peak RSS capture
+- schema moved to version 4 and records the benchmark forward-case instrument
+  sampling distribution, current owned sampling-plan byte estimate, old
+  full-kernel row estimate, and transient integration-kernel scratch estimate
+- compact report rows summarize the sampling-plan footprint alongside the
+  process-level memory row
+
+Memory result:
+
+| item | result |
+| --- | ---: |
+| benchmark nominal wavelengths | 301 |
+| channel integration kernels | 602 |
+| support-count range | 151-518 samples |
+| support-count median / p90 | 196 / 266 samples |
+| current owned wavelength sampling estimate | 2,156,472 B (2.06 MiB) |
+| previous full-kernel row payload estimate | 19,743,192 B (18.83 MiB) |
+| estimated row-payload saving already achieved | 17,586,768 B (16.77 MiB) |
+| 2-worker `IntegrationKernel` scratch | 65,568 B (64.03 KiB) |
+| measured benchmark peak RSS | 83.4 MiB |
+
+Interpretation:
+- this is measurement instrumentation, not an optimization
+- the retained benchmark uses DISAMAR high-resolution integration for both
+  radiance and irradiance; every kernel spills to side storage because all
+  support counts are above the current 5-sample inline threshold
+- the compact wavelength-plan work from Experiment 1 currently saves about
+  16.77 MiB on the 301-wavelength benchmark shape after accounting for the
+  remaining side offset/weight storage
+- the remaining fixed-capacity `IntegrationKernel` scratch is only 64.03 KiB at
+  the benchmark's 2-worker cap, so the larger opportunity is not stack scratch
+  size alone; it is whether the 2.06 MiB retained support sample storage can be
+  encoded or recomputed without making spectral integration slower
+- peak RSS is lower than Experiment 44 in this run, but this is a fresh
+  measurement run and should not be treated as a product memory reduction by
+  itself
+
+Validation and benchmark evidence:
+- `uv run python -m compileall benchmark/run_benchmark.py benchmark/suite/layout.py benchmark/suite/report.py benchmark/suite/config.py`:
+  passed
+- diagnostic-only import of `memory_layout_diagnostics()` matched the retained
+  run shape: 301 nominal wavelengths, support-count max 518, current owned plan
+  estimate 2,156,472 B
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `a1e413f81d9347398be921eaf6fef7d0`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode spectra worst
+  max_abs_over_noise `1.59985574045`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `0.00377768945481`, pressure delta
+  `5.09865532685 hPa`
+
+Benchmark comparison against Experiment 44:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.562587 s | 140.656352 s | 1.0007 |
+| total benchmark CPU | 271.285864 s | 271.331560 s | 1.0002 |
+| forward no-session median | 0.942316 s | 0.937861 s | 0.9953 |
+| forward session setup | 0.693180 s | 0.691194 s | 0.9971 |
+| forward session cached median | 0.255806 s | 0.254400 s | 0.9945 |
+| forward fast four-scene median | 4.644536 s | 4.637128 s | 0.9984 |
+| OE session retrieval median | 1.080792 s | 1.083199 s | 1.0022 |
+| OE fast retrieval median | 0.836084 s | 0.838982 s | 1.0035 |
+| OE sweep session total wall | 19.468969 s | 19.489018 s | 1.0010 |
+| OE sweep fast total wall | 10.612415 s | 10.642678 s | 1.0029 |
+
+Conclusion:
+- accepted
+- this closes the first priority measurement gap: the instrument sampling path
+  now exposes actual support-count distribution and retained plan bytes in the
+  benchmark schema
+- timing/residuals stayed clean, and the post-timing diagnostic is excluded
+  from the benchmark wall-time and peak-RSS boundaries
+- next experiments should use the measured 151-518 support-count range before
+  attempting to shrink or encode remaining integration sample storage
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -3434,8 +3517,9 @@ table verifies all markers are covered by this scratch analysis.
 
 ## Current Priority Order
 
-1. measure adaptive interval and integration sample-count distributions before
-   changing remaining max-capacity scratch
+1. use the measured 151-518 integration-support range to evaluate whether
+   retained offset/weight storage can be encoded, reduced, or recomputed without
+   slowing spectral integration
 2. prototype LABOS order workspace SoA and active-layer lists
 3. generation tags or active lists for repeatedly reset support-row valid caches
 4. use total-only spectroscopy cache by default and side-store breakdown arrays

@@ -40,6 +40,7 @@ def build_results(
     total_benchmark_wall_s: float,
     total_benchmark_process_cpu_s: float,
     memory: dict[str, Any],
+    memory_layout: dict[str, Any],
 ) -> dict[str, Any]:
 
     run = db.run_payload(run_id)
@@ -76,6 +77,7 @@ def build_results(
             total_benchmark_wall_s,
         ),
         "memory": memory,
+        "memory_layout": memory_layout,
         "command": config.COMMAND,
         "output": "benchmark/results.json",
         "scratch_db": "benchmark/.runs/benchmark.sqlite",
@@ -94,7 +96,7 @@ def build_results(
             "retrieval_fast_minus_session_single_case": retrieval["single"]["fast_minus_session"],
             "retrieval_sweep_fast_minus_session": retrieval["sweep"]["fast_minus_session"],
         },
-        "report": build_compact_report(forward, retrieval, memory),
+        "report": build_compact_report(forward, retrieval, memory, memory_layout),
     }
 
 
@@ -102,6 +104,7 @@ def build_compact_report(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
     memory: dict[str, Any],
+    memory_layout: dict[str, Any],
 ) -> dict[str, list[dict[str, str]]]:
 
     no_session = forward["no_session"]
@@ -166,7 +169,40 @@ def build_compact_report(
         ],
         "total_wall_clock_rows": total_wall_rows(forward, retrieval),
         "resource_rows": resource_rows(forward, retrieval, memory),
+        "memory_layout_rows": memory_layout_rows(memory_layout),
     }
+
+
+def memory_layout_rows(memory_layout: dict[str, Any]) -> list[dict[str, str]]:
+
+    instrument = memory_layout["instrument_sampling"]
+    support = instrument["support_count_stats"]
+
+    return [
+        {
+            "area": "Instrument sampling plan",
+            "shape": (
+                f"{instrument['nominal_sample_count']} wavelengths, "
+                f"{instrument['kernel_count']} channel kernels, "
+                f"support count median {support['median']:.1f}, max {support['max']}"
+            ),
+            "memory": (
+                f"current owned plan {instrument['current_owned_wavelength_sampling_bytes']} B; "
+                "estimated row payload saved "
+                f"{instrument['estimated_row_payload_saved_mib']:.2f} MiB"
+            ),
+        },
+        {
+            "area": "Integration kernel scratch",
+            "shape": (
+                f"{instrument['estimated_sampling_worker_count']} sampling worker(s), "
+                f"{instrument['integration_kernel_scratch_bytes_per_worker']} B each"
+            ),
+            "memory": (
+                f"{instrument['integration_kernel_scratch_bytes_at_worker_count']} B transient"
+            ),
+        },
+    ]
 
 
 def format_forward_residuals(case: dict[str, Any]) -> str:

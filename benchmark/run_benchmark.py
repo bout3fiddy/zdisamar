@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from suite import config, memory, native, report  # noqa: E402
+from suite import config, layout, memory, native, report  # noqa: E402
 from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
@@ -62,14 +62,20 @@ def main() -> int:
         started = timing_start()
         forward.run(db, progress, run_id)
         retrieval.run(db, progress, run_id)
-        db.finish_run(run_id, "complete")
         total_timing = elapsed_since(started)
+        memory_payload = memory_probe.finish()
+        progress.log("layout", "start post-timing memory-layout diagnostics")
+        memory_layout = layout.memory_layout_diagnostics()
+        db.summary(run_id, "memory_layout", memory_layout)
+        progress.log("layout", "complete")
+        db.finish_run(run_id, "complete")
         results = report.build_results(
             db,
             run_id,
             total_benchmark_wall_s=total_timing.wall_s,
             total_benchmark_process_cpu_s=total_timing.process_cpu_s,
-            memory=memory_probe.finish(),
+            memory=memory_payload,
+            memory_layout=memory_layout,
         )
         report.write_json_atomic(config.RESULTS_PATH, results)
         progress.log("benchmark", f"wrote {config.RESULTS_PATH.relative_to(config.REPO_ROOT)}")

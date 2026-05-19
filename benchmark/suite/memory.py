@@ -28,6 +28,7 @@ class PeakRssProbe:
         end = peak_rss()
         delta_bytes = None
         delta_mib = None
+
         if self.start.bytes is not None and end.bytes is not None:
             delta_bytes = max(end.bytes - self.start.bytes, 0)
             delta_mib = delta_bytes / (1024 * 1024)
@@ -61,6 +62,7 @@ def peak_rss() -> PeakRssSample:
         )
 
     maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
     return PeakRssSample(
         bytes=normalize_ru_maxrss_to_bytes(maxrss),
         source="resource.getrusage(RUSAGE_SELF).ru_maxrss",
