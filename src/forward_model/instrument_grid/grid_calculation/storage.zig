@@ -31,7 +31,7 @@ pub const Error =
 //   size: 272 B, align: 8 B
 //   field storage: 272 B across 17 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, scratch, +12 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: wavelength/product slices are always active; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
@@ -55,12 +55,25 @@ pub const Buffers = struct {
     reflectance_noise_sigma: ?[]f64 = null,
 };
 
+pub fn routeMayUseSourceInterfaces(scene: *const Scene, route: common.Route) bool {
+    if (!route.rtm_controls.integrate_source_function) return true;
+    return scene.atmosphere.interval_grid.semantics == .none;
+}
+
+pub fn routeUsesRtmQuadrature(route: common.Route) bool {
+    return route.rtm_controls.integrate_source_function;
+}
+
+pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
+    return route.rtm_controls.use_spherical_correction;
+}
+
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
 //   size: 600 B, align: 8 B
 //   field storage: 596 B across 29 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 28 bool-storage slack = 60 bits
-//   out-of-line: noise_sigma, forward_misses, irradiance, reflectance, scratch, +15 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: product/noise/cache slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
@@ -183,7 +196,13 @@ pub const SummaryStorage = struct {
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
         const layer_count = transportLayerCountHint(scene, route);
-        const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene, route);
+        const needs_source_interfaces = routeMayUseSourceInterfaces(scene, route);
+        const needs_rtm_quadrature = routeUsesRtmQuadrature(route);
+        const needs_pseudo_spherical_grid = routeUsesPseudoSphericalGrid(route);
+        const pseudo_spherical_sample_count = if (needs_pseudo_spherical_grid)
+            pseudoSphericalSampleCountHint(scene, route)
+        else
+            0;
         const wants_jacobian = route.derivative_mode != .none;
         const wants_radiance_noise = implementations.noise.materializesSigma(scene, .radiance);
         const wants_irradiance_noise = implementations.noise.materializesSigma(scene, .irradiance);
@@ -198,11 +217,30 @@ pub const SummaryStorage = struct {
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
         try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
-        try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
-        try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
-        try ensurePseudoSphericalSampleBufferCapacity(allocator, &self.pseudo_spherical_samples, pseudo_spherical_sample_count);
-        try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
-        try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
+        if (needs_source_interfaces) {
+            try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
+        } else {
+            freeSourceInterfaceBuffer(allocator, self.source_interfaces);
+            self.source_interfaces = &.{};
+        }
+        if (needs_rtm_quadrature) {
+            try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
+        } else {
+            freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
+            self.rtm_quadrature_levels = &.{};
+        }
+        if (needs_pseudo_spherical_grid) {
+            try ensurePseudoSphericalSampleBufferCapacity(allocator, &self.pseudo_spherical_samples, pseudo_spherical_sample_count);
+            try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
+            try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
+        } else {
+            freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
+            freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
+            freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
+            self.pseudo_spherical_samples = &.{};
+            self.pseudo_spherical_level_starts = &.{};
+            self.pseudo_spherical_level_altitudes = &.{};
+        }
         if (wants_jacobian) {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count * jacobian.state_count);
         }
@@ -221,11 +259,11 @@ pub const SummaryStorage = struct {
             .scratch = self.scratch[0..sample_count],
             .scratch_aux = self.scratch_aux[0..sample_count],
             .layer_inputs = self.layer_inputs[0..layer_count],
-            .source_interfaces = self.source_interfaces[0 .. layer_count + 1],
-            .rtm_quadrature_levels = self.rtm_quadrature_levels[0 .. layer_count + 1],
-            .pseudo_spherical_samples = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count],
-            .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts[0 .. layer_count + 1],
-            .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes[0 .. layer_count + 1],
+            .source_interfaces = if (needs_source_interfaces) self.source_interfaces[0 .. layer_count + 1] else &.{},
+            .rtm_quadrature_levels = if (needs_rtm_quadrature) self.rtm_quadrature_levels[0 .. layer_count + 1] else &.{},
+            .pseudo_spherical_samples = if (needs_pseudo_spherical_grid) self.pseudo_spherical_samples[0..pseudo_spherical_sample_count] else &.{},
+            .pseudo_spherical_level_starts = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_starts[0 .. layer_count + 1] else &.{},
+            .pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_altitudes[0 .. layer_count + 1] else &.{},
             .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * jacobian.state_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
             .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
@@ -295,10 +333,10 @@ fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
     return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
-pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
+pub fn validateBuffers(scene: *const Scene, route: common.Route, sample_count: usize, buffers: Buffers) Error!void {
     // INVARIANT:
-    //   The summary buffers, radiative transfer-layer buffers, and quadrature carriers
-    //   must stay shape-compatible for a single sweep.
+    //   The always-active summary buffers and the route-selected transport
+    //   carriers must stay shape-compatible for a single sweep.
     if (sample_count == 0 or
         buffers.wavelengths.len != sample_count or
         buffers.radiance.len != sample_count or
@@ -306,15 +344,24 @@ pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
         buffers.reflectance.len != sample_count or
         buffers.scratch.len != sample_count or
         buffers.scratch_aux.len != sample_count or
-        buffers.layer_inputs.len == 0 or
-        buffers.source_interfaces.len != buffers.layer_inputs.len + 1 or
+        buffers.layer_inputs.len == 0)
+    {
+        return error.ShapeMismatch;
+    }
+    if (routeMayUseSourceInterfaces(scene, route) and
+        buffers.source_interfaces.len != buffers.layer_inputs.len + 1)
+    {
+        return error.ShapeMismatch;
+    }
+    if (routeUsesRtmQuadrature(route) and
         buffers.rtm_quadrature_levels.len != buffers.layer_inputs.len + 1)
     {
         return error.ShapeMismatch;
     }
-    if (buffers.pseudo_spherical_samples.len == 0 or
-        buffers.pseudo_spherical_level_starts.len != buffers.layer_inputs.len + 1 or
-        buffers.pseudo_spherical_level_altitudes.len != buffers.layer_inputs.len + 1)
+    if (routeUsesPseudoSphericalGrid(route) and
+        (buffers.pseudo_spherical_samples.len == 0 or
+            buffers.pseudo_spherical_level_starts.len != buffers.layer_inputs.len + 1 or
+            buffers.pseudo_spherical_level_altitudes.len != buffers.layer_inputs.len + 1))
     {
         return error.ShapeMismatch;
     }

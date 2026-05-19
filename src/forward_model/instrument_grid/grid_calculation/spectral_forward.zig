@@ -44,7 +44,7 @@ const forward_prefetch_pooled_chunk_size: usize = 16;
 //   size: 3296 B, align: 8 B
 //   field storage: 3296 B across 9 fields; largest: labos_workspace=3168 B, layer_inputs=16 B, source_interfaces=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layer_inputs, source_interfaces, rtm_quadrature_levels, pseudo_spherical_samples, pseudo_spherical_level_starts, +3 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: layer_inputs always owns transport rows; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
 //   cache span: 52 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 3296 B (3.219 KiB); total also includes referenced storage above
@@ -68,19 +68,37 @@ const ForwardSampleScratch = struct {
         const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
         const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
+        const needs_source_interfaces = Storage.routeMayUseSourceInterfaces(scene, route);
+        const needs_rtm_quadrature = Storage.routeUsesRtmQuadrature(route);
+        const needs_pseudo_spherical_grid = Storage.routeUsesPseudoSphericalGrid(route);
 
         const layer_inputs = try allocator.alloc(common.LayerInput, layer_count);
         errdefer allocator.free(layer_inputs);
-        const source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1);
-        errdefer allocator.free(source_interfaces);
-        const rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1);
-        errdefer allocator.free(rtm_quadrature_levels);
-        const pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count);
-        errdefer allocator.free(pseudo_spherical_samples);
-        const pseudo_spherical_level_starts = try allocator.alloc(usize, layer_count + 1);
-        errdefer allocator.free(pseudo_spherical_level_starts);
-        const pseudo_spherical_level_altitudes = try allocator.alloc(f64, layer_count + 1);
-        errdefer allocator.free(pseudo_spherical_level_altitudes);
+        const source_interfaces = if (needs_source_interfaces)
+            try allocator.alloc(common.SourceInterfaceInput, layer_count + 1)
+        else
+            @constCast(&[_]common.SourceInterfaceInput{});
+        errdefer if (source_interfaces.len != 0) allocator.free(source_interfaces);
+        const rtm_quadrature_levels = if (needs_rtm_quadrature)
+            try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1)
+        else
+            @constCast(&[_]common.RtmQuadratureLevel{});
+        errdefer if (rtm_quadrature_levels.len != 0) allocator.free(rtm_quadrature_levels);
+        const pseudo_spherical_samples = if (needs_pseudo_spherical_grid)
+            try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count)
+        else
+            @constCast(&[_]common.PseudoSphericalSample{});
+        errdefer if (pseudo_spherical_samples.len != 0) allocator.free(pseudo_spherical_samples);
+        const pseudo_spherical_level_starts = if (needs_pseudo_spherical_grid)
+            try allocator.alloc(usize, layer_count + 1)
+        else
+            @constCast(&[_]usize{});
+        errdefer if (pseudo_spherical_level_starts.len != 0) allocator.free(pseudo_spherical_level_starts);
+        const pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid)
+            try allocator.alloc(f64, layer_count + 1)
+        else
+            @constCast(&[_]f64{});
+        errdefer if (pseudo_spherical_level_altitudes.len != 0) allocator.free(pseudo_spherical_level_altitudes);
         const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
         errdefer allocator.free(support_carrier_valid);
         const support_carrier_scalars = try allocator.alloc(CarrierEval.SharedOpticalScalars, support_cache_count);
@@ -102,11 +120,11 @@ const ForwardSampleScratch = struct {
     fn deinit(self: *ForwardSampleScratch, allocator: Allocator) void {
         self.labos_workspace.deinit();
         allocator.free(self.layer_inputs);
-        allocator.free(self.source_interfaces);
-        allocator.free(self.rtm_quadrature_levels);
-        allocator.free(self.pseudo_spherical_samples);
-        allocator.free(self.pseudo_spherical_level_starts);
-        allocator.free(self.pseudo_spherical_level_altitudes);
+        if (self.source_interfaces.len != 0) allocator.free(self.source_interfaces);
+        if (self.rtm_quadrature_levels.len != 0) allocator.free(self.rtm_quadrature_levels);
+        if (self.pseudo_spherical_samples.len != 0) allocator.free(self.pseudo_spherical_samples);
+        if (self.pseudo_spherical_level_starts.len != 0) allocator.free(self.pseudo_spherical_level_starts);
+        if (self.pseudo_spherical_level_altitudes.len != 0) allocator.free(self.pseudo_spherical_level_altitudes);
         allocator.free(self.support_carrier_valid);
         allocator.free(self.support_carrier_scalars);
         self.* = undefined;

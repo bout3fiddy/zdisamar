@@ -2251,6 +2251,79 @@ Conclusion:
 - this is worth keeping because it converts a route-inactive backing array into
   lazy side storage without changing the arithmetic loop or residuals
 
+### Experiment 35: route-gate forward transport scratch buffers
+
+Changed:
+- `ForwardInput.configuredForwardInput` no longer slices the source-interface
+  buffer before it knows the route needs the source-interface fallback
+- `ForwardSampleScratch` allocates source-interface, RTM-quadrature, and
+  pseudo-spherical backing arrays only for routes that can consume those arrays
+- `SummaryStorage.buffers` returns empty route-inactive transport slices and
+  releases stale route-inactive backing storage when a reused workspace changes
+  route shape
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| explicit-interval integrated-source source interfaces | `nlevel * 1272 B` | 0 B | -100.00% |
+| current 117-level O2 A source-interface storage | 148,824 B | 0 B | -145.3 KiB per storage owner |
+| worker-cap-2 O2 A prefetch scratch source storage | 297,648 B | 0 B | -290.7 KiB per prefetch batch |
+| non-integrated RTM quadrature storage | `nlevel * 72 B` | 0 B | -100.00% |
+| plane-parallel pseudo-spherical storage | `sample_count * 24 B + nlevel * 16 B` | 0 B | -100.00% |
+
+Interpretation:
+- `SourceInterfaceInput` is 1272 B because it carries one full above-interface
+  phase row; explicit-interval integrated-source routes must stay on the
+  RTM-quadrature carrier path and return `MissingExplicitRtmQuadrature` instead
+  of falling back to coarse source interfaces
+- `RtmQuadratureLevel` is 72 B and is only read when
+  `integrate_source_function` is enabled
+- `PseudoSphericalSample` is 24 B, with two `nlevel` side arrays for starts and
+  altitudes; those buffers are only read when spherical correction is enabled
+- the struct headers stay the same size; the win is backing-storage removal for
+  inactive route payloads
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU
+- `uv run benchmark/run_benchmark.py`: run
+  `7891ec08d18c4865bc088c5826fc6f1b`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode worst
+  `max_abs_over_noise=1.59985574045`; session-vs-no-session reflectance
+  max_abs `0`; OE session AOD diff `8.69864882902e-08`; fast-vs-session sweep
+  max AOD delta `0.00376644268103`
+
+Benchmark comparison against Experiment 34:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 144.042204 s | 143.825114 s | 0.9985 |
+| total benchmark CPU | 277.686383 s | 277.399728 s | 0.9990 |
+| forward no-session median | 0.983889 s | 0.977100 s | 0.9931 |
+| forward session setup | 0.709735 s | 0.715540 s | 1.0082 |
+| forward session first cached | 0.274181 s | 0.272202 s | 0.9928 |
+| forward session cached median | 0.274392 s | 0.271217 s | 0.9884 |
+| forward fast four-scene median | 4.706151 s | 4.735891 s | 1.0063 |
+| OE session retrieval median | 1.143309 s | 1.134661 s | 0.9924 |
+| OE fast retrieval median | 0.882785 s | 0.879741 s | 0.9966 |
+| OE sweep session total wall | 19.850683 s | 19.660416 s | 0.9904 |
+| OE sweep fast total wall | 10.808254 s | 10.750633 s | 0.9947 |
+
+Conclusion:
+- the change removes route-inactive backing arrays without changing any
+  carrier math or LABOS execution path
+- benchmark movement is favorable overall; the slower rows are limited to
+  forward session setup `+0.82%` and fast four-scene median `+0.63%`, while
+  total wall, CPU, cached forward, and OE rows improved in this clean run
+- this is worth keeping because the memory win comes from not allocating
+  impossible-to-read route payloads, and the retained benchmark/residual gate is
+  clean
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

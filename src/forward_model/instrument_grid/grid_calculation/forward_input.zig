@@ -57,7 +57,6 @@ pub fn configuredForwardInput(
         optical_depths,
         layer_inputs,
     );
-    const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     var has_rtm_quadrature = false;
     if (route.rtm_controls.integrate_source_function) {
         // DECISION:
@@ -89,6 +88,7 @@ pub fn configuredForwardInput(
         }
     }
     if (!has_rtm_quadrature) {
+        const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
         {
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");
             defer zone.end();

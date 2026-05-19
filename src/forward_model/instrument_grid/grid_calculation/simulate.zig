@@ -329,7 +329,7 @@ pub fn simulateInternal(
     const simulate_zone = Trace.staticZone(@src(), "simulate.product");
     defer simulate_zone.end();
 
-    const setup = try buildSimulationSetup(scene, prepared, implementations, buffers);
+    const setup = try buildSimulationSetup(scene, route, prepared, implementations, buffers);
     var simulation_plan = try resolveSimulationPlan(
         allocator,
         scene,
@@ -352,7 +352,7 @@ pub fn simulateInternal(
     );
 
     var summary = RunningSummary.init();
-    const transport_layer_count = try validateTransportBuffers(route, prepared, buffers);
+    const transport_layer_count = try validateTransportBuffers(scene, route, prepared, buffers);
     try fillRadianceSamples(
         allocator,
         scene,
@@ -400,13 +400,14 @@ pub fn simulateInternal(
 
 fn buildSimulationSetup(
     scene: *const Scene,
+    route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
     buffers: Storage.Buffers,
 ) Storage.Error!SimulationSetup {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    try Storage.validateBuffers(sample_count, buffers);
+    try Storage.validateBuffers(scene, route, sample_count, buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -561,14 +562,26 @@ fn prefetchSimulationPlan(
 }
 
 fn validateTransportBuffers(
+    scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     buffers: Storage.Buffers,
 ) Storage.Error!usize {
     const transport_layer_count = Storage.resolvedTransportLayerCount(route, prepared);
-    if (buffers.layer_inputs.len < transport_layer_count or
-        buffers.source_interfaces.len < transport_layer_count + 1 or
-        buffers.rtm_quadrature_levels.len < transport_layer_count + 1 or
+    if (buffers.layer_inputs.len < transport_layer_count) {
+        return error.ShapeMismatch;
+    }
+    if (Storage.routeMayUseSourceInterfaces(scene, route) and
+        buffers.source_interfaces.len < transport_layer_count + 1)
+    {
+        return error.ShapeMismatch;
+    }
+    if (Storage.routeUsesRtmQuadrature(route) and
+        buffers.rtm_quadrature_levels.len < transport_layer_count + 1)
+    {
+        return error.ShapeMismatch;
+    }
+    if (Storage.routeUsesPseudoSphericalGrid(route) and
         buffers.pseudo_spherical_level_starts.len < transport_layer_count + 1)
     {
         return error.ShapeMismatch;
@@ -593,6 +606,27 @@ fn fillRadianceSamples(
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!void {
+    const source_interfaces = if (Storage.routeMayUseSourceInterfaces(scene, route))
+        buffers.source_interfaces[0 .. transport_layer_count + 1]
+    else
+        @constCast(&[_]common.SourceInterfaceInput{});
+    const rtm_quadrature_levels = if (Storage.routeUsesRtmQuadrature(route))
+        buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1]
+    else
+        @constCast(&[_]common.RtmQuadratureLevel{});
+    const pseudo_spherical_samples = if (Storage.routeUsesPseudoSphericalGrid(route))
+        buffers.pseudo_spherical_samples
+    else
+        @constCast(&[_]common.PseudoSphericalSample{});
+    const pseudo_spherical_level_starts = if (Storage.routeUsesPseudoSphericalGrid(route))
+        buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1]
+    else
+        @constCast(&[_]usize{});
+    const pseudo_spherical_level_altitudes = if (Storage.routeUsesPseudoSphericalGrid(route))
+        buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1]
+    else
+        @constCast(&[_]f64{});
+
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
@@ -609,11 +643,11 @@ fn fillRadianceSamples(
                 setup.safe_span,
                 implementations,
                 buffers.layer_inputs[0..transport_layer_count],
-                buffers.source_interfaces[0 .. transport_layer_count + 1],
-                buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1],
-                buffers.pseudo_spherical_samples,
-                buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
-                buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
+                source_interfaces,
+                rtm_quadrature_levels,
+                pseudo_spherical_samples,
+                pseudo_spherical_level_starts,
+                pseudo_spherical_level_altitudes,
                 evaluation_cache,
                 &plan.radiance_integration,
                 wavelength_sampling.kernel_storage,
