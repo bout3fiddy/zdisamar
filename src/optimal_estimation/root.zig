@@ -496,6 +496,7 @@ fn writeStateToInput(
             .surface_albedo => input.surface_albedo = value,
             .aerosol_optical_depth => input.aerosol.optical_depth = value,
             .aerosol_layer_mid_pressure_hpa => {
+                const fit_interval_index = @as(u64, spec.interval_index_1based);
                 const half_thickness = 0.5 * spec.thickness_hpa;
                 const top_pressure = value - half_thickness;
                 const bottom_pressure = value + half_thickness;
@@ -503,13 +504,14 @@ fn writeStateToInput(
                 input.aerosol.placement.bottom_pressure_hpa = bottom_pressure;
                 var updated = false;
                 for (intervals) |*interval| {
-                    if (interval.index_1based == spec.interval_index_1based) {
+                    const interval_index = @as(u64, interval.index_1based);
+                    if (interval_index == fit_interval_index) {
                         interval.top_pressure_hpa = top_pressure;
                         interval.bottom_pressure_hpa = bottom_pressure;
                         updated = true;
-                    } else if (interval.index_1based == spec.interval_index_1based - 1) {
+                    } else if (interval_index + 1 == fit_interval_index) {
                         interval.bottom_pressure_hpa = top_pressure;
-                    } else if (interval.index_1based == spec.interval_index_1based + 1) {
+                    } else if (interval_index == fit_interval_index + 1) {
                         interval.top_pressure_hpa = bottom_pressure;
                     }
                 }
@@ -703,9 +705,22 @@ pub fn freePressureProfile(allocator: Allocator, profile: PressureAltitudeProfil
     allocator.free(profile.second);
 }
 
+fn validatePressureProfileSamples(altitude_km: []const f64, pressure_hpa: []const f64) !void {
+    if (altitude_km.len < 2 or altitude_km.len != pressure_hpa.len) return error.InvalidPressureProfile;
+    for (0..altitude_km.len) |index| {
+        if (!std.math.isFinite(altitude_km[index]) or !std.math.isFinite(pressure_hpa[index]) or pressure_hpa[index] <= 0.0) {
+            return error.InvalidPressureProfile;
+        }
+        if (index != 0 and (altitude_km[index] <= altitude_km[index - 1] or pressure_hpa[index] >= pressure_hpa[index - 1])) {
+            return error.InvalidPressureProfile;
+        }
+    }
+}
+
 fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressure_hpa: []const f64, second: []f64) !void {
     const count = x.len;
     if (count != pressure_hpa.len or count != second.len or count < 2) return error.InvalidPressureProfile;
+    try validatePressureProfileSamples(x, pressure_hpa);
     if (count == 2) {
         second[0] = 0.0;
         second[1] = 0.0;
@@ -716,12 +731,6 @@ fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressur
         return endpointSplineSecondDerivativesDynamic(allocator, x, pressure_hpa, second);
     }
     var rhs = algebra.zeroVector();
-    for (0..count) |index| {
-        if (!std.math.isFinite(x[index]) or !std.math.isFinite(pressure_hpa[index]) or pressure_hpa[index] <= 0.0) return error.InvalidPressureProfile;
-        if (index != 0) {
-            if (x[index] <= x[index - 1] or pressure_hpa[index] >= pressure_hpa[index - 1]) return error.InvalidPressureProfile;
-        }
-    }
     const width0 = x[1] - x[0];
     matrix[0][0] = 2.0 * width0;
     matrix[0][1] = width0;
@@ -746,10 +755,6 @@ fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressur
 }
 
 fn endpointSplineSecondDerivativesDynamic(allocator: Allocator, x: []const f64, pressure_hpa: []const f64, second: []f64) !void {
-    for (0..x.len) |index| {
-        if (!std.math.isFinite(x[index]) or !std.math.isFinite(pressure_hpa[index]) or pressure_hpa[index] <= 0.0) return error.InvalidPressureProfile;
-        if (index != 0 and (x[index] <= x[index - 1] or pressure_hpa[index] >= pressure_hpa[index - 1])) return error.InvalidPressureProfile;
-    }
     const count = x.len;
     var lower = try allocator.alloc(f64, count);
     defer allocator.free(lower);

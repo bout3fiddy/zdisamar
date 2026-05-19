@@ -345,6 +345,16 @@ def assert_reference_data_and_rtm_tables() -> None:
             nominal_wavelengths = rtm.nominal_wavelengths(case)
             assert nominal_wavelengths[0] == case.spectral_grid.start_nm
             assert nominal_wavelengths[-1] == case.spectral_grid.end_nm
+            invalid_grid_case = copy.deepcopy(case)
+            invalid_grid_case.spectral_grid.sample_count = -1
+
+            try:
+                rtm.nominal_wavelengths(invalid_grid_case)
+            except ValueError as error:
+                assert "sample_count" in str(error)
+            else:
+                raise AssertionError("negative nominal spectral sample count was accepted")
+
             mutable_case = copy.deepcopy(case)
 
             with rtm.SessionCache() as cache:

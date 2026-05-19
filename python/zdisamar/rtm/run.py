@@ -124,7 +124,10 @@ def nominal_wavelengths(case: O2AInput):
 
     count = int(case.spectral_grid.sample_count)
 
-    if count <= 0:
+    if count < 0:
+        raise ValueError("nominal spectral sample_count must be non-negative")
+
+    if count == 0:
         return array("d")
 
     if count == 1:

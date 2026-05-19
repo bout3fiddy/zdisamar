@@ -6,6 +6,7 @@ const zdisamar = @import("zdisamar");
 test {
     _ = @import("observation_model_test.zig");
     _ = @import("input/o2a_reference/root_test.zig");
+    _ = @import("optimal_estimation_test.zig");
 }
 
 const Scene = zdisamar.Input;
