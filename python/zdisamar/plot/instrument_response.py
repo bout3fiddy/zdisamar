@@ -2,11 +2,12 @@
 
 from pathlib import Path
 
-import altair as alt
 import numpy as np
 
-from .data import with_channel_labels
+from . import fields
+from .data import as_float, with_channel_labels
 from .properties import PLOT, PlotAccessor
+from .svg import SvgFigure, SvgPanel, line_panel
 
 
 class InstrumentResponsePlot(PlotAccessor):
@@ -18,10 +19,10 @@ class InstrumentResponsePlot(PlotAccessor):
 
     def curve(self, save: str | Path | None = None):
 
-        return self._finish(_curve(self._target), save=save)
+        return self.finish_plot(curve_figure(self.target), save=save)
 
 
-def _curve(response):
+def curve_figure(response):
 
     data = with_channel_labels(response)
     required = [
@@ -32,70 +33,66 @@ def _curve(response):
         "weight",
         "instrument_fwhm_nm",
     ]
-    missing = [column for column in required if column not in data.columns]
+    present = set[str]()
+
+    for row in data:
+        present.update(row)
+
+    missing = [column for column in required if column not in present]
 
     if missing:
         raise ValueError(f"missing required plotting columns: {', '.join(missing)}")
 
-    data = data[data["channel_label"] == "radiance"].copy()
+    data = [row for row in data if row["channel_label"] == "radiance"]
 
-    if data.empty:
+    if not data:
         raise ValueError("no radiance instrument response rows")
 
-    nominal_wavelengths = np.asarray(data["nominal_wavelength_nm"], dtype=float)
+    nominal_wavelengths = np.asarray([row["nominal_wavelength_nm"] for row in data], dtype=float)
     nearest = int(np.argmin(np.abs(nominal_wavelengths - 760.76)))
     selected = float(nominal_wavelengths[nearest])
-    selected_rows = np.asarray(data["nominal_wavelength_nm"], dtype=float) == selected
-    data = data.loc[selected_rows].copy()
-    data = data.sort_values(by=["offset_nm"]).copy()
-    max_weight = float(np.max(np.asarray(data["weight"], dtype=float)))
+    data = [row for row in data if as_float(row["nominal_wavelength_nm"]) == selected]
+    data = sorted(data, key=lambda row: as_float(row["offset_nm"]))
+    max_weight = float(np.max(np.asarray([row["weight"] for row in data], dtype=float)))
 
     if max_weight <= 0.0:
         raise ValueError("instrument response weights are not positive")
 
-    data["normalized_response"] = data["weight"] / max_weight
-    plot_data = data[data["weight"] >= max_weight * 1.0e-4].copy()
+    data = [{**row, "normalized_response": as_float(row["weight"]) / max_weight} for row in data]
+    plot_data = [row for row in data if as_float(row["weight"]) >= max_weight * 1.0e-4]
 
-    if plot_data.empty:
+    if not plot_data:
         plot_data = data
 
-    offsets = np.asarray(plot_data["offset_nm"], dtype=float)
+    offsets = np.asarray([row["offset_nm"] for row in plot_data], dtype=float)
     x_min = float(np.min(offsets))
     x_max = float(np.max(offsets))
     x_pad = max((x_max - x_min) * 0.04, 0.01)
     title = f"Instrument spectral response function (ISRF), {selected:.5f} nm"
 
-    return (
-        alt.Chart(plot_data)
-        .mark_line(color=PLOT.colors["black"], strokeWidth=PLOT.isrf_line_width)
-        .encode(
-            x=alt.X(
-                "offset_nm:Q",
-                title="Offset from nominal wavelength (nm)",
-                scale=alt.Scale(domain=[x_min - x_pad, x_max + x_pad], zero=False),
-            ),
-            y=alt.Y(
-                "normalized_response:Q",
-                title="Normalized ISRF",
-                scale=alt.Scale(domain=[0.0, 1.05]),
-                axis=alt.Axis(format=".2f"),
-            ),
-            tooltip=[
-                alt.Tooltip(
-                    "nominal_wavelength_nm:Q",
-                    title="Nominal wavelength (nm)",
-                    format=".5f",
-                ),
-                alt.Tooltip(
-                    "support_wavelength_nm:Q",
-                    title="Support wavelength (nm)",
-                    format=".5f",
-                ),
-                alt.Tooltip("offset_nm:Q", title="Offset (nm)", format=".6f"),
-                alt.Tooltip("normalized_response:Q", title="Normalized ISRF", format=".5f"),
-                alt.Tooltip("weight:Q", title="Native weight", format=".5g"),
-                alt.Tooltip("instrument_fwhm_nm:Q", title="FWHM (nm)", format=".5f"),
-            ],
-        )
-        .properties(**PLOT.chart(title))
+    panel = line_panel(
+        title=title,
+        x_title=fields.QUANTITY_LABELS["offset_nm"],
+        y_title="Normalized ISRF",
+        x=[as_float(row["offset_nm"]) for row in plot_data],
+        y=[as_float(row["normalized_response"]) for row in plot_data],
+        name=title,
+        color=PLOT.colors["black"],
+        marker_x=False,
+    )
+
+    panel = SvgPanel(
+        title=panel.title,
+        x_title=panel.x_title,
+        y_title=panel.y_title,
+        series=panel.series,
+        width=panel.width,
+        height=panel.height,
+        x_domain=(x_min - x_pad, x_max + x_pad),
+        y_domain=(0.0, 1.05),
+    )
+
+    return SvgFigure(
+        title=title,
+        panels=(panel,),
     )

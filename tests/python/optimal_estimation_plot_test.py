@@ -1,11 +1,16 @@
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
+from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
 from zdisamar.plot.optimal_estimation import MEASUREMENT_RESIDUAL_HEIGHT
+from zdisamar.plot.profiles import interval_profile_rows
 from zdisamar.plot.properties import PLOT
+from zdisamar.plot.svg import SvgFigure, SvgPanel, SvgSeries
 
 
 def build_result() -> Result:
@@ -60,40 +65,46 @@ def main() -> int:
 
     convergence = result.plot.convergence().to_dict()
     assert convergence["title"]["text"] == "Retrieved state trajectory"
-    assert len(convergence["hconcat"]) == 2
+    assert convergence["type"] == "zdisamar-svg"
+    assert len(convergence["panels"]) == 2
     assert convergence["resolve"]["scale"]["y"] == "independent"
+    assert convergence["panels"][0]["x_ticks"] == [0.0, 1.0, 2.0]
     convergence_spec = json.dumps(convergence)
     assert "Aerosol optical depth" in convergence_spec
     assert "Layer mid-pressure (hPa)" in convergence_spec
-    assert '"labelAlign": "center"' in convergence_spec
-    assert '"labelAngle": 0' in convergence_spec
-    assert '"labelBaseline": "top"' in convergence_spec
+    assert '"line"' in convergence_spec
+    assert '"points"' in convergence_spec
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
 
     fit = result.plot.measurement_fit().to_dict()
     fit_spec = json.dumps(fit)
     assert fit["title"]["text"] == "Measurement fit"
-    assert len(fit["vconcat"]) == 2
-    assert '"point"' in fit_spec
+    assert len(fit["panels"]) == 2
+    assert '"points"' in fit_spec
     assert "Residual" in fit_spec
     assert "residual_scaled" not in fit_spec
-    assert fit["vconcat"][1]["width"] == PLOT.diagnostic_width
-    assert fit["vconcat"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    assert fit["panels"][1]["width"] == PLOT.diagnostic_width
+    assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    assert fit["panels"][1]["marker_x"] == []
+    fit_residual_domain = fit["panels"][1]["y_domain"]
+    assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
     assert residual["title"]["text"] == "Final residual"
     assert "residual_scaled" not in residual_spec
+    assert residual["panels"][0]["marker_x"] == []
+    residual_domain = residual["panels"][0]["y_domain"]
+    assert residual_domain[0] <= 0.0 <= residual_domain[1]
 
     jacobian = result.plot.jacobian().to_dict()
     jacobian_spec = json.dumps(jacobian)
     assert jacobian["title"]["text"] == "Final reflectance Jacobians"
-    assert len(jacobian["hconcat"]) == 2
+    assert len(jacobian["panels"]) == 2
     assert jacobian["resolve"]["scale"]["y"] == "independent"
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
-    assert "labelExpr" in jacobian_spec
     assert "x1e-5" in jacobian_spec
     assert "Reflectance jacobian" not in jacobian_spec
     assert "dR/d\\u03c4" in jacobian_spec
@@ -106,10 +117,71 @@ def main() -> int:
     assert flat_tiny_domain[0] > 0.0
     assert flat_tiny_domain[1] < 2.0e-5
 
-    theme = PLOT.theme()["config"]
-    assert theme["axisX"]["grid"] is False
-    assert theme["axisY"]["tickCount"] == 5
-    assert theme["axis"]["gridOpacity"] <= 0.15
+    with TemporaryDirectory() as directory:
+        jacobian_path = Path(directory) / "jacobian.svg"
+        result.plot.jacobian().save(jacobian_path)
+        jacobian_svg = jacobian_path.read_text()
+
+    assert f".grid {{ stroke: {PLOT.colors['grid']};" in jacobian_svg
+    assert f"stroke-opacity: {PLOT.grid_opacity}" in jacobian_svg
+    assert f".axis-title {{ font-size: {PLOT.axis_title_font_size}px;" in jacobian_svg
+
+    missing_samples_plot = SvgFigure(
+        title="Missing samples",
+        panels=(
+            SvgPanel(
+                title="Missing samples",
+                x_title="x",
+                y_title="y",
+                series=(
+                    SvgSeries.band(
+                        "band",
+                        [0.0, 1.0, 2.0, 3.0],
+                        [-0.1, -0.2, np.nan, -0.3],
+                        [0.1, 0.2, np.inf, 0.3],
+                    ),
+                    SvgSeries.line("line", [0.0, 1.0, 2.0, 3.0], [0.0, np.nan, 1.0, 2.0]),
+                    SvgSeries.points("points", [0.0, 1.0, 2.0], [0.0, np.inf, 1.0]),
+                ),
+            ),
+        ),
+    )
+
+    with TemporaryDirectory() as directory:
+        missing_samples_path = Path(directory) / "missing-samples.svg"
+        missing_samples_plot.save(missing_samples_path)
+        missing_samples = missing_samples_path.read_text()
+
+    assert "nan" not in missing_samples.lower()
+    assert "inf" not in missing_samples.lower()
+    assert 'd="M0.000' in missing_samples
+    assert " M" in missing_samples
+
+    empty_plot = SvgFigure(title="Empty figure", panels=())
+    empty_spec = empty_plot.to_dict()
+    assert empty_spec["panels"] == []
+    assert empty_plot.width > 0
+    assert empty_plot.height > 0
+
+    with TemporaryDirectory() as directory:
+        empty_path = Path(directory) / "empty.svg"
+        empty_plot.save(empty_path)
+        assert "<svg" in empty_path.read_text()
+
+    empty_profile = interval_profile_rows(
+        [
+            {
+                WAVELENGTH_NM: 760.76,
+                "altitude_km": np.nan,
+                "top_altitude_km": 1.0,
+                "bottom_altitude_km": 0.0,
+                TOTAL_OPTICAL_DEPTH: 1.0,
+            }
+        ],
+        value=TOTAL_OPTICAL_DEPTH,
+        vertical_axis="altitude_km",
+    )
+    assert empty_profile == []
 
     print("optimal_estimation_plot=ok")
 

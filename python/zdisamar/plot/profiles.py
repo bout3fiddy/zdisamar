@@ -1,62 +1,61 @@
 """Shared profile-table transforms for vertical diagnostic plots."""
 
+import numpy as np
+
 from . import fields
-from .data import require_columns, to_dataframe
+from .data import PlotRow, as_float, require_columns, to_records
 
 
-def nearest_wavelength_value(obj, wavelength_nm: float) -> float:
+def nearest_wavelength_value(obj: object, wavelength_nm: float) -> float:
 
-    result = to_dataframe(obj)
+    result = to_records(obj)
     require_columns(result, [fields.WAVELENGTH_NM])
-    unique_wavelengths = result[fields.WAVELENGTH_NM].drop_duplicates()
-    index = (unique_wavelengths - float(wavelength_nm)).abs().idxmin()
+    unique_wavelengths = sorted({as_float(row[fields.WAVELENGTH_NM]) for row in result})
 
-    return float(unique_wavelengths.loc[index])
+    return min(unique_wavelengths, key=lambda value: abs(value - float(wavelength_nm)))
 
 
 def active_profile_rows(
-    obj,
+    obj: object,
     *,
     value: str,
     vertical_axis: str,
     wavelength_nm: float | None = None,
-):
-
-    import numpy as np
+) -> list[PlotRow]:
 
     required = [fields.WAVELENGTH_NM, vertical_axis, value]
-    result = to_dataframe(obj)
+    result = to_records(obj)
     require_columns(result, required)
-    result = result.copy()
 
     if wavelength_nm is not None:
         selected = nearest_wavelength_value(result, wavelength_nm)
-        result = result[result[fields.WAVELENGTH_NM] == selected].copy()
+        result = [row for row in result if as_float(row[fields.WAVELENGTH_NM]) == selected]
 
-    finite = np.isfinite(np.asarray(result[vertical_axis], dtype=float)) & np.isfinite(
-        np.asarray(result[value], dtype=float)
-    )
-    result = result.loc[finite].copy()
+    result = [
+        row
+        for row in result
+        if np.isfinite(as_float(row[vertical_axis])) and np.isfinite(as_float(row[value]))
+    ]
 
-    if "support_row_kind_label" in result.columns:
-        active = result[result["support_row_kind_label"] == "parity_active"].copy()
+    if result and "support_row_kind_label" in result[0]:
+        active = [row for row in result if row["support_row_kind_label"] == "parity_active"]
 
-        if not active.empty:
+        if active:
             result = active
-    elif "path_length_cm" in result.columns:
-        active = result[result["path_length_cm"] > 0.0].copy()
+    elif result and "path_length_cm" in result[0]:
+        active = [row for row in result if as_float(row["path_length_cm"]) > 0.0]
 
-        if not active.empty:
+        if active:
             result = active
 
     if vertical_axis == "pressure_hpa":
-        return result.sort_values(vertical_axis, ascending=False)
+        return sorted(result, key=lambda row: as_float(row[vertical_axis]), reverse=True)
 
-    return result.sort_values(vertical_axis)
+    return sorted(result, key=lambda row: as_float(row[vertical_axis]))
 
 
 def interval_profile_rows(
-    obj,
+    obj: object,
     *,
     value: str,
     vertical_axis: str,
@@ -64,9 +63,7 @@ def interval_profile_rows(
     mode: str = "sum",
     numerator: str | None = None,
     denominator: str | None = None,
-):
-
-    import numpy as np
+) -> list[PlotRow]:
 
     required = [fields.WAVELENGTH_NM, vertical_axis, value]
 
@@ -76,43 +73,60 @@ def interval_profile_rows(
     if denominator is not None:
         required.append(denominator)
 
+    source_rows = to_records(obj)
+    require_columns(source_rows, required)
     result = active_profile_rows(
-        obj,
+        source_rows,
         value=value,
         vertical_axis=vertical_axis,
         wavelength_nm=wavelength_nm,
     )
-    require_columns(result, required)
+
+    if not result:
+        return result
 
     top_column = "top_pressure_hpa" if vertical_axis == "pressure_hpa" else "top_altitude_km"
     bottom_column = (
         "bottom_pressure_hpa" if vertical_axis == "pressure_hpa" else "bottom_altitude_km"
     )
 
-    if top_column not in result.columns or bottom_column not in result.columns:
+    if not result or top_column not in result[0] or bottom_column not in result[0]:
         return result
 
-    group_columns = [fields.WAVELENGTH_NM, top_column, bottom_column]
-    grouped = result.groupby(group_columns, as_index=False)
+    grouped: dict[tuple[float, float, float], list[PlotRow]] = {}
 
-    if numerator is not None and denominator is not None:
-        summed = grouped[[numerator, denominator]].sum()
-        summed[value] = np.divide(
-            summed[numerator],
-            summed[denominator],
-            out=np.zeros(len(summed), dtype=float),
-            where=summed[denominator].to_numpy(dtype=float) > 0.0,
+    for row in result:
+        key = (
+            as_float(row[fields.WAVELENGTH_NM]),
+            as_float(row[top_column]),
+            as_float(row[bottom_column]),
         )
-    elif mode == "mean":
-        summed = grouped[[value]].mean()
-    else:
-        summed = grouped[[value]].sum()
+        grouped.setdefault(key, []).append(row)
 
-    summed[vertical_axis] = 0.5 * (
-        summed[top_column].to_numpy(dtype=float) + summed[bottom_column].to_numpy(dtype=float)
-    )
+    summed: list[PlotRow] = []
+
+    for (wavelength_nm, top, bottom), rows in grouped.items():
+        output: PlotRow = {
+            fields.WAVELENGTH_NM: wavelength_nm,
+            top_column: top,
+            bottom_column: bottom,
+            vertical_axis: 0.5 * (top + bottom),
+        }
+
+        if numerator is not None and denominator is not None:
+            numerator_sum = sum(as_float(row[numerator]) for row in rows)
+            denominator_sum = sum(as_float(row[denominator]) for row in rows)
+            output[numerator] = numerator_sum
+            output[denominator] = denominator_sum
+            output[value] = numerator_sum / denominator_sum if denominator_sum > 0.0 else 0.0
+        elif mode == "mean":
+            output[value] = sum(as_float(row[value]) for row in rows) / len(rows)
+        else:
+            output[value] = sum(as_float(row[value]) for row in rows)
+
+        summed.append(output)
 
     if vertical_axis == "pressure_hpa":
-        return summed.sort_values(vertical_axis, ascending=False)
+        return sorted(summed, key=lambda row: as_float(row[vertical_axis]), reverse=True)
 
-    return summed.sort_values(vertical_axis)
+    return sorted(summed, key=lambda row: as_float(row[vertical_axis]))

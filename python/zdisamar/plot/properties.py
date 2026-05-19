@@ -1,8 +1,14 @@
-"""Plot styling and save policy."""
+"""SVG plot styling and save policy."""
 
 from pathlib import Path
+from typing import Protocol, TypeVar
 
-import altair as alt
+
+class SavableSvg(Protocol):
+    def save(self, path: str | Path) -> None: ...
+
+
+SvgChart = TypeVar("SvgChart", bound=SavableSvg)
 
 
 class PlotProperties:
@@ -11,7 +17,6 @@ class PlotProperties:
     width = 1311
     height = 465
     diagnostic_width = 620
-    theme_name = "zdisamar_validation"
     font = "Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace"
     markers_nm = (755.0, 760.76, 776.0)
     line_width = 1.4
@@ -23,7 +28,6 @@ class PlotProperties:
     default_point_size = 28
     minimum_point_size = 35
     noise_band_opacity = 0.45
-    png_scale_factor = 4.0
     grid_opacity = 0.10
     x_axis_tick_count = 6
     y_axis_tick_count = 5
@@ -50,53 +54,7 @@ class PlotProperties:
         "residual_negative": "#1F4E79",
     }
 
-    def __init__(self) -> None:
-
-        self._registered = False
-        self._enabled = False
-
-    def prepare(self) -> None:
-        """Enable the zdisamar Altair theme before any chart is built."""
-
-        if self._enabled:
-            return
-
-        if not self._registered:
-            alt.themes.register(self.theme_name, self._theme)  # pyright: ignore[reportArgumentType]
-            self._registered = True
-
-        alt.themes.enable(self.theme_name)  # pyright: ignore[reportArgumentType]
-        self._enabled = True
-
-    def chart(self, title: str) -> dict[str, object]:
-
-        return {"width": self.width, "height": self.height, "title": self.title(title)}
-
-    def title(self, text: str):
-
-        return alt.TitleParams(
-            text=text,
-            anchor="middle",
-            font=self.font,
-            fontSize=self.title_font_size,
-            fontWeight="normal",
-        )
-
-    def panel_title(self, text: str):
-
-        return alt.TitleParams(
-            text=text,
-            anchor="middle",
-            font=self.font,
-            fontSize=self.panel_title_font_size,
-            fontWeight="normal",
-        )
-
-    def theme(self):
-
-        return self._theme()
-
-    def finish(self, chart, *, save: str | Path | None = None):
+    def finish(self, chart: SvgChart, *, save: str | Path | None = None) -> SvgChart:
         """Return charts by default and write image files only when requested."""
 
         if save is not None:
@@ -104,82 +62,20 @@ class PlotProperties:
 
         return chart
 
-    def save(self, chart, path: str | Path) -> None:
-        """Use one high-resolution PNG setting for saved validation figures."""
+    def save(self, chart: SavableSvg, path: str | Path) -> None:
+        """Save runtime plots as SVG."""
 
         output = Path(path)
 
         if output.suffix == "":
-            output = output.with_suffix(".png")
+            output = output.with_suffix(".svg")
 
         output.parent.mkdir(parents=True, exist_ok=True)
-        kwargs = {"scale_factor": self.png_scale_factor} if output.suffix.lower() == ".png" else {}
-        chart.save(output, **kwargs)
 
-    def _theme(self):
+        if output.suffix.lower() != ".svg":
+            raise ValueError("zdisamar runtime plots save as SVG")
 
-        return {
-            "config": {
-                "background": "white",
-                "view": {
-                    "stroke": "black",
-                    "continuousWidth": self.width,
-                    "continuousHeight": self.height,
-                },
-                "axis": {
-                    "domain": True,
-                    "domainColor": "black",
-                    "grid": True,
-                    "gridColor": self.colors["grid"],
-                    "gridOpacity": self.grid_opacity,
-                    "labelColor": "black",
-                    "labelFont": self.font,
-                    "labelFontSize": self.axis_label_font_size,
-                    "tickColor": "black",
-                    "titleColor": "black",
-                    "titleFont": self.font,
-                    "titleFontSize": self.axis_title_font_size,
-                    "titlePadding": 12,
-                },
-                "axisX": {
-                    "grid": False,
-                    "tickCount": self.x_axis_tick_count,
-                },
-                "axisY": {
-                    "grid": True,
-                    "tickCount": self.y_axis_tick_count,
-                },
-                "legend": {
-                    "labelColor": "black",
-                    "labelFont": self.font,
-                    "labelFontSize": self.legend_font_size,
-                    "labelLimit": 320,
-                    "orient": "bottom-left",
-                    "fillColor": "white",
-                    "strokeColor": "#cccccc",
-                    "padding": 8,
-                    "titleColor": "black",
-                    "titleFont": self.font,
-                    "titleFontSize": self.legend_font_size,
-                },
-                "line": {"strokeWidth": self.line_width},
-                "point": {"size": self.default_point_size},
-                "range": {
-                    "category": [
-                        self.colors["blue"],
-                        self.colors["orange"],
-                        self.colors["red"],
-                    ]
-                },
-                "title": {
-                    "color": "black",
-                    "font": self.font,
-                    "fontSize": self.title_font_size,
-                    "fontWeight": "normal",
-                    "anchor": "middle",
-                },
-            }
-        }
+        chart.save(output)
 
 
 PLOT = PlotProperties()
@@ -190,18 +86,13 @@ class PlotAccessor:
 
     def __init__(self, target):
 
-        PLOT.prepare()
-        self._target = target
+        self.target = target
 
     @property
     def properties(self) -> PlotProperties:
 
         return PLOT
 
-    def _chart_properties(self, title: str) -> dict[str, object]:
-
-        return PLOT.chart(title)
-
-    def _finish(self, chart, *, save: str | Path | None = None):
+    def finish_plot(self, chart: SvgChart, *, save: str | Path | None = None) -> SvgChart:
 
         return PLOT.finish(chart, save=save)

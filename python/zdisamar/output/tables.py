@@ -16,6 +16,10 @@ from ..bindings.structures import (
 )
 
 
+class PandasConversionError(ImportError):
+    """Raised when a table is converted to pandas without pandas installed."""
+
+
 def field_names(structure: type[object]) -> tuple[str, ...]:
     """Keep Python table columns in the same order as the model output."""
 
@@ -67,9 +71,18 @@ class RtmTable:
         return rows
 
     def to_pandas(self):
-        """Create a DataFrame only when the caller needs pandas."""
+        """Create a DataFrame when the caller has installed pandas."""
 
-        import pandas as pd
+        try:
+            import pandas as pd
+        except ModuleNotFoundError as error:
+            if error.name != "pandas":
+                raise
+
+            raise PandasConversionError(
+                "RtmTable.to_pandas() requires pandas, which is not a default zdisamar "
+                "runtime dependency. Install pandas explicitly or use RtmTable.to_rows()."
+            ) from error
 
         return pd.DataFrame.from_records(self.to_rows())
 

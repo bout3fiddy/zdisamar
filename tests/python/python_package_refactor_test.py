@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import fields, replace
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 
 def assert_import_laziness() -> None:
@@ -94,7 +95,7 @@ def assert_plot_jacobian_uses_rtm_conversion() -> None:
     frame, field, _title = jacobian_frame(Spectrum(), "aerosol_optical_depth")
     assert field == "reflectance_jacobian"
     assert np.allclose(
-        frame[field].to_numpy(dtype=float),
+        np.array([row[field] for row in frame], dtype=float),
         rtm.reflectance_jacobian_from_radiance_jacobian(
             Spectrum.radiance_jacobian[:, 0],
             Spectrum.irradiance,
@@ -201,6 +202,7 @@ def assert_reference_data_and_rtm_tables() -> None:
 
     import numpy as np
     from zdisamar import rtm
+    from zdisamar.output.tables import PandasConversionError
     from zdisamar.wavelength_bands import o2a
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -272,11 +274,26 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert len(rows) == budget.row_count
             assert "support_row_kind_label" in rows[0]
 
+            with patch.dict(sys.modules, {"pandas": None}):
+                try:
+                    budget.to_pandas()
+                except PandasConversionError as error:
+                    assert "to_rows" in str(error)
+                else:
+                    raise AssertionError("to_pandas succeeded without pandas installed")
+
             spectrum = rtm.spectrum(case)
             output = Path(tmpdir) / "reflectance"
             chart = spectrum.plot.reflectance(save=output)
             assert chart is not None
-            assert output.with_suffix(".png").exists()
+            reflectance_spec = chart.to_dict()
+            reflectance_panels = cast(list[dict[str, object]], reflectance_spec["panels"])
+            reflectance_series = cast(list[dict[str, object]], reflectance_panels[0]["series"])
+            assert any(
+                series["kind"] == "points" and series["name"] == "Minimum reflectance"
+                for series in reflectance_series
+            )
+            assert output.with_suffix(".svg").exists()
         finally:
             os.chdir(old_cwd)
 

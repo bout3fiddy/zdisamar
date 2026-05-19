@@ -244,7 +244,6 @@ def build_validation_rows(
 
 def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
 
-    PLOT.prepare()
     series_order = list(dict.fromkeys(data["series"]))
     rows = []
 
@@ -352,7 +351,8 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
     chart = alt.vconcat(*rows, spacing=18).properties(
         title="O2A validation against DISAMAR reference"
     )
-    PLOT.save(chart, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(output_path, scale_factor=4.0)
 
 
 def write_metrics(metrics: list[MetricRow], output_path: Path) -> None:

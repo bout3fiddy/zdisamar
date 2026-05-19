@@ -1,1 +1,1 @@
-"""Altair plotting helpers for zdisamar domain accessors."""
+"""SVG plotting helpers for zdisamar domain accessors."""

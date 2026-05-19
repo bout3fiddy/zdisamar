@@ -1,14 +1,13 @@
 """Spectrum plot accessors."""
 
+from dataclasses import replace
+from math import isfinite
 from pathlib import Path
 
-import altair as alt
-
 from . import fields
-from .axes import marker_rules, scaled_y
-from .charts import wavelength_line_chart
-from .data import spectrum_frame
+from .data import column_values, spectrum_frame
 from .properties import PLOT, PlotAccessor
+from .svg import SvgFigure, SvgSeries, line_panel
 
 
 class SpectrumPlot(PlotAccessor):
@@ -20,32 +19,31 @@ class SpectrumPlot(PlotAccessor):
 
     def reflectance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.REFLECTANCE, show_minimum=True),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.REFLECTANCE),
             save=save,
         )
 
     def radiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.RADIANCE, show_minimum=False),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.RADIANCE),
             save=save,
         )
 
     def irradiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.IRRADIANCE, show_minimum=False),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.IRRADIANCE),
             save=save,
         )
 
     def sun_normalized_radiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(
-                self._target,
+        return self.finish_plot(
+            quantity_chart(
+                self.target,
                 fields.SUN_NORMALIZED_RADIANCE,
-                show_minimum=False,
             ),
             save=save,
         )
@@ -55,73 +53,71 @@ class SpectrumPlot(PlotAccessor):
 
         from .jacobian import reflectance_jacobian
 
-        return self._finish(reflectance_jacobian(self._target, state), save=save)
+        return self.finish_plot(reflectance_jacobian(self.target, state), save=save)
 
     def snr(self, noise_table, save: str | Path | None = None):
 
         from .signal_to_noise import snr
 
-        return self._finish(snr(self._target, noise_table), save=save)
+        return self.finish_plot(snr(self.target, noise_table), save=save)
 
     def noise_envelope(self, noise_table, save: str | Path | None = None):
 
         from .signal_to_noise import noise_envelope
 
-        return self._finish(noise_envelope(self._target, noise_table), save=save)
+        return self.finish_plot(noise_envelope(self.target, noise_table), save=save)
 
 
-def _quantity_chart(
+def quantity_chart(
     spectrum,
     quantity: str,
-    *,
-    show_minimum: bool,
 ):
 
     data = spectrum_frame(spectrum)
     title = fields.QUANTITY_LABELS[quantity]
-    data, y_field, y = scaled_y(data, quantity, title, axis=_quantity_axis(quantity))
-    line = wavelength_line_chart(
-        data,
-        y,
-        [
-            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip(f"{quantity}:Q", title=title, format=".8g"),
-        ],
+    x = column_values(data, fields.WAVELENGTH_NM)
+    y = column_values(data, quantity)
+    panel = line_panel(
+        title=title,
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title=title,
+        x=x,
+        y=y,
+        name=title,
+        color=PLOT.colors.get(quantity, PLOT.colors["blue"]),
     )
-    layers = [line, marker_rules(data)]
 
-    if show_minimum and not data.empty:
-        minimum = data.loc[[data[quantity].idxmin()]]
-        layers.append(
-            alt.Chart(minimum)
-            .mark_point(
-                filled=True,
-                color=PLOT.colors["black"],
-                size=PLOT.minimum_point_size,
-            )
-            .encode(
-                x=f"{fields.WAVELENGTH_NM}:Q",
-                y=f"{y_field}:Q",
-                tooltip=[
-                    alt.Tooltip(
-                        f"{fields.WAVELENGTH_NM}:Q",
-                        title="Minimum wavelength (nm)",
-                        format=".4f",
+    if quantity == fields.REFLECTANCE:
+        minimum = minimum_sample(x, y)
+
+        if minimum is not None:
+            panel = replace(
+                panel,
+                series=(
+                    *panel.series,
+                    SvgSeries.points(
+                        "Minimum reflectance",
+                        (minimum[0],),
+                        (minimum[1],),
+                        color=PLOT.colors["black"],
+                        point_size=PLOT.minimum_point_size,
                     ),
-                    alt.Tooltip(f"{quantity}:Q", title="Minimum", format=".8g"),
-                ],
+                ),
             )
-        )
 
-    return alt.layer(*layers).properties(**PLOT.chart(title))
+    return SvgFigure(title=title, panels=(panel,))
 
 
-def _quantity_axis(quantity: str):
+def minimum_sample(x: list[float], y: list[float]) -> tuple[float, float] | None:
 
-    if quantity in {fields.RADIANCE, fields.IRRADIANCE}:
-        return alt.Axis(format=".4g", tickCount=6)
+    samples = [(x_value, y_value) for x_value, y_value in zip(x, y, strict=True)]
+    finite_samples = [
+        (x_value, y_value)
+        for x_value, y_value in samples
+        if isfinite(x_value) and isfinite(y_value)
+    ]
 
-    if quantity == fields.SUN_NORMALIZED_RADIANCE:
-        return alt.Axis(format=".3g")
+    if not finite_samples:
+        return None
 
-    return alt.Axis()
+    return min(finite_samples, key=lambda item: item[1])

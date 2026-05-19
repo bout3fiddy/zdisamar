@@ -77,7 +77,6 @@ The validation tree is split by target:
   `zdisamar-fast` as a third model using the fast-mode sweep rows.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked paired-retrieval plot outputs.
-
 ## Baseline Commands
 
 - `zig build test`

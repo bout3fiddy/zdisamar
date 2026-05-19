@@ -546,7 +546,6 @@ def create_paired_style_retrieved_fast_scatter(
     output_path: Path,
 ) -> None:
 
-    PLOT.prepare()
     retrieved = fast_retrieved_rows(data)
     differences = fast_difference_rows(data)
     top = alt.hconcat(
@@ -593,7 +592,8 @@ def create_paired_style_retrieved_fast_scatter(
             ),
         }
     )
-    PLOT.save(chart, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(output_path, scale_factor=4.0)
 
 
 def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
@@ -614,7 +614,6 @@ def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
 
 def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None:
 
-    PLOT.prepare()
     stats_by_model = paired_manifest_latency_stats()
     stats_by_model["zdisamar_fast"] = stats_from_values(
         data[data["mode"] == "fast"]["retrieval_s"].to_list()
@@ -690,7 +689,8 @@ def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None
             "subtitle": "Line spans min-max; horizontal tick is median; dot is mean.",
         },
     )
-    PLOT.save(chart, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(output_path, scale_factor=4.0)
 
 
 def mode_subset(data: pd.DataFrame, mode: str) -> pd.DataFrame:
@@ -817,7 +817,6 @@ def timing_chart(
 
 def create_plot(data: pd.DataFrame, output_path: Path) -> None:
 
-    PLOT.prepare()
     delta = paired_delta_frame(data)
     chart = alt.vconcat(
         alt.hconcat(
@@ -884,7 +883,8 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
             ),
         }
     )
-    PLOT.save(chart, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(output_path, scale_factor=4.0)
 
 
 def main() -> None:

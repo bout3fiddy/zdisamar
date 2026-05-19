@@ -824,7 +824,6 @@ def histogram_chart(
 
 def save_retrieved_plot(frame: pl.DataFrame) -> None:
 
-    PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     aod = ok.select(
         "case",
@@ -892,12 +891,12 @@ def save_retrieved_plot(frame: pl.DataFrame) -> None:
             ),
         }
     )
-    PLOT.save(chart, RETRIEVED_PLOT_PATH)
+    RETRIEVED_PLOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(RETRIEVED_PLOT_PATH, scale_factor=4.0)
 
 
 def save_error_histograms(frame: pl.DataFrame) -> None:
 
-    PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     data = pd.DataFrame(ok.to_dicts())
     charts = []
@@ -926,12 +925,12 @@ def save_error_histograms(frame: pl.DataFrame) -> None:
         )
 
     chart = alt.hconcat(*charts, spacing=32).properties(title="Retrieval Error Histograms")
-    PLOT.save(chart, ERROR_HISTOGRAM_PATH)
+    ERROR_HISTOGRAM_PATH.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(ERROR_HISTOGRAM_PATH, scale_factor=4.0)
 
 
 def save_latency_plot(frame: pl.DataFrame) -> None:
 
-    PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     rows: list[dict[str, float | str]] = []
 
@@ -1016,7 +1015,8 @@ def save_latency_plot(frame: pl.DataFrame) -> None:
             "subtitle": "Line spans min-max; horizontal tick is median; dot is mean.",
         },
     )
-    PLOT.save(chart, LATENCY_PLOT_PATH)
+    LATENCY_PLOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(LATENCY_PLOT_PATH, scale_factor=4.0)
 
 
 def fast_mode_latency_stats() -> dict[str, float] | None:

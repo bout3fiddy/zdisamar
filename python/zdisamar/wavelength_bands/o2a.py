@@ -17,11 +17,12 @@ from ..input import (
     VerticalInterval,
 )
 from ..input.wavelength_band.o2a import O2AInput as O2ACase
-from ..rtm.run import o2a_reference_case
 
 
 def reference_case() -> O2ACase:
     """Return the packaged DISAMAR-family O2 A reference case."""
+
+    from ..rtm.run import o2a_reference_case
 
     return o2a_reference_case()
 

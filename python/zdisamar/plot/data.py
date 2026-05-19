@@ -1,39 +1,47 @@
 """Data normalization helpers for plotting objects and tables."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Protocol, TypeGuard
+
+import numpy as np
 
 from . import fields
 
+PlotRow = dict[str, object]
 
-def to_dataframe(obj):
-    """Convert supported zdisamar plotting inputs to a Pandas data frame."""
 
-    import pandas as pd
+class RowProvider(Protocol):
+    """Native table objects expose rows without requiring pandas."""
 
-    if isinstance(obj, pd.DataFrame):
-        return obj.copy()
+    def to_rows(self) -> Sequence[Mapping[str, object]]: ...
 
-    if _looks_like_spectrum(obj):
-        return pd.DataFrame(
-            {
-                fields.WAVELENGTH_NM: _copy_array(obj.wavelength_nm),
-                fields.RADIANCE: _copy_array(obj.radiance),
-                fields.IRRADIANCE: _copy_array(obj.irradiance),
-                fields.REFLECTANCE: _copy_array(obj.reflectance),
-                fields.SUN_NORMALIZED_RADIANCE: _copy_array(obj.sun_normalized_radiance),
-            }
-        )
 
-    if hasattr(obj, "table"):
-        return pd.DataFrame.from_records(obj.table)
+def to_records(obj: object) -> list[PlotRow]:
+    """Convert supported zdisamar plotting inputs to plain Python rows."""
+
+    if is_row_sequence(obj):
+        return [dict(item) for item in obj]
+
+    if looks_like_spectrum(obj):
+        return spectrum_records(obj)
+
+    if has_rows(obj):
+        rows = obj.to_rows()
+
+        return [dict(row) for row in rows]
 
     raise TypeError(f"unsupported plotting data input: {type(obj).__name__}")
 
 
-def require_columns(frame, required: Sequence[str]) -> None:
+def require_columns(rows: Sequence[Mapping[str, object]], required: Sequence[str]) -> None:
     """Fail early when a plot is missing its physical quantity columns."""
 
-    missing = [name for name in required if name not in frame.columns]
+    present = set[str]()
+
+    for row in rows:
+        present.update(row.keys())
+
+    missing = [name for name in required if name not in present]
 
     if missing:
         raise ValueError(f"missing required plotting columns: {', '.join(missing)}")
@@ -42,7 +50,7 @@ def require_columns(frame, required: Sequence[str]) -> None:
 def spectrum_frame(spectrum):
     """Put spectrum-like objects into one plotting table shape."""
 
-    frame = to_dataframe(spectrum)
+    frame = to_records(spectrum)
     require_columns(frame, fields.SPECTRUM_FIELDS)
 
     return frame
@@ -51,29 +59,94 @@ def spectrum_frame(spectrum):
 def with_channel_labels(obj):
     """Add radiance/irradiance labels to instrument-response rows."""
 
-    result = to_dataframe(obj)
+    result = to_records(obj)
 
-    if "channel_label" in result.columns or "channel" not in result.columns:
+    if not result:
         return result
 
-    result = result.copy()
-    result["channel_label"] = result["channel"].map(
-        lambda value: {0: "radiance", 1: "irradiance", "0": "radiance", "1": "irradiance"}.get(
-            value, str(value)
-        )
+    if "channel_label" in result[0] or "channel" not in result[0]:
+        return result
+
+    labels: dict[object, str] = {0: "radiance", 1: "irradiance", "0": "radiance", "1": "irradiance"}
+
+    return [
+        {
+            **row,
+            "channel_label": labels.get(row.get("channel"), str(row.get("channel"))),
+        }
+        for row in result
+    ]
+
+
+def column_values(rows: Iterable[Mapping[str, object]], name: str) -> list[float]:
+    """Return one numeric column as floats."""
+
+    return [as_float(row[name]) for row in rows]
+
+
+def as_float(value: object) -> float:
+    """Convert a plotting scalar to float and reject non-numeric table values."""
+
+    if isinstance(value, int | float | str):
+        return float(value)
+
+    if isinstance(value, np.generic):
+        scalar = value.item()
+
+        if isinstance(scalar, int | float | str):
+            return float(scalar)
+
+    raise TypeError(f"expected numeric plotting value, got {type(value).__name__}")
+
+
+def spectrum_records(obj: object) -> list[PlotRow]:
+
+    wavelength_nm = list(getattr(obj, fields.WAVELENGTH_NM))
+    radiance = list(getattr(obj, fields.RADIANCE))
+    irradiance = list(getattr(obj, fields.IRRADIANCE))
+    reflectance = list(getattr(obj, fields.REFLECTANCE))
+    sun_normalized = list(getattr(obj, fields.SUN_NORMALIZED_RADIANCE))
+
+    zipped = zip(
+        wavelength_nm,
+        radiance,
+        irradiance,
+        reflectance,
+        sun_normalized,
+        strict=True,
     )
 
-    return result
+    rows: list[PlotRow] = []
+
+    for values in zipped:
+        wavelength = values[0]
+        radiance_value = values[1]
+        irradiance_value = values[2]
+        reflectance_value = values[3]
+        sun_normalized_value = values[4]
+        rows.append(
+            {
+                fields.WAVELENGTH_NM: float(wavelength),
+                fields.RADIANCE: float(radiance_value),
+                fields.IRRADIANCE: float(irradiance_value),
+                fields.REFLECTANCE: float(reflectance_value),
+                fields.SUN_NORMALIZED_RADIANCE: float(sun_normalized_value),
+            }
+        )
+
+    return rows
 
 
-def _looks_like_spectrum(obj) -> bool:
+def looks_like_spectrum(obj) -> bool:
 
     return all(hasattr(obj, name) for name in fields.SPECTRUM_FIELDS)
 
 
-def _copy_array(value):
+def has_rows(obj: object) -> TypeGuard[RowProvider]:
 
-    try:
-        return value.copy()
-    except AttributeError:
-        return value
+    return callable(getattr(obj, "to_rows", None))
+
+
+def is_row_sequence(obj: object) -> TypeGuard[list[Mapping[str, object]]]:
+
+    return isinstance(obj, list) and all(isinstance(item, Mapping) for item in obj)

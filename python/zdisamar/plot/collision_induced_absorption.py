@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
-import altair as alt
+import numpy as np
 
 from . import fields
-from .axes import label, scaled_x
+from .axes import label
+from .data import column_values
 from .profiles import interval_profile_rows, nearest_wavelength_value
 from .properties import PLOT, PlotAccessor
+from .svg import SvgFigure, SvgPanel, SvgSeries
 
 DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 
@@ -25,20 +27,20 @@ class CollisionInducedAbsorptionPlot(PlotAccessor):
         save: str | Path | None = None,
     ):
 
-        return self._finish(
-            _optical_depth_profile(self._target, wavelength_nm=wavelength_nm),
+        return self.finish_plot(
+            optical_depth_profile(self.target, wavelength_nm=wavelength_nm),
             save=save,
         )
 
 
-def _optical_depth_profile(
+def optical_depth_profile(
     table,
     *,
     wavelength_nm: float | None,
 ):
 
     quantity = fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH
-    selected_wavelength_nm = _profile_wavelength(table, wavelength_nm)
+    selected_wavelength_nm = profile_wavelength(table, wavelength_nm)
     data = interval_profile_rows(
         table,
         value=quantity,
@@ -47,38 +49,32 @@ def _optical_depth_profile(
     )
     title = "O2-O2 collision-induced absorption optical depth profile"
 
-    if selected_wavelength_nm is not None and not data.empty:
+    if selected_wavelength_nm is not None and data:
         title = f"{title}, {nearest_wavelength_value(data, selected_wavelength_nm):.2f} nm"
 
-    data, _, x = scaled_x(data, quantity, label(quantity))
-
-    return (
-        alt.Chart(data)
-        .mark_point(
-            filled=True,
-            color=PLOT.colors["collision_induced_absorption"],
-            size=PLOT.profile_point_size,
-            opacity=PLOT.profile_point_opacity,
-        )
-        .encode(
-            x=x,
-            y=alt.Y("altitude_km:Q", title=label("altitude_km")),
-            tooltip=[
-                alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip("altitude_km:Q", title=label("altitude_km"), format=".4g"),
-                alt.Tooltip(f"{quantity}:Q", title=label(quantity), format=".4e"),
-            ],
-        )
-        .properties(**PLOT.chart(title))
+    panel = SvgPanel(
+        title=title,
+        x_title=label(quantity),
+        y_title=label("altitude_km"),
+        series=(
+            SvgSeries.points(
+                title,
+                column_values(data, quantity),
+                column_values(data, "altitude_km"),
+                color=PLOT.colors["collision_induced_absorption"],
+                point_size=PLOT.profile_point_size,
+                opacity=PLOT.profile_point_opacity,
+            ),
+        ),
     )
 
+    return SvgFigure(title=title, panels=(panel,))
 
-def _profile_wavelength(table, wavelength_nm: float | None) -> float | None:
+
+def profile_wavelength(table, wavelength_nm: float | None) -> float | None:
 
     if wavelength_nm is not None:
         return wavelength_nm
-
-    import numpy as np
 
     values = np.unique(table.column(fields.WAVELENGTH_NM))
 

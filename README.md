@@ -30,6 +30,11 @@ Python-facing O2 A output and plotting accessors, and
 [`optimal_estimation_demo.ipynb`](./scripts/demo/optimal_estimation_demo.ipynb),
 which shows a two-state O2 A optimal-estimation flow.
 
+The published Python package keeps runtime dependencies narrow: the RTM,
+optimal-estimation helpers, and notebook-facing SVG plots require NumPy only.
+Validation scripts that regenerate tracked PNG comparison figures declare their
+own plotting dependencies through `uv run --script` headers.
+
 ## Why The Oxygen A Band
 
 The oxygen A band near 758-770 nm is a strong molecular oxygen absorption band

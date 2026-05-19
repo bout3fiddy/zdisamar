@@ -1,79 +1,61 @@
 """Signal-to-noise plots."""
 
-import altair as alt
+import numpy as np
 
 from . import fields
-from .axes import finite_padded_scale, marker_rules, scaled_y, wavelength_x
-from .charts import wavelength_line_chart
-from .data import spectrum_frame
+from .data import column_values, spectrum_frame
 from .properties import PLOT
+from .svg import SvgFigure, SvgPanel, SvgSeries, line_panel
 
 
 def snr(spectrum, noise_table):
 
-    data = _snr_frame(spectrum, noise_table)
-    data, _, y = scaled_y(data, fields.SNR, fields.QUANTITY_LABELS[fields.SNR])
-    line = wavelength_line_chart(
-        data,
-        y,
-        [
-            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
-        ],
+    data = snr_frame(spectrum, noise_table)
+    title = fields.QUANTITY_LABELS[fields.SNR]
+    panel = line_panel(
+        title=title,
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title=title,
+        x=column_values(data, fields.WAVELENGTH_NM),
+        y=column_values(data, fields.SNR),
+        name=title,
     )
 
-    return alt.layer(line, marker_rules(data)).properties(**PLOT.chart("Signal-to-noise ratio"))
+    return SvgFigure(title="Signal-to-noise ratio", panels=(panel,))
 
 
 def noise_envelope(spectrum, noise_table):
 
-    data = _snr_frame(spectrum, noise_table)
-    signal = data[fields.SUN_NORMALIZED_RADIANCE].to_numpy(dtype=float)
-    sigma = signal / data[fields.SNR].to_numpy(dtype=float)
-    data = data.assign(noise_lo=signal - sigma, noise_hi=signal + sigma)
-    y_scale = finite_padded_scale(data["noise_lo"].tolist() + data["noise_hi"].tolist())
-    band = (
-        alt.Chart(data)
-        .mark_area(color=PLOT.colors["band"], opacity=PLOT.noise_band_opacity)
-        .encode(
-            x=wavelength_x(),
-            y=alt.Y(
-                "noise_lo:Q",
-                title=fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE],
-                scale=y_scale,
+    data = snr_frame(spectrum, noise_table)
+    x = column_values(data, fields.WAVELENGTH_NM)
+    signal = np.asarray(column_values(data, fields.SUN_NORMALIZED_RADIANCE), dtype=float)
+    snr_values = np.asarray(column_values(data, fields.SNR), dtype=float)
+    sigma = signal / snr_values
+    title = "Sun-normalized radiance noise envelope"
+    y_title = fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE]
+    panel = SvgPanel(
+        title=title,
+        x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+        y_title=y_title,
+        series=(
+            SvgSeries.band("noise envelope", x, signal - sigma, signal + sigma),
+            SvgSeries.line(
+                y_title,
+                x,
+                signal,
+                color=PLOT.colors["sun_normalized_radiance"],
             ),
-            y2="noise_hi:Q",
-        )
-    )
-    line = wavelength_line_chart(
-        data,
-        alt.Y(
-            f"{fields.SUN_NORMALIZED_RADIANCE}:Q",
-            title=fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE],
-            scale=y_scale,
         ),
-        [
-            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip(
-                f"{fields.SUN_NORMALIZED_RADIANCE}:Q",
-                title="Sun-normalized radiance",
-                format=".8g",
-            ),
-            alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
-        ],
+        marker_x=tuple(value for value in PLOT.markers_nm if min(x) <= value <= max(x)),
     )
 
-    return alt.layer(band, line, marker_rules(data)).properties(
-        **PLOT.chart("Sun-normalized radiance noise envelope")
-    )
+    return SvgFigure(title=title, panels=(panel,))
 
 
-def _snr_frame(spectrum, noise_table):
-
-    import numpy as np
+def snr_frame(spectrum, noise_table):
 
     data = spectrum_frame(spectrum)
-    wavelengths, snr_values = _noise_arrays(noise_table)
+    wavelengths, snr_values = noise_arrays(noise_table)
 
     if wavelengths.size != snr_values.size:
         raise ValueError("noise_table wavelengths and SNR values must have the same length")
@@ -84,18 +66,14 @@ def _snr_frame(spectrum, noise_table):
     if np.any(snr_values <= 0.0):
         raise ValueError("noise_table SNR values must be positive")
 
-    data[fields.SNR] = np.interp(
-        data[fields.WAVELENGTH_NM].to_numpy(dtype=float),
-        wavelengths,
-        snr_values,
-    )
+    interpolated = np.interp(column_values(data, fields.WAVELENGTH_NM), wavelengths, snr_values)
 
-    return data
+    return [
+        {**row, fields.SNR: float(value)} for row, value in zip(data, interpolated, strict=True)
+    ]
 
 
-def _noise_arrays(noise_table):
-
-    import numpy as np
+def noise_arrays(noise_table):
 
     if isinstance(noise_table, tuple) and len(noise_table) == 2:
         return (
