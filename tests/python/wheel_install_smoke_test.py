@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -26,7 +27,6 @@ def main() -> int:
         try:
             os.chdir(tmpdir)
 
-            import numpy as np
             import zdisamar
             from zdisamar import reference_data, rtm
             from zdisamar.bindings.loader import library_filename, load_library
@@ -56,10 +56,10 @@ def main() -> int:
             # as a standalone Zig executable or on macOS.
             reference_spectrum = rtm.spectrum(reference_case)
             assert len(reference_spectrum.wavelength_nm) == 701
-            assert np.all(np.isfinite(reference_spectrum.reflectance))
-            assert int(np.count_nonzero(reference_spectrum.reflectance)) == 701
-            reflectance_min = float(np.min(reference_spectrum.reflectance))
-            reflectance_max = float(np.max(reference_spectrum.reflectance))
+            assert all(math.isfinite(value) for value in reference_spectrum.reflectance)
+            assert sum(1 for value in reference_spectrum.reflectance if value != 0.0) == 701
+            reflectance_min = min(reference_spectrum.reflectance)
+            reflectance_max = max(reference_spectrum.reflectance)
             assert 0.005 < reflectance_min < 0.008
             assert 0.22 < reflectance_max < 0.24
             spectrum_repr = repr(reference_spectrum)
@@ -70,7 +70,7 @@ def main() -> int:
 
             case = o2a.reference_case().with_fast_mode()
             assert int(case.spectral_grid.sample_count) > 0
-            wavelengths = np.array([760.76], dtype=np.float64)
+            wavelengths = [760.76]
             budget = rtm.atmospheric_budget(case, wavelengths)
             assert budget.row_count > 0
             assert len(budget.column("wavelength_nm")) == budget.row_count
