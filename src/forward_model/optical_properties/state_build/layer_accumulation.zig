@@ -21,24 +21,26 @@ const parity_support_row_chunk_size: usize = 8;
 const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const centimeters_per_kilometer = 1.0e5;
 const boltzmann_hpa_cm3_per_k = internal.boltzmann_hpa_cm3_per_k;
-const max_collision_complex_profile_nodes: usize = 256;
+const max_collision_complex_profile_nodes: usize = 64;
 
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
 // layout(64-bit):
-//   size: 2072 B, align: 8 B
-//   field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=2048 B; padding: 0 B (0 bits)
+//   size: 1048 B, align: 8 B
+//   field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=512 B, log_complex_second=512 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: log_complex_vmr_fraction:[256]f64=2048 B
+//   inline arrays: log_complex_vmr_fraction:[64]f64=512 B, log_complex_second:[64]f64=512 B
 //   out-of-line: altitudes_km carries a slice descriptor; referenced storage is not included in size
-//   cache span: 33 cache line(s) at 64 B per line
+//   cache span: 17 cache line(s) at 64 B per line
 //   count: one per optical-state accumulation request
-//   footprint: per instance = 2072 B (2.023 KiB); replaces per-support-row 4096 B stack rebuilds
+//   footprint: per instance = 1048 B (1.023 KiB); precomputes a 512 B spline-second table
+//   sample traffic: pair-density samples avoid 10240 B endpoint-secant spline scratch per call
 const CollisionComplexProfileCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
     log_complex_vmr_fraction: [max_collision_complex_profile_nodes]f64 = undefined,
+    log_complex_second: [max_collision_complex_profile_nodes]f64 = undefined,
 
     fn init(context: *const Context) CollisionComplexProfileCache {
         if (context.collision_induced_absorption == null and !context.operational_o2o2_lut.enabled()) {
@@ -57,6 +59,7 @@ const CollisionComplexProfileCache = struct {
             .node_count = node_count,
             .altitudes_km = context.spectroscopy_profile_altitudes_km[0..node_count],
             .log_complex_vmr_fraction = undefined,
+            .log_complex_second = undefined,
         };
         for (0..node_count) |index| {
             const pressure_hpa = context.spectroscopy_profile_pressures_hpa[index];
@@ -77,6 +80,11 @@ const CollisionComplexProfileCache = struct {
             if (complex_vmr_fraction <= 0.0) return .{};
             cache.log_complex_vmr_fraction[index] = @log(complex_vmr_fraction);
         }
+        spline.endpointSecantSecondDerivatives(
+            cache.altitudes_km[0..node_count],
+            cache.log_complex_vmr_fraction[0..node_count],
+            cache.log_complex_second[0..node_count],
+        ) catch return .{};
         return cache;
     }
 
@@ -91,15 +99,17 @@ const CollisionComplexProfileCache = struct {
         }
         const altitudes = self.altitudes_km[0..self.node_count];
         const log_complex_vmr_fraction = self.log_complex_vmr_fraction[0..self.node_count];
+        const log_complex_second = self.log_complex_second[0..self.node_count];
         if (altitude_km <= altitudes[0]) {
             return @exp(log_complex_vmr_fraction[0]) * air_number_density_cm3;
         }
         if (altitude_km >= altitudes[self.node_count - 1]) {
             return @exp(log_complex_vmr_fraction[self.node_count - 1]) * air_number_density_cm3;
         }
-        const sampled_log_vmr = spline.sampleEndpointSecant(
+        const sampled_log_vmr = spline.sampleWithSecondDerivatives(
             altitudes,
             log_complex_vmr_fraction,
+            log_complex_second,
             altitude_km,
         ) catch return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
         return @exp(sampled_log_vmr) * air_number_density_cm3;

@@ -176,6 +176,7 @@ def build_compact_report(
 def memory_layout_rows(memory_layout: dict[str, Any]) -> list[dict[str, str]]:
 
     instrument = memory_layout["instrument_sampling"]
+    optical = memory_layout["optical_accumulation"]
     support = instrument["support_count_stats"]
 
     return [
@@ -200,6 +201,21 @@ def memory_layout_rows(memory_layout: dict[str, Any]) -> list[dict[str, str]]:
             ),
             "memory": (
                 f"{instrument['integration_kernel_scratch_bytes_at_worker_count']} B transient"
+            ),
+        },
+        {
+            "area": "Collision-complex profile cache",
+            "shape": (
+                f"{optical['benchmark_profile_node_count']} profile nodes, "
+                f"capacity {optical['collision_complex_profile_cache_capacity']}"
+            ),
+            "memory": (
+                "request cache "
+                f"{optical['previous_collision_complex_profile_cache_bytes']} -> "
+                f"{optical['current_collision_complex_profile_cache_bytes']} B; "
+                "sample spline scratch "
+                f"{optical['previous_collision_complex_sample_spline_scratch_bytes']} -> "
+                f"{optical['current_collision_complex_sample_spline_scratch_bytes']} B"
             ),
         },
     ]

@@ -3560,6 +3560,183 @@ Conclusion:
 - peak RSS high-water mark moved up slightly, so this result is justified by
   lower hot-path memory traffic and flat latency, not by RSS
 
+### Experiment 54: reject compact integration-plan sample encodings
+
+Changed:
+- prototype only; reverted after measurement
+- first tried storing retained integration offsets and weights as `f32` while
+  leaving the build-time scratch kernel in `f64`
+- then tried a precision-safe variant that removed inline sample arrays from
+  `IntegrationKernelRef` and stored all enabled kernels in side storage as
+  `f64`
+
+Memory traffic result:
+
+| item | before | prototype | change |
+| --- | ---: | ---: | ---: |
+| `f32` retained side sample width | 16 B/sample | 8 B/sample | -50.00% |
+| `f32` current owned wavelength sampling estimate | 2,156,472 B | about 1,108,360 B | about -1.00 MiB |
+| side-only `IntegrationKernelRef` | 88 B | 8 B | -80 B (-90.91%) |
+| side-only `WavelengthSampling` row | 200 B | 40 B | -160 B (-80.00%) |
+| side-only current sampling row payload | 60,200 B | 12,040 B | -47.03 KiB |
+| side-only current owned wavelength sampling estimate | 2,156,472 B | 2,108,312 B | -47.03 KiB |
+
+Interpretation:
+- `f32` storage materially shrank retained plan bytes, but it changed support
+  wavelength values enough to destroy exact cache-key reuse
+- side-only descriptors preserved exact support values but only removed a small
+  retained row payload because the measured O2 A kernels already had 151-518
+  side-storage samples
+- the remaining 2.00 MiB plan payload is the exact `f64` offset/weight side
+  storage; useful reductions need an exact support-index encoding, not narrower
+  floating-point storage or descriptor-only row changes
+
+Validation and benchmark evidence:
+- `zig build check`: passed for both prototypes
+- `f32` prototype benchmark run `8d4a4a736c9e4f95bbc94043ec0b5bf3` was
+  interrupted after five no-session repeats because repeat timings were
+  `16.424 s`, `16.129 s`, `16.160 s`, `16.161 s`, and `16.179 s`, versus the
+  accepted baseline median near `0.95 s`
+- side-only prototype benchmark run `918ac80ebb514e7c953078feeab77ae6`,
+  `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10, effective native worker cap 2,
+  `ReleaseFast` native sync before timing
+- side-only benchmark residual rows unchanged: fast-mode spectra worst
+  max_abs_over_noise `1.59985574045`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `0.00377768945481`, pressure delta
+  `5.09865532685 hPa`
+
+Side-only benchmark comparison against accepted Experiment 53:
+
+| metric | before | prototype | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.038678 s | 140.162319 s | 1.0009 |
+| total benchmark CPU | 270.167662 s | 270.358551 s | 1.0007 |
+| peak RSS high-water mark | 79.59 MiB | 102.36 MiB | 1.2860 |
+| forward no-session median | 0.950625 s | 0.952191 s | 1.0016 |
+| forward session cached median | 0.255628 s | 0.254395 s | 0.9952 |
+| forward fast four-scene median | 4.619134 s | 4.619246 s | 1.0000 |
+| OE session retrieval median | 1.073290 s | 1.075361 s | 1.0019 |
+| OE fast retrieval median | 0.829583 s | 0.832152 s | 1.0031 |
+| OE sweep session total wall | 19.293402 s | 19.330962 s | 1.0019 |
+| OE sweep fast total wall | 10.535349 s | 10.568591 s | 1.0032 |
+
+Conclusion:
+- rejected and reverted
+- `f32` storage is invalid for this path because exact wavelength identity
+  drives cache reuse
+- side-only descriptors are correct but the memory win is too small for the
+  slight OE timing regression and noisy/higher peak RSS in the benchmark run
+- next wavelength-plan attempt should preserve exact support identity with
+  integer/range handles, or skip this area until a larger exact encoding is
+  available
+
+### Experiment 55: accept collision-complex profile-cache second derivatives
+
+Changed:
+- `src/forward_model/optical_properties/state_build/layer_accumulation.zig`
+- `benchmark/suite/layout.py`
+- `benchmark/suite/report.py`
+- `benchmark/results.json`
+- reduced the collision-complex profile-cache capacity from 256 to 64 nodes,
+  matching the existing profile-spectroscopy cache cap and the 47-node bundled
+  O2 A spectroscopy profile used by this benchmark
+- stored endpoint-secant spline second derivatives once in
+  `CollisionComplexProfileCache` and sampled with `sampleWithSecondDerivatives`
+  instead of rebuilding spline scratch in every pair-density sample
+- added benchmark-schema/report fields for this memory-layout area
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `CollisionComplexProfileCache` capacity | 256 profile nodes | 64 profile nodes | -75.00% capacity |
+| `CollisionComplexProfileCache` size | 2,072 B | 1,048 B | -1,024 B (-49.42%) per request |
+| cache-line span | 33 lines | 17 lines | -16 lines |
+| endpoint-secant spline scratch in pair-density sample | 10,240 B/sample | 0 B/sample | -10.00 KiB/sample |
+
+Interpretation:
+- the request cache remains stack-owned and non-allocating
+- the benchmarked O2 A profile has 47 spectroscopy nodes, so the 64-node cache
+  leaves capacity headroom without carrying the old 256-node payload
+- precomputing second derivatives moves 512 B into the request cache and removes
+  the 10 KiB per-sample scratch arrays used by endpoint-secant spline sampling
+
+Validation and benchmark evidence:
+- benchmark run `681aa46ebeae41549eeb1fac8e7fc29a`, `ZDISAMAR_WORKER_LIMIT=2`,
+  host CPUs 10, effective native worker cap 2, `ReleaseFast` native sync before
+  timing
+- residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.59985574045`; OE session AOD diff `8.699e-08`; fast-vs-session sweep max
+  AOD delta `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 53:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.038678 s | 139.763542 s | 0.9980 |
+| total benchmark CPU | 270.167662 s | 269.694876 s | 0.9983 |
+| peak RSS high-water mark | 79.59 MiB | 97.44 MiB | 1.2242 |
+| forward no-session median | 0.950625 s | 0.947441 s | 0.9967 |
+| forward session setup | 0.701626 s | 0.697172 s | 0.9937 |
+| forward session cached median | 0.255628 s | 0.253947 s | 0.9934 |
+| forward fast four-scene median | 4.619134 s | 4.614469 s | 0.9990 |
+| OE session retrieval median | 1.073290 s | 1.072732 s | 0.9995 |
+| OE fast retrieval median | 0.829583 s | 0.829837 s | 1.0003 |
+| OE sweep session total wall | 19.293402 s | 19.284192 s | 0.9995 |
+| OE sweep fast total wall | 10.535349 s | 10.538312 s | 1.0003 |
+
+Conclusion:
+- accepted
+- the hot pair-density sampling path avoids a 10 KiB scratch rebuild per sample
+  while the request cache is 1 KiB smaller and benchmark latency stays flat
+- peak RSS high-water moved up in this run, so this result is justified by the
+  retained memory-layout counters and latency, not by process high-water RSS
+
+### Experiment 56: reject 48-node profile-spectroscopy cache cap
+
+Changed:
+- prototype only; reverted after measurement
+- reduced `max_spectroscopy_profile_nodes` from 64 to 48 in
+  `state_spectroscopy.zig` and `layer_spectroscopy.zig`
+- target was the benchmark's 47-node spectroscopy profile
+
+Memory traffic result:
+
+| item | before | prototype | change |
+| --- | ---: | ---: | ---: |
+| `StateSpectroscopyCache` | 1,032 B | 776 B | -256 B (-24.81%) |
+| `LayerSpectroscopyProfileCache` | 3,096 B | 2,328 B | -768 B (-24.81%) |
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- benchmark run `873756c829244a27875a08497f0288b2`, `ZDISAMAR_WORKER_LIMIT=2`,
+  host CPUs 10, effective native worker cap 2, `ReleaseFast` native sync before
+  timing
+- residual rows unchanged: fast-mode spectra worst max_abs_over_noise
+  `1.59985574045`; OE session AOD diff `8.699e-08`; fast-vs-session sweep max
+  AOD delta `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 53:
+
+| metric | before | prototype | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.038678 s | 140.091704 s | 1.0004 |
+| total benchmark CPU | 270.167662 s | 270.207832 s | 1.0001 |
+| peak RSS high-water mark | 79.59 MiB | 112.88 MiB | 1.4182 |
+| forward no-session median | 0.950625 s | 0.958310 s | 1.0081 |
+| forward session setup | 0.701626 s | 0.709800 s | 1.0117 |
+| forward session cached median | 0.255628 s | 0.257341 s | 1.0067 |
+| forward fast four-scene median | 4.619134 s | 4.619586 s | 1.0001 |
+| OE session retrieval median | 1.073290 s | 1.072722 s | 0.9995 |
+| OE fast retrieval median | 0.829583 s | 0.829215 s | 0.9996 |
+| OE sweep session total wall | 19.293402 s | 19.266165 s | 0.9986 |
+| OE sweep fast total wall | 10.535349 s | 10.532601 s | 0.9997 |
+
+Conclusion:
+- rejected and reverted
+- the retained cache reduction is small, while the forward path consistently
+  slowed on the required benchmark boundary
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
