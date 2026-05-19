@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const internal = @import("internal");
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
@@ -11,6 +12,8 @@ const measurement_sigma_reflectance = 1.0e-3;
 
 const AtomicUsize = std.atomic.Value(usize);
 const Allocator = std.mem.Allocator;
+const max_allocation_site_count = 512;
+const max_reported_allocation_sites = 12;
 
 const Config = struct {
     output_dir: []const u8 = default_output_dir,
@@ -56,16 +59,85 @@ const AllocationDelta = struct {
     peak_live_bytes_over_start: usize,
 };
 
+const AllocationSiteKind = enum {
+    alloc,
+    resize_growth,
+    remap_growth,
+};
+
+// Aggregated allocation call site captured by the trace-only allocator.
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: 40 B across 5 usize fields; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one fixed-table slot per observed return address in a measured phase
+//   footprint: per instance = 40 B (0.039 KiB)
+const AllocationSite = struct {
+    return_address: usize = 0,
+    alloc_count: usize = 0,
+    resize_growth_count: usize = 0,
+    remap_growth_count: usize = 0,
+    allocated_bytes: usize = 0,
+};
+
+// Top allocation sites copied out of the trace allocator before the next phase reset.
+// layout(64-bit):
+//   size: 504 B, align: 8 B
+//   field storage: sites=480 B, count=8 B, untracked_alloc_count=8 B, untracked_allocated_bytes=8 B
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one stack value for each reported phase
+//   footprint: per instance = 504 B (0.492 KiB)
+const AllocationSiteReport = struct {
+    sites: [max_reported_allocation_sites]AllocationSite = [_]AllocationSite{.{}} ** max_reported_allocation_sites,
+    count: usize = 0,
+    untracked_alloc_count: usize = 0,
+    untracked_allocated_bytes: usize = 0,
+
+    fn include(self: *AllocationSiteReport, site: AllocationSite) void {
+        if (site.allocated_bytes == 0) return;
+        var insert_index: usize = 0;
+        while (insert_index < self.count and self.sites[insert_index].allocated_bytes >= site.allocated_bytes) {
+            insert_index += 1;
+        }
+        if (insert_index >= max_reported_allocation_sites) return;
+        const last = @min(self.count, max_reported_allocation_sites - 1);
+        var move_index = last;
+        while (move_index > insert_index) : (move_index -= 1) {
+            self.sites[move_index] = self.sites[move_index - 1];
+        }
+        self.sites[insert_index] = site;
+        if (self.count < max_reported_allocation_sites) self.count += 1;
+    }
+};
+
+// Shape summary for the reusable wavelength plan retained in ProductStorage.
+// layout(64-bit):
+//   size: 64 B, align: 8 B
+//   field storage: 64 B across 8 usize fields; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one stack value in the trace report
+//   footprint: per instance = 64 B (0.062 KiB)
+const WavelengthPlanStats = struct {
+    row_count: usize = 0,
+    kernel_ref_count: usize = 0,
+    disabled_kernel_count: usize = 0,
+    inline_kernel_count: usize = 0,
+    side_kernel_count: usize = 0,
+    max_kernel_sample_count: usize = 0,
+    side_sample_count: usize = 0,
+    forward_miss_count: usize = 0,
+};
+
 // Trace-only allocator wrapper. Normal product builds never instantiate it; the
 // build graph wires this file only into the explicit optimal-estimation trace executable.
 // layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: child=16 B, eight atomic usize counters at 8 B each; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: child allocator owns the actual memory; counters are inline atomic scalars
-//   cache span: 2 cache line(s) at 64 B per line
+//   size: 20592 B, align: 8 B
+//   field storage: child=16 B, eight atomic counters=64 B, site mutex=4 B, allocation_sites=20480 B, site counters=24 B; padding: 4 B
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   out-of-line: child allocator owns the actual memory; site buckets are fixed inline trace storage
+//   cache span: 322 cache line(s) at 64 B per line
 //   count: one live value in the trace executable
-//   footprint: per instance = 80 B (0.078 KiB); no heap storage
+//   footprint: per instance = 20592 B (20.109 KiB); no heap storage
 const CountingAllocator = struct {
     child: Allocator,
     alloc_count: AtomicUsize = AtomicUsize.init(0),
@@ -76,6 +148,11 @@ const CountingAllocator = struct {
     freed_bytes: AtomicUsize = AtomicUsize.init(0),
     live_bytes: AtomicUsize = AtomicUsize.init(0),
     phase_peak_live_bytes: AtomicUsize = AtomicUsize.init(0),
+    site_mutex: std.Thread.Mutex = .{},
+    allocation_sites: [max_allocation_site_count]AllocationSite = [_]AllocationSite{.{}} ** max_allocation_site_count,
+    allocation_site_count: usize = 0,
+    untracked_site_alloc_count: usize = 0,
+    untracked_site_allocated_bytes: usize = 0,
 
     fn init(child: Allocator) CountingAllocator {
         return .{ .child = child };
@@ -109,6 +186,7 @@ const CountingAllocator = struct {
     fn resetPhasePeak(self: *CountingAllocator) AllocationSnapshot {
         const start = self.snapshot();
         self.phase_peak_live_bytes.store(start.live_bytes, .monotonic);
+        self.resetAllocationSites();
         return start;
     }
 
@@ -133,6 +211,7 @@ const CountingAllocator = struct {
         _ = self.alloc_count.fetchAdd(1, .monotonic);
         _ = self.allocated_bytes.fetchAdd(len, .monotonic);
         self.addLiveBytes(len);
+        self.recordAllocationSite(ret_addr, len, .alloc);
         return ptr;
     }
 
@@ -140,7 +219,7 @@ const CountingAllocator = struct {
         const self: *CountingAllocator = @ptrCast(@alignCast(context));
         if (!self.child.rawResize(memory, alignment, new_len, ret_addr)) return false;
         _ = self.resize_count.fetchAdd(1, .monotonic);
-        self.recordSizeChange(memory.len, new_len);
+        self.recordSizeChange(memory.len, new_len, ret_addr, .resize_growth);
         return true;
     }
 
@@ -148,7 +227,7 @@ const CountingAllocator = struct {
         const self: *CountingAllocator = @ptrCast(@alignCast(context));
         const ptr = self.child.rawRemap(memory, alignment, new_len, ret_addr) orelse return null;
         _ = self.remap_count.fetchAdd(1, .monotonic);
-        self.recordSizeChange(memory.len, new_len);
+        self.recordSizeChange(memory.len, new_len, ret_addr, .remap_growth);
         return ptr;
     }
 
@@ -160,11 +239,18 @@ const CountingAllocator = struct {
         _ = self.live_bytes.fetchSub(memory.len, .monotonic);
     }
 
-    fn recordSizeChange(self: *CountingAllocator, old_len: usize, new_len: usize) void {
+    fn recordSizeChange(
+        self: *CountingAllocator,
+        old_len: usize,
+        new_len: usize,
+        ret_addr: usize,
+        kind: AllocationSiteKind,
+    ) void {
         if (new_len > old_len) {
             const delta_bytes = new_len - old_len;
             _ = self.allocated_bytes.fetchAdd(delta_bytes, .monotonic);
             self.addLiveBytes(delta_bytes);
+            self.recordAllocationSite(ret_addr, delta_bytes, kind);
         } else if (old_len > new_len) {
             const delta_bytes = old_len - new_len;
             _ = self.freed_bytes.fetchAdd(delta_bytes, .monotonic);
@@ -184,6 +270,65 @@ const CountingAllocator = struct {
         while (candidate > current) {
             current = counter.cmpxchgWeak(current, candidate, .monotonic, .monotonic) orelse return;
         }
+    }
+
+    fn resetAllocationSites(self: *CountingAllocator) void {
+        self.site_mutex.lock();
+        defer self.site_mutex.unlock();
+        self.allocation_site_count = 0;
+        self.untracked_site_alloc_count = 0;
+        self.untracked_site_allocated_bytes = 0;
+    }
+
+    fn recordAllocationSite(
+        self: *CountingAllocator,
+        return_address: usize,
+        allocated_bytes: usize,
+        kind: AllocationSiteKind,
+    ) void {
+        self.site_mutex.lock();
+        defer self.site_mutex.unlock();
+
+        for (self.allocation_sites[0..self.allocation_site_count]) |*site| {
+            if (site.return_address != return_address) continue;
+            switch (kind) {
+                .alloc => site.alloc_count += 1,
+                .resize_growth => site.resize_growth_count += 1,
+                .remap_growth => site.remap_growth_count += 1,
+            }
+            site.allocated_bytes += allocated_bytes;
+            return;
+        }
+
+        if (self.allocation_site_count >= self.allocation_sites.len) {
+            self.untracked_site_alloc_count += 1;
+            self.untracked_site_allocated_bytes += allocated_bytes;
+            return;
+        }
+
+        var site: AllocationSite = .{ .return_address = return_address };
+        switch (kind) {
+            .alloc => site.alloc_count = 1,
+            .resize_growth => site.resize_growth_count = 1,
+            .remap_growth => site.remap_growth_count = 1,
+        }
+        site.allocated_bytes = allocated_bytes;
+        self.allocation_sites[self.allocation_site_count] = site;
+        self.allocation_site_count += 1;
+    }
+
+    fn allocationSiteReport(self: *CountingAllocator) AllocationSiteReport {
+        self.site_mutex.lock();
+        defer self.site_mutex.unlock();
+
+        var report: AllocationSiteReport = .{
+            .untracked_alloc_count = self.untracked_site_alloc_count,
+            .untracked_allocated_bytes = self.untracked_site_allocated_bytes,
+        };
+        for (self.allocation_sites[0..self.allocation_site_count]) |site| {
+            report.include(site);
+        }
+        return report;
     }
 };
 
@@ -219,6 +364,7 @@ fn mainInner() !void {
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(allocator, &input);
     const reference_prepare_ns = reference_timer.read();
     const reference_allocations = counting_allocator.delta(reference_alloc_start);
+    const reference_allocation_sites = counting_allocator.allocationSiteReport();
     defer prepared_case.deinit(allocator);
 
     const sample_count = prepared_case.reference.len;
@@ -290,6 +436,8 @@ fn mainInner() !void {
     );
     const retrieval_ns = retrieval_timer.read();
     const retrieval_allocations = counting_allocator.delta(retrieval_alloc_start);
+    const retrieval_allocation_sites = counting_allocator.allocationSiteReport();
+    const wavelength_plan_stats = collectWavelengthPlanStats(&product_storage);
     defer result.deinit(allocator);
 
     try writeSummary(
@@ -303,6 +451,9 @@ fn mainInner() !void {
         &result,
         reference_allocations,
         retrieval_allocations,
+        reference_allocation_sites,
+        retrieval_allocation_sites,
+        wavelength_plan_stats,
     );
 
     std.debug.print(
@@ -346,6 +497,9 @@ fn writeSummary(
     result: *const OptimalEstimation.Result,
     reference_allocations: AllocationDelta,
     retrieval_allocations: AllocationDelta,
+    reference_allocation_sites: AllocationSiteReport,
+    retrieval_allocation_sites: AllocationSiteReport,
+    wavelength_plan_stats: WavelengthPlanStats,
 ) !void {
     var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer file.close();
@@ -361,6 +515,7 @@ fn writeSummary(
         \\  "max_iterations": {},
         \\  "iteration_count": {},
         \\  "converged": {},
+        \\  "executable_vmaddr_slide": "0x{x}",
         \\  "reference_prepare_ns": {},
         \\  "reference_prepare_s": {d:.9},
         \\  "retrieval_wall_ns": {},
@@ -387,6 +542,7 @@ fn writeSummary(
             max_iterations,
             result.iteration_count,
             result.converged,
+            executableVmaddrSlide(),
             reference_prepare_ns,
             @as(f64, @floatFromInt(reference_prepare_ns)) / 1.0e9,
             retrieval_ns,
@@ -403,7 +559,18 @@ fn writeSummary(
     try writeAllocationDelta(&writer.interface, "reference_prepare", reference_allocations, true);
     try writeAllocationDelta(&writer.interface, "retrieval", retrieval_allocations, false);
     try writer.interface.writeAll(
-        \\  }
+        \\  },
+        \\  "allocation_top_sites": {
+        \\
+    );
+    try writeAllocationSiteReport(&writer.interface, "reference_prepare", reference_allocation_sites, true);
+    try writeAllocationSiteReport(&writer.interface, "retrieval", retrieval_allocation_sites, false);
+    try writer.interface.writeAll(
+        \\  },
+        \\
+    );
+    try writeWavelengthPlanStats(&writer.interface, wavelength_plan_stats);
+    try writer.interface.writeAll(
         \\}
         \\
     );
@@ -439,6 +606,117 @@ fn writeAllocationDelta(writer: *std.Io.Writer, name: []const u8, delta_value: A
             if (needs_comma) "," else "",
         },
     );
+}
+
+fn writeAllocationSiteReport(
+    writer: *std.Io.Writer,
+    name: []const u8,
+    report: AllocationSiteReport,
+    needs_comma: bool,
+) !void {
+    const vmaddr_slide = executableVmaddrSlide();
+    try writer.print(
+        \\    "{s}": {{
+        \\      "untracked_alloc_count": {},
+        \\      "untracked_allocated_bytes": {},
+        \\      "sites": [
+        \\
+    ,
+        .{ name, report.untracked_alloc_count, report.untracked_allocated_bytes },
+    );
+    for (report.sites[0..report.count], 0..) |site, index| {
+        const unslid_return_address = site.return_address -| vmaddr_slide;
+        try writer.print(
+            \\        {{"return_address": "0x{x}", "unslid_return_address": "0x{x}", "alloc_count": {}, "resize_growth_count": {}, "remap_growth_count": {}, "allocated_bytes": {}}}{s}
+            \\
+        ,
+            .{
+                site.return_address,
+                unslid_return_address,
+                site.alloc_count,
+                site.resize_growth_count,
+                site.remap_growth_count,
+                site.allocated_bytes,
+                if (index + 1 == report.count) "" else ",",
+            },
+        );
+    }
+    try writer.print(
+        \\      ]
+        \\    }}{s}
+        \\
+    ,
+        .{if (needs_comma) "," else ""},
+    );
+}
+
+fn collectWavelengthPlanStats(storage: *const InstrumentGrid.ProductStorage) WavelengthPlanStats {
+    const plan = storage.wavelength_sampling.view();
+    var stats: WavelengthPlanStats = .{
+        .row_count = plan.rows.len,
+        .kernel_ref_count = plan.rows.len * 2,
+        .side_sample_count = plan.kernel_storage.offsets_nm.len,
+        .forward_miss_count = storage.forward_misses.len,
+    };
+    for (plan.rows) |row| {
+        updateWavelengthPlanStats(&stats, row.radiance_integration);
+        updateWavelengthPlanStats(&stats, row.irradiance_integration);
+    }
+    return stats;
+}
+
+fn updateWavelengthPlanStats(
+    stats: *WavelengthPlanStats,
+    kernel: anytype,
+) void {
+    if (!kernel.enabled()) {
+        stats.disabled_kernel_count += 1;
+        stats.max_kernel_sample_count = @max(stats.max_kernel_sample_count, 1);
+        return;
+    }
+    const sample_count = kernel.activeSampleCount();
+    stats.max_kernel_sample_count = @max(stats.max_kernel_sample_count, sample_count);
+    if (sample_count <= kernel.inline_offsets_nm.len) {
+        stats.inline_kernel_count += 1;
+    } else {
+        stats.side_kernel_count += 1;
+    }
+}
+
+fn writeWavelengthPlanStats(writer: *std.Io.Writer, stats: WavelengthPlanStats) !void {
+    try writer.print(
+        \\  "wavelength_plan": {{
+        \\    "row_count": {},
+        \\    "kernel_ref_count": {},
+        \\    "disabled_kernel_count": {},
+        \\    "inline_kernel_count": {},
+        \\    "side_kernel_count": {},
+        \\    "max_kernel_sample_count": {},
+        \\    "side_sample_count": {},
+        \\    "side_storage_bytes": {},
+        \\    "forward_miss_count": {}
+        \\  }}
+        \\
+    ,
+        .{
+            stats.row_count,
+            stats.kernel_ref_count,
+            stats.disabled_kernel_count,
+            stats.inline_kernel_count,
+            stats.side_kernel_count,
+            stats.max_kernel_sample_count,
+            stats.side_sample_count,
+            stats.side_sample_count * @sizeOf(f64) * 2,
+            stats.forward_miss_count,
+        },
+    );
+}
+
+fn executableVmaddrSlide() usize {
+    return if (builtin.os.tag == .macos)
+        std.c._dyld_get_image_vmaddr_slide(0)
+    else
+        0;
 }
 
 fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {

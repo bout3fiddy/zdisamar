@@ -21,6 +21,8 @@ pub const OwnedWavelengthSampling = Plan.OwnedWavelengthSampling;
 
 const min_parallel_wavelength_sample_count: usize = 64;
 const wavelength_sampling_chunk_size: usize = 16;
+const initial_side_samples_per_kernel_cap: usize = 512;
+const initial_side_storage_sample_cap: usize = 1 << 20;
 
 // layout(64-bit):
 //   size: 24 B, align: 8 B
@@ -66,8 +68,8 @@ const WavelengthSamplingWorker = struct {
 
 // layout(64-bit):
 //   size: 64 B, align: 8 B
-//   field storage: mutex=16 B, offsets_nm=24 B, weights=24 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   field storage: mutex=4 B, offsets_nm=16 B, weights=16 B, expected_kernel_ref_count=8 B, reserved_from_first_side_kernel=1 B; padding: 19 B
+//   unused bits: 152 padding + 7 bool-storage slack = 159 bits
 //   out-of-line: offsets_nm, weights carry ArrayList backing storage; referenced storage is not included in size
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: one per wavelength sampling build
@@ -76,6 +78,12 @@ const KernelStorageBuilder = struct {
     mutex: std.Thread.Mutex = .{},
     offsets_nm: std.ArrayList(f64) = .empty,
     weights: std.ArrayList(f64) = .empty,
+    expected_kernel_ref_count: usize = 0,
+    reserved_from_first_side_kernel: bool = false,
+
+    fn init(expected_kernel_ref_count: usize) KernelStorageBuilder {
+        return .{ .expected_kernel_ref_count = expected_kernel_ref_count };
+    }
 
     fn append(self: *KernelStorageBuilder, allocator: Allocator, kernel: *const IntegrationKernel) Error!u32 {
         const count = kernel.sample_count;
@@ -88,11 +96,30 @@ const KernelStorageBuilder = struct {
             return error.OutOfMemory;
         }
         const start: u32 = @intCast(self.offsets_nm.items.len);
-        try self.offsets_nm.ensureUnusedCapacity(allocator, count);
-        try self.weights.ensureUnusedCapacity(allocator, count);
+        try self.ensureCapacityForSideKernel(allocator, count);
         self.offsets_nm.appendSliceAssumeCapacity(kernel.offsets_nm[0..count]);
         self.weights.appendSliceAssumeCapacity(kernel.weights[0..count]);
         return start;
+    }
+
+    fn ensureCapacityForSideKernel(self: *KernelStorageBuilder, allocator: Allocator, count: usize) Error!void {
+        const required_capacity = self.offsets_nm.items.len + count;
+        if (!self.reserved_from_first_side_kernel and self.expected_kernel_ref_count != 0) {
+            self.reserved_from_first_side_kernel = true;
+            const samples_per_kernel_hint = @min(count, initial_side_samples_per_kernel_cap);
+            const raw_capacity_hint = std.math.mul(
+                usize,
+                self.expected_kernel_ref_count,
+                samples_per_kernel_hint,
+            ) catch initial_side_storage_sample_cap;
+            const capacity_hint = @min(raw_capacity_hint, initial_side_storage_sample_cap);
+            const reserved_capacity = @max(required_capacity, capacity_hint);
+            try self.offsets_nm.ensureTotalCapacity(allocator, reserved_capacity);
+            try self.weights.ensureTotalCapacity(allocator, reserved_capacity);
+            return;
+        }
+        try self.offsets_nm.ensureUnusedCapacity(allocator, count);
+        try self.weights.ensureUnusedCapacity(allocator, count);
     }
 
     fn deinit(self: *KernelStorageBuilder, allocator: Allocator) void {
@@ -120,7 +147,7 @@ pub fn buildWavelengthSampling(
     try resolved_axis.validate();
     const plans = try allocator.alloc(WavelengthSampling, sample_count);
     errdefer allocator.free(plans);
-    var kernel_storage_builder: KernelStorageBuilder = .{};
+    var kernel_storage_builder = KernelStorageBuilder.init(sample_count * 2);
     defer kernel_storage_builder.deinit(allocator);
     const can_cache_adaptive_plan = prepared.spectroscopy_lines != null and
         std.mem.eql(u8, implementations.instrument.id, "builtin.generic_response");
