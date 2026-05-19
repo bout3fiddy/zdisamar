@@ -17,32 +17,31 @@ class SpectrumPlot(PlotAccessor):
 
     def reflectance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.REFLECTANCE, show_minimum=True),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.REFLECTANCE),
             save=save,
         )
 
     def radiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.RADIANCE, show_minimum=False),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.RADIANCE),
             save=save,
         )
 
     def irradiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(self._target, fields.IRRADIANCE, show_minimum=False),
+        return self.finish_plot(
+            quantity_chart(self.target, fields.IRRADIANCE),
             save=save,
         )
 
     def sun_normalized_radiance(self, save: str | Path | None = None):
 
-        return self._finish(
-            _quantity_chart(
-                self._target,
+        return self.finish_plot(
+            quantity_chart(
+                self.target,
                 fields.SUN_NORMALIZED_RADIANCE,
-                show_minimum=False,
             ),
             save=save,
         )
@@ -52,26 +51,24 @@ class SpectrumPlot(PlotAccessor):
 
         from .jacobian import reflectance_jacobian
 
-        return self._finish(reflectance_jacobian(self._target, state), save=save)
+        return self.finish_plot(reflectance_jacobian(self.target, state), save=save)
 
     def snr(self, noise_table, save: str | Path | None = None):
 
         from .signal_to_noise import snr
 
-        return self._finish(snr(self._target, noise_table), save=save)
+        return self.finish_plot(snr(self.target, noise_table), save=save)
 
     def noise_envelope(self, noise_table, save: str | Path | None = None):
 
         from .signal_to_noise import noise_envelope
 
-        return self._finish(noise_envelope(self._target, noise_table), save=save)
+        return self.finish_plot(noise_envelope(self.target, noise_table), save=save)
 
 
-def _quantity_chart(
+def quantity_chart(
     spectrum,
     quantity: str,
-    *,
-    show_minimum: bool,
 ):
 
     data = spectrum_frame(spectrum)
@@ -87,7 +84,5 @@ def _quantity_chart(
         name=title,
         color=PLOT.colors.get(quantity, PLOT.colors["blue"]),
     )
-
-    _ = show_minimum
 
     return SvgFigure(title=title, panels=(panel,))

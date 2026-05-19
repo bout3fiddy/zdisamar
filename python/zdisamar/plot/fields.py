@@ -1,4 +1,4 @@
-"""Stable field names used by the Altair plotting helpers."""
+"""Stable field names used by the SVG plotting helpers."""
 
 WAVELENGTH_NM = "wavelength_nm"
 REFLECTANCE = "reflectance"

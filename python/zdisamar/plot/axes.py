@@ -80,7 +80,7 @@ def wavelength_x():
 def marker_values(values) -> list[float]:
     """Draw fixed O2 A reference wavelengths only inside the plotted band."""
 
-    finite = _finite_values(values)
+    finite = finite_values(values)
 
     if not finite:
         return []
@@ -118,7 +118,7 @@ def scaled_y(
         EncodingSpec(
             field=field,
             title=title,
-            axis=axis or _default_numeric_axis(values, PLOT.y_axis_tick_count, compact_axis),
+            axis=axis or default_numeric_axis(values, PLOT.y_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
         ),
     )
@@ -142,7 +142,7 @@ def scaled_x(
         EncodingSpec(
             field=field,
             title=title,
-            axis=axis or _default_numeric_axis(values, PLOT.x_axis_tick_count, compact_axis),
+            axis=axis or default_numeric_axis(values, PLOT.x_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
         ),
     )
@@ -162,7 +162,7 @@ def finite_padded_scale(values):
 def finite_padded_domain(values) -> tuple[float, float] | None:
     """Return the finite padded domain used by all SVG plots."""
 
-    finite = _finite_values(values)
+    finite = finite_values(values)
 
     if not finite:
         return None
@@ -175,7 +175,7 @@ def finite_padded_domain(values) -> tuple[float, float] | None:
     return (low - pad, high + pad)
 
 
-def _default_numeric_axis(values, tick_count: int, compact_axis: bool) -> AxisSpec:
+def default_numeric_axis(values, tick_count: int, compact_axis: bool) -> AxisSpec:
 
     if compact_axis:
         return numeric_axis(values, tickCount=tick_count)
@@ -214,7 +214,7 @@ def axis_multiplier_text(values):
 def axis_exponent(values) -> int | None:
     """Use one power-of-ten multiplier for very small or large tick labels."""
 
-    finite = _finite_values(values)
+    finite = finite_values(values)
 
     if not finite:
         return None
@@ -227,6 +227,6 @@ def axis_exponent(values) -> int | None:
     return int(math.floor(math.log10(max_abs)))
 
 
-def _finite_values(values) -> list[float]:
+def finite_values(values) -> list[float]:
 
     return [float(value) for value in values if math.isfinite(float(value))]

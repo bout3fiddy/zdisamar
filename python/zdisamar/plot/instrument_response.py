@@ -19,10 +19,10 @@ class InstrumentResponsePlot(PlotAccessor):
 
     def curve(self, save: str | Path | None = None):
 
-        return self._finish(_curve(self._target), save=save)
+        return self.finish_plot(curve_figure(self.target), save=save)
 
 
-def _curve(response):
+def curve_figure(response):
 
     data = with_channel_labels(response)
     required = [

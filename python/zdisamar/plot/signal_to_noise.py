@@ -10,7 +10,7 @@ from .svg import SvgFigure, SvgPanel, SvgSeries, line_panel
 
 def snr(spectrum, noise_table):
 
-    data = _snr_frame(spectrum, noise_table)
+    data = snr_frame(spectrum, noise_table)
     title = fields.QUANTITY_LABELS[fields.SNR]
     panel = line_panel(
         title=title,
@@ -26,7 +26,7 @@ def snr(spectrum, noise_table):
 
 def noise_envelope(spectrum, noise_table):
 
-    data = _snr_frame(spectrum, noise_table)
+    data = snr_frame(spectrum, noise_table)
     x = column_values(data, fields.WAVELENGTH_NM)
     signal = np.asarray(column_values(data, fields.SUN_NORMALIZED_RADIANCE), dtype=float)
     snr_values = np.asarray(column_values(data, fields.SNR), dtype=float)
@@ -52,10 +52,10 @@ def noise_envelope(spectrum, noise_table):
     return SvgFigure(title=title, panels=(panel,))
 
 
-def _snr_frame(spectrum, noise_table):
+def snr_frame(spectrum, noise_table):
 
     data = spectrum_frame(spectrum)
-    wavelengths, snr_values = _noise_arrays(noise_table)
+    wavelengths, snr_values = noise_arrays(noise_table)
 
     if wavelengths.size != snr_values.size:
         raise ValueError("noise_table wavelengths and SNR values must have the same length")
@@ -73,7 +73,7 @@ def _snr_frame(spectrum, noise_table):
     ]
 
 
-def _noise_arrays(noise_table):
+def noise_arrays(noise_table):
 
     if isinstance(noise_table, tuple) and len(noise_table) == 2:
         return (

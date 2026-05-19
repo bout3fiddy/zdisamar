@@ -19,13 +19,13 @@ class RowProvider(Protocol):
 def to_records(obj: object) -> list[PlotRow]:
     """Convert supported zdisamar plotting inputs to plain Python rows."""
 
-    if _is_row_sequence(obj):
+    if is_row_sequence(obj):
         return [dict(item) for item in obj]
 
-    if _looks_like_spectrum(obj):
-        return _spectrum_records(obj)
+    if looks_like_spectrum(obj):
+        return spectrum_records(obj)
 
-    if _has_rows(obj):
+    if has_rows(obj):
         rows = obj.to_rows()
 
         return [dict(row) for row in rows]
@@ -99,7 +99,7 @@ def as_float(value: object) -> float:
     raise TypeError(f"expected numeric plotting value, got {type(value).__name__}")
 
 
-def _spectrum_records(obj: object) -> list[PlotRow]:
+def spectrum_records(obj: object) -> list[PlotRow]:
 
     wavelength_nm = list(getattr(obj, fields.WAVELENGTH_NM))
     radiance = list(getattr(obj, fields.RADIANCE))
@@ -137,16 +137,16 @@ def _spectrum_records(obj: object) -> list[PlotRow]:
     return rows
 
 
-def _looks_like_spectrum(obj) -> bool:
+def looks_like_spectrum(obj) -> bool:
 
     return all(hasattr(obj, name) for name in fields.SPECTRUM_FIELDS)
 
 
-def _has_rows(obj: object) -> TypeGuard[RowProvider]:
+def has_rows(obj: object) -> TypeGuard[RowProvider]:
 
     return callable(getattr(obj, "to_rows", None))
 
 
-def _is_row_sequence(obj: object) -> TypeGuard[list[Mapping[str, object]]]:
+def is_row_sequence(obj: object) -> TypeGuard[list[Mapping[str, object]]]:
 
     return isinstance(obj, list) and all(isinstance(item, Mapping) for item in obj)

@@ -274,7 +274,6 @@ def create_plot(
     output_path: Path,
 ) -> None:
 
-    PLOT.prepare()
     metric_by_scene = {str(metric["scene"]): metric for metric in metrics}
     rows = []
 
@@ -406,7 +405,8 @@ def create_plot(
     chart = alt.vconcat(*rows, spacing=18).properties(
         title="O2A Fast-Mode Spectra: Reference Thresholds vs Fast Thresholds"
     )
-    PLOT.save(chart, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    chart.save(output_path, scale_factor=4.0)
 
 
 def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:

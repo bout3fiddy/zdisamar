@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
@@ -68,7 +70,6 @@ def main() -> int:
     assert "Layer mid-pressure (hPa)" in convergence_spec
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
-    assert result.plot.convergence().quality_metrics()["out_of_bounds_count"] == 0
 
     fit = result.plot.measurement_fit().to_dict()
     fit_spec = json.dumps(fit)
@@ -104,10 +105,14 @@ def main() -> int:
     assert flat_tiny_domain[0] > 0.0
     assert flat_tiny_domain[1] < 2.0e-5
 
-    theme = PLOT.theme()["config"]
-    assert theme["axisX"]["grid"] is False
-    assert theme["axisY"]["tickCount"] == 5
-    assert theme["axis"]["gridOpacity"] <= 0.15
+    with TemporaryDirectory() as directory:
+        jacobian_path = Path(directory) / "jacobian.svg"
+        result.plot.jacobian().save(jacobian_path)
+        jacobian_svg = jacobian_path.read_text()
+
+    assert f".grid {{ stroke: {PLOT.colors['grid']};" in jacobian_svg
+    assert f"stroke-opacity: {PLOT.grid_opacity}" in jacobian_svg
+    assert f".axis-title {{ font-size: {PLOT.axis_title_font_size}px;" in jacobian_svg
 
     print("optimal_estimation_plot=ok")
 

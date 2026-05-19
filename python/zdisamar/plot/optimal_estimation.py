@@ -2,10 +2,7 @@
 
 from pathlib import Path
 
-import numpy as np
-
 from . import fields
-from .axes import axis_exponent
 from .data import as_float
 from .properties import PLOT, PlotAccessor
 from .svg import SvgFigure, SvgPanel, SvgSeries, axis_multiplier, line_panel
@@ -57,22 +54,22 @@ class OptimalEstimationPlot(PlotAccessor):
 
     def convergence(self, save: str | Path | None = None):
 
-        return self._finish(_convergence(self._target), save=save)
+        return self.finish_plot(convergence_figure(self.target), save=save)
 
     def measurement_fit(self, save: str | Path | None = None):
 
-        return self._finish(_measurement_fit(self._target), save=save)
+        return self.finish_plot(measurement_fit_figure(self.target), save=save)
 
     def residual(self, save: str | Path | None = None):
 
-        return self._finish(_residual(self._target), save=save)
+        return self.finish_plot(residual_figure(self.target), save=save)
 
     def jacobian(self, save: str | Path | None = None, *, columns: int = 2):
 
-        return self._finish(_jacobian(self._target, columns=columns), save=save)
+        return self.finish_plot(jacobian_figure(self.target, columns=columns), save=save)
 
 
-def _state_history_rows(result) -> list[dict[str, object]]:
+def state_history_rows(result) -> list[dict[str, object]]:
     """Put each retrieved coordinate into a long table with physical labels."""
 
     rows: list[dict[str, object]] = []
@@ -84,9 +81,9 @@ def _state_history_rows(result) -> list[dict[str, object]]:
                     "iteration": 0,
                     "state_name": state_name,
                     "state_order": index,
-                    "state": _state_label(state_name),
-                    "unit": _state_unit(state_name),
-                    "state_panel": _state_panel_title(state_name),
+                    "state": state_label(state_name),
+                    "unit": state_unit(state_name),
+                    "state_panel": state_panel_title(state_name),
                     "value": float(result.initial_state[index]),
                     "state_vector_convergence": None,
                     "chi2_reflectance": None,
@@ -101,9 +98,9 @@ def _state_history_rows(result) -> list[dict[str, object]]:
                     "iteration": iteration.index,
                     "state_name": state_name,
                     "state_order": index,
-                    "state": _state_label(state_name),
-                    "unit": _state_unit(state_name),
-                    "state_panel": _state_panel_title(state_name),
+                    "state": state_label(state_name),
+                    "unit": state_unit(state_name),
+                    "state_panel": state_panel_title(state_name),
                     "value": float(iteration.state[index]),
                     "state_vector_convergence": iteration.state_vector_convergence,
                     "chi2_reflectance": iteration.chi2_reflectance,
@@ -114,12 +111,12 @@ def _state_history_rows(result) -> list[dict[str, object]]:
     return rows
 
 
-def _fit_rows(result) -> list[dict[str, float]]:
+def fit_rows(result) -> list[dict[str, float]]:
 
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
-    measurement = _require_measurement(result)
-    evaluation = _require_final_evaluation(result)
+    measurement = require_measurement(result)
+    evaluation = require_final_evaluation(result)
     wavelength_nm = measurement.wavelength_nm
     require_matching_wavelength_grid(
         wavelength_nm,
@@ -149,8 +146,8 @@ def jacobian_frame(result) -> list[dict[str, object]]:
 
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
-    measurement = _require_measurement(result)
-    evaluation = _require_final_evaluation(result)
+    measurement = require_measurement(result)
+    evaluation = require_final_evaluation(result)
     wavelength_nm = measurement.wavelength_nm
     require_matching_wavelength_grid(
         wavelength_nm,
@@ -167,11 +164,11 @@ def jacobian_frame(result) -> list[dict[str, object]]:
             rows.append(
                 {
                     "wavelength_nm": float(wavelength),
-                    "state": _state_label(state_name),
+                    "state": state_label(state_name),
                     "state_name": state_name,
                     "state_order": index,
-                    "unit": _state_unit(state_name),
-                    "state_panel": _state_panel_title(state_name),
+                    "unit": state_unit(state_name),
+                    "state_panel": state_panel_title(state_name),
                     "reflectance_jacobian": float(value),
                 }
             )
@@ -179,24 +176,24 @@ def jacobian_frame(result) -> list[dict[str, object]]:
     return rows
 
 
-def _convergence(result) -> SvgFigure:
+def convergence_figure(result) -> SvgFigure:
 
-    rows = _state_history_rows(result)
-    columns = _state_columns(result)
+    rows = state_history_rows(result)
+    columns = state_columns(result)
     panels = []
 
     for index, state_name in enumerate(result.state_names):
         panel_rows = [row for row in rows if row["state_name"] == state_name]
         values = [as_float(row["value"]) for row in panel_rows]
         panel = line_panel(
-            title=_state_panel_title(state_name),
+            title=state_panel_title(state_name),
             x_title="Iteration",
             y_title=STATE_TRACE_Y_TITLE,
             x=[as_float(row["iteration"]) for row in panel_rows],
             y=values,
-            name=_state_label(state_name),
-            color=_state_color_at(index),
-            width=_panel_width(columns),
+            name=state_label(state_name),
+            color=state_color_at(index),
+            width=panel_width(columns),
             height=STATE_TRACE_PANEL_HEIGHT,
             marker_x=False,
         )
@@ -211,9 +208,9 @@ def _convergence(result) -> SvgFigure:
     )
 
 
-def _measurement_fit(result) -> SvgFigure:
+def measurement_fit_figure(result) -> SvgFigure:
 
-    rows = _fit_rows(result)
+    rows = fit_rows(result)
     wavelength = [row["wavelength_nm"] for row in rows]
     measurement = [row["measurement"] for row in rows]
     retrieved = [row["retrieved_model"] for row in rows]
@@ -265,9 +262,9 @@ def _measurement_fit(result) -> SvgFigure:
     )
 
 
-def _residual(result) -> SvgFigure:
+def residual_figure(result) -> SvgFigure:
 
-    rows = _fit_rows(result)
+    rows = fit_rows(result)
     residual = [row["residual"] for row in rows]
     panel = line_panel(
         title="Final residual",
@@ -285,7 +282,7 @@ def _residual(result) -> SvgFigure:
     return SvgFigure(title="Final residual", panels=(panel,))
 
 
-def _jacobian(result, *, columns: int) -> SvgFigure:
+def jacobian_figure(result, *, columns: int) -> SvgFigure:
 
     rows = jacobian_frame(result)
     columns = max(1, columns)
@@ -294,16 +291,16 @@ def _jacobian(result, *, columns: int) -> SvgFigure:
     for index, state_name in enumerate(result.state_names):
         panel_rows = [row for row in rows if row["state_name"] == state_name]
         values = [as_float(row["reflectance_jacobian"]) for row in panel_rows]
-        derivative_title = _state_derivative_title(state_name)
+        derivative_title = state_derivative_title(state_name)
         panel = line_panel(
-            title=_state_panel_title(state_name),
+            title=state_panel_title(state_name),
             x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
             y_title=derivative_title,
             x=[as_float(row["wavelength_nm"]) for row in panel_rows],
             y=values,
             name=derivative_title,
-            color=_state_color_at(index),
-            width=_panel_width(columns),
+            color=state_color_at(index),
+            width=panel_width(columns),
             height=JACOBIAN_PANEL_HEIGHT,
         )
         panels.append(panel)
@@ -317,7 +314,7 @@ def _jacobian(result, *, columns: int) -> SvgFigure:
     )
 
 
-def _require_measurement(result):
+def require_measurement(result):
 
     if result.measurement is None:
         raise RuntimeError("optimal-estimation result does not include a measurement")
@@ -325,7 +322,7 @@ def _require_measurement(result):
     return result.measurement
 
 
-def _require_final_evaluation(result):
+def require_final_evaluation(result):
 
     # The final spectrum can be expensive. It is evaluated here only for plots
     # that need residuals or Jacobians at the accepted retrieval state.
@@ -337,37 +334,37 @@ def _require_final_evaluation(result):
     return evaluation
 
 
-def _state_label(state_name: str) -> str:
+def state_label(state_name: str) -> str:
 
     return STATE_LABELS.get(state_name, state_name.replace("_", " "))
 
 
-def _state_unit(state_name: str) -> str:
+def state_unit(state_name: str) -> str:
 
     return STATE_UNITS.get(state_name, "")
 
 
-def _state_axis_title(state_name: str) -> str:
+def state_axis_title(state_name: str) -> str:
 
-    return STATE_AXIS_TITLES.get(state_name, _state_label(state_name))
-
-
-def _state_panel_title(state_name: str) -> str:
-
-    return STATE_PANEL_TITLES.get(state_name, _state_axis_title(state_name))
+    return STATE_AXIS_TITLES.get(state_name, state_label(state_name))
 
 
-def _state_derivative_title(state_name: str) -> str:
+def state_panel_title(state_name: str) -> str:
+
+    return STATE_PANEL_TITLES.get(state_name, state_axis_title(state_name))
+
+
+def state_derivative_title(state_name: str) -> str:
 
     return STATE_DERIVATIVE_TITLES.get(state_name, "dR/dx")
 
 
-def _state_color_at(index: int) -> str:
+def state_color_at(index: int) -> str:
 
-    return _color_range(index + 1)[index]
+    return color_range(index + 1)[index]
 
 
-def _color_range(count: int) -> list[str]:
+def color_range(count: int) -> list[str]:
 
     palette = [
         PLOT.colors["blue"],
@@ -379,18 +376,11 @@ def _color_range(count: int) -> list[str]:
     return [palette[index % len(palette)] for index in range(count)]
 
 
-def _state_columns(result) -> int:
+def state_columns(result) -> int:
 
     return min(STATE_TRACE_COLUMNS, max(1, len(result.state_names)))
 
 
-def _panel_width(columns: int) -> int:
+def panel_width(columns: int) -> int:
 
     return max(300, int(PLOT.diagnostic_width / max(1, columns)) - 35)
-
-
-def _with_axis_multiplier(values: np.ndarray) -> str | None:
-
-    exponent = axis_exponent(values)
-
-    return None if exponent is None else f"x1e{exponent}"

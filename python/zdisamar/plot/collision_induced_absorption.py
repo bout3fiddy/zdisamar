@@ -27,20 +27,20 @@ class CollisionInducedAbsorptionPlot(PlotAccessor):
         save: str | Path | None = None,
     ):
 
-        return self._finish(
-            _optical_depth_profile(self._target, wavelength_nm=wavelength_nm),
+        return self.finish_plot(
+            optical_depth_profile(self.target, wavelength_nm=wavelength_nm),
             save=save,
         )
 
 
-def _optical_depth_profile(
+def optical_depth_profile(
     table,
     *,
     wavelength_nm: float | None,
 ):
 
     quantity = fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH
-    selected_wavelength_nm = _profile_wavelength(table, wavelength_nm)
+    selected_wavelength_nm = profile_wavelength(table, wavelength_nm)
     data = interval_profile_rows(
         table,
         value=quantity,
@@ -71,7 +71,7 @@ def _optical_depth_profile(
     return SvgFigure(title=title, panels=(panel,))
 
 
-def _profile_wavelength(table, wavelength_nm: float | None) -> float | None:
+def profile_wavelength(table, wavelength_nm: float | None) -> float | None:
 
     if wavelength_nm is not None:
         return wavelength_nm

@@ -14,13 +14,12 @@ X_TICK_LABEL_Y_OFFSET = 30
 X_AXIS_TITLE_Y_OFFSET = 70
 Y_TICK_LABEL_X = -14
 Y_AXIS_TITLE_X = -104
-ESTIMATED_TICK_LABEL_CHAR_WIDTH = 7.2
 PANEL_TITLE_Y = -24
 
 
 @dataclass(frozen=True)
 class SvgSeries:
-    """One plotted SVG series with source data retained for scoring."""
+    """One plotted SVG series."""
 
     name: str
     kind: str
@@ -164,7 +163,7 @@ class SvgPanel:
             height=self.height,
             x_domain=self.x_domain,
             y_domain=self.y_domain,
-            marker_x=tuple(marker_values(_series_x_values(self.series))),
+            marker_x=tuple(marker_values(series_x_values(self.series))),
             rule_y=self.rule_y,
             y_axis_multiplier=self.y_axis_multiplier,
         )
@@ -204,14 +203,14 @@ class SvgFigure:
         rows = (len(self.panels) + max(self.columns, 1) - 1) // max(self.columns, 1)
 
         return (
-            self._effective_margin_top()
+            self.effective_margin_top()
             + self.margin_bottom
             + rows * panel_height
             + (rows - 1) * self.panel_spacing
         )
 
     def to_dict(self) -> dict[str, object]:
-        """Return a stable plot description for tests and quality scoring."""
+        """Return a stable plot description for tests."""
 
         return {
             "type": "zdisamar-svg",
@@ -220,66 +219,7 @@ class SvgFigure:
             "height": self.height,
             "columns": self.columns,
             "resolve": {"scale": {"y": "independent" if self.y_independent else "shared"}},
-            "panels": [self._panel_dict(index, panel) for index, panel in enumerate(self.panels)],
-        }
-
-    def quality_metrics(self) -> dict[str, object]:
-        """Return objective checks that do not depend on visual inspection."""
-
-        data_max_px_error = 0.0
-        out_of_bounds_count = 0
-        style_mismatch_count = 0
-        series_count = 0
-        duplicate_visible_title_count = 0
-        min_axis_title_tick_gap_px = float("inf")
-
-        for panel in self.panels:
-            x_domain = panel.resolved_x_domain()
-            y_domain = panel.resolved_y_domain()
-            y_tick_label_width = max(
-                len(_format_tick(value, panel.y_axis_multiplier))
-                for value in _ticks(y_domain, PLOT.y_axis_tick_count)
-            )
-            y_tick_label_left = (
-                Y_TICK_LABEL_X - y_tick_label_width * ESTIMATED_TICK_LABEL_CHAR_WIDTH
-            )
-            min_axis_title_tick_gap_px = min(
-                min_axis_title_tick_gap_px,
-                float(X_AXIS_TITLE_Y_OFFSET - X_TICK_LABEL_Y_OFFSET),
-                float(y_tick_label_left - Y_AXIS_TITLE_X),
-            )
-
-            if self._draw_panel_title(panel) and panel.title == self.title:
-                duplicate_visible_title_count += 1
-
-            for series in panel.series:
-                series_count += 1
-
-                if not _looks_like_style(series.color):
-                    style_mismatch_count += 1
-
-                for x, y in zip(series.x, series.y, strict=True):
-                    px = _scale(x, x_domain, 0.0, float(panel.width))
-                    py = _scale(y, y_domain, float(panel.height), 0.0)
-                    roundtrip_x = _unscale(px, x_domain, 0.0, float(panel.width))
-                    roundtrip_y = _unscale(py, y_domain, float(panel.height), 0.0)
-                    data_max_px_error = max(
-                        data_max_px_error,
-                        abs(_scale(roundtrip_x, x_domain, 0.0, float(panel.width)) - px),
-                        abs(_scale(roundtrip_y, y_domain, float(panel.height), 0.0) - py),
-                    )
-
-                    if not (-0.5 <= px <= panel.width + 0.5 and -0.5 <= py <= panel.height + 0.5):
-                        out_of_bounds_count += 1
-
-        return {
-            "panel_count": len(self.panels),
-            "series_count": series_count,
-            "data_max_px_error": data_max_px_error,
-            "out_of_bounds_count": out_of_bounds_count,
-            "style_mismatch_count": style_mismatch_count,
-            "duplicate_visible_title_count": duplicate_visible_title_count,
-            "min_axis_title_tick_gap_px": min_axis_title_tick_gap_px,
+            "panels": [self.panel_dict(index, panel) for index, panel in enumerate(self.panels)],
         }
 
     def save(self, path: str | Path) -> None:
@@ -291,10 +231,28 @@ class SvgFigure:
             output = output.with_suffix(".svg")
 
         if output.suffix.lower() != ".svg":
-            raise ValueError("zdisamar runtime plots save as SVG; use validation tooling for PNG")
+            raise ValueError("zdisamar runtime plots save as SVG")
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(self._repr_svg_(), encoding="utf-8")
+
+    @property
+    def svg_css(self) -> str:
+        """Return the CSS embedded in this SVG figure."""
+
+        return (
+            "<style>"
+            f"text {{ font-family: {PLOT.font}; fill: black; }}"
+            f".plot-title {{ font-size: {PLOT.title_font_size}px; font-weight: 400; }}"
+            f".panel-title {{ font-size: {PLOT.panel_title_font_size}px; font-weight: 400; }}"
+            f".axis-title {{ font-size: {PLOT.axis_title_font_size}px; }}"
+            f".tick-label,.axis-multiplier {{ font-size: {PLOT.axis_label_font_size}px; }}"
+            ".plot-bg { fill: white; stroke: black; stroke-width: 1; }"
+            ".axis { stroke: black; stroke-width: 1; }"
+            f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
+            ".series.line { stroke-linejoin: round; stroke-linecap: round; }"
+            "</style>"
+        )
 
     def _repr_svg_(self) -> str:
         """Return notebook-display SVG."""
@@ -305,7 +263,7 @@ class SvgFigure:
                 f'height="{self.height}" viewBox="0 0 {self.width} {self.height}">'
             ),
             f"<title>{escape(self.title)}</title>",
-            _style_block(),
+            self.svg_css,
             (
                 f'<text class="plot-title" x="{self.width / 2:.3f}" y="34" '
                 f'text-anchor="middle">{escape(self.title)}</text>'
@@ -313,15 +271,15 @@ class SvgFigure:
         ]
 
         for index, panel in enumerate(self.panels):
-            elements.extend(self._panel_svg(index, panel))
+            elements.extend(self.panel_svg(index, panel))
 
         elements.append("</svg>")
 
         return "\n".join(elements)
 
-    def _panel_dict(self, index: int, panel: SvgPanel) -> dict[str, object]:
+    def panel_dict(self, index: int, panel: SvgPanel) -> dict[str, object]:
 
-        origin_x, origin_y = self._panel_origin(index)
+        origin_x, origin_y = self.panel_origin(index)
         x_domain = panel.resolved_x_domain()
         y_domain = panel.resolved_y_domain()
 
@@ -350,9 +308,9 @@ class SvgFigure:
             ],
         }
 
-    def _panel_svg(self, index: int, panel: SvgPanel) -> list[str]:
+    def panel_svg(self, index: int, panel: SvgPanel) -> list[str]:
 
-        origin_x, origin_y = self._panel_origin(index)
+        origin_x, origin_y = self.panel_origin(index)
         x_domain = panel.resolved_x_domain()
         y_domain = panel.resolved_y_domain()
         elements = [
@@ -360,34 +318,34 @@ class SvgFigure:
             f'<rect class="plot-bg" x="0" y="0" width="{panel.width}" height="{panel.height}" />',
         ]
 
-        if self._draw_panel_title(panel):
+        if self.draw_panel_title(panel):
             elements.append(
                 f'<text class="panel-title" x="{panel.width / 2:.3f}" y="{PANEL_TITLE_Y}" '
                 f'text-anchor="middle">{escape(panel.title)}</text>'
             )
 
-        elements.extend(_axis_svg(panel, x_domain, y_domain))
+        elements.extend(axis_svg(panel, x_domain, y_domain))
 
         for marker in panel.marker_x:
-            x = _scale(marker, x_domain, 0.0, float(panel.width))
+            x = scale_value(marker, x_domain, 0.0, float(panel.width))
             elements.append(
                 f'<line class="marker" x1="{x:.3f}" x2="{x:.3f}" y1="0" '
                 f'y2="{panel.height}" stroke="{PLOT.colors["neutral"]}" '
                 f'stroke-width="{PLOT.marker_rule_width}" '
-                f'stroke-dasharray="{_dash(PLOT.marker_rule_dash)}" />'
+                f'stroke-dasharray="{dash_values(PLOT.marker_rule_dash)}" />'
             )
 
         for rule in panel.rule_y:
-            y = _scale(rule, y_domain, float(panel.height), 0.0)
+            y = scale_value(rule, y_domain, float(panel.height), 0.0)
             elements.append(
                 f'<line class="rule-y" x1="0" x2="{panel.width}" y1="{y:.3f}" '
                 f'y2="{y:.3f}" stroke="{PLOT.colors["neutral"]}" '
                 f'stroke-width="{PLOT.marker_rule_width}" '
-                f'stroke-dasharray="{_dash(PLOT.marker_rule_dash)}" />'
+                f'stroke-dasharray="{dash_values(PLOT.marker_rule_dash)}" />'
             )
 
         for series in panel.series:
-            elements.extend(_series_svg(panel, series, x_domain, y_domain))
+            elements.extend(series_svg(panel, series, x_domain, y_domain))
 
         if panel.y_axis_multiplier is not None:
             elements.append(
@@ -399,7 +357,7 @@ class SvgFigure:
 
         return elements
 
-    def _panel_origin(self, index: int) -> tuple[int, int]:
+    def panel_origin(self, index: int) -> tuple[int, int]:
 
         columns = max(self.columns, 1)
         panel_width = max(panel.width for panel in self.panels)
@@ -409,16 +367,16 @@ class SvgFigure:
 
         return (
             self.margin_left + column * (panel_width + self.panel_spacing),
-            self._effective_margin_top() + row * (panel_height + self.panel_spacing),
+            self.effective_margin_top() + row * (panel_height + self.panel_spacing),
         )
 
-    def _draw_panel_title(self, panel: SvgPanel) -> bool:
+    def draw_panel_title(self, panel: SvgPanel) -> bool:
 
         return not (len(self.panels) == 1 and panel.title == self.title)
 
-    def _effective_margin_top(self) -> int:
+    def effective_margin_top(self) -> int:
 
-        if any(self._draw_panel_title(panel) for panel in self.panels):
+        if any(self.draw_panel_title(panel) for panel in self.panels):
             return 104
 
         return self.margin_top
@@ -463,7 +421,7 @@ def axis_multiplier(values: Iterable[float]) -> str | None:
     return None if exponent is None else f"x1e{exponent}"
 
 
-def _axis_svg(
+def axis_svg(
     panel: SvgPanel,
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
@@ -474,21 +432,21 @@ def _axis_svg(
         f'<line class="axis" x1="0" x2="0" y1="0" y2="{panel.height}" />',
     ]
 
-    for value in _ticks(y_domain, PLOT.y_axis_tick_count):
-        y = _scale(value, y_domain, float(panel.height), 0.0)
+    for value in ticks(y_domain, PLOT.y_axis_tick_count):
+        y = scale_value(value, y_domain, float(panel.height), 0.0)
         elements.append(
             f'<line class="grid" x1="0" x2="{panel.width}" y1="{y:.3f}" y2="{y:.3f}" />'
         )
         elements.append(
             f'<text class="tick-label" x="{Y_TICK_LABEL_X}" y="{y + 4:.3f}" text-anchor="end">'
-            f"{escape(_format_tick(value, panel.y_axis_multiplier))}</text>"
+            f"{escape(format_tick(value, panel.y_axis_multiplier))}</text>"
         )
 
-    for value in _ticks(x_domain, PLOT.x_axis_tick_count):
-        x = _scale(value, x_domain, 0.0, float(panel.width))
+    for value in ticks(x_domain, PLOT.x_axis_tick_count):
+        x = scale_value(value, x_domain, 0.0, float(panel.width))
         elements.append(
             f'<text class="tick-label" x="{x:.3f}" y="{panel.height + X_TICK_LABEL_Y_OFFSET}" '
-            f'text-anchor="middle">{escape(_format_tick(value, None))}</text>'
+            f'text-anchor="middle">{escape(format_tick(value, None))}</text>'
         )
 
     elements.append(
@@ -507,7 +465,7 @@ def _axis_svg(
     return elements
 
 
-def _series_svg(
+def series_svg(
     panel: SvgPanel,
     series: SvgSeries,
     x_domain: tuple[float, float],
@@ -517,15 +475,15 @@ def _series_svg(
     if series.kind == "band":
         upper = [
             (
-                _scale(x, x_domain, 0.0, float(panel.width)),
-                _scale(y, y_domain, float(panel.height), 0.0),
+                scale_value(x, x_domain, 0.0, float(panel.width)),
+                scale_value(y, y_domain, float(panel.height), 0.0),
             )
             for x, y in zip(series.x, series.y2, strict=True)
         ]
         lower = [
             (
-                _scale(x, x_domain, 0.0, float(panel.width)),
-                _scale(y, y_domain, float(panel.height), 0.0),
+                scale_value(x, x_domain, 0.0, float(panel.width)),
+                scale_value(y, y_domain, float(panel.height), 0.0),
             )
             for x, y in zip(reversed(series.x), reversed(series.y), strict=True)
         ]
@@ -544,8 +502,8 @@ def _series_svg(
         return [
             (
                 f'<circle class="series point" '
-                f'cx="{_scale(x, x_domain, 0.0, float(panel.width)):.3f}" '
-                f'cy="{_scale(y, y_domain, float(panel.height), 0.0):.3f}" '
+                f'cx="{scale_value(x, x_domain, 0.0, float(panel.width)):.3f}" '
+                f'cy="{scale_value(y, y_domain, float(panel.height), 0.0):.3f}" '
                 f'r="{radius:.3f}" '
                 f'fill="{series.color}" opacity="{series.opacity:.3f}">'
                 f"<title>{escape(series.name)}</title></circle>"
@@ -554,9 +512,9 @@ def _series_svg(
         ]
 
     path = [
-        _path_data(
-            _scale(x, x_domain, 0.0, float(panel.width)),
-            _scale(y, y_domain, float(panel.height), 0.0),
+        path_data(
+            scale_value(x, x_domain, 0.0, float(panel.width)),
+            scale_value(y, y_domain, float(panel.height), 0.0),
             index,
         )
         for index, (x, y) in enumerate(zip(series.x, series.y, strict=True))
@@ -566,24 +524,24 @@ def _series_svg(
         (
             f'<path class="series line" d="{" ".join(path)}" fill="none" stroke="{series.color}" '
             f'stroke-width="{series.stroke_width}" opacity="{series.opacity:.3f}" '
-            f'stroke-dasharray="{_dash(series.dash)}"><title>{escape(series.name)}</title></path>'
+            f'stroke-dasharray="{dash_values(series.dash)}"><title>{escape(series.name)}</title></path>'
         )
     ]
 
 
-def _series_x_values(series: Sequence[SvgSeries]) -> list[float]:
+def series_x_values(series: Sequence[SvgSeries]) -> list[float]:
 
     return [value for item in series for value in item.x]
 
 
-def _path_data(x: float, y: float, index: int) -> str:
+def path_data(x: float, y: float, index: int) -> str:
 
     command = "M" if index == 0 else "L"
 
     return f"{command}{x:.3f},{y:.3f}"
 
 
-def _ticks(domain: tuple[float, float], count: int) -> list[float]:
+def ticks(domain: tuple[float, float], count: int) -> list[float]:
 
     low, high = domain
 
@@ -595,7 +553,7 @@ def _ticks(domain: tuple[float, float], count: int) -> list[float]:
     return [low + index * step for index in range(count)]
 
 
-def _format_tick(value: float, multiplier: str | None) -> str:
+def format_tick(value: float, multiplier: str | None) -> str:
 
     if multiplier is not None:
         exponent = int(multiplier.removeprefix("x1e"))
@@ -604,7 +562,7 @@ def _format_tick(value: float, multiplier: str | None) -> str:
     return f"{value:.4g}"
 
 
-def _scale(
+def scale_value(
     value: float,
     domain: tuple[float, float],
     pixel_min: float,
@@ -619,43 +577,6 @@ def _scale(
     return pixel_min + (value - low) * (pixel_max - pixel_min) / (high - low)
 
 
-def _unscale(
-    pixel: float,
-    domain: tuple[float, float],
-    pixel_min: float,
-    pixel_max: float,
-) -> float:
-
-    low, high = domain
-
-    if pixel_max == pixel_min:
-        return 0.5 * (low + high)
-
-    return low + (pixel - pixel_min) * (high - low) / (pixel_max - pixel_min)
-
-
-def _dash(values: Sequence[float]) -> str:
+def dash_values(values: Sequence[float]) -> str:
 
     return "none" if not values else " ".join(f"{value:g}" for value in values)
-
-
-def _looks_like_style(color: str) -> bool:
-
-    return color.startswith("#") and len(color) == 7
-
-
-def _style_block() -> str:
-
-    return (
-        "<style>"
-        f"text {{ font-family: {PLOT.font}; fill: black; }}"
-        f".plot-title {{ font-size: {PLOT.title_font_size}px; font-weight: 400; }}"
-        f".panel-title {{ font-size: {PLOT.panel_title_font_size}px; font-weight: 400; }}"
-        f".axis-title {{ font-size: {PLOT.axis_title_font_size}px; }}"
-        f".tick-label,.axis-multiplier {{ font-size: {PLOT.axis_label_font_size}px; }}"
-        ".plot-bg { fill: white; stroke: black; stroke-width: 1; }"
-        ".axis { stroke: black; stroke-width: 1; }"
-        f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
-        ".series.line { stroke-linejoin: round; stroke-linecap: round; }"
-        "</style>"
-    )
