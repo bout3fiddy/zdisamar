@@ -41,6 +41,9 @@ from .structures import (
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
 )
 
+_MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
+_MAX_UINT32 = 2**32 - 1
+
 
 def contiguous_wavelengths(wavelengths_nm):
     """Prepare a one-dimensional wavelength grid for the zdisamar model."""
@@ -308,6 +311,13 @@ class RtmHandle:
 
         state_buffers = []
         state_specs = []
+        max_iterations = int(controls.max_iterations)
+
+        if max_iterations <= 0 or max_iterations > _MAX_OPTIMAL_ESTIMATION_ITERATIONS:
+            raise ValueError(
+                "optimal-estimation max_iterations must be between "
+                f"1 and {_MAX_OPTIMAL_ESTIMATION_ITERATIONS}"
+            )
 
         for parameter in state_vector.parameters:
             state_name = getattr(parameter, "jacobian_name", parameter.name)
@@ -334,12 +344,17 @@ class RtmHandle:
 
             lower = getattr(parameter, "lower", None)
             upper = getattr(parameter, "upper", None)
+            interval_index_1based = int(getattr(parameter, "interval_index_1based", 0))
+
+            if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
+                raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")
+
             state_specs.append(
                 COptimalEstimationStateSpec(
                     state_id=state_id,
                     has_lower=0 if lower is None else 1,
                     has_upper=0 if upper is None else 1,
-                    interval_index_1based=int(getattr(parameter, "interval_index_1based", 0)),
+                    interval_index_1based=interval_index_1based,
                     initial=float(parameter.initial),
                     prior=float(parameter.prior),
                     variance=float(parameter.variance),
@@ -364,7 +379,7 @@ class RtmHandle:
             state_count=len(state_specs),
             states=state_spec_array,
             controls=COptimalEstimationControls(
-                max_iterations=int(controls.max_iterations),
+                max_iterations=max_iterations,
                 state_vector_convergence_threshold=float(
                     controls.state_vector_convergence_threshold
                 ),

@@ -11,6 +11,7 @@ const Matrix = algebra.Matrix;
 const Vector = algebra.Vector;
 
 pub const max_state_count = algebra.max_state_count;
+pub const max_iteration_count: usize = 1000;
 
 pub const Error = error{
     EmptyMeasurement,
@@ -265,7 +266,7 @@ pub fn runO2A(
     controls: Controls,
 ) !Result {
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
-    if (controls.max_iterations == 0) return error.InvalidStateSpec;
+    if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
 
     var measurement = try MeasurementWorkspace.init(
         allocator,

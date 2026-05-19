@@ -6,6 +6,7 @@ import sys
 import tempfile
 from dataclasses import fields, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
@@ -234,6 +235,57 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
     assert observed_solar_zenith == [original_solar_zenith]
 
 
+def assert_native_oe_marshaling_bounds() -> None:
+
+    from zdisamar.bindings.handles import RtmHandle
+    from zdisamar.inverse_method import optimal_estimation
+
+    handle = object.__new__(RtmHandle)
+    measurement = optimal_estimation.Measurement(
+        wavelength_nm=[760.0],
+        reflectance=[0.2],
+        variance=[1.0e-6],
+    )
+    state_vector = SimpleNamespace(
+        parameters=[
+            SimpleNamespace(
+                name="aerosol_optical_depth",
+                initial=0.3,
+                prior=0.3,
+                variance=0.8,
+                lower=None,
+                upper=None,
+                interval_index_1based=0,
+            )
+        ]
+    )
+
+    for max_iterations in (-1, 0, 1001):
+        try:
+            handle.optimal_estimation(
+                measurement=measurement,
+                state_vector=state_vector,
+                controls=optimal_estimation.RetrievalControls(max_iterations=max_iterations),
+            )
+        except ValueError as error:
+            assert "max_iterations" in str(error)
+        else:
+            raise AssertionError("invalid max_iterations reached native OE marshaling")
+
+    state_vector.parameters[0].interval_index_1based = 2**32
+
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+    except ValueError as error:
+        assert "interval_index_1based" in str(error)
+    else:
+        raise AssertionError("invalid interval index reached native OE marshaling")
+
+
 def assert_reference_data_and_rtm_tables() -> None:
 
     import numpy as np
@@ -347,6 +399,7 @@ def main() -> int:
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
+    assert_native_oe_marshaling_bounds()
     assert_reference_data_and_rtm_tables()
     print("python_package_refactor=ok")
 
