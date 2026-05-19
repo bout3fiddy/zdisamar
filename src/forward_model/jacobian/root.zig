@@ -40,6 +40,38 @@ pub fn sanitizedMask(mask: StateMask) StateMask {
     return mask & all_states_mask;
 }
 
+pub fn activeStateCount(mask: StateMask) usize {
+    const active_mask = sanitizedMask(mask);
+    var count: usize = 0;
+    for (0..state_count) |index| {
+        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) != 0) count += 1;
+    }
+    return count;
+}
+
+pub fn activeStateIndex(mask: StateMask, state: State) ?usize {
+    const active_mask = sanitizedMask(mask);
+    const target_index = stateIndex(state);
+    var active_index: usize = 0;
+    for (0..state_count) |index| {
+        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
+        if (index == target_index) return active_index;
+        active_index += 1;
+    }
+    return null;
+}
+
+pub fn activeStateAt(mask: StateMask, active_index: usize) ?State {
+    const active_mask = sanitizedMask(mask);
+    var current: usize = 0;
+    for (0..state_count) |index| {
+        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
+        if (current == active_index) return @enumFromInt(index);
+        current += 1;
+    }
+    return null;
+}
+
 pub fn get(vector: Vector, state: State) f64 {
     return vector[stateIndex(state)];
 }

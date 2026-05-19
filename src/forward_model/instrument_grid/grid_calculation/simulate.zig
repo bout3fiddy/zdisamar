@@ -653,7 +653,15 @@ fn fillRadianceSamples(
                 wavelength_sampling.kernel_storage,
             );
             buffers.scratch[index] = integrated.radiance;
-            if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
+            if (buffers.jacobian) |jacobian_buffer| {
+                writeJacobianSample(
+                    jacobian_buffer,
+                    buffers.jacobian_state_mask,
+                    setup.sample_count,
+                    index,
+                    integrated.jacobian,
+                );
+            }
         }
     }
     if (setup.uses_integrated_radiance_sampling) {
@@ -862,8 +870,8 @@ fn materializeNoiseSamples(
 // hot path:
 //   when: once per simulation when a Jacobian buffer is requested
 //   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
-//   data: derivative state mask, column-major scratch views, jacobian buffer, wavelength array
-//   follow: copyJacobianColumnToScratch and Postprocess.applyChannelJacobianCorrections
+//   data: derivative state mask, state-major active-column buffer, wavelength array
+//   follow: jacobianColumn and Postprocess.applyChannelJacobianCorrections
 fn processJacobianSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -876,33 +884,39 @@ fn processJacobianSamples(
         {
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
+            const active_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
+            if (active_count == 0 or jacobian_buffer.len != setup.sample_count * active_count) return error.ShapeMismatch;
             if (!setup.uses_integrated_radiance_sampling) {
-                for (0..jacobian.state_count) |state_index| {
-                    if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
-                    copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
-                    try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
-                    copyScratchToJacobianColumn(buffers.scratch_aux, jacobian_buffer, state_index);
+                for (0..active_count) |active_index| {
+                    const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+                    if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
+                    const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                    try convolution.apply(column, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
+                    @memcpy(column, buffers.scratch_aux);
                 }
             }
-            for (0..jacobian.state_count) |state_index| {
-                if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
-                copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
+            for (0..active_count) |active_index| {
+                const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+                if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
+                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 try Postprocess.applyChannelJacobianCorrections(
                     scene,
                     .radiance,
                     setup.radiance_calibration,
                     prepared.depolarization_factor,
                     buffers.wavelengths,
-                    buffers.scratch,
+                    column,
                     buffers.scratch_aux,
                 );
-                copyScratchToJacobianColumn(buffers.scratch, jacobian_buffer, state_index);
             }
             // DECISION:
             //   Ring synthesis uses the irradiance-only basis from the current
             //   forward model, so it does not change the routed radiance Jacobian.
-            for (0..setup.sample_count) |index| {
-                summary.addJacobianRow(readJacobianRow(jacobian_buffer, index));
+            for (0..active_count) |active_index| {
+                const state = jacobian.activeStateAt(buffers.jacobian_state_mask, active_index) orelse return error.ShapeMismatch;
+                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                const state_index = jacobian.stateIndex(state);
+                for (column) |value| summary.jacobian_sum[state_index] += value;
             }
             return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
         }
@@ -1004,33 +1018,21 @@ fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
     hash.update(std.mem.asBytes(&bits));
 }
 
-fn jacobianOffset(sample_index: usize, state_index: usize) usize {
-    return sample_index * jacobian.state_count + state_index;
+fn jacobianColumn(buffer: []f64, sample_count: usize, active_index: usize) []f64 {
+    return buffer[active_index * sample_count ..][0..sample_count];
 }
 
-fn writeJacobianRow(buffer: []f64, sample_index: usize, values: jacobian.Vector) void {
-    for (0..jacobian.state_count) |state_index| {
-        buffer[jacobianOffset(sample_index, state_index)] = values[state_index];
-    }
-}
-
-fn readJacobianRow(buffer: []const f64, sample_index: usize) jacobian.Vector {
-    var values = jacobian.zero();
-    for (0..jacobian.state_count) |state_index| {
-        values[state_index] = buffer[jacobianOffset(sample_index, state_index)];
-    }
-    return values;
-}
-
-fn copyJacobianColumnToScratch(buffer: []const f64, state_index: usize, scratch: []f64) void {
-    for (scratch, 0..) |*value, sample_index| {
-        value.* = buffer[jacobianOffset(sample_index, state_index)];
-    }
-}
-
-fn copyScratchToJacobianColumn(scratch: []const f64, buffer: []f64, state_index: usize) void {
-    for (scratch, 0..) |value, sample_index| {
-        buffer[jacobianOffset(sample_index, state_index)] = value;
+fn writeJacobianSample(
+    buffer: []f64,
+    active_mask: jacobian.StateMask,
+    sample_count: usize,
+    sample_index: usize,
+    values: jacobian.Vector,
+) void {
+    const active_count = jacobian.activeStateCount(active_mask);
+    for (0..active_count) |active_index| {
+        const state = jacobian.activeStateAt(active_mask, active_index) orelse unreachable;
+        buffer[active_index * sample_count + sample_index] = values[jacobian.stateIndex(state)];
     }
 }
 

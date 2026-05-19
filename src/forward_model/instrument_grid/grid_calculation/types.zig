@@ -92,13 +92,13 @@ pub const InstrumentGridProduct = struct {
 
 // Borrowed instrument grid outputs backed by a reusable product storage.
 // layout(64-bit):
-//   size: 320 B, align: 8 B
-//   field storage: 320 B across 21 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 328 B, align: 8 B
+//   field storage: 321 B across 22 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: wavelengths, radiance, irradiance, reflectance, noise_sigma, +3 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
+//   cache span: 6 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 320 B (0.312 KiB); total also includes referenced storage above
+//   footprint: per instance = 328 B (0.320 KiB); total also includes referenced storage above
 pub const InstrumentGridProductView = struct {
     summary: InstrumentGridSummary,
     wavelengths: []const f64,
@@ -109,7 +109,11 @@ pub const InstrumentGridProductView = struct {
     radiance_noise_sigma: []const f64 = &.{},
     irradiance_noise_sigma: []const f64 = &.{},
     reflectance_noise_sigma: []const f64 = &.{},
+    // Borrowed workspace Jacobians are state-major and contain only the active
+    // derivative states. Owned products expand this back to the public row-major
+    // full-state shape.
     jacobian: ?[]const f64 = null,
+    jacobian_state_mask: jacobian.StateMask = 0,
     effective_air_mass_factor: f64,
     effective_single_scatter_albedo: f64,
     effective_temperature_k: f64,
@@ -142,7 +146,10 @@ pub const InstrumentGridProductView = struct {
         errdefer allocator.free(irradiance_noise_sigma);
         const reflectance_noise_sigma = try cloneF64Slice(allocator, self.reflectance_noise_sigma);
         errdefer allocator.free(reflectance_noise_sigma);
-        const jacobian_values = if (self.jacobian) |values| try cloneF64Slice(allocator, values) else null;
+        const jacobian_values = if (self.jacobian) |values|
+            try cloneExpandedJacobian(allocator, values, self.jacobian_state_mask, self.wavelengths.len)
+        else
+            null;
         errdefer if (jacobian_values) |values| allocator.free(values);
 
         return .{
@@ -170,6 +177,28 @@ pub const InstrumentGridProductView = struct {
         };
     }
 };
+
+fn cloneExpandedJacobian(
+    allocator: Allocator,
+    values: []const f64,
+    active_mask: jacobian.StateMask,
+    sample_count: usize,
+) ![]f64 {
+    const active_count = jacobian.activeStateCount(active_mask);
+    if (active_count == 0 or values.len != active_count * sample_count) return error.ShapeMismatch;
+
+    const expanded = try allocator.alloc(f64, sample_count * jacobian.state_count);
+    @memset(expanded, 0.0);
+    for (0..active_count) |active_index| {
+        const state = jacobian.activeStateAt(active_mask, active_index) orelse return error.ShapeMismatch;
+        const state_index = jacobian.stateIndex(state);
+        const column = values[active_index * sample_count ..][0..sample_count];
+        for (column, 0..) |value, sample_index| {
+            expanded[sample_index * jacobian.state_count + state_index] = value;
+        }
+    }
+    return expanded;
+}
 
 fn cloneF64Slice(allocator: Allocator, values: []const f64) ![]f64 {
     if (values.len == 0) return try allocator.alloc(f64, 0);

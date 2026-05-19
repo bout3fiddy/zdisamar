@@ -28,13 +28,13 @@ pub const Error =
     };
 
 // layout(64-bit):
-//   size: 272 B, align: 8 B
-//   field storage: 272 B across 17 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 280 B, align: 8 B
+//   field storage: 273 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: wavelength/product slices are always active; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
+//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
 pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
@@ -49,6 +49,7 @@ pub const Buffers = struct {
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     jacobian: ?[]f64 = null,
+    jacobian_state_mask: jacobian.StateMask = 0,
     noise_sigma: ?[]f64 = null,
     radiance_noise_sigma: ?[]f64 = null,
     irradiance_noise_sigma: ?[]f64 = null,
@@ -203,7 +204,12 @@ pub const SummaryStorage = struct {
             pseudoSphericalSampleCountHint(scene, route)
         else
             0;
-        const wants_jacobian = route.derivative_mode != .none;
+        const active_jacobian_mask = if (route.derivative_mode != .none)
+            jacobian.sanitizedMask(route.derivative_state_mask)
+        else
+            0;
+        const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
+        const wants_jacobian = active_jacobian_count != 0;
         const wants_radiance_noise = implementations.noise.materializesSigma(scene, .radiance);
         const wants_irradiance_noise = implementations.noise.materializesSigma(scene, .irradiance);
         const wants_noise = wants_radiance_noise or
@@ -242,7 +248,7 @@ pub const SummaryStorage = struct {
             self.pseudo_spherical_level_altitudes = &.{};
         }
         if (wants_jacobian) {
-            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * jacobian.state_count);
+            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
         }
         if (wants_noise) {
             try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
@@ -264,7 +270,8 @@ pub const SummaryStorage = struct {
             .pseudo_spherical_samples = if (needs_pseudo_spherical_grid) self.pseudo_spherical_samples[0..pseudo_spherical_sample_count] else &.{},
             .pseudo_spherical_level_starts = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_starts[0 .. layer_count + 1] else &.{},
             .pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_altitudes[0 .. layer_count + 1] else &.{},
-            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * jacobian.state_count] else null,
+            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * active_jacobian_count] else null,
+            .jacobian_state_mask = if (wants_jacobian) active_jacobian_mask else 0,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
             .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
             .irradiance_noise_sigma = if (wants_noise) self.irradiance_noise_sigma[0..sample_count] else null,
@@ -366,7 +373,10 @@ pub fn validateBuffers(scene: *const Scene, route: common.Route, sample_count: u
         return error.ShapeMismatch;
     }
     if (buffers.jacobian) |values| {
-        if (values.len != sample_count * jacobian.state_count) return error.ShapeMismatch;
+        const active_jacobian_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
+        if (active_jacobian_count == 0 or values.len != sample_count * active_jacobian_count) return error.ShapeMismatch;
+    } else if (buffers.jacobian_state_mask != 0) {
+        return error.ShapeMismatch;
     }
     if (buffers.noise_sigma) |noise_sigma| {
         if (noise_sigma.len != sample_count) return error.ShapeMismatch;

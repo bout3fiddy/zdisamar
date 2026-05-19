@@ -527,7 +527,7 @@ const Accumulation = struct {
     jt_invse_j: Matrix,
 };
 
-// Per-iteration projection from native RTM Jacobian columns into the OE state vector.
+// Per-iteration projection from active native RTM Jacobian columns into the OE state vector.
 // layout(64-bit):
 //   size: 48 B, align: 8 B
 //   field storage: source_index=24 B, state_scale=24 B; padding: 0 B
@@ -551,6 +551,10 @@ fn accumulateNormalSystem(
 ) !Accumulation {
     if (view.wavelengths.len != measurement.wavelength_nm.len) return error.WavelengthGridMismatch;
     const raw_jacobian = view.jacobian orelse return error.MissingJacobian;
+    const active_jacobian_count = jacobian.activeStateCount(view.jacobian_state_mask);
+    if (active_jacobian_count == 0 or raw_jacobian.len != measurement.wavelength_nm.len * active_jacobian_count) {
+        return error.MissingJacobian;
+    }
     scratch.b = algebra.zeroVector();
     scratch.g = algebra.zeroMatrix();
     scratch.jt_invse_j = algebra.zeroMatrix();
@@ -558,7 +562,8 @@ fn accumulateNormalSystem(
     for (0..state_specs.len) |index| {
         scratch.dx_white[index] = (previous[index] - prior[index]) / sqrt_sa[index];
         const spec = state_specs[index];
-        projection.source_index[index] = jacobian.stateIndex(spec.state);
+        projection.source_index[index] = jacobian.activeStateIndex(view.jacobian_state_mask, spec.state) orelse
+            return error.MissingJacobian;
         projection.state_scale[index] = if (spec.state == .aerosol_layer_mid_pressure_hpa)
             try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[index])
         else
@@ -574,7 +579,7 @@ fn accumulateNormalSystem(
         chi2_reflectance += residual * residual * inv_variance;
         const reflectance_scale = std.math.pi / (solar_mu0 * @max(view.irradiance[sample_index], 1.0e-300));
         for (0..state_specs.len) |state_index| {
-            const source_index = sample_index * jacobian.state_count + projection.source_index[state_index];
+            const source_index = projection.source_index[state_index] * measurement.wavelength_nm.len + sample_index;
             column_values[state_index] =
                 raw_jacobian[source_index] * reflectance_scale * projection.state_scale[state_index];
         }
