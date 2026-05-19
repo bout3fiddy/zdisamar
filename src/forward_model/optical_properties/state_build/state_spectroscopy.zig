@@ -52,8 +52,9 @@ pub const ProfileNodeSpectroscopyCache = struct {
             .total_values = undefined,
             .total_second = undefined,
         };
+        var wavelength_anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
         const wavelength_window = if (prepared_states != null)
-            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
+            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm, &wavelength_anchor_storage)
         else
             null;
         for (0..node_count) |index| {

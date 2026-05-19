@@ -499,8 +499,8 @@ inline fn doDouble12x10Step(
 
 fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
-    for (layers) |layer| {
-        max_index = @max(max_index, phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients));
+    for (layers) |*layer| {
+        max_index = @max(max_index, phase_functions.maxPhaseCoefficientIndex(&layer.phase_coefficients));
     }
     return max_index;
 }
@@ -515,8 +515,8 @@ pub fn fillLayerPhaseMaxIndices(
     layers: []const common.LayerInput,
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
-    for (layers, layer_phase_max_indices[0..layers.len]) |layer, *max_index| {
-        max_index.* = phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients);
+    for (layers, layer_phase_max_indices[0..layers.len]) |*layer, *max_index| {
+        max_index.* = phase_functions.maxPhaseCoefficientIndex(&layer.phase_coefficients);
     }
 }
 
@@ -532,7 +532,7 @@ pub fn fillLayerEffectiveScatteringSuffixes(
 ) void {
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
     std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
-    for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_phase_index, layer_idx| {
+    for (layers, layer_phase_max_indices[0..layers.len], 0..) |*layer, max_phase_index, layer_idx| {
         const layer_suffixes = suffixes[layer_idx * basis.max_phase_coef ..][0..basis.max_phase_coef];
         @memset(layer_suffixes, 0.0);
         var suffix: f64 = 0.0;
@@ -572,7 +572,7 @@ pub fn calcRTlayersIntoWithBasis(
     for (0..nlayer) |layer_idx| {
         Trace.plotU("layer_visits", 1);
         const rt_idx = layer_idx + 1;
-        const layer = layers[layer_idx];
+        const layer = &layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             if (rt_active) |active| active[rt_idx] = false;
@@ -580,7 +580,7 @@ pub fn calcRTlayersIntoWithBasis(
             continue;
         }
 
-        const phase_coefs = layer.phase_coefficients;
+        const phase_coefs = &layer.phase_coefficients;
         const max_phase_index = if (layer_phase_max_indices) |indices|
             indices[layer_idx]
         else

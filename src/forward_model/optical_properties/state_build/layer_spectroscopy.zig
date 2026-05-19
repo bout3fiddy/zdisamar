@@ -90,8 +90,13 @@ pub const ProfileSpectroscopyCache = struct {
             .total_second = undefined,
         };
         var wavelength_window_storage: LineListEval.StrongLineWavelengthWindow = undefined;
+        var wavelength_anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
         const wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow = if (prepared_states != null) blk: {
-            wavelength_window_storage = LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm);
+            wavelength_window_storage = LineListEval.prepareStrongLineWavelengthWindow(
+                line_list,
+                wavelength_nm,
+                &wavelength_anchor_storage,
+            );
             break :blk &wavelength_window_storage;
         } else null;
         fillProfileSpectroscopyCacheValues(

@@ -197,7 +197,7 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
 
 pub fn fillZplusZminFromBasis(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
 ) PhaseKernel {
@@ -217,7 +217,7 @@ pub fn fillZplusZminFromBasis(
 //   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
 pub fn fillZplusZminFromBasisLimited(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -304,7 +304,7 @@ pub fn fillZplusZminFromBasisLimited(
 //   follow: reflectance buildPhaseRowCache and scattering-source weighting
 pub fn fillZplusZminRowFromBasisLimited(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -387,7 +387,7 @@ pub fn fillZplusZminRowFromBasisLimited(
 
 fn fillZplusZminRowFromBasisLimited12(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -442,7 +442,7 @@ fn fillZplusZminRowFromBasisLimited12(
 
 fn fillZplusZminFromBasisLimited12(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -535,7 +535,7 @@ inline fn fillPhaseRow12(
 
 pub fn fillZplusZmin(
     i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
+    phase_coefs: *const [types.max_phase_coef]f64,
     geo: *const Geometry,
 ) PhaseKernel {
     const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);

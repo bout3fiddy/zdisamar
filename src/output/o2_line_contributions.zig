@@ -198,10 +198,12 @@ fn appendRowsForWavelength(
     const safe_temperature = @max(thermodynamic_state.temperature_k, 150.0);
     const relevant_window = LineListOps.relevantLineWindowForWavelength(line_list, wavelength_nm);
     const relevant_lines = relevant_window.lines;
+    var anchor_storage: [SpectroscopyTypes.max_strong_line_sidecars]SpectroscopyTypes.StrongLineAnchorIndex = undefined;
     const strong_line_anchors = LineListOps.selectStrongLineAnchors(
         line_list,
         relevant_lines,
         relevant_window.start_index,
+        &anchor_storage,
     );
 
     for (relevant_lines, 0..) |line, line_index| {
@@ -218,7 +220,7 @@ fn appendRowsForWavelength(
                 relevant_window.start_index,
                 line,
                 line_index,
-                &strong_line_anchors,
+                strong_line_anchors,
             ),
         );
     }
@@ -245,7 +247,7 @@ fn appendRowsForWavelength(
                     strong_lines,
                     strong_line,
                     strong_index,
-                    &strong_line_anchors,
+                    strong_line_anchors,
                     relevant_lines,
                     relevant_window.start_index,
                     &strong_state,
@@ -264,7 +266,7 @@ fn weakLineRow(
     start_index: usize,
     line: SpectroscopyLine,
     line_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]SpectroscopyTypes.StrongLineAnchorIndex,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
 ) O2LineContributionRow {
     const matched_strong_index = LineListOps.matchedStrongIndexForRelevantLine(
         line_list,
@@ -334,7 +336,7 @@ fn strongLineRow(
     strong_lines: []const SpectroscopyStrongLine,
     strong_line: SpectroscopyStrongLine,
     strong_index: usize,
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]SpectroscopyTypes.StrongLineAnchorIndex,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_state: *const Physics.StrongLineConvTPState,
@@ -393,7 +395,7 @@ fn strongLineRow(
 }
 
 fn strongAnchorLine(
-    strong_line_anchors: *const [SpectroscopyTypes.max_strong_line_sidecars]SpectroscopyTypes.StrongLineAnchorIndex,
+    strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_index: usize,

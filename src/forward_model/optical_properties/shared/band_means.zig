@@ -52,7 +52,8 @@ pub fn computeBandLineMeans(
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
         const evaluation = if (prepared_state) |*state| blk: {
-            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm);
+            var anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
+            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm, &anchor_storage);
             break :blk LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                 line_list.*,
                 wavelength_nm,

@@ -61,7 +61,7 @@ test "cached layer kernels preserve integrated reflectance when source interface
     for (0..layers.len) |layer_idx| {
         kernel_cache[layer_idx + 1] = fillZplusZminFromBasis(
             i_fourier,
-            layers[layer_idx].phase_coefficients,
+            &layers[layer_idx].phase_coefficients,
             &geo,
             &plm_basis,
         );

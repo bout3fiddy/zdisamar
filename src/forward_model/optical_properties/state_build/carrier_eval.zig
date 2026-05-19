@@ -485,16 +485,16 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
             gas_scattering_optical_depth_per_km,
             particle_above.aerosol_scattering_optical_depth_per_km,
             particle_above.cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
         .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficients(
             wavelength_nm,
             gas_scattering_optical_depth_per_km,
             particle_below.aerosol_scattering_optical_depth_per_km,
             particle_below.cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
     };
 }
@@ -551,16 +551,16 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
             gas_scattering_optical_depth_per_km,
             particle_above.aerosol_scattering_optical_depth_per_km,
             particle_above.cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
         .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
             wavelength_cache.rayleigh_phase_coefficient2,
             gas_scattering_optical_depth_per_km,
             particle_below.aerosol_scattering_optical_depth_per_km,
             particle_below.cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
     };
 }
@@ -697,8 +697,8 @@ fn fillSourceInterfaceFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_above.aerosol_scattering_optical_depth_per_km,
                 particle_above.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             )
         else
             PhaseFunctions.combinePhaseCoefficients(
@@ -706,8 +706,8 @@ fn fillSourceInterfaceFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_above.aerosol_scattering_optical_depth_per_km,
                 particle_above.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             ),
         .phase_coefficients_below = if (rayleigh_phase_coefficient2) |coefficient2|
             PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
@@ -715,8 +715,8 @@ fn fillSourceInterfaceFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_below.aerosol_scattering_optical_depth_per_km,
                 particle_below.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             )
         else
             PhaseFunctions.combinePhaseCoefficients(
@@ -724,8 +724,8 @@ fn fillSourceInterfaceFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_below.aerosol_scattering_optical_depth_per_km,
                 particle_below.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             ),
     };
 }
@@ -854,8 +854,8 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_above.aerosol_scattering_optical_depth_per_km,
                 particle_above.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             )
         else
             PhaseFunctions.combinePhaseCoefficients(
@@ -863,8 +863,8 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
                 gas_scattering_optical_depth_per_km,
                 particle_above.aerosol_scattering_optical_depth_per_km,
                 particle_above.cloud_scattering_optical_depth_per_km,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             ),
         .aerosol_ksca_above_per_km = particle_above.aerosol_scattering_optical_depth_per_km,
         .aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
@@ -1004,8 +1004,8 @@ fn composeSharedActiveCarrier(
             gas_carrier.gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
     };
 }
@@ -1442,8 +1442,8 @@ fn sharedOpticalCarrierFromScalars(
             scalars.gas_scattering_optical_depth_per_km,
             scalars.aerosol_scattering_optical_depth_per_km,
             scalars.cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
     };
 }
@@ -1612,8 +1612,8 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
             gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         ),
     };
 }

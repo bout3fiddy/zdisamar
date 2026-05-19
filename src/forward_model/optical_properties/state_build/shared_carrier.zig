@@ -109,8 +109,8 @@ fn accumulateSharedScalars(
     scalars: *const carrier_eval.SharedOpticalScalars,
     weight_km: f64,
     rayleigh_phase_coefficient2: f64,
-    aerosol_phase_coefficients: [phase_coefficient_count]f64,
-    cloud_phase_coefficients: [phase_coefficient_count]f64,
+    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
+    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) void {
     const weighted_gas_absorption = scalars.gas_absorption_optical_depth_per_km * weight_km;
     const weighted_gas_scattering = scalars.gas_scattering_optical_depth_per_km * weight_km;
@@ -360,8 +360,8 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
             scalars,
             weight_km,
             wavelength_cache.rayleigh_phase_coefficient2,
-            self.aerosol_phase_coefficients,
-            self.cloud_phase_coefficients,
+            &self.aerosol_phase_coefficients,
+            &self.cloud_phase_coefficients,
         );
     }
     return evaluatedLayerFromSharedCarrier(
@@ -408,8 +408,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
                 scalars,
                 weight_km,
                 wavelength_cache.rayleigh_phase_coefficient2,
-                self.aerosol_phase_coefficients,
-                self.cloud_phase_coefficients,
+                &self.aerosol_phase_coefficients,
+                &self.cloud_phase_coefficients,
             );
         }
     }

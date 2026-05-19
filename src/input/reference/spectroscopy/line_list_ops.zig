@@ -321,14 +321,18 @@ pub fn selectStrongLineAnchors(
     self: SpectroscopyLineList,
     relevant_lines: []const Types.SpectroscopyLine,
     start_index: usize,
-) [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex {
-    var anchors = [_]Types.StrongLineAnchorIndex{Types.missing_strong_line_anchor_index} ** Types.max_strong_line_sidecars;
-    const strong_lines = self.strong_lines orelse return anchors;
-    if (usesVendorStrongLinePartition(self)) return anchors;
+    anchor_storage: []Types.StrongLineAnchorIndex,
+) []const Types.StrongLineAnchorIndex {
+    const strong_lines = self.strong_lines orelse return &.{};
+    if (usesVendorStrongLinePartition(self)) return &.{};
+    const anchor_count = @min(strong_lines.len, @min(anchor_storage.len, Types.max_strong_line_sidecars));
+    const anchors = anchor_storage[0..anchor_count];
+    @memset(anchors, Types.missing_strong_line_anchor_index);
 
     var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     for (relevant_lines, 0..) |line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
+        if (strong_index >= anchors.len) continue;
         if (line_index > std.math.maxInt(Types.StrongLineAnchorIndex)) continue;
         const delta = @abs(strong_lines[strong_index].center_wavelength_nm - line.center_wavelength_nm);
         if (delta > deltas[strong_index]) continue;
@@ -372,7 +376,7 @@ pub fn shouldExcludeWeakLine(
     start_index: usize,
     line: Types.SpectroscopyLine,
     line_index: usize,
-    strong_line_anchors: *const [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex,
+    strong_line_anchors: []const Types.StrongLineAnchorIndex,
 ) bool {
     if (usesVendorStrongLinePartition(self)) {
         if (self.preserve_anchor_weak_lines) return false;
@@ -381,6 +385,7 @@ pub fn shouldExcludeWeakLine(
     }
     const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse return false;
     if (self.preserve_anchor_weak_lines) return false;
+    if (strong_index >= strong_line_anchors.len) return false;
     if (strong_line_anchors[strong_index] == Types.missing_strong_line_anchor_index) return false;
     return @as(usize, @intCast(strong_line_anchors[strong_index])) == line_index;
 }

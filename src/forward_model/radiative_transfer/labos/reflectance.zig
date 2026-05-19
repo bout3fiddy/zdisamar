@@ -31,15 +31,15 @@ const PhaseRowCache = struct {
 };
 
 // layout(64-bit):
-//   size: 1216 B, align: 8 B
-//   field storage: coefficients=1208 B, max_index=8 B; padding: 0 B (0 bits)
+//   size: 16 B, align: 8 B
+//   field storage: coefficients=8 B, max_index=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: coefficients:[151]f64=1208 B
-//   cache span: 19 cache line(s) at 64 B per line
+//   out-of-line: coefficients points at prepared phase storage; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1216 B (1.188 KiB); total = per instance * live instance count
+//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 const UnitPhase = struct {
-    coefficients: [basis.max_phase_coef]f64,
+    coefficients: *const [basis.max_phase_coef]f64,
     max_index: usize,
 };
 
@@ -56,18 +56,18 @@ const ScatteringSourceRowSums = struct {
     pplusmin_u: f64,
 };
 
-fn sourceInterfaceAtLevel(
+fn sourceInterfaceAtLevelPtr(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
     ilevel: usize,
-) common.SourceInterfaceInput {
+) ?*const common.SourceInterfaceInput {
     if (source_interfaces.len == layers.len + 1 and ilevel < source_interfaces.len) {
-        return source_interfaces[ilevel];
+        return &source_interfaces[ilevel];
     }
-    return common.sourceInterfaceFromLayers(layers, ilevel);
+    return null;
 }
 
-fn maxPhaseCoefficientIndex(phase_coefficients: [basis.max_phase_coef]f64) usize {
+fn maxPhaseCoefficientIndex(phase_coefficients: *const [basis.max_phase_coef]f64) usize {
     var max_index: usize = 0;
     for (1..basis.max_phase_coef) |idx| {
         if (@abs(phase_coefficients[idx]) > 1.0e-12) {
@@ -82,9 +82,13 @@ fn maxInterfacePhaseCoefficientIndex(
     source_interfaces: []const common.SourceInterfaceInput,
     ilevel: usize,
 ) usize {
-    const source_interface = sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
-    const above_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_above);
-    const below_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_below);
+    var fallback_source_interface: common.SourceInterfaceInput = undefined;
+    const source_interface = sourceInterfaceAtLevelPtr(layers, source_interfaces, ilevel) orelse blk: {
+        fallback_source_interface = common.sourceInterfaceFromLayers(layers, ilevel);
+        break :blk &fallback_source_interface;
+    };
+    const above_max = maxPhaseCoefficientIndex(&source_interface.phase_coefficients_above);
+    const below_max = maxPhaseCoefficientIndex(&source_interface.phase_coefficients_below);
     if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return @max(above_max, below_max);
     return @max(above_max, below_max);
 }
@@ -94,11 +98,11 @@ fn adjacentLayerPhaseCoefficientIndex(
     ilevel: usize,
 ) usize {
     if (layers.len == 0) return 0;
-    if (ilevel == 0) return maxPhaseCoefficientIndex(layers[0].phase_coefficients);
-    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(layers[layers.len - 1].phase_coefficients);
+    if (ilevel == 0) return maxPhaseCoefficientIndex(&layers[0].phase_coefficients);
+    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(&layers[layers.len - 1].phase_coefficients);
     return @max(
-        maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients),
-        maxPhaseCoefficientIndex(layers[ilevel].phase_coefficients),
+        maxPhaseCoefficientIndex(&layers[ilevel - 1].phase_coefficients),
+        maxPhaseCoefficientIndex(&layers[ilevel].phase_coefficients),
     );
 }
 
@@ -125,7 +129,7 @@ pub fn fillAdjacentLayerPhaseMaxIndices(
 
 fn reuseLayerKernelIndex(
     layers: []const common.LayerInput,
-    source_interface: common.SourceInterfaceInput,
+    source_interface: *const common.SourceInterfaceInput,
     ilevel: usize,
 ) ?usize {
     if (layers.len == 0) return null;
@@ -213,30 +217,31 @@ pub fn calcIntegratedReflectanceWithBasis(
     const use_rtm_quadrature = rtm_quadrature.isValidFor(layers.len);
 
     for (0..end_level + 1) |ilevel| {
-        // DECISION:
-        //   Prefer the quadrature carrier when it is aligned with the layer
-        //   grid; otherwise fall back to the source-interface contract.
+        var fallback_source_interface: common.SourceInterfaceInput = undefined;
         const source_interface = if (use_rtm_quadrature)
-            common.SourceInterfaceInput{}
+            null
         else
-            sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
+            sourceInterfaceAtLevelPtr(layers, source_interfaces, ilevel) orelse blk: {
+                fallback_source_interface = common.sourceInterfaceFromLayers(layers, ilevel);
+                break :blk &fallback_source_interface;
+            };
         const source_rtm_weight = if (use_rtm_quadrature)
             rtm_quadrature.levels[ilevel].weight
-        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
-            source_interface.rtm_weight
+        else if (source_interface.?.rtm_weight > 0.0 and source_interface.?.ksca_above > 0.0)
+            source_interface.?.rtm_weight
         else
-            source_interface.source_weight;
+            source_interface.?.source_weight;
         const source_ksca = if (use_rtm_quadrature)
             rtm_quadrature.levels[ilevel].ksca
-        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
-            source_interface.ksca_above
+        else if (source_interface.?.rtm_weight > 0.0 and source_interface.?.ksca_above > 0.0)
+            source_interface.?.ksca_above
         else
             1.0;
         if (source_rtm_weight <= 0.0 or source_ksca <= 0.0) continue;
         const phase_coefficients = if (use_rtm_quadrature)
-            rtm_quadrature.levels[ilevel].phase_coefficients
+            &rtm_quadrature.levels[ilevel].phase_coefficients
         else
-            source_interface.phase_coefficients_above;
+            &source_interface.?.phase_coefficients_above;
         const source_max_phase_index = if (adjacent_layer_phase_max_indices) |indices|
             indices[ilevel]
         else if (use_rtm_quadrature or layers.len != 0)
@@ -254,7 +259,7 @@ pub fn calcIntegratedReflectanceWithBasis(
         var computed_row: basis.PhaseKernelRow = undefined;
         const phase_rows: PhaseRows = blk: {
             if (!use_rtm_quadrature) {
-                if (reuseLayerKernelIndex(layers, source_interface, ilevel)) |above_index| {
+                if (reuseLayerKernelIndex(layers, source_interface.?, ilevel)) |above_index| {
                     if (layer_phase_kernel_cache) |cache| {
                         if (layer_phase_kernel_valid) |valid| {
                             const cache_index = above_index + 1;
@@ -376,7 +381,7 @@ fn absorptionInterfaceWeighting(
 }
 
 inline fn scatteringSourceRowSums(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    scaled_phase_coefficients: *const [basis.max_phase_coef]f64,
     max_phase_index: usize,
     level: *const basis.UDField,
     i_fourier: usize,
@@ -424,7 +429,7 @@ inline fn scatteringSourceRowSums(
 //   data: phase row cache, source row sums, Gauss weights, derivative output row
 //   follow: scatteringSourceWeightingFromPhaseRows and buildPhaseRowCache
 fn scatteringSourceWeightingFromScaledPhase(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    scaled_phase_coefficients: *const [basis.max_phase_coef]f64,
     max_phase_index: usize,
     ud: []const basis.UDField,
     ilevel: usize,
@@ -464,7 +469,7 @@ fn scatteringSourceWeightingFromScaledPhase(
 }
 
 fn aerosolInterfaceWeightingFromScaledPhase(
-    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    scaled_phase_coefficients: *const [basis.max_phase_coef]f64,
     ud: []const basis.UDField,
     ilevel: usize,
     i_fourier: usize,
@@ -517,7 +522,7 @@ fn activeAerosolInteriorBounds(
 fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
     var aerosol_optical_depth: f64 = 0.0;
     var aerosol_scattering_optical_depth: f64 = 0.0;
-    for (layers) |layer| {
+    for (layers) |*layer| {
         aerosol_optical_depth += @max(layer.aerosol_optical_depth, 0.0);
         aerosol_scattering_optical_depth += @max(layer.aerosol_scattering_optical_depth, 0.0);
     }
@@ -526,7 +531,7 @@ fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
 }
 
 fn unitAerosolPhase(rtm_quadrature: common.RtmQuadratureGrid) ?UnitPhase {
-    const coefficients = rtm_quadrature.aerosol_phase_coefficients.*;
+    const coefficients = rtm_quadrature.aerosol_phase_coefficients;
     if (coefficients[0] <= 0.0) return null;
     return .{
         .coefficients = coefficients,
@@ -550,7 +555,7 @@ fn commonActiveAerosolUnitPhase(
 //   data: phase coefficients, phase basis, geometry, phase row cache output
 //   follow: scatteringSourceWeightingFromPhaseRows and calcIntegratedReflectanceWithBasis
 fn buildPhaseRowCache(
-    phase_coefficients: [basis.max_phase_coef]f64,
+    phase_coefficients: *const [basis.max_phase_coef]f64,
     max_phase_index: usize,
     i_fourier: usize,
     geo: *const basis.Geometry,
@@ -833,7 +838,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
     var weighting: f64 = 0.0;
     const unit_phase = unitAerosolPhase(rtm_quadrature) orelse return 0.0;
     for (0..end_level + 1) |ilevel| {
-        const level = rtm_quadrature.levels[ilevel];
+        const level = &rtm_quadrature.levels[ilevel];
         if (level.weight <= 0.0) continue;
         const d_sca_d_tau = level.aerosol_ksca_jacobian;
         if (d_sca_d_tau == 0.0) continue;
@@ -927,32 +932,32 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
-    for (layers) |layer| total += @max(layer.scattering_optical_depth, 0.0);
+    for (layers) |*layer| total += @max(layer.scattering_optical_depth, 0.0);
     return total;
 }
 
 fn maxFourierIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
-    for (layers) |layer| {
-        max_index = @max(max_index, maxPhaseCoefficientIndex(layer.phase_coefficients));
+    for (layers) |*layer| {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(&layer.phase_coefficients));
     }
     return max_index;
 }
 
 fn maxFourierIndexInterfaces(source_interfaces: []const common.SourceInterfaceInput) usize {
     var max_index: usize = 0;
-    for (source_interfaces) |source_interface| {
-        max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_above));
-        max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_below));
+    for (source_interfaces) |*source_interface| {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(&source_interface.phase_coefficients_above));
+        max_index = @max(max_index, maxPhaseCoefficientIndex(&source_interface.phase_coefficients_below));
     }
     return max_index;
 }
 
 fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
     var max_index: usize = 0;
-    for (rtm_quadrature.levels) |level| {
+    for (rtm_quadrature.levels) |*level| {
         if (level.weight <= 0.0 or level.ksca <= 0.0) continue;
-        max_index = @max(max_index, maxPhaseCoefficientIndex(level.phase_coefficients));
+        max_index = @max(max_index, maxPhaseCoefficientIndex(&level.phase_coefficients));
     }
     return max_index;
 }

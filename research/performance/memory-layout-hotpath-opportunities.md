@@ -1612,6 +1612,147 @@ Conclusion:
 - this is worth keeping because it reduces prepare-time cache footprint and
   derivative workspace while preserving benchmark residuals
 
+### Experiment 26: move strong-line anchor storage out of the window descriptor
+
+Changed:
+- `StrongLineWavelengthWindow` now stores an anchor slice instead of an inline
+  `[128]StrongLineAnchorIndex`
+- callers provide request-local anchor scratch only where a strong-line window
+  is prepared
+- diagnostic O2 line contribution expansion uses the same slice-based anchor
+  contract as the spectroscopy hot path
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `StrongLineWavelengthWindow` | 536 B | 40 B | -496 B (-92.54%) |
+| inline anchor payload in window | 512 B | 0 B | -512 B |
+| anchor descriptor in window | 0 B | 16 B | +16 B |
+| caller scratch where anchors are needed | included in window | 512 B side scratch | same active storage, lower descriptor copy |
+
+Interpretation:
+- this is not a retained multi-megabyte win because non-vendor strong-line
+  paths still need the 128-entry anchor scratch
+- the useful change is that the window descriptor no longer copies or returns a
+  512 B inline anchor payload when it is passed around
+- vendor strong-line partition paths now carry an empty anchor slice and do not
+  initialize anchor entries
+- this was kept as a small cleanup, not counted as the large memory-layout win
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `28e450d6e0f54474b1f72a892bada2cf`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi` and the
+  plotting worktree `ruff server` were present
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.995434 s | 0.996798 s | 1.0014 |
+| forward session setup | 0.717953 s | 0.716234 s | 0.9976 |
+| forward session cached median | 0.285699 s | 0.286249 s | 1.0019 |
+| forward fast four-scene median | 4.826326 s | 4.824771 s | 0.9997 |
+| OE session retrieval median | 1.202613 s | 1.200702 s | 0.9984 |
+| OE fast retrieval median | 0.931660 s | 0.932937 s | 1.0014 |
+| OE sweep session total wall | 20.496456 s | 20.542370 s | 1.0022 |
+| OE sweep fast total wall | 11.207220 s | 11.227811 s | 1.0018 |
+
+Conclusion:
+- this removes an oversized value payload from the window descriptor but does
+  not materially reduce retained memory because the scratch still exists where
+  anchor selection is active
+- the benchmark boundary is effectively neutral, with small differences inside
+  normal run noise
+- this experiment helped expose the larger next target: phase and interface
+  value copies in LABOS and optical-property phase helpers
+
+### Experiment 27: pass phase rows and source interfaces by reference in hot paths
+
+Changed:
+- LABOS phase-basis builders now receive `*const [151]f64` instead of copying a
+  full phase coefficient array into each call
+- `calcIntegratedReflectanceWithBasis` reads source interfaces by pointer on
+  the normal prefilled-interface path instead of returning a 2,472 B row by value
+- layer/Fourier loops and phase-signature probes read `LayerInput` rows by
+  pointer where they only inspect fields
+- optical phase-combination helpers receive prepared aerosol/cloud phase arrays
+  by pointer, while still returning the final combined phase row for the
+  destination row
+- `UnitPhase` now stores a pointer to prepared aerosol phase coefficients
+  instead of copying a full `[151]f64` payload into the optional value
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| phase coefficient argument | 1,208 B array copy | 8 B pointer | -1,200 B per call |
+| `combinePhaseCoefficients*` particle inputs | 2,416 B copied args | 16 B pointer args | -2,400 B per call |
+| `SourceInterfaceInput` hot lookup | 2,472 B row copy | 8 B pointer | -2,464 B per level lookup |
+| `LayerInput` layer/Fourier local | 1,376 B row copy | 8 B pointer | -1,368 B per layer visit |
+| phase-signature argument | 1,208 B array copy | 8 B pointer | -1,200 B per layer signature |
+| `UnitPhase` | 1,216 B | 16 B | -1,200 B (-98.68%) |
+
+Interpretation:
+- this does not change the retained `LayerInput`, `SourceInterfaceInput`, or
+  `RtmQuadratureLevel` layouts; it removes repeated value copies while the same
+  rows remain the authoritative storage
+- the largest traffic removals are in LABOS phase matrix/row construction,
+  integrated reflectance source loops, and optical-property phase combination
+  helpers
+- this is a better first step than side-storing phase rows because it improves
+  locality without adding pointer chasing to the phase arrays already stored in
+  the hot row buffers
+- the fallback route that synthesizes a source interface from layers still
+  creates a local row, but the normal filled-interface route is pointer-only
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `8309a49317014d52bc8cbae1bcece216`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after timing; only idle `takopi` and the
+  plotting worktree `ruff server` were present
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against Experiment 26:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 148.226725 s | 146.417382 s | 0.9878 |
+| total benchmark CPU | 286.150883 s | 282.591216 s | 0.9876 |
+| forward no-session median | 0.996798 s | 0.989707 s | 0.9929 |
+| forward session setup | 0.716234 s | 0.713116 s | 0.9956 |
+| forward session cached median | 0.286249 s | 0.283051 s | 0.9888 |
+| forward fast four-scene median | 4.824771 s | 4.769943 s | 0.9886 |
+| OE session retrieval median | 1.200702 s | 1.189757 s | 0.9909 |
+| OE fast retrieval median | 0.932937 s | 0.922561 s | 0.9889 |
+| OE sweep session total wall | 20.542370 s | 20.143692 s | 0.9806 |
+| OE sweep fast total wall | 11.227811 s | 11.098399 s | 0.9885 |
+
+Conclusion:
+- this removes repeated 1.2 KiB to 2.4 KiB value copies from the LABOS and
+  optical-property phase hot paths without changing scientific outputs
+- the retained benchmark is faster across every tracked timing row by roughly
+  0.4% to 1.9%, with total wall and CPU down about 1.2%
+- this is worth keeping and is a better next base than immediately side-storing
+  phase rows because it gives a clean speed win while preserving the current
+  dense phase-row consumer layout
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1795,7 +1936,7 @@ Relevant layout facts:
 | `ProfileSpectroscopyCache` | 3,096 B | six `[64]f64` arrays | 0 |
 | `ProfileNodeSpectroscopyCache` | 1,032 B | total values + second derivatives | 0 |
 | `ProfileCacheValueWorker` | 288 B | `SpectroscopyLineList` descriptor | 0 |
-| `StrongLineWavelengthWindow` | 1,048 B | fixed anchor payload | 0 |
+| `StrongLineWavelengthWindow` | 40 B | line window slices + anchor slice | 0 |
 
 Memory access shape:
 - the layer-preparation profile cache stores line, line-mixing, total, and the
@@ -1805,6 +1946,8 @@ Memory access shape:
   arrays are more valuable for diagnostics, validation, or derivative-specific
   paths
 - worker structs carry a pointer to the request-local wavelength window
+- strong-line anchor storage is now caller-owned scratch; the window itself is
+  only a line slice, start index, and anchor slice descriptor
 
 Potential direction:
 - route plain forward execution through the total-only cache where breakdown

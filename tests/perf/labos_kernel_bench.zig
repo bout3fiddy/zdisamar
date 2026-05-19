@@ -238,7 +238,7 @@ fn benchPhaseFill(
 ) labos.PhaseKernel {
     return labos.fillZplusZminFromBasisLimited(
         0,
-        phase_coefs.*,
+        phase_coefs,
         phase_scan_max,
         geo,
         plm_basis,

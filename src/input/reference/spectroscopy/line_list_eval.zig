@@ -10,18 +10,17 @@ const Types = @import("types.zig");
 const SpectroscopyLineList = LineList.SpectroscopyLineList;
 
 // layout(64-bit):
-//   size: 536 B, align: 8 B
-//   field storage: lines=16 B, start_index=8 B, anchors=512 B; padding: 0 B (0 bits)
+//   size: 40 B, align: 8 B
+//   field storage: lines=16 B, start_index=8 B, anchors=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: anchors:[128]StrongLineAnchorIndex=512 B
-//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   cache span: 9 cache line(s) at 64 B per line
+//   out-of-line: lines and anchors carry slice descriptors; referenced storage is not included in size
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 536 B (0.523 KiB); total also includes referenced storage above
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const StrongLineWavelengthWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,
-    anchors: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex,
+    anchors: []const Types.StrongLineAnchorIndex,
 };
 
 // hot path:
@@ -124,14 +123,20 @@ pub fn totalSigmaWithStrongLineSidecars(
     );
     const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
     const relevant_lines = relevant_window.lines;
-    const strong_line_anchors = Ops.selectStrongLineAnchors(self, relevant_lines, relevant_window.start_index);
+    var anchor_storage: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex = undefined;
+    const strong_line_anchors = Ops.selectStrongLineAnchors(
+        self,
+        relevant_lines,
+        relevant_window.start_index,
+        &anchor_storage,
+    );
 
     var weak_line_sigma: f64 = 0.0;
     var strong_line_sigma: f64 = 0.0;
     var line_mixing_sigma: f64 = 0.0;
 
     for (relevant_lines, 0..) |line, line_index| {
-        if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, &strong_line_anchors)) continue;
+        if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, strong_line_anchors)) continue;
         const contribution = Physics.weakLineContribution(
             wavelength_nm,
             line,
@@ -176,7 +181,8 @@ pub fn totalSigmaWithPreparedStrongLineState(
 ) Types.SpectroscopyEvaluation {
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
-    const window = prepareStrongLineWavelengthWindow(self, wavelength_nm);
+    var anchor_storage: [Types.max_strong_line_sidecars]Types.StrongLineAnchorIndex = undefined;
+    const window = prepareStrongLineWavelengthWindow(self, wavelength_nm, &anchor_storage);
     return totalSigmaWithPreparedStrongLineStateAndWindow(
         self,
         wavelength_nm,
@@ -191,12 +197,18 @@ pub fn totalSigmaWithPreparedStrongLineState(
 pub fn prepareStrongLineWavelengthWindow(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
+    anchor_storage: []Types.StrongLineAnchorIndex,
 ) StrongLineWavelengthWindow {
     const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
     return .{
         .lines = relevant_window.lines,
         .start_index = relevant_window.start_index,
-        .anchors = Ops.selectStrongLineAnchors(self, relevant_window.lines, relevant_window.start_index),
+        .anchors = Ops.selectStrongLineAnchors(
+            self,
+            relevant_window.lines,
+            relevant_window.start_index,
+            anchor_storage,
+        ),
     };
 }
 
@@ -247,7 +259,7 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
         if (vendor_weak_exclusions) |matches| {
             const global_index = window.start_index + line_index;
             if (global_index < matches.len and matches[global_index] != null) continue;
-        } else if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, &window.anchors)) continue;
+        } else if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, window.anchors)) continue;
         if (weak_line_states) |states| {
             weak_line_sigma += Physics.weakLineSigmaPreparedWithStimulatedEmissionScale(
                 weak_line_wavelength_state,
