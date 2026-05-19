@@ -3430,6 +3430,67 @@ Conclusion:
   store traffic and residual-safe route specialization rather than retained
   struct-size reduction
 
+### Experiment 52: reject no-derivative RTM aerosol split-field gating
+
+Changed:
+- temporarily gated `RtmQuadratureLevel.aerosol_ksca_above_per_km` and
+  `aerosol_ksca_below_per_km` writes on `compute_jacobian`
+- no-derivative routes still wrote `altitude_km`, `weight`, `ksca`, and phase
+  mixture weights because integrated-source transport reads those fields
+- derivative routes kept the split aerosol fields current for optical-depth and
+  pressure-shift weighting
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| no-derivative RTM aerosol split stores | 16 B/level row | 0 B/level row | -16 B/level row |
+| current 117-level O2 A RTM grid | 1,872 B/pass | 0 B/pass | -1.83 KiB/pass |
+| current 701-miss no-session forward solve lower bound | 1,312,272 B | 0 B | -1.25 MiB/write traffic |
+| 10 no-session benchmark repeats lower bound | 13,122,720 B | 0 B | -12.52 MiB/write traffic |
+
+Interpretation:
+- this was a memory-traffic-only experiment; `RtmQuadratureLevel` stayed 72 B
+- the removed stores target fields that no-derivative transport does not read
+- unlike Experiment 51, the lower-bound traffic reduction is much smaller and
+  did not show a corresponding latency improvement
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `55ab45a7c6244f3f873af52d598dfc95`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 51:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.029479 s | 140.370552 s | 1.0024 |
+| total benchmark CPU | 270.156206 s | 270.553770 s | 1.0015 |
+| peak RSS high-water mark | 78.75 MiB | 82.39 MiB | 1.0462 |
+| forward no-session median | 0.954903 s | 0.959925 s | 1.0053 |
+| forward session cached median | 0.254594 s | 0.256391 s | 1.0071 |
+| forward fast four-scene median | 4.620401 s | 4.622826 s | 1.0005 |
+| OE session retrieval median | 1.073463 s | 1.074707 s | 1.0012 |
+| OE fast retrieval median | 0.830158 s | 0.831543 s | 1.0017 |
+| OE sweep session total wall | 19.275704 s | 19.298489 s | 1.0012 |
+| OE sweep fast total wall | 10.550308 s | 10.547082 s | 0.9997 |
+
+Conclusion:
+- rejected and reverted
+- correctness was unchanged, but the forward medians and total benchmark wall
+  moved slightly slower on the retained benchmark boundary
+- the traffic reduction is too small to justify keeping a change that does not
+  improve latency; larger traffic cuts or direct latency wins remain higher
+  priority
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
