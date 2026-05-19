@@ -15,6 +15,37 @@ const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
 
 // layout(64-bit):
+//   size: 56 B, align: 8 B
+//   field storage: 56 B across 7 fields; largest: gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B, cia_optical_depth_per_km=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+pub const SharedOpticalScalars = struct {
+    gas_absorption_optical_depth_per_km: f64 = 0.0,
+    gas_scattering_optical_depth_per_km: f64 = 0.0,
+    cia_optical_depth_per_km: f64 = 0.0,
+    aerosol_optical_depth_per_km: f64 = 0.0,
+    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
+    cloud_optical_depth_per_km: f64 = 0.0,
+    cloud_scattering_optical_depth_per_km: f64 = 0.0,
+
+    pub fn totalScatteringOpticalDepthPerKm(self: SharedOpticalScalars) f64 {
+        return self.gas_scattering_optical_depth_per_km +
+            self.aerosol_scattering_optical_depth_per_km +
+            self.cloud_scattering_optical_depth_per_km;
+    }
+
+    pub fn totalOpticalDepthPerKm(self: SharedOpticalScalars) f64 {
+        return self.gas_absorption_optical_depth_per_km +
+            self.gas_scattering_optical_depth_per_km +
+            self.cia_optical_depth_per_km +
+            self.aerosol_optical_depth_per_km +
+            self.cloud_optical_depth_per_km;
+    }
+};
+
+// layout(64-bit):
 //   size: 1264 B, align: 8 B
 //   field storage: 1264 B across 8 fields; largest: phase_coefficients=1208 B, gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
@@ -33,37 +64,43 @@ pub const SharedOpticalCarrier = struct {
     phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
 
     pub fn totalScatteringOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
-        return self.gas_scattering_optical_depth_per_km +
-            self.aerosol_scattering_optical_depth_per_km +
-            self.cloud_scattering_optical_depth_per_km;
+        return self.scalars().totalScatteringOpticalDepthPerKm();
     }
 
     pub fn totalOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
-        return self.gas_absorption_optical_depth_per_km +
-            self.gas_scattering_optical_depth_per_km +
-            self.cia_optical_depth_per_km +
-            self.aerosol_optical_depth_per_km +
-            self.cloud_optical_depth_per_km;
+        return self.scalars().totalOpticalDepthPerKm();
+    }
+
+    pub fn scalars(self: SharedOpticalCarrier) SharedOpticalScalars {
+        return .{
+            .gas_absorption_optical_depth_per_km = self.gas_absorption_optical_depth_per_km,
+            .gas_scattering_optical_depth_per_km = self.gas_scattering_optical_depth_per_km,
+            .cia_optical_depth_per_km = self.cia_optical_depth_per_km,
+            .aerosol_optical_depth_per_km = self.aerosol_optical_depth_per_km,
+            .aerosol_scattering_optical_depth_per_km = self.aerosol_scattering_optical_depth_per_km,
+            .cloud_optical_depth_per_km = self.cloud_optical_depth_per_km,
+            .cloud_scattering_optical_depth_per_km = self.cloud_scattering_optical_depth_per_km,
+        };
     }
 };
 
 // hot path:
 //   when: once per high-resolution wavelength and reused across layer/source passes
-//   work: memoizes support-row optical carriers for the current wavelength
-//   data: valid-bit slice, carrier slice, prepared state, profile spectroscopy cache
-//   follow: cachedSupportRowRef and fills from shared support-row carrier functions
+//   work: memoizes support-row optical-depth scalars for the current wavelength
+//   data: valid-bit slice, scalar carrier slice, prepared state, profile spectroscopy cache
+//   follow: cachedSupportRowScalarsRef; full carriers are rebuilt only for callers that need phase rows
 // layout(64-bit):
 //   size: 120 B, align: 8 B
-//   field storage: 120 B across 8 fields; largest: cia_coefficients=40 B, support_row_valid=16 B, support_row_carriers=16 B; padding: 0 B (0 bits)
+//   field storage: 120 B across 8 fields; largest: cia_coefficients=40 B, support_row_valid=16 B, support_row_scalars=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: profile_cache, support_row_valid, support_row_carriers carry references/descriptors; referenced storage is not included in size
+//   out-of-line: profile_cache, support_row_valid, support_row_scalars carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 120 B (0.117 KiB); total also includes referenced storage above
 pub const WavelengthCarrierCache = struct {
     profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     support_row_valid: []bool,
-    support_row_carriers: []SharedOpticalCarrier,
+    support_row_scalars: []SharedOpticalScalars,
     continuum_sigma: f64,
     cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
@@ -74,7 +111,7 @@ pub const WavelengthCarrierCache = struct {
         prepared: *const State.PreparedOpticalState,
         wavelength_nm: f64,
         support_row_valid: []bool,
-        support_row_carriers: []SharedOpticalCarrier,
+        support_row_scalars: []SharedOpticalScalars,
         profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     ) WavelengthCarrierCache {
         @memset(support_row_valid, false);
@@ -82,7 +119,7 @@ pub const WavelengthCarrierCache = struct {
         return .{
             .profile_cache = profile_cache,
             .support_row_valid = support_row_valid,
-            .support_row_carriers = support_row_carriers,
+            .support_row_scalars = support_row_scalars,
             .continuum_sigma = if (prepared.cross_section_absorbers.len == 0)
                 continuum_table.interpolateSigma(wavelength_nm)
             else
@@ -102,30 +139,35 @@ pub const WavelengthCarrierCache = struct {
         global_sublayer_index: usize,
         strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
     ) SharedOpticalCarrier {
-        var fallback: SharedOpticalCarrier = undefined;
-        return self.cachedSupportRowRef(
+        var fallback: SharedOpticalScalars = undefined;
+        const scalars = self.cachedSupportRowScalarsRef(
             prepared,
             wavelength_nm,
             sublayer,
             global_sublayer_index,
             strong_line_state,
             &fallback,
-        ).*;
+        );
+        return sharedOpticalCarrierFromScalars(
+            prepared,
+            self.rayleigh_phase_coefficient2,
+            scalars.*,
+        );
     }
 
-    pub fn cachedSupportRowRef(
+    pub fn cachedSupportRowScalarsRef(
         self: *WavelengthCarrierCache,
         prepared: *const State.PreparedOpticalState,
         wavelength_nm: f64,
         sublayer: PreparedSublayer,
         global_sublayer_index: usize,
         strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
-        fallback: *SharedOpticalCarrier,
-    ) *const SharedOpticalCarrier {
+        fallback: *SharedOpticalScalars,
+    ) *const SharedOpticalScalars {
         if (global_sublayer_index >= self.support_row_valid.len or
-            global_sublayer_index >= self.support_row_carriers.len)
+            global_sublayer_index >= self.support_row_scalars.len)
         {
-            fallback.* = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+            fallback.* = sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
                 prepared,
                 wavelength_nm,
                 sublayer,
@@ -136,8 +178,8 @@ pub const WavelengthCarrierCache = struct {
             return fallback;
         }
         if (!self.support_row_valid[global_sublayer_index]) {
-            fillSharedOpticalCarrierAtSupportRowWithScalarCache(
-                &self.support_row_carriers[global_sublayer_index],
+            fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+                &self.support_row_scalars[global_sublayer_index],
                 prepared,
                 wavelength_nm,
                 sublayer,
@@ -147,12 +189,11 @@ pub const WavelengthCarrierCache = struct {
                 self.continuum_sigma,
                 self.cia_coefficients,
                 self.rayleigh_cross_section_cm2,
-                self.rayleigh_phase_coefficient2,
                 self.particle_scales,
             );
             self.support_row_valid[global_sublayer_index] = true;
         }
-        return &self.support_row_carriers[global_sublayer_index];
+        return &self.support_row_scalars[global_sublayer_index];
     }
 };
 
@@ -477,8 +518,8 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
         if (boundary_row_index < states.len) &states[boundary_row_index] else null
     else
         null;
-    var fallback_gas_carrier: SharedOpticalCarrier = undefined;
-    const gas_carrier = wavelength_cache.cachedSupportRowRef(
+    var fallback_gas_carrier: SharedOpticalScalars = undefined;
+    const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
         wavelength_nm,
         sublayers[boundary_row_index],
@@ -599,8 +640,8 @@ pub fn fillSourceInterfaceAtLevelWithCarrierCache(
         if (boundary_row_index < states.len) &states[boundary_row_index] else null
     else
         null;
-    var fallback_gas_carrier: SharedOpticalCarrier = undefined;
-    const gas_carrier = wavelength_cache.cachedSupportRowRef(
+    var fallback_gas_carrier: SharedOpticalScalars = undefined;
+    const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
         wavelength_nm,
         sublayers[boundary_row_index],
@@ -762,8 +803,8 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         if (boundary_row_index < states.len) &states[boundary_row_index] else null
     else
         null;
-    var fallback_gas_carrier: SharedOpticalCarrier = undefined;
-    const gas_carrier = wavelength_cache.cachedSupportRowRef(
+    var fallback_gas_carrier: SharedOpticalScalars = undefined;
+    const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
         wavelength_nm,
         sublayers[boundary_row_index],
@@ -1190,7 +1231,7 @@ pub fn sharedOpticalCarrierAtSupportRow(
 //   when: support-row carrier evaluation runs without WavelengthCarrierCache
 //   work: fills one shared optical carrier from sublayer scalar fields and spectroscopy cache
 //   data: support sublayer, strong-line state, wavelength, profile spectroscopy cache
-//   follow: fillSharedOpticalCarrierAtSupportRowWithScalarCache
+//   follow: fillSharedOpticalScalarsAtSupportRowWithScalarCache
 pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1204,7 +1245,8 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         continuum_table.interpolateSigma(wavelength_nm)
     else
         0.0;
-    return sharedOpticalCarrierAtSupportRowWithScalarCache(
+    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+    const scalars = sharedOpticalScalarsAtSupportRowWithScalarCache(
         self,
         wavelength_nm,
         sublayer,
@@ -1214,12 +1256,39 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         continuum_sigma,
         null,
         Rayleigh.crossSectionCm2(wavelength_nm),
-        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        ParticleWavelengthScales.init(self, wavelength_nm),
+    );
+    return sharedOpticalCarrierFromScalars(self, rayleigh_phase_coefficient2, scalars);
+}
+
+fn sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) SharedOpticalScalars {
+    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
+    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
+        continuum_table.interpolateSigma(wavelength_nm)
+    else
+        0.0;
+    return sharedOpticalScalarsAtSupportRowWithScalarCache(
+        self,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        strong_line_state,
+        profile_cache,
+        continuum_sigma,
+        null,
+        Rayleigh.crossSectionCm2(wavelength_nm),
         ParticleWavelengthScales.init(self, wavelength_nm),
     );
 }
 
-fn sharedOpticalCarrierAtSupportRowWithScalarCache(
+fn sharedOpticalScalarsAtSupportRowWithScalarCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
     sublayer: PreparedSublayer,
@@ -1229,12 +1298,11 @@ fn sharedOpticalCarrierAtSupportRowWithScalarCache(
     continuum_sigma: f64,
     cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
-    rayleigh_phase_coefficient2: f64,
     particle_scales: ParticleWavelengthScales,
-) SharedOpticalCarrier {
-    var carrier: SharedOpticalCarrier = undefined;
-    fillSharedOpticalCarrierAtSupportRowWithScalarCache(
-        &carrier,
+) SharedOpticalScalars {
+    var scalars: SharedOpticalScalars = undefined;
+    fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+        &scalars,
         self,
         wavelength_nm,
         sublayer,
@@ -1244,19 +1312,18 @@ fn sharedOpticalCarrierAtSupportRowWithScalarCache(
         continuum_sigma,
         cia_coefficients,
         rayleigh_cross_section_cm2,
-        rayleigh_phase_coefficient2,
         particle_scales,
     );
-    return carrier;
+    return scalars;
 }
 
 // hot path:
 //   when: on a support-row carrier cache miss for the current wavelength
-//   work: combines cross-section LUTs, line spectroscopy, CIA/Rayleigh, particles, and phase terms
-//   data: scalar support row, active absorbers, cross-section LUTs, carrier output fields
-//   follow: weightedSpectroscopyEvaluationAtSupportRow and phase coefficient combination
-fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
-    out: *SharedOpticalCarrier,
+//   work: combines cross-section LUTs, line spectroscopy, CIA/Rayleigh, and particles into scalar depth terms
+//   data: scalar support row, active absorbers, cross-section LUTs, scalar carrier output fields
+//   follow: weightedSpectroscopyEvaluationAtSupportRow and layer/source scalar consumers
+fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+    out: *SharedOpticalScalars,
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
     sublayer: PreparedSublayer,
@@ -1266,7 +1333,6 @@ fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
     continuum_sigma: f64,
     cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
-    rayleigh_phase_coefficient2: f64,
     particle_scales: ParticleWavelengthScales,
 ) void {
     const spectroscopy_sigma = if (self.line_absorbers.len != 0)
@@ -1355,11 +1421,27 @@ fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
         .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
+    };
+}
+
+fn sharedOpticalCarrierFromScalars(
+    self: *const State.PreparedOpticalState,
+    rayleigh_phase_coefficient2: f64,
+    scalars: SharedOpticalScalars,
+) SharedOpticalCarrier {
+    return .{
+        .gas_absorption_optical_depth_per_km = scalars.gas_absorption_optical_depth_per_km,
+        .gas_scattering_optical_depth_per_km = scalars.gas_scattering_optical_depth_per_km,
+        .cia_optical_depth_per_km = scalars.cia_optical_depth_per_km,
+        .aerosol_optical_depth_per_km = scalars.aerosol_optical_depth_per_km,
+        .aerosol_scattering_optical_depth_per_km = scalars.aerosol_scattering_optical_depth_per_km,
+        .cloud_optical_depth_per_km = scalars.cloud_optical_depth_per_km,
+        .cloud_scattering_optical_depth_per_km = scalars.cloud_scattering_optical_depth_per_km,
         .phase_coefficients = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
             rayleigh_phase_coefficient2,
-            gas_scattering_optical_depth_per_km,
-            aerosol_scattering_optical_depth_per_km,
-            cloud_scattering_optical_depth_per_km,
+            scalars.gas_scattering_optical_depth_per_km,
+            scalars.aerosol_scattering_optical_depth_per_km,
+            scalars.cloud_scattering_optical_depth_per_km,
             self.aerosol_phase_coefficients,
             self.cloud_phase_coefficients,
         ),
@@ -1368,9 +1450,9 @@ fn fillSharedOpticalCarrierAtSupportRowWithScalarCache(
 
 // hot path:
 //   when: support-row carrier evaluation runs through WavelengthCarrierCache
-//   work: returns or fills one cached shared optical carrier for a support row
-//   data: support sublayer, global sublayer index, strong-line state, carrier cache
-//   follow: WavelengthCarrierCache.cachedSupportRow and cachedSupportRowRef
+//   work: returns one full shared carrier from the scalar support-row cache
+//   data: support sublayer, global sublayer index, strong-line state, scalar carrier cache
+//   follow: WavelengthCarrierCache.cachedSupportRow and sharedOpticalCarrierFromScalars
 pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,

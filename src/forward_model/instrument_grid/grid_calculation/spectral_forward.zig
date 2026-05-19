@@ -56,7 +56,7 @@ const ForwardSampleScratch = struct {
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     support_carrier_valid: []bool,
-    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
     labos_workspace: labos.Workspace,
 
     fn init(
@@ -83,8 +83,8 @@ const ForwardSampleScratch = struct {
         errdefer allocator.free(pseudo_spherical_level_altitudes);
         const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
         errdefer allocator.free(support_carrier_valid);
-        const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
-        errdefer allocator.free(support_carriers);
+        const support_carrier_scalars = try allocator.alloc(CarrierEval.SharedOpticalScalars, support_cache_count);
+        errdefer allocator.free(support_carrier_scalars);
 
         return .{
             .layer_inputs = layer_inputs,
@@ -94,7 +94,7 @@ const ForwardSampleScratch = struct {
             .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
             .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
             .support_carrier_valid = support_carrier_valid,
-            .support_carriers = support_carriers,
+            .support_carrier_scalars = support_carrier_scalars,
             .labos_workspace = labos.Workspace.init(allocator),
         };
     }
@@ -108,7 +108,7 @@ const ForwardSampleScratch = struct {
         allocator.free(self.pseudo_spherical_level_starts);
         allocator.free(self.pseudo_spherical_level_altitudes);
         allocator.free(self.support_carrier_valid);
-        allocator.free(self.support_carriers);
+        allocator.free(self.support_carrier_scalars);
         self.* = undefined;
     }
 };
@@ -245,8 +245,8 @@ pub fn computeForwardSampleAtWavelength(
     const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_inputs.len;
     const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
     defer allocator.free(support_carrier_valid);
-    const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
-    defer allocator.free(support_carriers);
+    const support_carrier_scalars = try allocator.alloc(CarrierEval.SharedOpticalScalars, support_cache_count);
+    defer allocator.free(support_carrier_scalars);
     var labos_workspace = labos.Workspace.init(allocator);
     defer labos_workspace.deinit();
     return computeForwardSampleAtWavelengthWithScratch(
@@ -264,7 +264,7 @@ pub fn computeForwardSampleAtWavelength(
         pseudo_spherical_level_starts,
         pseudo_spherical_level_altitudes,
         support_carrier_valid,
-        support_carriers,
+        support_carrier_scalars,
         null,
         &labos_workspace,
     );
@@ -290,7 +290,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     support_carrier_valid: []bool,
-    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
@@ -313,7 +313,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
             pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes,
             support_carrier_valid,
-            support_carriers,
+            support_carrier_scalars,
             profile_spectroscopy_cache,
         );
     };
@@ -390,7 +390,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                     scratch.pseudo_spherical_level_starts,
                     scratch.pseudo_spherical_level_altitudes,
                     scratch.support_carrier_valid,
-                    scratch.support_carriers,
+                    scratch.support_carrier_scalars,
                     profile_spectroscopy_cache,
                     &scratch.labos_workspace,
                 ) catch |err| {
@@ -460,7 +460,7 @@ pub fn prefetchForwardSamples(
                 scratch.pseudo_spherical_level_starts,
                 scratch.pseudo_spherical_level_altitudes,
                 scratch.support_carrier_valid,
-                scratch.support_carriers,
+                scratch.support_carrier_scalars,
                 profile_spectroscopy_cache,
                 &scratch.labos_workspace,
             );

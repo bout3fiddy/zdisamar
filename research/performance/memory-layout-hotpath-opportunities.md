@@ -1469,6 +1469,81 @@ Conclusion:
   traffic in the current benchmark shape and also drops retained session
   capacity by 233.81 KiB
 
+### Experiment 24: split support-row carrier cache into scalar rows
+
+Changed:
+- `WavelengthCarrierCache` now stores `[]SharedOpticalScalars` instead of
+  `[]SharedOpticalCarrier`
+- full carrier rows are rebuilt only for callers that still need a combined
+  phase row
+- cached reduced-layer fill now accumulates the phase numerator directly from
+  scalar gas/aerosol/cloud scattering and prepared phase arrays
+- pseudo-spherical attenuation samples read cached scalar optical depth instead
+  of forcing a full carrier row
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| support-row cached value | 1,264 B | 56 B | -1,208 B (-95.57%) |
+| retained support-row cache, 146 rows per worker | 184,544 B | 8,176 B | -172.23 KiB |
+| phase-row cache writes per forward miss, 146 rows | 176,368 B | 0 B | -172.23 KiB |
+| phase-row cache reads in layer fill, 116 interior rows | 140,128 B | 0 B | -136.84 KiB |
+| conservative 301-output-sample lower bound | 95,265,296 B | 0 B | -90.85 MiB hot phase-row traffic |
+| `WavelengthCarrierCache` header | 120 B | 120 B | unchanged |
+| `ForwardSampleScratch` header | 3,296 B | 3,296 B | unchanged |
+
+Interpretation:
+- `SharedOpticalCarrier` was mostly a `[151]f64` combined phase row; the
+  seven scalar optical-depth fields are only 56 B
+- the cached layer path already has access to the prepared aerosol/cloud phase
+  coefficient arrays, so it can accumulate the weighted phase numerator without
+  storing a normalized phase row in every support-row cache entry
+- this does not remove phase math from the layer path; it removes the
+  per-support-row phase-row cache write and the later phase-row load
+- boundary/source/RTM callers that still need a full carrier reconstruct it
+  from cached scalars and the prepared phase arrays
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- `uv run benchmark/run_benchmark.py`: retained run
+  `49f102ce5b0b49889f9ba57e4c0a9696`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- an earlier clean timing run, `70d14526a36c4954bc84cec15688ceb6`, was repeated
+  because sweep totals had moved slower; the second clean run above is the
+  retained artifact in `benchmark/results.json`
+- process checks showed no active zdisamar benchmark, validation, plotting, or
+  forward-model process before or after retained timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; session-vs-no-session reflectance residual `0.0`; fast-mode
+  spectra worst max_abs_over_noise `1.600`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep AOD max_abs delta `3.766e-03`
+
+Benchmark comparison against the previous committed `benchmark/results.json`:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| forward no-session median | 0.995911 s | 1.001330 s | 1.0054 |
+| forward session setup | 0.714895 s | 0.715155 s | 1.0004 |
+| forward session cached median | 0.288857 s | 0.286655 s | 0.9924 |
+| forward fast four-scene median | 4.824211 s | 4.829014 s | 1.0010 |
+| OE session setup median | 0.717994 s | 0.719351 s | 1.0019 |
+| OE session retrieval median | 1.203150 s | 1.200826 s | 0.9981 |
+| OE fast retrieval median | 0.933107 s | 0.932683 s | 0.9995 |
+| OE sweep session total wall | 20.478792 s | 20.564469 s | 1.0042 |
+| OE sweep fast total wall | 11.132325 s | 11.202943 s | 1.0063 |
+
+Conclusion:
+- this removes at least 90.85 MiB of hot phase-row cache traffic in the current
+  benchmark shape and reduces retained per-worker support cache capacity by
+  172.23 KiB
+- cached forward and single retrieval medians improved, while end-to-end sweep
+  totals were slower by about 0.4% to 0.6% in the retained run
+- this is a memory-layout tradeoff rather than a clean latency win; keep it
+  only because the removed phase-row traffic is large and residuals were
+  unchanged on the benchmark boundary
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -1598,7 +1673,7 @@ Relevant layout facts:
 | `SharedBoundaryCarrier` | 2,472 B | above/below combined phase rows | 0 |
 | `RtmQuadratureLevel` | 1,256 B | combined phase row + aerosol scattering scalars | 0 |
 | `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
-| `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + carrier slice | 0 |
+| `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + scalar carrier slice | 0 |
 
 Memory access shape:
 - scalar optical-depth values and phase coefficient vectors are stored in the
@@ -1606,7 +1681,7 @@ Memory access shape:
 - `PreparedSublayer` now carries scalar layer state and reads shared prepared
   particle phase data instead of carrying per-row copies
 - `WavelengthCarrierCache` uses `support_row_valid: []bool` and a
-  `[]SharedOpticalCarrier` cache for support-row reuse
+  `[]SharedOpticalScalars` cache for support-row reuse
 - `RtmQuadratureLevel` now keeps combined source phase inline but stores aerosol
   phase-dependent source/Jacobian data as scalars plus the grid-level unit phase
 - shared-grid layer, source-interface, and RTM quadrature builders now write
@@ -1615,15 +1690,19 @@ Memory access shape:
 - pseudo-spherical attenuation builders now write only the prepared
   `PseudoSphericalSample` grid and no longer mirror optical depth into unused
   full-width `LayerInput` rows
+- cached shared-grid layer fill accumulates phase numerators directly from the
+  scalar support-row cache and prepared phase arrays instead of loading cached
+  per-support-row phase rows
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
   reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated
   layer-specific fill of phase arrays dominates the PLM basis itself
 
 Potential direction:
-- split scalar optical-depth columns from phase-coefficient side storage
-- inspect whether combined phase rows can use side storage without moving
-  expensive phase recomputation into the LABOS hot loop
+- finish the scalar/phase split for non-cache carrier rows only where callers
+  do not need the combined phase row inline
+- inspect whether remaining combined phase rows can use side storage without
+  moving expensive phase recomputation into the LABOS hot loop
 - use generation tags or active support-row lists for `support_row_valid` when
   the cache is repeatedly reset per wavelength
 - keep `SharedRtmSubgrid` as a workspace slice and next inspect whether
@@ -1764,7 +1843,8 @@ Memory interpretation:
 Best current candidates:
 - `WavelengthSampling`: split row descriptors from kernel offsets/weights
 - `UDField` and `UDLocal`: split upward/downward/source columns by level
-- `SharedOpticalCarrier`: split scalar optical-depth columns from phase arrays
+- remaining optical carrier rows: split scalar optical-depth columns from phase
+  arrays where the caller reads only scalars
 - `PreparedSublayer`: split scalar layer state from particle phase side storage
 - profile spectroscopy cache: split total-only forward data from breakdown data
 

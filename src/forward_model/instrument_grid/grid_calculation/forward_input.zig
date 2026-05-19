@@ -22,7 +22,7 @@ pub fn configuredForwardInput(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     support_carrier_valid: []bool,
-    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
     var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
@@ -36,7 +36,7 @@ pub fn configuredForwardInput(
         prepared,
         wavelength_nm,
         support_carrier_valid,
-        support_carriers,
+        support_carrier_scalars,
         resolved_profile_cache,
     );
     const optical_depths = optical_depths: {

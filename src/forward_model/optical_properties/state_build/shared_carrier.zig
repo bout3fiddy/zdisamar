@@ -103,6 +103,45 @@ pub fn accumulateSharedCarrier(
     }
 }
 
+fn accumulateSharedScalars(
+    breakdown: *OpticalDepthBreakdown,
+    phase_numerator: *[phase_coefficient_count]f64,
+    scalars: *const carrier_eval.SharedOpticalScalars,
+    weight_km: f64,
+    rayleigh_phase_coefficient2: f64,
+    aerosol_phase_coefficients: [phase_coefficient_count]f64,
+    cloud_phase_coefficients: [phase_coefficient_count]f64,
+) void {
+    const weighted_gas_absorption = scalars.gas_absorption_optical_depth_per_km * weight_km;
+    const weighted_gas_scattering = scalars.gas_scattering_optical_depth_per_km * weight_km;
+    const weighted_cia = scalars.cia_optical_depth_per_km * weight_km;
+    const weighted_aerosol = scalars.aerosol_optical_depth_per_km * weight_km;
+    const weighted_aerosol_scattering = scalars.aerosol_scattering_optical_depth_per_km * weight_km;
+    const weighted_cloud = scalars.cloud_optical_depth_per_km * weight_km;
+    const weighted_cloud_scattering = scalars.cloud_scattering_optical_depth_per_km * weight_km;
+
+    breakdown.gas_absorption_optical_depth += weighted_gas_absorption;
+    breakdown.gas_scattering_optical_depth += weighted_gas_scattering;
+    breakdown.cia_optical_depth += weighted_cia;
+    breakdown.aerosol_optical_depth += weighted_aerosol;
+    breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
+    breakdown.cloud_optical_depth += weighted_cloud;
+    breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
+
+    const weighted_scattering = weighted_gas_scattering +
+        weighted_aerosol_scattering +
+        weighted_cloud_scattering;
+    if (weighted_scattering <= 0.0) return;
+
+    for (0..phase_coefficient_count) |index| {
+        phase_numerator[index] +=
+            weighted_aerosol_scattering * aerosol_phase_coefficients[index] +
+            weighted_cloud_scattering * cloud_phase_coefficients[index];
+    }
+    phase_numerator[0] += weighted_gas_scattering;
+    phase_numerator[2] += weighted_gas_scattering * rayleigh_phase_coefficient2;
+}
+
 pub fn evaluatedLayerFromSharedCarrier(
     scene: *const Scene,
     wavelength_nm: f64,
@@ -276,8 +315,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
 // hot path:
 //   when: forward input construction reduces support rows into a transport layer
 //   work: samples carrier cache rows and accumulates layer optical properties
-//   data: support-row descriptors, cached optical carriers, layer output fields
-//   follow: WavelengthCarrierCache access order and SharedOpticalCarrier field reads
+//   data: support-row descriptors, cached optical scalars, layer output fields
+//   follow: WavelengthCarrierCache scalar access and direct phase-numerator accumulation
 pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -306,16 +345,24 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
             if (local_index < states.len) &states[local_index] else null
         else
             null;
-        var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
-        const carrier = wavelength_cache.cachedSupportRowRef(
+        var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
+        const scalars = wavelength_cache.cachedSupportRowScalarsRef(
             self,
             wavelength_nm,
             support_sublayer,
             @intCast(support_sublayer.global_sublayer_index),
             strong_line_state,
-            &fallback_carrier,
+            &fallback_scalars,
         );
-        accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
+        accumulateSharedScalars(
+            &breakdown,
+            &phase_numerator,
+            scalars,
+            weight_km,
+            wavelength_cache.rayleigh_phase_coefficient2,
+            self.aerosol_phase_coefficients,
+            self.cloud_phase_coefficients,
+        );
     }
     return evaluatedLayerFromSharedCarrier(
         scene,
@@ -346,16 +393,24 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
                 if (local_index < states.len) &states[local_index] else null
             else
                 null;
-            var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
-            const carrier = wavelength_cache.cachedSupportRowRef(
+            var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
+            const scalars = wavelength_cache.cachedSupportRowScalarsRef(
                 self,
                 wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
-                &fallback_carrier,
+                &fallback_scalars,
             );
-            accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
+            accumulateSharedScalars(
+                &breakdown,
+                &phase_numerator,
+                scalars,
+                weight_km,
+                wavelength_cache.rayleigh_phase_coefficient2,
+                self.aerosol_phase_coefficients,
+                self.cloud_phase_coefficients,
+            );
         }
     }
     fillLayerInputFromSharedCarrier(
@@ -410,7 +465,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
 // hot path:
 //   when: pseudo-spherical grids expand shared support rows for a cached wavelength solve
 //   work: writes attenuation samples from support-row carrier optical depth per kilometer
-//   data: support sublayers, strong-line states, carrier cache, attenuation sample outputs
+//   data: support sublayers, strong-line states, scalar carrier cache, attenuation sample outputs
 //   follow: fillPseudoSphericalGridAtWavelengthWithCarrierCache and carrier cache reuse
 pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
@@ -430,16 +485,16 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
         else
             null;
         const optical_depth = if (weight_km > 0.0) optical_depth: {
-            var fallback_carrier: carrier_eval.SharedOpticalCarrier = undefined;
-            const carrier = wavelength_cache.cachedSupportRowRef(
+            var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
+            const scalars = wavelength_cache.cachedSupportRowScalarsRef(
                 self,
                 wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
-                &fallback_carrier,
+                &fallback_scalars,
             );
-            break :optical_depth weight_km * carrier.totalOpticalDepthPerKm();
+            break :optical_depth weight_km * scalars.totalOpticalDepthPerKm();
         } else 0.0;
         attenuation_samples[sample_index] = .{
             .altitude_km = support_sublayer.altitude_km,
