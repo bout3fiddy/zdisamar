@@ -27,6 +27,86 @@ const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
 // layout(64-bit):
+//   size: 2072 B, align: 8 B
+//   field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=2048 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   inline arrays: log_complex_vmr_fraction:[256]f64=2048 B
+//   out-of-line: altitudes_km carries a slice descriptor; referenced storage is not included in size
+//   cache span: 33 cache line(s) at 64 B per line
+//   count: one per optical-state accumulation request
+//   footprint: per instance = 2072 B (2.023 KiB); replaces per-support-row 4096 B stack rebuilds
+const CollisionComplexProfileCache = struct {
+    node_count: usize = 0,
+    altitudes_km: []const f64 = &.{},
+    log_complex_vmr_fraction: [max_collision_complex_profile_nodes]f64 = undefined,
+
+    fn init(context: *const Context) CollisionComplexProfileCache {
+        if (context.collision_induced_absorption == null and !context.operational_o2o2_lut.enabled()) {
+            return .{};
+        }
+        const node_count = context.spectroscopy_profile_altitudes_km.len;
+        if (node_count < 3 or
+            node_count > max_collision_complex_profile_nodes or
+            context.spectroscopy_profile_pressures_hpa.len != node_count or
+            context.spectroscopy_profile_temperatures_k.len != node_count)
+        {
+            return .{};
+        }
+
+        var cache = CollisionComplexProfileCache{
+            .node_count = node_count,
+            .altitudes_km = context.spectroscopy_profile_altitudes_km[0..node_count],
+            .log_complex_vmr_fraction = undefined,
+        };
+        for (0..node_count) |index| {
+            const pressure_hpa = context.spectroscopy_profile_pressures_hpa[index];
+            const temperature_k = context.spectroscopy_profile_temperatures_k[index];
+            const node_air_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k;
+            const parent_fraction = Spectroscopy.speciesMixingRatioAtPressure(
+                context.scene,
+                .o2,
+                &.{},
+                pressure_hpa,
+                oxygen_volume_mixing_ratio,
+            ) orelse oxygen_volume_mixing_ratio;
+            const parent_density_cm3 = node_air_density_cm3 * parent_fraction;
+            const complex_vmr_fraction = if (node_air_density_cm3 > 0.0)
+                parent_density_cm3 * parent_density_cm3 / node_air_density_cm3
+            else
+                0.0;
+            if (complex_vmr_fraction <= 0.0) return .{};
+            cache.log_complex_vmr_fraction[index] = @log(complex_vmr_fraction);
+        }
+        return cache;
+    }
+
+    fn pairDensityCm6(
+        self: *const CollisionComplexProfileCache,
+        altitude_km: f64,
+        air_number_density_cm3: f64,
+        fallback_oxygen_number_density_cm3: f64,
+    ) f64 {
+        if (self.node_count < 3 or air_number_density_cm3 <= 0.0) {
+            return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
+        }
+        const altitudes = self.altitudes_km[0..self.node_count];
+        const log_complex_vmr_fraction = self.log_complex_vmr_fraction[0..self.node_count];
+        if (altitude_km <= altitudes[0]) {
+            return @exp(log_complex_vmr_fraction[0]) * air_number_density_cm3;
+        }
+        if (altitude_km >= altitudes[self.node_count - 1]) {
+            return @exp(log_complex_vmr_fraction[self.node_count - 1]) * air_number_density_cm3;
+        }
+        const sampled_log_vmr = spline.sampleEndpointSecant(
+            altitudes,
+            log_complex_vmr_fraction,
+            altitude_km,
+        ) catch return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
+        return @exp(sampled_log_vmr) * air_number_density_cm3;
+    }
+};
+
+// layout(64-bit):
 //   size: 24 B, align: 8 B
 //   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
 //   unused bits: 48 padding + 0 bool-storage slack = 48 bits
@@ -44,18 +124,19 @@ const ParitySupportRowErrorState = struct {
 };
 
 // layout(64-bit):
-//   size: 304 B, align: 8 B
-//   field storage: 304 B across 16 fields; largest: totals=160 B, allocator=16 B, aerosol_sublayer_distribution=16 B; padding: 0 B (0 bits)
+//   size: 312 B, align: 8 B
+//   field storage: 312 B across 17 fields; largest: totals=160 B, allocator=16 B, aerosol_sublayer_distribution=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: context, absorbers, profile_spectroscopy_cache, aerosol_sublayer_distribution, cloud_sublayer_distribution, +2 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayer_distribution, +3 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
+//   footprint: per instance = 312 B (0.305 KiB); total also includes referenced storage above
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
     aerosol_single_scatter_albedo: f64,
@@ -71,61 +152,16 @@ const ParitySupportRowWorker = struct {
 };
 
 fn collisionComplexPairDensityCm6(
-    context: *const Context,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     altitude_km: f64,
     air_number_density_cm3: f64,
     fallback_oxygen_number_density_cm3: f64,
 ) f64 {
-    const node_count = context.spectroscopy_profile_altitudes_km.len;
-    if (context.collision_induced_absorption == null and !context.operational_o2o2_lut.enabled()) {
-        return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
-    }
-    if (node_count < 3 or
-        node_count > max_collision_complex_profile_nodes or
-        context.spectroscopy_profile_pressures_hpa.len != node_count or
-        context.spectroscopy_profile_temperatures_k.len != node_count or
-        air_number_density_cm3 <= 0.0)
-    {
-        return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
-    }
-
-    var altitudes_km: [max_collision_complex_profile_nodes]f64 = undefined;
-    var log_complex_vmr_fraction: [max_collision_complex_profile_nodes]f64 = undefined;
-    for (0..node_count) |index| {
-        const pressure_hpa = context.spectroscopy_profile_pressures_hpa[index];
-        const temperature_k = context.spectroscopy_profile_temperatures_k[index];
-        const node_air_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k;
-        const parent_fraction = Spectroscopy.speciesMixingRatioAtPressure(
-            context.scene,
-            .o2,
-            &.{},
-            pressure_hpa,
-            oxygen_volume_mixing_ratio,
-        ) orelse oxygen_volume_mixing_ratio;
-        const parent_density_cm3 = node_air_density_cm3 * parent_fraction;
-        const complex_vmr_fraction = if (node_air_density_cm3 > 0.0)
-            parent_density_cm3 * parent_density_cm3 / node_air_density_cm3
-        else
-            0.0;
-        if (complex_vmr_fraction <= 0.0) {
-            return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
-        }
-        altitudes_km[index] = context.spectroscopy_profile_altitudes_km[index];
-        log_complex_vmr_fraction[index] = @log(complex_vmr_fraction);
-    }
-
-    if (altitude_km <= altitudes_km[0]) {
-        return @exp(log_complex_vmr_fraction[0]) * air_number_density_cm3;
-    }
-    if (altitude_km >= altitudes_km[node_count - 1]) {
-        return @exp(log_complex_vmr_fraction[node_count - 1]) * air_number_density_cm3;
-    }
-    const sampled_log_vmr = spline.sampleEndpointSecant(
-        altitudes_km[0..node_count],
-        log_complex_vmr_fraction[0..node_count],
+    return collision_complex_cache.pairDensityCm6(
         altitude_km,
-    ) catch return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
-    return @exp(sampled_log_vmr) * air_number_density_cm3;
+        air_number_density_cm3,
+        fallback_oxygen_number_density_cm3,
+    );
 }
 
 // layout(64-bit):
@@ -342,6 +378,7 @@ pub fn populate(
         &profile_spectroscopy_cache
     else
         null;
+    const collision_complex_cache = CollisionComplexProfileCache.init(context);
 
     if (usesDisamarParitySupportGrid(context)) {
         if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
@@ -350,6 +387,7 @@ pub fn populate(
                 context,
                 absorbers,
                 profile_spectroscopy_cache_ptr,
+                &collision_complex_cache,
                 &totals,
                 aerosol_sublayer_distribution,
                 cloud_sublayer_distribution,
@@ -366,6 +404,7 @@ pub fn populate(
                 context,
                 absorbers,
                 profile_spectroscopy_cache_ptr,
+                &collision_complex_cache,
                 &totals,
                 aerosol_sublayer_distribution,
                 cloud_sublayer_distribution,
@@ -395,6 +434,7 @@ pub fn populate(
             context,
             absorbers,
             profile_spectroscopy_cache_ptr,
+            &collision_complex_cache,
             &totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -417,6 +457,7 @@ fn populateParitySupportRows(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -433,6 +474,7 @@ fn populateParitySupportRows(
             context,
             absorbers,
             profile_spectroscopy_cache,
+            collision_complex_cache,
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -457,6 +499,7 @@ fn populateParitySupportRowsParallel(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -474,6 +517,7 @@ fn populateParitySupportRowsParallel(
             context,
             absorbers,
             profile_spectroscopy_cache,
+            collision_complex_cache,
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -500,6 +544,7 @@ fn populateParitySupportRowsParallel(
             .context = context,
             .absorbers = absorbers,
             .profile_spectroscopy_cache = profile_spectroscopy_cache,
+            .collision_complex_cache = collision_complex_cache,
             .aerosol_sublayer_distribution = aerosol_sublayer_distribution,
             .cloud_sublayer_distribution = cloud_sublayer_distribution,
             .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
@@ -559,6 +604,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                     worker.context,
                     worker.absorbers,
                     worker.profile_spectroscopy_cache,
+                    worker.collision_complex_cache,
                     &worker.totals,
                     worker.aerosol_sublayer_distribution,
                     worker.cloud_sublayer_distribution,
@@ -583,6 +629,7 @@ fn populateParitySupportRow(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -607,6 +654,7 @@ fn populateParitySupportRow(
         context,
         absorbers,
         profile_spectroscopy_cache,
+        collision_complex_cache,
         totals,
         aerosol_sublayer_distribution,
         cloud_sublayer_distribution,
@@ -767,6 +815,7 @@ fn populateLayer(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -789,6 +838,7 @@ fn populateLayer(
             context,
             absorbers,
             profile_spectroscopy_cache,
+            collision_complex_cache,
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -884,6 +934,7 @@ fn populateSublayer(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -1031,7 +1082,7 @@ fn populateSublayer(
     else
         0.0;
     const cia_pair_density_cm6 = collisionComplexPairDensityCm6(
-        context,
+        collision_complex_cache,
         altitude_km,
         density,
         o2_density_cm3,

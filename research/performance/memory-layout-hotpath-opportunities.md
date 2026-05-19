@@ -2324,6 +2324,76 @@ Conclusion:
   impossible-to-read route payloads, and the retained benchmark/residual gate is
   clean
 
+### Experiment 36: cache collision-complex profile during accumulation
+
+Changed:
+- `collisionComplexPairDensityCm6` no longer rebuilds two
+  `[256]f64` stack arrays for every support-row/sublayer sample
+- `CollisionComplexProfileCache` stores the logarithmic collision-complex VMR
+  fraction once per optical-state accumulation request
+- the cache keeps altitudes as a slice into the spectroscopy profile, so only
+  the derived log-fraction column is copied into request-local storage
+- parity support row workers and serial layer accumulation receive a pointer to
+  the request-local cache instead of re-reading the whole profile per row
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| per support-row/sublayer stack rebuild | 4,096 B | 0 B | -100.00% |
+| request-local collision-complex cache | 0 B | 2,072 B | +2.0 KiB once |
+| current 117-row O2 A accumulation traffic | 479,232 B | 2,072 B | -477,160 B |
+| traffic formula | `support_rows * 4096 B` | `2072 B` | active-row independent cache |
+
+Interpretation:
+- the old helper wrote an altitude column and a log complex-VMR column every
+  time a row sampled CIA/O2-O2 pair density
+- the altitude column is already stable profile data, so the cache stores a
+  slice descriptor and does not duplicate the altitude values
+- each row keeps the same endpoint/extrapolation behavior and endpoint-secant
+  interpolation over the derived log complex-VMR fraction
+- when CIA/O2-O2 profile data is inactive or invalid, `node_count = 0` keeps the
+  existing fallback behavior of using squared O2 number density
+
+Benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU
+- `uv run benchmark/run_benchmark.py`: run
+  `05ff781808024450a259da58bb53f70b`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode worst
+  `max_abs_over_noise=1.59985574045`; session-vs-no-session reflectance
+  max_abs `0`; OE session AOD diff `8.69864882902e-08`; fast-vs-session sweep
+  max AOD delta `0.00376644268103`
+
+Benchmark comparison against Experiment 35:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 143.825114 s | 143.762322 s | 0.9996 |
+| total benchmark CPU | 277.399728 s | 277.189873 s | 0.9992 |
+| forward no-session median | 0.977100 s | 0.969912 s | 0.9926 |
+| forward session setup | 0.715540 s | 0.712534 s | 0.9958 |
+| forward session first cached | 0.272202 s | 0.267561 s | 0.9830 |
+| forward session cached median | 0.271217 s | 0.271549 s | 1.0012 |
+| forward fast four-scene median | 4.735891 s | 4.730962 s | 0.9990 |
+| OE session retrieval median | 1.134661 s | 1.137109 s | 1.0022 |
+| OE fast retrieval median | 0.879741 s | 0.879721 s | 1.0000 |
+| OE sweep session total wall | 19.660416 s | 19.677212 s | 1.0009 |
+| OE sweep fast total wall | 10.750633 s | 10.812318 s | 1.0057 |
+
+Conclusion:
+- the change removes repeated support-row stack traffic while adding one small
+  request-local cache
+- benchmark residuals are unchanged; total wall and CPU are slightly faster in
+  the clean run, while the largest slower retained row is OE sweep fast total
+  wall at `+0.57%`
+- this is worth keeping because the traffic reduction is direct and the retained
+  benchmark boundary shows no material runtime regression
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
