@@ -3288,6 +3288,78 @@ Conclusion:
   derivative path is split into a separate specialized layout or hardware
   counters show the current derivative row is actually memory-stall bound
 
+### Experiment 50: remove LABOS vector-local size metadata
+
+Changed:
+- removed `n` from `labos.Vec`
+- removed `n` from `labos.Vec2`
+- removed reset-time writes that only populated `Vec` and `Vec2` metadata inside
+  `initializeOrdersBuffers`
+- kept `Mat.n`; matrix indexing still needs the active stride in helpers that
+  do not always operate on the fixed 12-stream shape
+- updated `layout(64-bit)` comments and verified sizes with a scratch Zig
+  `@sizeOf` check: `Vec=96`, `Vec2=192`, `UDField=480`, `UDLocal=384`
+
+Memory traffic result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `Vec` | 104 B | 96 B | -8 B |
+| `Vec2` | 216 B | 192 B | -24 B |
+| `UDField` | 536 B | 480 B | -56 B |
+| `UDLocal` | 432 B | 384 B | -48 B |
+| current O2 A `ud` rows, 117 levels | 62,712 B | 56,160 B | -6.40 KiB |
+| current O2 A `ud_orde` rows, 117 levels | 50,544 B | 44,928 B | -5.48 KiB |
+| current O2 A `ud_local` rows, 117 levels | 50,544 B | 44,928 B | -5.48 KiB |
+| current O2 A `ud_sum_local` rows, 117 levels when local sums are active | 50,544 B | 44,928 B | -5.48 KiB |
+| current O2 A orders workspace rows with local sums | 214,344 B | 190,944 B | -22.85 KiB |
+| metadata-only reset writes per orders-buffer reset, 117 levels | 12,168 B | 0 B | -11.88 KiB/write pass |
+
+Interpretation:
+- this removes metadata that hot LABOS loops already know from `Geometry.nmutot`
+  and `Geometry.n_gauss`
+- unlike derivative side storage, this makes existing row payloads smaller
+  without adding an extra memory stream or extra branch
+- the retained workspace reduction is modest per worker, but order buffers are
+  reset, copied, and scanned inside the repeated Fourier/order solve, so the
+  traffic win is larger than the retained-byte delta alone
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- process-noise check before `uv run benchmark/run_benchmark.py` showed no
+  active zdisamar, benchmark, validation, forward-model, plotting, or
+  `zig build` process; an idle `ruff server` was present
+- `uv run benchmark/run_benchmark.py`: run
+  `9284d736fdde4640b47a03e54a125f3d`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: DISAMAR fixture worst interior max_abs
+  `9.569e-14`; fast-mode spectra worst max_abs_over_noise `1.59985574045`;
+  OE session AOD diff `8.699e-08`; fast-vs-session sweep max AOD delta
+  `0.00377768945481`, pressure delta `5.09865532685 hPa`
+
+Benchmark comparison against accepted Experiment 47:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.676606 s | 139.848251 s | 0.9941 |
+| total benchmark CPU | 271.460597 s | 269.841033 s | 0.9940 |
+| peak RSS high-water mark | 100.81 MiB | 100.31 MiB | 0.9950 |
+| forward no-session median | 0.945517 s | 0.950345 s | 1.0051 |
+| forward session cached median | 0.254982 s | 0.255979 s | 1.0039 |
+| forward fast four-scene median | 4.634547 s | 4.618706 s | 0.9966 |
+| OE session retrieval median | 1.081314 s | 1.072821 s | 0.9921 |
+| OE fast retrieval median | 0.835691 s | 0.830212 s | 0.9934 |
+| OE sweep session total wall | 19.533589 s | 19.259032 s | 0.9859 |
+| OE sweep fast total wall | 10.659538 s | 10.530824 s | 0.9879 |
+
+Conclusion:
+- accepted
+- the main OE surfaces got faster while residuals stayed unchanged
+- the pure forward no-session/session medians are slightly slower in this run,
+  but the full benchmark wall/CPU and both OE sweep totals improved
+- this is kept because it removes unused metadata from a repeated LABOS order
+  payload and improves the latency surfaces that matter most for retrieval
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable

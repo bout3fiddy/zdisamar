@@ -512,9 +512,6 @@ fn initializeOrdersBuffers(
         const orde = &ud_orde[index];
         const local = &ud_local[index];
         field.* = undefined;
-        field.E.n = nmutot;
-        initVec2Metadata(&field.U, nmutot);
-        initVec2Metadata(&field.D, nmutot);
 
         if (track_sum_local) {
             const sum_local = &ud_sum_local[index];
@@ -523,18 +520,10 @@ fn initializeOrdersBuffers(
         }
 
         orde.* = undefined;
-        initVec2Metadata(&orde.U, nmutot);
-        initVec2Metadata(&orde.D, nmutot);
 
         local.U = basis.Vec2.zero(nmutot);
         local.D = basis.Vec2.zero(nmutot);
     }
-}
-
-fn initVec2Metadata(vec2: *basis.Vec2, nmutot: usize) void {
-    vec2.n = nmutot;
-    vec2.col[0].n = nmutot;
-    vec2.col[1].n = nmutot;
 }
 
 // hot path:
