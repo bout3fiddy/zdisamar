@@ -14,7 +14,7 @@ research/performance/tracing/capture-tracy-forward-model.sh
 The script builds the LABOS bottleneck trace executable with:
 
 ```sh
-zig build labos-bottleneck-trace -Denable-ztracy=true -Dtrace-optimize=ReleaseFast
+zig build labos-bottleneck-trace -Denable-ztracy=true -Doptimize=ReleaseFast
 ```
 
 `-Denable-ztracy=true` always enables the full nested forward/LABOS zone set.
@@ -30,6 +30,27 @@ research/performance/tracing/output/
 
 The retained JSON summary is a coarse sanity check. The detailed phase, nesting,
 overlap, and per-thread view is the `.tracy` capture opened in `tracy-profiler`.
+
+## Optimal-Estimation Trace
+
+The OE trace harness is an explicit validation/performance target. It does not
+add timing fields to the Python package or C API; normal builds keep the trace
+facade disabled.
+
+```sh
+zig build optimal-estimation-trace -Doptimize=ReleaseFast -- \
+  --output-dir out/optimal-estimation-trace
+```
+
+Use Tracy zones for phase breakdown by enabling ztracy on the same target:
+
+```sh
+zig build optimal-estimation-trace -Doptimize=ReleaseFast -Denable-ztracy=true -- \
+  --output-dir out/optimal-estimation-trace-ztracy
+```
+
+The JSON summaries are scratch output under `out/`; they are useful for local
+sanity checks, while the timeline capture is the phase evidence.
 
 ## Lauka PMU Counters
 
@@ -54,7 +75,7 @@ The script builds the same O2 A LABOS forward harness in `ReleaseFast`, but
 without ztracy:
 
 ```sh
-zig build labos-bottleneck-trace-bin -Dtrace-optimize=ReleaseFast
+zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast
 ```
 
 It then records the forward-model executable with Lauka. The wrapper is

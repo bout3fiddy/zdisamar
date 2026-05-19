@@ -30,7 +30,6 @@ class RetrievalControls:
     max_iterations: int = 10
     state_vector_convergence_threshold: float = 1.0
     max_change_transformed_state: float = 1.0
-    collect_timing: bool = False
 
     @classmethod
     def from_disamar_retrieval_specs(cls) -> Self:
@@ -63,16 +62,6 @@ class Iteration:
 
 
 @dataclass(frozen=True)
-class IterationTiming:
-    """Wall-clock timing for the two expensive phases of one retrieval update."""
-
-    index: int
-    rtm_and_jacobian_s: float
-    solver_update_s: float
-    total_iteration_s: float
-
-
-@dataclass(frozen=True)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
@@ -83,7 +72,6 @@ class Result:
     history: tuple[Iteration, ...]
     posterior_covariance: Sequence[Sequence[float]]
     averaging_kernel: Sequence[Sequence[float]]
-    timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
     final_evaluation: RtmEvaluation | None = None
     last_evaluated_state: Sequence[float] | None = None

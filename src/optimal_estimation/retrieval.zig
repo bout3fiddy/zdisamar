@@ -4,6 +4,7 @@ const implementations = @import("../forward_model/implementations/root.zig");
 const jacobian = @import("../forward_model/jacobian/root.zig");
 const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
+const Trace = @import("../forward_model/performance_trace.zig");
 const algebra = @import("algebra.zig");
 
 const Allocator = std.mem.Allocator;
@@ -188,17 +189,16 @@ pub const IterationWorkspace = struct {
 
 // Native result storage retained behind the C result handle.
 // layout(64-bit):
-//   size: 232 B, align: 8 B
-//   field storage: counters/status=6 B, slice descriptors=224 B across 14 fields; padding: 2 B
-//   unused bits: 16 padding + 7 bool-storage slack = 23 bits
-//   out-of-line: state, posterior, history, and timing arrays are owned contiguous f64/u8 buffers
-//   cache span: 4 cache line(s) at 64 B per line
+//   size: 184 B, align: 8 B
+//   field storage: counters/status=4 B, slice descriptors=176 B across 11 fields; padding: 4 B
+//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
+//   out-of-line: state, posterior, and history arrays are owned contiguous f64/u8 buffers
+//   cache span: 3 cache line(s) at 64 B per line
 //   count: one per completed retrieval result handle
-//   footprint: per instance = 232 B (0.227 KiB); total also includes referenced result buffers
+//   footprint: per instance = 184 B (0.180 KiB); total also includes referenced result buffers
 pub const Result = struct {
     state_count: u8 = 0,
     iteration_count: u16 = 0,
-    timing_count: u16 = 0,
     converged: bool = false,
     state_ids: []jacobian.State = &.{},
     state: []f64 = &.{},
@@ -211,9 +211,6 @@ pub const Result = struct {
     history_chi2_state_vector: []f64 = &.{},
     history_state_vector_convergence: []f64 = &.{},
     history_snr_normal: []u8 = &.{},
-    timing_rtm_and_jacobian_s: []f64 = &.{},
-    timing_solver_update_s: []f64 = &.{},
-    timing_total_iteration_s: []f64 = &.{},
 
     pub fn init(allocator: Allocator, state_count: usize, max_iterations: usize) !Result {
         if (state_count > max_state_count) return error.InvalidStateCount;
@@ -231,9 +228,6 @@ pub const Result = struct {
         result.history_chi2_state_vector = try allocator.alloc(f64, max_iterations);
         result.history_state_vector_convergence = try allocator.alloc(f64, max_iterations);
         result.history_snr_normal = try allocator.alloc(u8, max_iterations);
-        result.timing_rtm_and_jacobian_s = try allocator.alloc(f64, max_iterations);
-        result.timing_solver_update_s = try allocator.alloc(f64, max_iterations);
-        result.timing_total_iteration_s = try allocator.alloc(f64, max_iterations);
         return result;
     }
 
@@ -249,9 +243,6 @@ pub const Result = struct {
         allocator.free(self.history_chi2_state_vector);
         allocator.free(self.history_state_vector_convergence);
         allocator.free(self.history_snr_normal);
-        allocator.free(self.timing_rtm_and_jacobian_s);
-        allocator.free(self.timing_solver_update_s);
-        allocator.free(self.timing_total_iteration_s);
         self.* = .{};
     }
 };
@@ -260,7 +251,6 @@ pub const Controls = struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
     max_change_transformed_state: f64 = 1.0,
-    collect_timing: bool = false,
 };
 
 pub fn runO2A(
@@ -273,8 +263,13 @@ pub fn runO2A(
     forward_storage: *InstrumentGrid.ProductStorage,
     controls: Controls,
 ) !Result {
+    const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
+    defer retrieval_zone.end();
+
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+    Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
+    Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
 
     var measurement = try MeasurementWorkspace.init(
         allocator,
@@ -324,46 +319,57 @@ pub fn runO2A(
 
     var converged = false;
     var iteration_count: usize = 0;
-    const collect_timing = controls.collect_timing;
     for (0..controls.max_iterations) |iteration_offset| {
-        const iteration_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
+        const iteration_zone = Trace.staticZone(@src(), "optimal_estimation.iteration");
+        defer iteration_zone.end();
+        iteration_zone.value(@intCast(iteration_offset + 1));
+
         const previous = state;
-        const rtm_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
-        var evaluation = try evaluateO2AState(
-            allocator,
-            &loaded_inputs,
-            base_input,
-            mutable_intervals,
-            forward_storage,
-            state_specs,
-            previous,
-            derivative_state_mask,
-        );
+        var evaluation = evaluation: {
+            const zone = Trace.staticZone(@src(), "optimal_estimation.rtm_jacobian");
+            defer zone.end();
+            break :evaluation try evaluateO2AState(
+                allocator,
+                &loaded_inputs,
+                base_input,
+                mutable_intervals,
+                forward_storage,
+                state_specs,
+                previous,
+                derivative_state_mask,
+            );
+        };
         defer evaluation.runtime_case.deinit(allocator);
-        const rtm_end_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
 
-        const solver_start_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
-        const accumulation = try accumulateNormalSystem(
-            measurement,
-            evaluation.view,
-            state_specs,
-            previous,
-            prior,
-            scratch.sqrt_sa,
-            evaluation.solar_mu0,
-            &scratch,
-        );
+        const accumulation = accumulation: {
+            const zone = Trace.staticZone(@src(), "optimal_estimation.normal_system");
+            defer zone.end();
+            break :accumulation try accumulateNormalSystem(
+                measurement,
+                evaluation.view,
+                state_specs,
+                previous,
+                prior,
+                scratch.sqrt_sa,
+                evaluation.solar_mu0,
+                &scratch,
+            );
+        };
 
-        const step = try solveStep(
-            state_specs.len,
-            scratch.g,
-            scratch.b,
-            prior,
-            scratch.sqrt_sa,
-            scratch.sqrt_inv_sa,
-            controls.max_change_transformed_state,
-            &scratch,
-        );
+        const step = step: {
+            const zone = Trace.staticZone(@src(), "optimal_estimation.solver_update");
+            defer zone.end();
+            break :step try solveStep(
+                state_specs.len,
+                scratch.g,
+                scratch.b,
+                prior,
+                scratch.sqrt_sa,
+                scratch.sqrt_inv_sa,
+                controls.max_change_transformed_state,
+                &scratch,
+            );
+        };
         state = step.state;
         for (0..state_specs.len) |index| {
             state[index] = @min(upper[index], @max(lower[index], state[index]));
@@ -376,7 +382,6 @@ pub fn runO2A(
         const state_conv = quadraticForm(step.posterior_precision, dx_iter, state_specs.len) /
             @as(f64, @floatFromInt(state_specs.len));
         converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
-        const solver_end_ns = if (collect_timing) std.time.nanoTimestamp() else 0;
 
         const history_offset = iteration_offset * state_specs.len;
         for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
@@ -385,11 +390,6 @@ pub fn runO2A(
         result.history_chi2_state_vector[iteration_offset] = chi2_state;
         result.history_state_vector_convergence[iteration_offset] = state_conv;
         result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
-        if (collect_timing) {
-            result.timing_rtm_and_jacobian_s[iteration_offset] = secondsBetween(rtm_start_ns, rtm_end_ns);
-            result.timing_solver_update_s[iteration_offset] = secondsBetween(solver_start_ns, solver_end_ns);
-            result.timing_total_iteration_s[iteration_offset] = secondsBetween(iteration_start_ns, solver_end_ns);
-        }
 
         final_posterior_precision = step.posterior_precision;
         scratch.jt_invse_j = accumulation.jt_invse_j;
@@ -400,7 +400,6 @@ pub fn runO2A(
     const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
     const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
     result.iteration_count = @intCast(iteration_count);
-    result.timing_count = if (collect_timing) @intCast(iteration_count) else 0;
     result.converged = converged;
     for (0..state_specs.len) |row| {
         result.state[row] = state[row];
@@ -681,10 +680,6 @@ fn quadraticForm(matrix: Matrix, vector: Vector, state_count: usize) f64 {
         value += vector[row] * row_value;
     }
     return value;
-}
-
-fn secondsBetween(start_ns: i128, end_ns: i128) f64 {
-    return @as(f64, @floatFromInt(end_ns - start_ns)) / 1.0e9;
 }
 
 pub fn buildPressureProfile(

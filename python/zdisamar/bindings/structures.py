@@ -220,7 +220,6 @@ class COptimalEstimationControls(ctypes.Structure):
         ("max_iterations", ctypes.c_size_t),
         ("state_vector_convergence_threshold", ctypes.c_double),
         ("max_change_transformed_state", ctypes.c_double),
-        ("collect_timing", ctypes.c_uint8),
     ]
 
 
@@ -240,7 +239,6 @@ class COptimalEstimationResult(ctypes.Structure):
     _fields_ = [
         ("state_count", ctypes.c_size_t),
         ("iteration_count", ctypes.c_size_t),
-        ("timing_count", ctypes.c_size_t),
         ("converged", ctypes.c_uint8),
         ("state_ids", ctypes.POINTER(ctypes.c_uint8)),
         ("state", ctypes.POINTER(ctypes.c_double)),
@@ -253,8 +251,5 @@ class COptimalEstimationResult(ctypes.Structure):
         ("history_chi2_state_vector", ctypes.POINTER(ctypes.c_double)),
         ("history_state_vector_convergence", ctypes.POINTER(ctypes.c_double)),
         ("history_snr_normal", ctypes.POINTER(ctypes.c_uint8)),
-        ("timing_rtm_and_jacobian_s", ctypes.POINTER(ctypes.c_double)),
-        ("timing_solver_update_s", ctypes.POINTER(ctypes.c_double)),
-        ("timing_total_iteration_s", ctypes.POINTER(ctypes.c_double)),
         ("result_handle", ctypes.c_void_p),
     ]

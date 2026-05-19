@@ -32,6 +32,7 @@ pub const input_reference_data = struct {
 };
 
 pub const o2a_reference = @import("input/o2a_reference/root.zig");
+pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
 // layout(64-bit):
 //   size: 0 B, align: 1 B

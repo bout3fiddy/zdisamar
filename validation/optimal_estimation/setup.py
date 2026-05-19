@@ -146,7 +146,6 @@ def retrieval_controls() -> optimal_estimation.RetrievalControls:
         max_iterations=10,
         state_vector_convergence_threshold=1.0,
         max_change_transformed_state=1.0,
-        collect_timing=True,
     )
 
 

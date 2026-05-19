@@ -390,7 +390,6 @@ class RtmHandle:
                     controls.state_vector_convergence_threshold
                 ),
                 max_change_transformed_state=float(controls.max_change_transformed_state),
-                collect_timing=1 if controls.collect_timing else 0,
             ),
         )
         raw = COptimalEstimationResult()
@@ -523,7 +522,6 @@ class RtmHandle:
 
         state_count = int(raw.state_count)
         iteration_count = int(raw.iteration_count)
-        timing_count = int(raw.timing_count)
         matrix_count = state_count * state_count
         history_count = iteration_count * state_count
 
@@ -538,7 +536,6 @@ class RtmHandle:
         return {
             "state_count": state_count,
             "iteration_count": iteration_count,
-            "timing_count": timing_count,
             "converged": bool(raw.converged),
             "state_ids": uint8s(raw.state_ids, state_count),
             "state": doubles(raw.state, state_count),
@@ -554,12 +551,6 @@ class RtmHandle:
                 iteration_count,
             ),
             "history_snr_normal": uint8s(raw.history_snr_normal, iteration_count),
-            "timing_rtm_and_jacobian_s": doubles(
-                raw.timing_rtm_and_jacobian_s,
-                timing_count,
-            ),
-            "timing_solver_update_s": doubles(raw.timing_solver_update_s, timing_count),
-            "timing_total_iteration_s": doubles(raw.timing_total_iteration_s, timing_count),
         }
 
     def _check(self, status: int) -> None:

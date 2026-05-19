@@ -1,68 +1,45 @@
 {
   "cache": {
-    "first_use_retrieval_s": 3.453297375002876,
+    "first_use_retrieval_s": 2.2645212500356138,
     "reused_retrieval": {
       "converged": true,
       "iterations": 3,
-      "iterations_detail": [
-        {
-          "index": 1,
-          "rtm_and_jacobian_s": 1.0491948339913506,
-          "solver_update_s": 0.00018462500884197652,
-          "total_iteration_s": 1.0493865410098806
-        },
-        {
-          "index": 2,
-          "rtm_and_jacobian_s": 1.0505746249982622,
-          "solver_update_s": 0.00017908299923874438,
-          "total_iteration_s": 1.0507619999989402
-        },
-        {
-          "index": 3,
-          "rtm_and_jacobian_s": 1.0422387500002515,
-          "solver_update_s": 0.00016145900008268654,
-          "total_iteration_s": 1.042405249987496
-        }
-      ],
-      "other_retrieval_s": 0.00043591600842773914,
-      "retrieval_plus_lazy_final_evaluation_s": 4.454839959013043,
+      "retrieval_plus_lazy_final_evaluation_s": 2.885681625106372,
       "retrieved": {
-        "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
-        "aerosol_optical_depth": 1.9681945906310179
+        "aerosol_layer_mid_pressure_hpa": 329.19089154083946,
+        "aerosol_optical_depth": 1.968194590638107
       },
-      "rtm_and_jacobian_s": 3.142008208989864,
-      "solver_update_s": 0.0005251670081634074,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 3.1429692920064554
+      "wall_s": 1.9747640420682728
     },
-    "setup_s": 0.31032808299642056
+    "setup_s": 0.28975720796734095
   },
   "direct_rtm_call_probe": {
     "jacobian_increment_s": {
-      "max": 0.11853749997681007,
-      "mean": 0.0016430001880507917,
-      "median": 0.08156070797122084,
-      "min": -0.34918345799087547
+      "max": 0.06861075002234429,
+      "mean": 0.06302651679143309,
+      "median": 0.06611279200296849,
+      "min": 0.05234366690274328
     },
     "probe_runs": 5,
     "rtm_and_jacobian_s": {
-      "max": 0.9693489169876557,
-      "mean": 0.9647894667985384,
-      "median": 0.9637660839944147,
-      "min": 0.9602716250228696
+      "max": 0.6521300419699401,
+      "mean": 0.6494637002004311,
+      "median": 0.6493020419729874,
+      "min": 0.6465074170846492
     },
     "rtm_only_s": {
-      "max": 1.309455083013745,
-      "mean": 0.9631464666104875,
-      "median": 0.8857436670223251,
-      "min": 0.8447188330173958
+      "max": 0.5969583750702441,
+      "mean": 0.586437183408998,
+      "median": 0.5835192919475958,
+      "min": 0.58239145798143
     }
   },
-  "lazy_final_evaluation_s": 1.3118706670065876,
-  "measurement_build_s": 1.1898202080046758,
+  "lazy_final_evaluation_s": 0.9109175830380991,
+  "measurement_build_s": 0.8605020410614088,
   "reference_case": 71,
   "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "scene": {

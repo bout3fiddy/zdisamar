@@ -149,10 +149,6 @@ def build_rows() -> list[dict[str, Any]]:
                     "converged": bool(result.converged),
                     "iterations": int(result.iterations),
                     "retrieval_s": retrieval_s,
-                    "rtm_and_jacobian_s": sum(
-                        timing.rtm_and_jacobian_s for timing in result.timing
-                    ),
-                    "solver_update_s": sum(timing.solver_update_s for timing in result.timing),
                     "truth_aerosol_optical_depth": truth["aerosol_optical_depth"],
                     "truth_aerosol_mid_pressure_hpa": truth["aerosol_mid_pressure_hpa"],
                     "initial_aerosol_optical_depth": initial["aerosol_optical_depth"],
@@ -225,9 +221,6 @@ def paired_delta_frame(data: pd.DataFrame) -> pd.DataFrame:
                     + float(fst["aerosol_mid_pressure_sigma_hpa"]) ** 2
                 ),
                 "retrieval_speedup_s": float(ref["retrieval_s"]) - float(fst["retrieval_s"]),
-                "rtm_jacobian_speedup_s": (
-                    float(ref["rtm_and_jacobian_s"]) - float(fst["rtm_and_jacobian_s"])
-                ),
             }
         )
 
@@ -296,7 +289,6 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
             "rows": int(len(subset)),
             "converged": int(subset["converged"].sum()),
             "retrieval_s": stats(subset["retrieval_s"]),
-            "rtm_and_jacobian_s": stats(subset["rtm_and_jacobian_s"]),
             "aerosol_optical_depth_abs_error": stats(subset["aerosol_optical_depth_error"].abs()),
             "aerosol_mid_pressure_abs_error_hpa": stats(
                 subset["aerosol_mid_pressure_error_hpa"].abs()
@@ -331,7 +323,6 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
             "aerosol_optical_depth_delta": stats(delta["aerosol_optical_depth_delta"]),
             "aerosol_mid_pressure_delta_hpa": stats(delta["aerosol_mid_pressure_delta_hpa"]),
             "retrieval_speedup_s": stats(delta["retrieval_speedup_s"]),
-            "rtm_jacobian_speedup_s": stats(delta["rtm_jacobian_speedup_s"]),
         },
     }
 
@@ -863,12 +854,6 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
                 value_column="retrieval_s",
                 title="Retrieval wall time",
                 ylabel="Wall time [s]",
-            ),
-            timing_chart(
-                data,
-                value_column="rtm_and_jacobian_s",
-                title="RTM + Jacobian time",
-                ylabel="Time [s]",
             ),
             spacing=32,
         ),

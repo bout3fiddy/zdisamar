@@ -9,7 +9,7 @@ from dataclasses import replace
 from ... import rtm
 from ...input.wavelength_band.o2a import O2AInput
 from .measurement import require_matching_wavelength_grid
-from .retrieval import Iteration, IterationTiming, Measurement, Result, RetrievalControls
+from .retrieval import Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import PressureAltitudeProfile, StateVector
 
@@ -320,7 +320,6 @@ def _result_from_native(
 
     state_count = _native_int(raw, "state_count")
     iteration_count = _native_int(raw, "iteration_count")
-    timing_count = _native_int(raw, "timing_count")
     history_state = _native_floats(raw, "history_state")
     history_chi2 = _native_floats(raw, "history_chi2")
     history_chi2_reflectance = _native_floats(raw, "history_chi2_reflectance")
@@ -330,16 +329,10 @@ def _result_from_native(
         "history_state_vector_convergence",
     )
     history_snr_normal = _native_ints(raw, "history_snr_normal")
-    timing_rtm_and_jacobian = _native_floats(raw, "timing_rtm_and_jacobian_s")
-    timing_solver_update = _native_floats(raw, "timing_solver_update_s")
-    timing_total_iteration = _native_floats(raw, "timing_total_iteration_s")
     state_names = state_vector.names
 
     if state_count != len(state_names):
         raise RuntimeError("native optimal-estimation state count does not match request")
-
-    if timing_count not in (0, iteration_count):
-        raise RuntimeError("native optimal-estimation timing count does not match result history")
 
     history = tuple(
         Iteration(
@@ -353,15 +346,6 @@ def _result_from_native(
         )
         for index in range(iteration_count)
     )
-    timing = tuple(
-        IterationTiming(
-            index=index + 1,
-            rtm_and_jacobian_s=timing_rtm_and_jacobian[index],
-            solver_update_s=timing_solver_update[index],
-            total_iteration_s=timing_total_iteration[index],
-        )
-        for index in range(timing_count)
-    )
 
     return Result(
         state_names=state_names,
@@ -374,7 +358,6 @@ def _result_from_native(
             state_count,
         ),
         averaging_kernel=_matrix_rows(_native_floats(raw, "averaging_kernel"), state_count),
-        timing=timing,
         measurement=measurement,
         initial_state=_native_floats(raw, "initial_state"),
     )

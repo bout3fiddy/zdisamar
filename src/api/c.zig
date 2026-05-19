@@ -68,17 +68,16 @@ pub const ZdsOptimalEstimationStateSpec = extern struct {
 };
 
 // layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: 25 B across 4 fields; largest: max_iterations=8 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   size: 24 B, align: 8 B
+//   field storage: 24 B across 3 fields; largest: max_iterations=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: one per native OE request
-//   footprint: per instance = 32 B (0.031 KiB)
+//   footprint: per instance = 24 B (0.023 KiB)
 pub const ZdsOptimalEstimationControls = extern struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
     max_change_transformed_state: f64 = 1.0,
-    collect_timing: u8 = 0,
 };
 
 // layout(64-bit):
@@ -100,17 +99,16 @@ pub const ZdsOptimalEstimationRequest = extern struct {
 };
 
 // layout(64-bit):
-//   size: 184 B, align: 8 B
-//   field storage: 177 B across 21 fields; largest: state_count=8 B, iteration_count=8 B, timing_count=8 B; padding: 7 B
+//   size: 120 B, align: 8 B
+//   field storage: 113 B across 15 fields; largest: state_count=8 B, iteration_count=8 B, state_ids=8 B; padding: 7 B
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: all pointer fields borrow the native result handle until freed
-//   cache span: 3 cache line(s) at 64 B per line
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: one per native OE result
-//   footprint: per instance = 184 B (0.180 KiB); total also includes native result arrays
+//   footprint: per instance = 120 B (0.117 KiB); total also includes native result arrays
 pub const ZdsOptimalEstimationResult = extern struct {
     state_count: usize = 0,
     iteration_count: usize = 0,
-    timing_count: usize = 0,
     converged: u8 = 0,
     state_ids: ?[*]const u8 = null,
     state: ?[*]const f64 = null,
@@ -123,9 +121,6 @@ pub const ZdsOptimalEstimationResult = extern struct {
     history_chi2_state_vector: ?[*]const f64 = null,
     history_state_vector_convergence: ?[*]const f64 = null,
     history_snr_normal: ?[*]const u8 = null,
-    timing_rtm_and_jacobian_s: ?[*]const f64 = null,
-    timing_solver_update_s: ?[*]const f64 = null,
-    timing_total_iteration_s: ?[*]const f64 = null,
     result_handle: ?*anyopaque = null,
 };
 
@@ -824,7 +819,6 @@ export fn zds_run_o2a_optimal_estimation(
             .max_iterations = resolved_request.controls.max_iterations,
             .state_vector_convergence_threshold = resolved_request.controls.state_vector_convergence_threshold,
             .max_change_transformed_state = resolved_request.controls.max_change_transformed_state,
-            .collect_timing = resolved_request.controls.collect_timing != 0,
         },
     ) catch |err| {
         allocator.destroy(native);
@@ -1251,7 +1245,6 @@ fn optimalEstimationResultView(native: *zdisamar.optimal_estimation.Result) ZdsO
     return .{
         .state_count = @intCast(native.state_count),
         .iteration_count = @intCast(native.iteration_count),
-        .timing_count = @intCast(native.timing_count),
         .converged = if (native.converged) 1 else 0,
         .state_ids = @ptrCast(native.state_ids.ptr),
         .state = native.state.ptr,
@@ -1264,9 +1257,6 @@ fn optimalEstimationResultView(native: *zdisamar.optimal_estimation.Result) ZdsO
         .history_chi2_state_vector = native.history_chi2_state_vector.ptr,
         .history_state_vector_convergence = native.history_state_vector_convergence.ptr,
         .history_snr_normal = native.history_snr_normal.ptr,
-        .timing_rtm_and_jacobian_s = native.timing_rtm_and_jacobian_s.ptr,
-        .timing_solver_update_s = native.timing_solver_update_s.ptr,
-        .timing_total_iteration_s = native.timing_total_iteration_s.ptr,
         .result_handle = @ptrCast(native),
     };
 }
