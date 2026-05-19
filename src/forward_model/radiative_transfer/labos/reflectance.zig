@@ -141,7 +141,7 @@ fn maxInterfacePhaseCoefficientIndex(
         fallback_source_interface = common.sourceInterfaceFromLayers(layers, ilevel);
         break :blk &fallback_source_interface;
     };
-    const above_max = maxPhaseCoefficientIndex(&source_interface.phase_coefficients_above);
+    const above_max = source_interface.phase_max_index_above;
     const below_max = source_interface.phase_max_index_below;
     if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return @max(above_max, below_max);
     return @max(above_max, below_max);
@@ -188,14 +188,7 @@ fn reuseLayerKernelIndex(
 ) ?usize {
     if (layers.len == 0) return null;
     const above_index = @min(ilevel, layers.len - 1);
-    const layer_phase_coefficients = layers[above_index].phase.coefficients();
-    if (!std.mem.eql(
-        f64,
-        source_interface.phase_coefficients_above[0..],
-        layer_phase_coefficients[0..],
-    )) {
-        return null;
-    }
+    if (!source_interface.phase_above.eql(layers[above_index].phase)) return null;
     return above_index;
 }
 
@@ -338,9 +331,13 @@ pub fn calcIntegratedReflectanceWithBasis(
                     view_idx,
                 )
             else
-                basis.fillZplusZminRowFromBasisLimited(
+                basis.fillZplusZminRowFromWeightedPhaseLimited(
                     i_fourier,
-                    &source_interface.?.phase_coefficients_above,
+                    source_interface.?.phase_above.aerosol_weight,
+                    source_interface.?.phase_above.cloud_weight,
+                    source_interface.?.phase_above.rayleigh2_weight,
+                    source_interface.?.phase_above.aerosol_phase_coefficients,
+                    source_interface.?.phase_above.cloud_phase_coefficients,
                     source_max_phase_index,
                     geo,
                     plm_basis,
@@ -1010,7 +1007,7 @@ fn maxFourierIndex(layers: []const common.LayerInput) usize {
 fn maxFourierIndexInterfaces(source_interfaces: []const common.SourceInterfaceInput) usize {
     var max_index: usize = 0;
     for (source_interfaces) |*source_interface| {
-        max_index = @max(max_index, maxPhaseCoefficientIndex(&source_interface.phase_coefficients_above));
+        max_index = @max(max_index, source_interface.phase_max_index_above);
         max_index = @max(max_index, source_interface.phase_max_index_below);
     }
     return max_index;

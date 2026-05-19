@@ -36,7 +36,8 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
             @max(layers[below_index].scattering_optical_depth, 0.0)
         else
             0.0,
-        .phase_coefficients_above = layers[above_index].phase.coefficients(),
+        .phase_above = layers[above_index].phase,
+        .phase_max_index_above = layers[above_index].phase.maxIndex(),
         .phase_max_index_below = if (ilevel > 0)
             layers[below_index].phase.maxIndex()
         else

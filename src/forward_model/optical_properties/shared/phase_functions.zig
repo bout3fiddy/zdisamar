@@ -51,10 +51,13 @@ pub const PhaseMixture = struct {
             return .{ .rayleigh2_weight = rayleigh_coef2 };
         }
         const inv_total = 1.0 / total_scattering;
+        const aerosol_weight = aerosol_scattering * inv_total;
+        const cloud_weight = cloud_scattering * inv_total;
+        const rayleigh2_weight = gas_scattering * inv_total * rayleigh_coef2;
         return .{
-            .aerosol_weight = aerosol_scattering * inv_total,
-            .cloud_weight = cloud_scattering * inv_total,
-            .rayleigh2_weight = gas_scattering * inv_total * rayleigh_coef2,
+            .aerosol_weight = aerosol_weight,
+            .cloud_weight = cloud_weight,
+            .rayleigh2_weight = rayleigh2_weight,
             .aerosol_phase_coefficients = aerosol_phase_coefficients,
             .cloud_phase_coefficients = cloud_phase_coefficients,
         };
@@ -69,6 +72,14 @@ pub const PhaseMixture = struct {
             self.cloud_phase_coefficients,
             index,
         );
+    }
+
+    pub fn eql(self: PhaseMixture, other: PhaseMixture) bool {
+        return self.aerosol_weight == other.aerosol_weight and
+            self.cloud_weight == other.cloud_weight and
+            self.rayleigh2_weight == other.rayleigh2_weight and
+            self.aerosol_phase_coefficients == other.aerosol_phase_coefficients and
+            self.cloud_phase_coefficients == other.cloud_phase_coefficients;
     }
 
     pub fn maxIndex(self: PhaseMixture) usize {

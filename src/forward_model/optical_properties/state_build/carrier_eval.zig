@@ -46,13 +46,12 @@ pub const SharedOpticalScalars = struct {
 };
 
 // layout(64-bit):
-//   size: 1264 B, align: 8 B
-//   field storage: 1264 B across 8 fields; largest: phase_coefficients=1208 B, gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B; padding: 0 B (0 bits)
+//   size: 56 B, align: 8 B
+//   field storage: 56 B across 7 fields; largest: gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B, cia_optical_depth_per_km=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[151]f64=1208 B
-//   cache span: 20 cache line(s) at 64 B per line
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1264 B (1.234 KiB); total = per instance * live instance count
+//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
 pub const SharedOpticalCarrier = struct {
     gas_absorption_optical_depth_per_km: f64 = 0.0,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
@@ -61,7 +60,6 @@ pub const SharedOpticalCarrier = struct {
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
     cloud_optical_depth_per_km: f64 = 0.0,
     cloud_scattering_optical_depth_per_km: f64 = 0.0,
-    phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
 
     pub fn totalScatteringOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
         return self.scalars().totalScatteringOpticalDepthPerKm();
@@ -148,11 +146,7 @@ pub const WavelengthCarrierCache = struct {
             strong_line_state,
             &fallback,
         );
-        return sharedOpticalCarrierFromScalars(
-            prepared,
-            self.rayleigh_phase_coefficient2,
-            scalars.*,
-        );
+        return sharedOpticalCarrierFromScalars(scalars.*);
     }
 
     pub fn cachedSupportRowScalarsRef(
@@ -248,14 +242,13 @@ pub const PreparedQuadratureCarrier = struct {
 };
 
 // layout(64-bit):
-//   size: 1272 B, align: 8 B
-//   field storage: 1272 B across 9 fields; largest: phase_coefficients_above=1208 B, gas_scattering_optical_depth_per_km=8 B, particle_scattering_optical_depth_above_per_km=8 B; padding: 0 B (0 bits)
+//   size: 112 B, align: 8 B
+//   field storage: 112 B across 10 fields; largest: phase_above=40 B, gas_scattering_optical_depth_per_km=8 B, particle_scattering_optical_depth_above_per_km=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients_above:[151]f64=1208 B
-//   encoded fields: phase_max_index_below stores the below-row Fourier bound instead of a full 1208 B phase row
-//   cache span: 20 cache line(s) at 64 B per line
+//   encoded fields: phase_above stores gas/aerosol/cloud phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1272 B (1.242 KiB); total = per instance * live instance count
+//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced phase storage above
 pub const SharedBoundaryCarrier = struct {
     gas_scattering_optical_depth_per_km: f64 = 0.0,
     particle_scattering_optical_depth_above_per_km: f64 = 0.0,
@@ -264,7 +257,8 @@ pub const SharedBoundaryCarrier = struct {
     aerosol_scattering_optical_depth_below_per_km: f64 = 0.0,
     ksca_above: f64 = 0.0,
     ksca_below: f64 = 0.0,
-    phase_coefficients_above: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    phase_above: PhaseFunctions.PhaseMixture = .{},
+    phase_max_index_above: usize = 0,
     phase_max_index_below: usize = 0,
 };
 
@@ -473,8 +467,17 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
         level_geometry.particle_below_support_row_index,
     );
     const gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km;
-    const phase_coefficients_below = PhaseFunctions.combinePhaseCoefficients(
-        wavelength_nm,
+    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+    const phase_above = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        rayleigh_phase_coefficient2,
+        gas_scattering_optical_depth_per_km,
+        particle_above.aerosol_scattering_optical_depth_per_km,
+        particle_above.cloud_scattering_optical_depth_per_km,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
+    );
+    const phase_below = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        rayleigh_phase_coefficient2,
         gas_scattering_optical_depth_per_km,
         particle_below.aerosol_scattering_optical_depth_per_km,
         particle_below.cloud_scattering_optical_depth_per_km,
@@ -489,15 +492,9 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
         .aerosol_scattering_optical_depth_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
         .ksca_above = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
         .ksca_below = gas_scattering_optical_depth_per_km + particle_below.totalScatteringOpticalDepthPerKm(),
-        .phase_coefficients_above = PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
-            gas_scattering_optical_depth_per_km,
-            particle_above.aerosol_scattering_optical_depth_per_km,
-            particle_above.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        ),
-        .phase_max_index_below = PhaseFunctions.maxPhaseCoefficientIndex(&phase_coefficients_below),
+        .phase_above = phase_above,
+        .phase_max_index_above = phase_above.maxIndex(),
+        .phase_max_index_below = phase_below.maxIndex(),
     };
 }
 
@@ -540,7 +537,15 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
         wavelength_cache.particle_scales,
     );
     const gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km;
-    const phase_coefficients_below = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+    const phase_above = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        wavelength_cache.rayleigh_phase_coefficient2,
+        gas_scattering_optical_depth_per_km,
+        particle_above.aerosol_scattering_optical_depth_per_km,
+        particle_above.cloud_scattering_optical_depth_per_km,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
+    );
+    const phase_below = PhaseFunctions.PhaseMixture.fromScatteringMix(
         wavelength_cache.rayleigh_phase_coefficient2,
         gas_scattering_optical_depth_per_km,
         particle_below.aerosol_scattering_optical_depth_per_km,
@@ -556,15 +561,9 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
         .aerosol_scattering_optical_depth_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km,
         .ksca_above = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
         .ksca_below = gas_scattering_optical_depth_per_km + particle_below.totalScatteringOpticalDepthPerKm(),
-        .phase_coefficients_above = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
-            wavelength_cache.rayleigh_phase_coefficient2,
-            gas_scattering_optical_depth_per_km,
-            particle_above.aerosol_scattering_optical_depth_per_km,
-            particle_above.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        ),
-        .phase_max_index_below = PhaseFunctions.maxPhaseCoefficientIndex(&phase_coefficients_below),
+        .phase_above = phase_above,
+        .phase_max_index_above = phase_above.maxIndex(),
+        .phase_max_index_below = phase_below.maxIndex(),
     };
 }
 
@@ -686,42 +685,24 @@ fn fillSourceInterfaceFromBoundaryParts(
 ) void {
     const particle_above_total = particle_above.totalScatteringOpticalDepthPerKm();
     const particle_below_total = particle_below.totalScatteringOpticalDepthPerKm();
-    const phase_coefficients_above = if (rayleigh_phase_coefficient2) |coefficient2|
-        PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
-            coefficient2,
-            gas_scattering_optical_depth_per_km,
-            particle_above.aerosol_scattering_optical_depth_per_km,
-            particle_above.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        )
-    else
-        PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
-            gas_scattering_optical_depth_per_km,
-            particle_above.aerosol_scattering_optical_depth_per_km,
-            particle_above.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        );
-    const phase_coefficients_below = if (rayleigh_phase_coefficient2) |coefficient2|
-        PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
-            coefficient2,
-            gas_scattering_optical_depth_per_km,
-            particle_below.aerosol_scattering_optical_depth_per_km,
-            particle_below.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        )
-    else
-        PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
-            gas_scattering_optical_depth_per_km,
-            particle_below.aerosol_scattering_optical_depth_per_km,
-            particle_below.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        );
+    const rayleigh_coef2 = rayleigh_phase_coefficient2 orelse
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+    const phase_above = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        rayleigh_coef2,
+        gas_scattering_optical_depth_per_km,
+        particle_above.aerosol_scattering_optical_depth_per_km,
+        particle_above.cloud_scattering_optical_depth_per_km,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
+    );
+    const phase_below = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        rayleigh_coef2,
+        gas_scattering_optical_depth_per_km,
+        particle_below.aerosol_scattering_optical_depth_per_km,
+        particle_below.cloud_scattering_optical_depth_per_km,
+        &self.aerosol_phase_coefficients,
+        &self.cloud_phase_coefficients,
+    );
     source_interface.* = .{
         .source_weight = 0.0,
         .rtm_weight = rtm_weight,
@@ -730,8 +711,9 @@ fn fillSourceInterfaceFromBoundaryParts(
         .particle_ksca_below = particle_below_total,
         .ksca_above = gas_scattering_optical_depth_per_km + particle_above_total,
         .ksca_below = gas_scattering_optical_depth_per_km + particle_below_total,
-        .phase_coefficients_above = phase_coefficients_above,
-        .phase_max_index_below = PhaseFunctions.maxPhaseCoefficientIndex(&phase_coefficients_below),
+        .phase_above = phase_above,
+        .phase_max_index_above = phase_above.maxIndex(),
+        .phase_max_index_below = phase_below.maxIndex(),
     };
 }
 
@@ -929,13 +911,13 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
         const above_index: usize = @intCast(above_index_u32);
         if (above_index >= sublayers.len) return gas_carrier;
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[above_index]);
-        return composeSharedActiveCarrier(self, wavelength_nm, gas_carrier, particle, particle, 0.0);
+        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
     }
     if (above_index_u32 == invalid_index) {
         const below_index: usize = @intCast(below_index_u32);
         if (below_index >= sublayers.len) return gas_carrier;
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[below_index]);
-        return composeSharedActiveCarrier(self, wavelength_nm, gas_carrier, particle, particle, 0.0);
+        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
     }
 
     const below_index: usize = @intCast(below_index_u32);
@@ -951,7 +933,7 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
         0.5;
     const particle_below = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, below_row);
     const particle_above = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, above_row);
-    return composeSharedActiveCarrier(self, wavelength_nm, gas_carrier, particle_below, particle_above, fraction);
+    return composeSharedActiveCarrier(gas_carrier, particle_below, particle_above, fraction);
 }
 
 // hot path:
@@ -960,8 +942,6 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
 //   data: gas carrier, below/above particle carriers, interpolation fraction, wavelength
 //   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and phase coefficient layout
 fn composeSharedActiveCarrier(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
     gas_carrier: SharedOpticalCarrier,
     particle_below: ParticleBoundaryCarrier,
     particle_above: ParticleBoundaryCarrier,
@@ -990,14 +970,6 @@ fn composeSharedActiveCarrier(
         .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
-        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
-            gas_carrier.gas_scattering_optical_depth_per_km,
-            aerosol_scattering_optical_depth_per_km,
-            cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        ),
     };
 }
 
@@ -1237,7 +1209,6 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         continuum_table.interpolateSigma(wavelength_nm)
     else
         0.0;
-    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
     const scalars = sharedOpticalScalarsAtSupportRowWithScalarCache(
         self,
         wavelength_nm,
@@ -1250,7 +1221,7 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         Rayleigh.crossSectionCm2(wavelength_nm),
         ParticleWavelengthScales.init(self, wavelength_nm),
     );
-    return sharedOpticalCarrierFromScalars(self, rayleigh_phase_coefficient2, scalars);
+    return sharedOpticalCarrierFromScalars(scalars);
 }
 
 fn sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
@@ -1416,11 +1387,7 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     };
 }
 
-fn sharedOpticalCarrierFromScalars(
-    self: *const State.PreparedOpticalState,
-    rayleigh_phase_coefficient2: f64,
-    scalars: SharedOpticalScalars,
-) SharedOpticalCarrier {
+fn sharedOpticalCarrierFromScalars(scalars: SharedOpticalScalars) SharedOpticalCarrier {
     return .{
         .gas_absorption_optical_depth_per_km = scalars.gas_absorption_optical_depth_per_km,
         .gas_scattering_optical_depth_per_km = scalars.gas_scattering_optical_depth_per_km,
@@ -1429,14 +1396,6 @@ fn sharedOpticalCarrierFromScalars(
         .aerosol_scattering_optical_depth_per_km = scalars.aerosol_scattering_optical_depth_per_km,
         .cloud_optical_depth_per_km = scalars.cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = scalars.cloud_scattering_optical_depth_per_km,
-        .phase_coefficients = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
-            rayleigh_phase_coefficient2,
-            scalars.gas_scattering_optical_depth_per_km,
-            scalars.aerosol_scattering_optical_depth_per_km,
-            scalars.cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        ),
     };
 }
 
@@ -1599,13 +1558,5 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
-        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
-            gas_scattering_optical_depth_per_km,
-            aerosol_scattering_optical_depth_per_km,
-            cloud_scattering_optical_depth_per_km,
-            &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
-        ),
     };
 }

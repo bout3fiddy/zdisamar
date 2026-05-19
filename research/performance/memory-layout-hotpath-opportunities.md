@@ -2774,6 +2774,82 @@ Conclusion:
   per-wavelength layer fill traffic, and OE retrieval latency all improved on
   the same benchmark/residual boundary
 
+### Experiment 43: encode source-interface phase rows and scalarize shared carriers
+
+Changed:
+- `SourceInterfaceInput` stores an encoded above phase mixture plus cached
+  above/below Fourier bounds instead of an inline `[151]f64` above phase row
+- `SharedBoundaryCarrier` uses the same encoded boundary representation for
+  callers that still construct a boundary carrier value
+- `SharedOpticalCarrier` now carries only optical-depth scalars; the full
+  combined phase row was removed from scalar-only carrier returns
+- integrated-source LABOS row filling consumes encoded phase weights directly
+  when it builds source-interface phase rows
+
+Memory result:
+
+| item | before | after | change |
+| --- | ---: | ---: | ---: |
+| `SharedOpticalCarrier` row | 1,264 B | 56 B | -1,208 B (-95.57%) |
+| `SourceInterfaceInput` row | 1,272 B | 112 B | -1,160 B (-91.19%) |
+| `SharedBoundaryCarrier` row | 1,272 B | 112 B | -1,160 B (-91.19%) |
+| 117-level source-interface buffer | 148,824 B | 13,104 B | -135,720 B (-132.54 KiB) |
+| 2-worker source-interface buffers | 297,648 B | 26,208 B | -271,440 B (-265.08 KiB) |
+| source-interface write surface, 701 forward misses | 104,325,624 B | 9,185,904 B | -95,139,720 B (-90.73 MiB) |
+
+Interpretation:
+- the above-interface phase row is the same Rayleigh/aerosol/cloud blend already
+  represented by `PhaseMixture`, so the row can be rebuilt at the consumer
+  boundary from weights and shared prepared phase rows
+- source-interface rows still retain the exact above and below Fourier bounds;
+  those bounds are compact scalar metadata, not full phase coefficient rows
+- `SharedOpticalCarrier` was returning a 1,208 B phase row to callers that only
+  consumed scalar optical depths, so removing it deletes work instead of adding
+  lazy recomputation
+- this combines with Experiment 42: layer and source-interface phase-row writes
+  now remove about 275.0 MiB of write traffic across the 701 benchmark misses
+  before counting smaller scalar-only carrier return savings
+
+Validation and benchmark evidence:
+- `zig build check`: passed
+- `zig build test-fast`: passed
+- process-noise checks before and after `uv run benchmark/run_benchmark.py`
+  showed no active zdisamar, forward-model, benchmark, validation, or plotting
+  process consuming CPU; Spotlight/Codex GUI load was present but no competing
+  forward-model process was detected
+- `uv run benchmark/run_benchmark.py`: run
+  `581102e81b3a44e9ad4fc3061ee76598`, `ZDISAMAR_WORKER_LIMIT=2`, host CPUs 10,
+  effective native worker cap 2, `ReleaseFast` native sync before timing
+- benchmark residual rows unchanged: fast-mode spectra worst
+  max_abs_over_noise `1.59985574045`; OE session AOD diff `8.699e-08`;
+  fast-vs-session sweep max AOD delta `0.00377768945481`, pressure delta
+  `5.09865532685 hPa`
+
+Benchmark comparison against Experiment 42:
+
+| metric | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| total benchmark wall | 140.938993 s | 140.800297 s | 0.9990 |
+| total benchmark CPU | 271.838358 s | 271.610686 s | 0.9992 |
+| forward no-session median | 0.948907 s | 0.954210 s | 1.0056 |
+| forward session setup | 0.699653 s | 0.702091 s | 1.0035 |
+| forward session first cached | 0.255445 s | 0.257382 s | 1.0076 |
+| forward session cached median | 0.255834 s | 0.257157 s | 1.0052 |
+| forward fast four-scene median | 4.636771 s | 4.638714 s | 1.0004 |
+| OE session setup median | 0.713594 s | 0.712604 s | 0.9986 |
+| OE session retrieval median | 1.086213 s | 1.081918 s | 0.9960 |
+| OE fast retrieval median | 0.835809 s | 0.836366 s | 1.0007 |
+| OE sweep session total wall | 19.582979 s | 19.484989 s | 0.9950 |
+| OE sweep fast total wall | 10.625625 s | 10.630680 s | 1.0005 |
+
+Conclusion:
+- accepted
+- this is a retained source-interface footprint reduction and a scalar-carrier
+  simplification with unchanged residuals
+- the total benchmark wall/CPU totals are slightly faster than Experiment 42,
+  and the main OE session/sweep timings improved on the retained benchmark
+  boundary
+
 Strategy checklist used while reading:
 - use indexes, handles, or ranges instead of per-element pointers where the
   backing storage is stable
@@ -2905,8 +2981,9 @@ Relevant layout facts:
 | `PreparedSublayer` | 272 B | scalar layer state + shared phase references | 48 |
 | `LayerInput` | 208 B | optical scalars, Jacobian vectors, encoded phase mixture | 0 |
 | `EvaluatedLayer` | 112 B | optical-depth breakdown + encoded phase mixture | 0 |
-| `SharedOpticalCarrier` | 1,264 B | combined `[151]f64` phase row | 0 |
-| `SharedBoundaryCarrier` | 1,272 B | above combined phase row + below phase bound | 0 |
+| `SharedOpticalCarrier` | 56 B | scalar optical-depth carrier | 0 |
+| `SharedBoundaryCarrier` | 112 B | boundary scalars + encoded above phase + bounds | 0 |
+| `SourceInterfaceInput` | 112 B | source scalars + encoded above phase + bounds | 0 |
 | `RtmQuadratureLevel` | 72 B | source scalars + encoded phase weights | 0 |
 | `SharedRtmSubgrid` | 32 B | scratch-backed altitude/weight slices | 0 |
 | `WavelengthCarrierCache` | 120 B plus backing slices | valid flags + scalar carrier slice | 0 |
@@ -2929,22 +3006,23 @@ Memory access shape:
 - cached shared-grid layer fill now derives layer phase weights from scalar
   optical totals instead of loading cached per-support-row phase rows or writing
   per-layer phase-numerator arrays
+- source-interface rows now use the same encoded phase shape and retain only
+  compact Fourier bounds for the above and below interface rows
+- scalar-only shared carrier returns no longer construct or return combined
+  phase rows
 - `SharedRtmSubgrid` returns slices over `GaussRuleScratch`; the scratch still
   reserves capacity for dynamic Gauss rules
 - historical notes show phase matrix construction is significant and repeated
   layer-specific fill of phase arrays dominates the PLM basis itself
 
 Potential direction:
-- inspect `SharedOpticalCarrier` and `SourceInterfaceInput.phase_coefficients_above`
-  as the remaining combined phase-row carriers, but only where the consumer can
-  use encoded weights without adding branchy lookup to the hot loop
 - use generation tags or active support-row lists for `support_row_valid` when
   the cache is repeatedly reset per wavelength
 - keep `SharedRtmSubgrid` as a workspace slice and next inspect whether
   `GaussRuleScratch` capacity itself should remain 128
-- keep benchmark evidence attached to any remaining phase-memoization change:
-  the accepted layer phase encoding worked because it removed large row traffic
-  without making the LABOS phase matrix path slower
+- remaining full phase rows are the canonical prepared aerosol/cloud phase rows
+  and phase-basis scratch/output rows; treat them as consumers or shared source
+  storage before trying to encode them further
 
 ### 4. Profile spectroscopy caches store multiple breakdown arrays
 
@@ -3080,8 +3158,6 @@ Memory interpretation:
 Best current candidates:
 - `WavelengthSampling`: split row descriptors from kernel offsets/weights
 - `UDField` and `UDLocal`: split upward/downward/source columns by level
-- remaining optical carrier rows: split scalar optical-depth columns from phase
-  arrays where the caller reads only scalars
 - `PreparedSublayer`: split scalar layer state from particle phase side storage
 - profile spectroscopy cache: split total-only forward data from breakdown data
 
@@ -3133,8 +3209,6 @@ Already present:
 Best next candidates:
 - integration kernels: build or reference active offsets/weights only, not full
   2048-capacity arrays per plan row
-- phase coefficients: store side arrays only for scattering-positive rows and
-  benchmark recomputation against memory traffic
 - profile spectroscopy breakdown: compute total in the default route and keep
   weak/strong/line breakdown side arrays for routes that need them
 - strong-line relaxation weights: allocate the active `line_count * line_count`
@@ -3161,24 +3235,18 @@ Fields likely worth keeping memoized until measured:
    arrays by level. Keep the public math helpers stable until the benchmark
    shows whether the layout helps transport loops.
 
-3. Carrier scalar/phase split
-
-   Store scalar optical-depth values separately from `[151]f64` phase arrays.
-   Add side storage only for rows with particle scattering or combined phase
-   use. Measure layer construction and LABOS input building together.
-
-4. Total-only spectroscopy profile cache
+3. Total-only spectroscopy profile cache
 
    Make the default forward path use `ProfileNodeSpectroscopyCache`-style
    total-only data and allocate breakdown arrays only for outputs or derivative
    paths that need them.
 
-5. Active/generation tags for cache-valid state
+4. Active/generation tags for cache-valid state
 
    Replace repeated `@memset(false)` plus bool scans with generation tags or
    active index lists for support-row carriers and LABOS active layers.
 
-6. Strong-line relaxation side storage
+5. Strong-line relaxation side storage
 
    Allocate relaxation weights to active `line_count * line_count` and inspect
    whether the access pattern is dense, triangular, or sparse.
@@ -3306,7 +3374,5 @@ table verifies all markers are covered by this scratch analysis.
 2. prototype LABOS order workspace SoA and active-layer lists
 3. generation tags or active lists for repeatedly reset support-row valid caches
 4. use total-only spectroscopy cache by default and side-store breakdown arrays
-5. inspect whether remaining combined phase rows can use side storage without
-   adding scattered source reads
-6. measure non-adjacent `RuntimeAttenArray.get` calls before changing
+5. measure non-adjacent `RuntimeAttenArray.get` calls before changing
    attenuation storage again
