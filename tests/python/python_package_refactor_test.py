@@ -261,6 +261,15 @@ def assert_reference_data_and_rtm_tables() -> None:
                 assert spectrum.case is not None
                 assert spectrum.case.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
 
+            mutable_case = copy.deepcopy(case)
+
+            with rtm.SessionCache() as cache:
+                spectrum = cache.spectrum(mutable_case, include_case=False)
+                assert spectrum.case is None
+                mutable_case.geometry.solar_zenith_deg = 0.0
+                cached_spectrum = cache.spectrum(include_case=False)
+                assert cached_spectrum.case is None
+
             budget = rtm.atmospheric_budget(case, np.array([760.76], dtype=np.float64))
             assert budget.row_count > 0
             assert budget.column("wavelength_nm").size == budget.row_count

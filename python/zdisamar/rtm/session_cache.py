@@ -13,20 +13,23 @@ class SessionCache:
 
     case: O2AInput | None = None
     _handle: RtmHandle = field(init=False, repr=False)
+    _loaded: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
 
         self._handle = RtmHandle()
+        initial_case = self.case
+        self.case = None
 
-        if self.case is not None:
-            self.load(self.case)
+        if initial_case is not None:
+            self.load(initial_case)
             self._handle.warm_cache()
 
     def load(self, case: O2AInput, *, copy_case: bool = True) -> None:
         """Load a wavelength-band case into the cached RTM storage."""
 
         self._handle.load_o2a_case(case, copy_case=copy_case)
-        self.case = case
+        self._loaded = True
 
     def spectrum(
         self,
@@ -40,7 +43,7 @@ class SessionCache:
 
         if case is not None:
             self.load(case, copy_case=include_case)
-        elif self.case is None:
+        elif not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.spectrum(
@@ -52,7 +55,7 @@ class SessionCache:
     def atmospheric_budget(self, wavelengths_nm):
         """Return atmospheric optical-depth budget rows for the loaded case."""
 
-        if self.case is None:
+        if not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.atmospheric_budget(wavelengths_nm)
@@ -64,7 +67,7 @@ class SessionCache:
     ):
         """Return instrument response rows for the loaded case."""
 
-        if self.case is None:
+        if not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.instrument_response_sampling(wavelengths_nm, channels=channels)
@@ -72,7 +75,7 @@ class SessionCache:
     def collision_induced_absorption(self, wavelengths_nm):
         """Return O2-O2 collision-induced absorption rows for the loaded case."""
 
-        if self.case is None:
+        if not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.collision_induced_absorption(wavelengths_nm)
@@ -81,6 +84,7 @@ class SessionCache:
         """Release cached RTM storage."""
 
         self._handle.close()
+        self._loaded = False
 
     def __enter__(self) -> Self:
 
