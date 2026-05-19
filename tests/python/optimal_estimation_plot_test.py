@@ -65,9 +65,12 @@ def main() -> int:
     assert convergence["type"] == "zdisamar-svg"
     assert len(convergence["panels"]) == 2
     assert convergence["resolve"]["scale"]["y"] == "independent"
+    assert convergence["panels"][0]["x_ticks"] == [0.0, 1.0, 2.0]
     convergence_spec = json.dumps(convergence)
     assert "Aerosol optical depth" in convergence_spec
     assert "Layer mid-pressure (hPa)" in convergence_spec
+    assert '"line"' in convergence_spec
+    assert '"points"' in convergence_spec
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
 

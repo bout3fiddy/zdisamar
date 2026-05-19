@@ -112,6 +112,7 @@ class SvgPanel:
     width: int = field(default_factory=lambda: PLOT.width)
     height: int = field(default_factory=lambda: PLOT.height)
     x_domain: tuple[float, float] | None = None
+    x_ticks: tuple[float, ...] = ()
     y_domain: tuple[float, float] | None = None
     marker_x: tuple[float, ...] = ()
     rule_y: tuple[float, ...] = ()
@@ -162,6 +163,7 @@ class SvgPanel:
             width=self.width,
             height=self.height,
             x_domain=self.x_domain,
+            x_ticks=self.x_ticks,
             y_domain=self.y_domain,
             marker_x=tuple(marker_values(series_x_values(self.series))),
             rule_y=self.rule_y,
@@ -291,6 +293,7 @@ class SvgFigure:
             "x_title": panel.x_title,
             "y_title": panel.y_title,
             "x_domain": [x_domain[0], x_domain[1]],
+            "x_ticks": list(panel.x_ticks),
             "y_domain": [y_domain[0], y_domain[1]],
             "marker_x": list(panel.marker_x),
             "rule_y": list(panel.rule_y),
@@ -442,7 +445,9 @@ def axis_svg(
             f"{escape(format_tick(value, panel.y_axis_multiplier))}</text>"
         )
 
-    for value in ticks(x_domain, PLOT.x_axis_tick_count):
+    x_tick_values = panel.x_ticks if panel.x_ticks else ticks(x_domain, PLOT.x_axis_tick_count)
+
+    for value in x_tick_values:
         x = scale_value(value, x_domain, 0.0, float(panel.width))
         elements.append(
             f'<text class="tick-label" x="{x:.3f}" y="{panel.height + X_TICK_LABEL_Y_OFFSET}" '

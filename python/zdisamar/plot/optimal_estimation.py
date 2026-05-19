@@ -184,18 +184,22 @@ def convergence_figure(result) -> SvgFigure:
 
     for index, state_name in enumerate(result.state_names):
         panel_rows = [row for row in rows if row["state_name"] == state_name]
+        x_values = [as_float(row["iteration"]) for row in panel_rows]
         values = [as_float(row["value"]) for row in panel_rows]
-        panel = line_panel(
+        color = state_color_at(index)
+        panel = SvgPanel(
             title=state_panel_title(state_name),
             x_title="Iteration",
             y_title=STATE_TRACE_Y_TITLE,
-            x=[as_float(row["iteration"]) for row in panel_rows],
-            y=values,
-            name=state_label(state_name),
-            color=state_color_at(index),
+            series=(
+                SvgSeries.line(state_label(state_name), x_values, values, color=color),
+                SvgSeries.points(state_label(state_name), x_values, values, color=color),
+            ),
             width=panel_width(columns),
             height=STATE_TRACE_PANEL_HEIGHT,
-            marker_x=False,
+            x_domain=iteration_domain(x_values),
+            x_ticks=tuple(sorted(set(x_values))),
+            marker_x=(),
         )
         panels.append(panel)
 
@@ -379,6 +383,20 @@ def color_range(count: int) -> list[str]:
 def state_columns(result) -> int:
 
     return min(STATE_TRACE_COLUMNS, max(1, len(result.state_names)))
+
+
+def iteration_domain(values: list[float]) -> tuple[float, float]:
+
+    if not values:
+        return (0.0, 1.0)
+
+    low = min(values)
+    high = max(values)
+
+    if low == high:
+        return (low - 0.5, high + 0.5)
+
+    return (low, high)
 
 
 def panel_width(columns: int) -> int:
