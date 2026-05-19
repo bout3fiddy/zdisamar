@@ -235,6 +235,65 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
     assert observed_solar_zenith == [original_solar_zenith]
 
 
+def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Measurement,
+        Result,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.rtm.session_cache import SessionCache
+
+    events: list[tuple[str, object, object]] = []
+    requested_case = SimpleNamespace(scene_id="requested")
+    measurement = Measurement((), (), ())
+    state_vector = SimpleNamespace(parameters=())
+    controls = RetrievalControls(max_iterations=1)
+    native_result = Result((), (), 0, True, (), (), ())
+
+    class Handle:
+        def optimal_estimation(self, *, measurement, state_vector, controls):
+
+            events.append(("optimal_estimation", measurement, controls))
+
+            return {"state_count": 0}
+
+    class Cache:
+        _handle = Handle()
+
+        def loaded_for(self, case) -> bool:
+
+            events.append(("loaded_for", case, None))
+
+            return False
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            events.append(("load", case, copy_case))
+
+    with (
+        patch.object(o2a_oe, "_result_from_native", return_value=native_result),
+        patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
+    ):
+        result = o2a_oe._disamar_oe(  # noqa: SLF001
+            case=cast(O2AInput, requested_case),
+            measurement=measurement,
+            state_vector=cast(StateVector, state_vector),
+            controls=controls,
+            cache=cast(SessionCache, Cache()),
+        )
+
+    assert result is native_result
+    assert events == [
+        ("loaded_for", requested_case, None),
+        ("load", requested_case, False),
+        ("optimal_estimation", measurement, controls),
+    ]
+
+
 def assert_native_oe_marshaling_bounds() -> None:
 
     from zdisamar.bindings.handles import RtmHandle
@@ -284,6 +343,37 @@ def assert_native_oe_marshaling_bounds() -> None:
         assert "interval_index_1based" in str(error)
     else:
         raise AssertionError("invalid interval index reached native OE marshaling")
+
+
+def assert_native_oe_runs_after_default_prepare() -> None:
+
+    from zdisamar.bindings.handles import RtmHandle
+    from zdisamar.inverse_method import optimal_estimation
+
+    handle = RtmHandle()
+
+    try:
+        case = handle.default_o2a_case()
+        measurement = optimal_estimation.measurement_from_case(case, reflectance_variance=1.0e-6)
+        state_vector = optimal_estimation.StateVector(
+            (
+                optimal_estimation.AerosolOpticalDepth(
+                    initial=0.3,
+                    prior=0.3,
+                    variance=0.8,
+                ),
+            )
+        )
+        handle._check(handle._lib.zds_prepare_default_o2a(handle._ctx))  # noqa: SLF001
+        result = handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+        assert result["iteration_count"] == 1
+        assert result["state_count"] == 1
+    finally:
+        handle.close()
 
 
 def assert_reference_data_and_rtm_tables() -> None:
@@ -409,7 +499,9 @@ def main() -> int:
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
+    assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_marshaling_bounds()
+    assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()
     print("python_package_refactor=ok")
 

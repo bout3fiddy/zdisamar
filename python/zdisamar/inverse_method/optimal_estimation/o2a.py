@@ -92,6 +92,10 @@ def _disamar_oe(
 
     final_evaluate_state = _lazy_final_evaluator(case, state_vector)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
+
+    if not cache.loaded_for(case):
+        cache.load(case, copy_case=False)
+
     raw = cache._handle.optimal_estimation(  # noqa: SLF001
         measurement=measurement,
         state_vector=state_vector,

@@ -14,6 +14,7 @@ class SessionCache:
     case: O2AInput | None = None
     _handle: RtmHandle = field(init=False, repr=False)
     _loaded: bool = field(default=False, init=False, repr=False)
+    _loaded_case_identity: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
 
@@ -30,6 +31,12 @@ class SessionCache:
 
         self._handle.load_o2a_case(case, copy_case=copy_case)
         self._loaded = True
+        self._loaded_case_identity = id(case)
+
+    def loaded_for(self, case: O2AInput) -> bool:
+        """Return whether this cache was loaded from this case object."""
+
+        return self._loaded and self._loaded_case_identity == id(case)
 
     def spectrum(
         self,
@@ -85,6 +92,7 @@ class SessionCache:
 
         self._handle.close()
         self._loaded = False
+        self._loaded_case_identity = None
 
     def __enter__(self) -> Self:
 

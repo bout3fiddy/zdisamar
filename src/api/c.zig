@@ -717,10 +717,17 @@ export fn zds_run_o2a_optimal_estimation(
         resolved.setError("null optimal-estimation result");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const parsed = &(resolved.parsed_input orelse {
-        resolved.setError("not prepared from O2A JSON");
-        return @intFromEnum(ZdsStatus.failure);
-    });
+    var default_input: zdisamar.O2AInput = undefined;
+    const input = if (resolved.parsed_input) |*parsed|
+        &parsed.value
+    else input: {
+        if (resolved.prepared == null) {
+            resolved.setError("not prepared");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        default_input = zdisamar.defaultO2AInput();
+        break :input &default_input;
+    };
     const wavelengths_ptr = resolved_request.wavelength_nm orelse {
         resolved.setError("null measurement wavelengths");
         return @intFromEnum(ZdsStatus.failure);
@@ -799,7 +806,7 @@ export fn zds_run_o2a_optimal_estimation(
     };
     native.* = zdisamar.optimal_estimation.runO2A(
         allocator,
-        &parsed.value,
+        input,
         wavelengths_ptr[0..resolved_request.sample_count],
         reflectance_ptr[0..resolved_request.sample_count],
         variance_ptr[0..resolved_request.sample_count],
