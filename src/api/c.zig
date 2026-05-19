@@ -753,12 +753,12 @@ export fn zds_run_o2a_optimal_estimation(
         return @intFromEnum(ZdsStatus.failure);
     }
 
-    var profiles = [_]?zdisamar.optimal_estimation.PressureAltitudeProfile{null} ** zdisamar.optimal_estimation.max_state_count;
+    var profiles = [_]zdisamar.optimal_estimation.PressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count;
     defer {
         for (&profiles) |*profile| {
-            if (profile.*) |resolved_profile| {
-                zdisamar.optimal_estimation.freePressureProfile(allocator, resolved_profile);
-                profile.* = null;
+            if (profile.hasSamples()) {
+                zdisamar.optimal_estimation.freePressureProfile(allocator, profile.*);
+                profile.* = .{};
             }
         }
     }
@@ -787,13 +787,21 @@ export fn zds_run_o2a_optimal_estimation(
                 return @intFromEnum(ZdsStatus.failure);
             };
         }
+        if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
+            resolved.setError("invalid optimal-estimation lower bound");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
+            resolved.setError("invalid optimal-estimation upper bound");
+            return @intFromEnum(ZdsStatus.failure);
+        }
         state_specs[index] = .{
             .state = state,
             .initial = raw.initial,
             .prior = raw.prior,
             .variance = raw.variance,
-            .lower = if (raw.has_lower != 0) raw.lower else null,
-            .upper = if (raw.has_upper != 0) raw.upper else null,
+            .lower_bound = if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound,
+            .upper_bound = if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound,
             .thickness_hpa = raw.thickness_hpa,
             .interval_index_1based = raw.interval_index_1based,
             .pressure_altitude_profile = profiles[index],
@@ -1241,9 +1249,9 @@ fn spectrumView(resolved: *const Context, spectrum: ?*const ZdsSpectrum) !?zdisa
 
 fn optimalEstimationResultView(native: *zdisamar.optimal_estimation.Result) ZdsOptimalEstimationResult {
     return .{
-        .state_count = native.state_count,
-        .iteration_count = native.iteration_count,
-        .timing_count = native.timing_count,
+        .state_count = @intCast(native.state_count),
+        .iteration_count = @intCast(native.iteration_count),
+        .timing_count = @intCast(native.timing_count),
         .converged = if (native.converged) 1 else 0,
         .state_ids = @ptrCast(native.state_ids.ptr),
         .state = native.state.ptr,

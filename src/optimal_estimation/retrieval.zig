@@ -12,6 +12,8 @@ const Vector = algebra.Vector;
 
 pub const max_state_count = algebra.max_state_count;
 pub const max_iteration_count: usize = 1000;
+pub const no_lower_bound = -std.math.inf(f64);
+pub const no_upper_bound = std.math.inf(f64);
 
 pub const Error = error{
     EmptyMeasurement,
@@ -29,23 +31,23 @@ pub const Error = error{
 
 // Scalar retrieval variable description passed from Python into native OE.
 // layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 66 B across 11 fields; largest: initial=8 B, prior=8 B, variance=8 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   encoded fields: state uses the RTM Jacobian enum; pressure metadata is only read for aerosol layer pressure
+//   size: 104 B, align: 8 B
+//   field storage: 101 B across 9 fields; largest: pressure_altitude_profile=48 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
+//   encoded fields: bounds use infinities for absence; an empty pressure profile means no pressure-state metadata
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: retrieval state count, currently 1..3
-//   footprint: per instance = 72 B (0.070 KiB); total = per instance * state count
+//   footprint: per instance = 104 B (0.102 KiB); total = per instance * state count
 pub const StateSpec = struct {
     state: jacobian.State,
     initial: f64,
     prior: f64,
     variance: f64,
-    lower: ?f64 = null,
-    upper: ?f64 = null,
+    lower_bound: f64 = no_lower_bound,
+    upper_bound: f64 = no_upper_bound,
     thickness_hpa: f64 = 0.0,
     interval_index_1based: u32 = 0,
-    pressure_altitude_profile: ?PressureAltitudeProfile = null,
+    pressure_altitude_profile: PressureAltitudeProfile = .{},
 };
 
 // Pressure-altitude table used to convert native altitude tangents to hPa tangents.
@@ -58,9 +60,13 @@ pub const StateSpec = struct {
 //   count: at most one profile per pressure-placement state
 //   footprint: per instance = 48 B (0.047 KiB); total also includes second-derivative storage
 pub const PressureAltitudeProfile = struct {
-    altitude_km: []const f64,
-    pressure_hpa: []const f64,
-    second: []const f64,
+    altitude_km: []const f64 = &.{},
+    pressure_hpa: []const f64 = &.{},
+    second: []const f64 = &.{},
+
+    pub fn hasSamples(self: PressureAltitudeProfile) bool {
+        return self.altitude_km.len != 0 or self.pressure_hpa.len != 0 or self.second.len != 0;
+    }
 
     pub fn altitudeDerivativeAtPressure(self: PressureAltitudeProfile, pressure_hpa: f64) !f64 {
         if (self.altitude_km.len < 2 or self.altitude_km.len != self.pressure_hpa.len or self.second.len != self.altitude_km.len) {
@@ -180,19 +186,19 @@ pub const IterationWorkspace = struct {
     averaging_kernel: Matrix = algebra.zeroMatrix(),
 };
 
-// Native result storage exposed through the C ABI.
+// Native result storage retained behind the C result handle.
 // layout(64-bit):
-//   size: 240 B, align: 8 B
-//   field storage: scalar block=32 B, slice descriptors=208 B across 13 fields
-//   unused bits: 56 scalar padding + 7 bool-storage slack = 63 bits
+//   size: 232 B, align: 8 B
+//   field storage: counters/status=6 B, slice descriptors=224 B across 14 fields; padding: 2 B
+//   unused bits: 16 padding + 7 bool-storage slack = 23 bits
 //   out-of-line: state, posterior, history, and timing arrays are owned contiguous f64/u8 buffers
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: one per completed retrieval result handle
-//   footprint: per instance = 240 B (0.234 KiB); total also includes referenced result buffers
+//   footprint: per instance = 232 B (0.227 KiB); total also includes referenced result buffers
 pub const Result = struct {
-    state_count: usize = 0,
-    iteration_count: usize = 0,
-    timing_count: usize = 0,
+    state_count: u8 = 0,
+    iteration_count: u16 = 0,
+    timing_count: u16 = 0,
     converged: bool = false,
     state_ids: []jacobian.State = &.{},
     state: []f64 = &.{},
@@ -210,7 +216,9 @@ pub const Result = struct {
     timing_total_iteration_s: []f64 = &.{},
 
     pub fn init(allocator: Allocator, state_count: usize, max_iterations: usize) !Result {
-        var result: Result = .{ .state_count = state_count };
+        if (state_count > max_state_count) return error.InvalidStateCount;
+        if (max_iterations > max_iteration_count) return error.InvalidStateSpec;
+        var result: Result = .{ .state_count = @intCast(state_count) };
         errdefer result.deinit(allocator);
         result.state_ids = try allocator.alloc(jacobian.State, state_count);
         result.state = try allocator.alloc(f64, state_count);
@@ -290,8 +298,6 @@ pub fn runO2A(
     var variance = algebra.zeroVector();
     var lower = algebra.zeroVector();
     var upper = algebra.zeroVector();
-    var has_lower = [_]bool{false} ** max_state_count;
-    var has_upper = [_]bool{false} ** max_state_count;
     var derivative_state_mask: jacobian.StateMask = 0;
 
     for (state_specs, 0..) |spec, index| {
@@ -302,14 +308,8 @@ pub fn runO2A(
         variance[index] = spec.variance;
         result.initial_state[index] = spec.initial;
         derivative_state_mask |= jacobian.stateMask(spec.state);
-        if (spec.lower) |value| {
-            lower[index] = value;
-            has_lower[index] = true;
-        }
-        if (spec.upper) |value| {
-            upper[index] = value;
-            has_upper[index] = true;
-        }
+        lower[index] = spec.lower_bound;
+        upper[index] = spec.upper_bound;
     }
 
     var scratch: IterationWorkspace = .{};
@@ -366,8 +366,7 @@ pub fn runO2A(
         );
         state = step.state;
         for (0..state_specs.len) |index| {
-            if (has_lower[index]) state[index] = @max(lower[index], state[index]);
-            if (has_upper[index]) state[index] = @min(upper[index], state[index]);
+            state[index] = @min(upper[index], @max(lower[index], state[index]));
         }
 
         var dx_iter = algebra.zeroVector();
@@ -400,8 +399,8 @@ pub fn runO2A(
 
     const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
     const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
-    result.iteration_count = iteration_count;
-    result.timing_count = if (collect_timing) iteration_count else 0;
+    result.iteration_count = @intCast(iteration_count);
+    result.timing_count = if (collect_timing) @intCast(iteration_count) else 0;
     result.converged = converged;
     for (0..state_specs.len) |row| {
         result.state[row] = state[row];
@@ -421,13 +420,16 @@ fn validateStateSpec(spec: StateSpec) !void {
     {
         return error.InvalidStateSpec;
     }
-    if (spec.lower) |value| if (!std.math.isFinite(value)) return error.InvalidStateSpec;
-    if (spec.upper) |value| if (!std.math.isFinite(value)) return error.InvalidStateSpec;
-    if (spec.lower != null and spec.upper != null and spec.lower.? > spec.upper.?) return error.InvalidStateSpec;
+    if (std.math.isNan(spec.lower_bound) or std.math.isNan(spec.upper_bound)) return error.InvalidStateSpec;
+    if (spec.lower_bound != no_lower_bound and !std.math.isFinite(spec.lower_bound)) return error.InvalidStateSpec;
+    if (spec.upper_bound != no_upper_bound and !std.math.isFinite(spec.upper_bound)) return error.InvalidStateSpec;
+    if (spec.lower_bound > spec.upper_bound) return error.InvalidStateSpec;
     if (spec.state == .aerosol_layer_mid_pressure_hpa) {
-        if (spec.thickness_hpa <= 0.0 or spec.interval_index_1based == 0 or spec.pressure_altitude_profile == null) {
+        if (spec.thickness_hpa <= 0.0 or spec.interval_index_1based == 0 or !spec.pressure_altitude_profile.hasSamples()) {
             return error.InvalidStateSpec;
         }
+    } else if (spec.thickness_hpa != 0.0 or spec.interval_index_1based != 0 or spec.pressure_altitude_profile.hasSamples()) {
+        return error.InvalidStateSpec;
     }
 }
 
@@ -557,7 +559,7 @@ fn accumulateNormalSystem(
             const source_index = sample_index * jacobian.state_count + jacobian.stateIndex(spec.state);
             var value = raw_jacobian[source_index] * reflectance_scale;
             if (spec.state == .aerosol_layer_mid_pressure_hpa) {
-                value *= try spec.pressure_altitude_profile.?.altitudeDerivativeAtPressure(previous[state_index]);
+                value *= try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[state_index]);
             }
             column_values[state_index] = value;
         }
@@ -702,6 +704,7 @@ pub fn buildPressureProfile(
 }
 
 pub fn freePressureProfile(allocator: Allocator, profile: PressureAltitudeProfile) void {
+    if (profile.second.len == 0) return;
     allocator.free(profile.second);
 }
 

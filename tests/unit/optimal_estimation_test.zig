@@ -3,6 +3,12 @@ const zdisamar = @import("zdisamar");
 
 const optimal_estimation = zdisamar.optimal_estimation;
 
+test "native optimal-estimation layouts avoid optional payload overhead" {
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(optimal_estimation.StateSpec));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(optimal_estimation.PressureAltitudeProfile));
+    try std.testing.expectEqual(@as(usize, 232), @sizeOf(optimal_estimation.Result));
+}
+
 test "pressure profile validates two-point samples before linear spline shortcut" {
     try std.testing.expectError(
         error.InvalidPressureProfile,
