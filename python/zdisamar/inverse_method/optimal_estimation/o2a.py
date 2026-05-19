@@ -69,6 +69,7 @@ def disamar_oe(
                 state_vector=state_vector,
                 controls=controls,
                 cache=local_cache,
+                load_case=False,
             )
 
     return _disamar_oe(
@@ -77,6 +78,7 @@ def disamar_oe(
         state_vector=state_vector,
         controls=controls,
         cache=cache,
+        load_case=True,
     )
 
 
@@ -87,13 +89,14 @@ def _disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None,
     cache: rtm.SessionCache,
+    load_case: bool = True,
 ) -> Result:
     """Bind the O2 A RTM relation to the generic OE solver."""
 
     final_evaluate_state = _lazy_final_evaluator(case, state_vector)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
 
-    if not cache.loaded_for(case):
+    if load_case:
         cache.load(case, copy_case=False)
 
     raw = cache._handle.optimal_estimation(  # noqa: SLF001

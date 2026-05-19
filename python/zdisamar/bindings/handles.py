@@ -4,6 +4,7 @@ import copy
 import ctypes
 import math
 from array import array
+from numbers import Integral
 from typing import Self
 
 from .. import reference_data
@@ -344,7 +345,12 @@ class RtmHandle:
 
             lower = getattr(parameter, "lower", None)
             upper = getattr(parameter, "upper", None)
-            interval_index_1based = int(getattr(parameter, "interval_index_1based", 0))
+            raw_interval_index = getattr(parameter, "interval_index_1based", 0)
+
+            if not isinstance(raw_interval_index, Integral) or isinstance(raw_interval_index, bool):
+                raise ValueError("optimal-estimation interval_index_1based must be an integer")
+
+            interval_index_1based = int(raw_interval_index)
 
             if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
                 raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")

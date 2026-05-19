@@ -264,12 +264,6 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     class Cache:
         _handle = Handle()
 
-        def loaded_for(self, case) -> bool:
-
-            events.append(("loaded_for", case, None))
-
-            return False
-
         def load(self, case, *, copy_case: bool = True) -> None:
 
             events.append(("load", case, copy_case))
@@ -288,7 +282,6 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     assert result is native_result
     assert events == [
-        ("loaded_for", requested_case, None),
         ("load", requested_case, False),
         ("optimal_estimation", measurement, controls),
     ]
@@ -343,6 +336,19 @@ def assert_native_oe_marshaling_bounds() -> None:
         assert "interval_index_1based" in str(error)
     else:
         raise AssertionError("invalid interval index reached native OE marshaling")
+
+    state_vector.parameters[0].interval_index_1based = 1.9
+
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+    except ValueError as error:
+        assert "interval_index_1based" in str(error)
+    else:
+        raise AssertionError("non-integer interval index reached native OE marshaling")
 
 
 def assert_native_oe_runs_after_default_prepare() -> None:
