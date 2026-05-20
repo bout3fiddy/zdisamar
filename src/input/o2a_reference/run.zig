@@ -76,6 +76,17 @@ pub const PreparedRuntimeEvaluation = struct {
     }
 };
 
+pub const PreparedRuntimeOptics = struct {
+    scene: Scene,
+    prepared: OpticsPrepare.PreparedOpticalState,
+
+    pub fn deinit(self: *PreparedRuntimeOptics, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
@@ -508,6 +519,15 @@ pub fn prepareResolvedVendorO2ARoute(
     });
 }
 
+pub fn prepareResolvedVendorO2ARouteFromResolved(resolved: *const ResolvedVendorO2ACase) !Route {
+    return transport_common.prepareRoute(.{
+        .regime = resolved.observation.regime,
+        .execution_mode = try resolved.plan.executionMode(),
+        .derivative_mode = try resolved.plan.derivativeMode(),
+        .rtm_controls = resolved.rtm_controls,
+    });
+}
+
 pub fn runResolvedVendorO2AReflectanceCase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
@@ -613,6 +633,27 @@ pub fn prepareResolvedVendorO2AEvaluationWithInputs(
     resolved: *const ResolvedVendorO2ACase,
     inputs: *const LoadedVendorO2AInputs,
 ) !PreparedRuntimeEvaluation {
+    var optics = try prepareResolvedVendorO2AOpticsWithInputs(allocator, resolved, inputs);
+    errdefer optics.deinit(allocator);
+
+    const route = route: {
+        const zone = Trace.staticZone(@src(), "prepare.route");
+        defer zone.end();
+        break :route try prepareResolvedVendorO2ARoute(&optics.scene, resolved.plan, resolved.rtm_controls);
+    };
+
+    return .{
+        .scene = optics.scene,
+        .route = route,
+        .prepared = optics.prepared,
+    };
+}
+
+pub fn prepareResolvedVendorO2AOpticsWithInputs(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+) !PreparedRuntimeOptics {
     var scene = scene: {
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
@@ -646,15 +687,8 @@ pub fn prepareResolvedVendorO2AEvaluationWithInputs(
         try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
     }
 
-    const route = route: {
-        const zone = Trace.staticZone(@src(), "prepare.route");
-        defer zone.end();
-        break :route try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
-    };
-
     return .{
         .scene = scene,
-        .route = route,
         .prepared = prepared,
     };
 }

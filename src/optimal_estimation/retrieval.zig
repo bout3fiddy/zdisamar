@@ -10,6 +10,7 @@ const algebra = @import("algebra.zig");
 const Allocator = std.mem.Allocator;
 const Matrix = algebra.Matrix;
 const Vector = algebra.Vector;
+const VerticalInterval = @import("../input/Atmosphere.zig").VerticalInterval;
 
 pub const max_state_count = algebra.max_state_count;
 pub const max_iteration_count: usize = 1000;
@@ -116,17 +117,16 @@ pub const PressureAltitudeProfile = struct {
 
 // Long-lived measurement buffers for one retrieval.
 // layout(64-bit):
-//   size: 64 B, align: 8 B
-//   field storage: four slice descriptors at 16 B each; padding: 0 B (0 bits)
+//   size: 48 B, align: 8 B
+//   field storage: three slice descriptors at 16 B each; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: spectral arrays are dense f64 SoA buffers owned by this workspace
+//   out-of-line: wavelength, reflectance, and inverse variance are dense f64 SoA buffers owned by this workspace
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: one per retrieval
-//   footprint: per instance = 64 B (0.062 KiB); total also includes 4 * sample_count * 8 B
+//   footprint: per instance = 48 B (0.047 KiB); total also includes 3 * sample_count * 8 B
 pub const MeasurementWorkspace = struct {
     wavelength_nm: []f64 = &.{},
     reflectance: []f64 = &.{},
-    variance: []f64 = &.{},
     inv_variance: []f64 = &.{},
 
     pub fn init(
@@ -141,9 +141,8 @@ pub const MeasurementWorkspace = struct {
         errdefer workspace.deinit(allocator);
         workspace.wavelength_nm = try allocator.dupe(f64, wavelength_nm);
         workspace.reflectance = try allocator.dupe(f64, reflectance);
-        workspace.variance = try allocator.dupe(f64, variance);
         workspace.inv_variance = try allocator.alloc(f64, variance.len);
-        for (workspace.wavelength_nm, workspace.reflectance, workspace.variance, workspace.inv_variance, 0..) |wavelength, y, var_value, *inv, index| {
+        for (workspace.wavelength_nm, workspace.reflectance, variance, workspace.inv_variance, 0..) |wavelength, y, var_value, *inv, index| {
             if (!std.math.isFinite(wavelength) or !std.math.isFinite(y) or !std.math.isFinite(var_value) or var_value <= 0.0) {
                 return error.InvalidMeasurement;
             }
@@ -156,7 +155,6 @@ pub const MeasurementWorkspace = struct {
     pub fn deinit(self: *MeasurementWorkspace, allocator: Allocator) void {
         allocator.free(self.wavelength_nm);
         allocator.free(self.reflectance);
-        allocator.free(self.variance);
         allocator.free(self.inv_variance);
         self.* = .{};
     }
@@ -253,6 +251,64 @@ pub const Controls = struct {
     max_change_transformed_state: f64 = 1.0,
 };
 
+// Retrieval-owned preparation for one inverse problem. State evaluations still
+// rebuild the state-dependent scene and optical state, but route selection and
+// long-lived input/measurement ownership are outside the iteration loop.
+const RetrievalPreparedCase = struct {
+    state_specs: []const StateSpec,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    measurement: MeasurementWorkspace,
+    loaded_inputs: o2a_types.LoadedVendorO2AInputs,
+    mutable_input: o2a_types.ResolvedVendorO2ACase,
+    mutable_intervals: []VerticalInterval,
+    route: o2a_types.Route,
+
+    fn init(
+        allocator: Allocator,
+        base_input: *const o2a_types.ResolvedVendorO2ACase,
+        measurement_wavelength_nm: []const f64,
+        measurement_reflectance: []const f64,
+        measurement_variance: []const f64,
+        state_specs: []const StateSpec,
+        forward_storage: *InstrumentGrid.ProductStorage,
+    ) !RetrievalPreparedCase {
+        var measurement = try MeasurementWorkspace.init(
+            allocator,
+            measurement_wavelength_nm,
+            measurement_reflectance,
+            measurement_variance,
+        );
+        errdefer measurement.deinit(allocator);
+
+        var loaded_inputs = try o2a_runtime.loadResolvedVendorO2AInputs(allocator, base_input);
+        errdefer loaded_inputs.deinit(allocator);
+
+        const mutable_intervals = try allocator.alloc(VerticalInterval, base_input.intervals.len);
+        errdefer allocator.free(mutable_intervals);
+        @memcpy(mutable_intervals, base_input.intervals);
+
+        var mutable_input = base_input.*;
+        mutable_input.intervals = mutable_intervals;
+
+        return .{
+            .state_specs = state_specs,
+            .forward_storage = forward_storage,
+            .measurement = measurement,
+            .loaded_inputs = loaded_inputs,
+            .mutable_input = mutable_input,
+            .mutable_intervals = mutable_intervals,
+            .route = try o2a_runtime.prepareResolvedVendorO2ARouteFromResolved(base_input),
+        };
+    }
+
+    fn deinit(self: *RetrievalPreparedCase, allocator: Allocator) void {
+        allocator.free(self.mutable_intervals);
+        self.loaded_inputs.deinit(allocator);
+        self.measurement.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn runO2A(
     allocator: Allocator,
     base_input: *const o2a_types.ResolvedVendorO2ACase,
@@ -271,19 +327,16 @@ pub fn runO2A(
     Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
     Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
 
-    var measurement = try MeasurementWorkspace.init(
+    var prepared_case = try RetrievalPreparedCase.init(
         allocator,
+        base_input,
         measurement_wavelength_nm,
         measurement_reflectance,
         measurement_variance,
+        state_specs,
+        forward_storage,
     );
-    defer measurement.deinit(allocator);
-
-    var loaded_inputs = try o2a_runtime.loadResolvedVendorO2AInputs(allocator, base_input);
-    defer loaded_inputs.deinit(allocator);
-
-    const mutable_intervals = try allocator.alloc(@import("../input/Atmosphere.zig").VerticalInterval, base_input.intervals.len);
-    defer allocator.free(mutable_intervals);
+    defer prepared_case.deinit(allocator);
 
     var result = try Result.init(allocator, state_specs.len, controls.max_iterations);
     errdefer result.deinit(allocator);
@@ -306,6 +359,8 @@ pub fn runO2A(
         lower[index] = spec.lower_bound;
         upper[index] = spec.upper_bound;
     }
+    prepared_case.route.derivative_mode = .semi_analytical;
+    prepared_case.route.derivative_state_mask = derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
@@ -325,26 +380,21 @@ pub fn runO2A(
         iteration_zone.value(@intCast(iteration_offset + 1));
 
         const previous = state;
-        const evaluation = evaluation: {
+        const evaluation = traced_evaluation: {
             const zone = Trace.staticZone(@src(), "optimal_estimation.rtm_jacobian");
             defer zone.end();
-            break :evaluation try evaluateO2AState(
+            break :traced_evaluation try evaluateO2AState(
                 allocator,
-                &loaded_inputs,
-                base_input,
-                mutable_intervals,
-                forward_storage,
-                state_specs,
+                &prepared_case,
                 previous,
-                derivative_state_mask,
             );
         };
 
-        const accumulation = accumulation: {
+        const accumulation = traced_normal_system: {
             const zone = Trace.staticZone(@src(), "optimal_estimation.normal_system");
             defer zone.end();
-            break :accumulation try accumulateNormalSystem(
-                measurement,
+            break :traced_normal_system try accumulateNormalSystem(
+                prepared_case.measurement,
                 evaluation.view,
                 state_specs,
                 previous,
@@ -355,10 +405,10 @@ pub fn runO2A(
             );
         };
 
-        const step = step: {
+        const step = traced_solver_update: {
             const zone = Trace.staticZone(@src(), "optimal_estimation.solver_update");
             defer zone.end();
-            break :step try solveStep(
+            break :traced_solver_update try solveStep(
                 state_specs.len,
                 scratch.g,
                 scratch.b,
@@ -447,57 +497,54 @@ const ForwardEvaluation = struct {
 
 fn evaluateO2AState(
     allocator: Allocator,
-    inputs: *const o2a_types.LoadedVendorO2AInputs,
-    base_input: *const o2a_types.ResolvedVendorO2ACase,
-    mutable_intervals: []@import("../input/Atmosphere.zig").VerticalInterval,
-    forward_storage: *InstrumentGrid.ProductStorage,
-    state_specs: []const StateSpec,
+    prepared_case: *RetrievalPreparedCase,
     state: Vector,
-    derivative_state_mask: jacobian.StateMask,
 ) !ForwardEvaluation {
-    var working_input: o2a_types.ResolvedVendorO2ACase = undefined;
     {
         const zone = Trace.staticZone(@src(), "optimal_estimation.state_application");
         defer zone.end();
-        working_input = base_input.*;
-        @memcpy(mutable_intervals, base_input.intervals);
-        working_input.intervals = mutable_intervals;
-        try writeStateToInput(&working_input, mutable_intervals, state_specs, state);
+        // The mutable case starts as the base case once. Each evaluation overwrites
+        // every retrieval-owned field, so the iteration path avoids recopying the
+        // full resolved case and interval grid before the RTM preparation.
+        try writeStateToInput(
+            &prepared_case.mutable_input,
+            prepared_case.mutable_intervals,
+            prepared_case.state_specs,
+            state,
+        );
     }
 
-    var runtime_case = runtime_case: {
+    var runtime_optics = prepared_runtime_optics: {
         const zone = Trace.staticZone(@src(), "optimal_estimation.prepare_evaluation");
         defer zone.end();
-        break :runtime_case try o2a_runtime.prepareResolvedVendorO2AEvaluationWithInputs(
+        break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticsWithInputs(
             allocator,
-            &working_input,
-            inputs,
+            &prepared_case.mutable_input,
+            &prepared_case.loaded_inputs,
         );
     };
-    defer runtime_case.deinit(allocator);
-    runtime_case.route.derivative_mode = .semi_analytical;
-    runtime_case.route.derivative_state_mask = derivative_state_mask;
-    const view = view: {
+    defer runtime_optics.deinit(allocator);
+    const view = simulated_forward_view: {
         const zone = Trace.staticZone(@src(), "optimal_estimation.forward_jacobian_product");
         defer zone.end();
-        break :view try InstrumentGrid.simulateProductWithWorkspace(
+        break :simulated_forward_view try InstrumentGrid.simulateProductWithWorkspace(
             allocator,
-            forward_storage,
-            &runtime_case.scene,
-            runtime_case.route,
-            &runtime_case.prepared,
+            prepared_case.forward_storage,
+            &runtime_optics.scene,
+            prepared_case.route,
+            &runtime_optics.prepared,
             implementations.exact(),
         );
     };
     return .{
         .view = view,
-        .solar_mu0 = runtime_case.scene.geometry.solarCosineAtAltitude(0.0),
+        .solar_mu0 = runtime_optics.scene.geometry.solarCosineAtAltitude(0.0),
     };
 }
 
 fn writeStateToInput(
     input: *o2a_types.ResolvedVendorO2ACase,
-    intervals: []@import("../input/Atmosphere.zig").VerticalInterval,
+    intervals: []VerticalInterval,
     state_specs: []const StateSpec,
     state: Vector,
 ) !void {
