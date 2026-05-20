@@ -15,6 +15,7 @@ pub const shared_carrier = @import("state_build/shared_carrier.zig");
 pub const state_spectroscopy = @import("state_build/state_spectroscopy.zig");
 
 pub const PreparationInputs = builder.PreparationInputs;
+pub const BorrowedProfilePreparation = builder.BorrowedProfilePreparation;
 pub const PreparedLayer = state.PreparedLayer;
 pub const PreparedSublayer = state.PreparedSublayer;
 pub const OpticalDepthBreakdown = state.OpticalDepthBreakdown;

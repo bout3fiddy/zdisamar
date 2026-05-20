@@ -37,6 +37,9 @@ pub fn assemble(
         .spectroscopy_profile_altitudes_km = context.spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = context.spectroscopy_profile_pressures_hpa,
         .spectroscopy_profile_temperatures_k = context.spectroscopy_profile_temperatures_k,
+        .owns_spectroscopy_profile_arrays = context.owns_spectroscopy_profile_arrays,
+        .owns_spectroscopy_profile_strong_line_states = absorbers.owns_profile_strong_line_states,
+        .owns_spectroscopy_profile_weak_line_states = absorbers.owns_profile_weak_line_states,
         .cross_section_absorbers = absorbers.owned_cross_section_absorbers,
         .line_absorbers = absorbers.owned_line_absorbers,
         .continuum_owner_species = absorbers.continuum_owner_species,
@@ -98,6 +101,7 @@ pub fn assemble(
     context.spectroscopy_profile_altitudes_km = &.{};
     context.spectroscopy_profile_pressures_hpa = &.{};
     context.spectroscopy_profile_temperatures_k = &.{};
+    context.owns_spectroscopy_profile_arrays = false;
     context.collision_induced_absorption = null;
     context.spectroscopy_lines = null;
     context.aerosol_fraction_control = .{};
@@ -115,6 +119,8 @@ pub fn assemble(
     absorbers.profile_strong_line_state_count = 0;
     absorbers.profile_weak_line_states = null;
     absorbers.profile_weak_line_state_count = 0;
+    absorbers.owns_profile_strong_line_states = true;
+    absorbers.owns_profile_weak_line_states = true;
     absorbers.owned_lines = null;
 
     return prepared;

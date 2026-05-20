@@ -10,6 +10,7 @@ const Trace = @import("../../performance_trace.zig");
 const Allocator = std.mem.Allocator;
 
 pub const PreparationInputs = Context.PreparationInputs;
+pub const BorrowedProfilePreparation = Context.BorrowedProfilePreparation;
 
 // hot path:
 //   when: once per prepared scene/session before repeated forward solves

@@ -1,9 +1,11 @@
 const std = @import("std");
 const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
+const OpticsPrepare = @import("../forward_model/optical_properties/root.zig");
 const implementations = @import("../forward_model/implementations/root.zig");
 const jacobian = @import("../forward_model/jacobian/root.zig");
 const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
+const ReferenceData = @import("../input/ReferenceData.zig");
 const Trace = @import("../forward_model/performance_trace.zig");
 const algebra = @import("algebra.zig");
 
@@ -252,6 +254,69 @@ pub const Controls = struct {
     max_change_transformed_state: f64 = 1.0,
 };
 
+// Retrieval-session cache for profile spectroscopy support.
+// layout(64-bit):
+//   size: 88 B, align: 8 B
+//   field storage: borrowed=80 B, captured=1 B; padding: 7 B
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one per retrieval, reused across all OE state evaluations
+//   footprint: per instance = 88 B (0.086 KiB); referenced arrays are captured from the first prepared optical state
+//   invariant: pressure-placement refreshes vertical-grid rows, not these profile thermodynamic rows
+const ProfilePreparationSession = struct {
+    borrowed: OpticsPrepare.BorrowedProfilePreparation = .{},
+    captured: bool = false,
+
+    fn borrowedPreparation(self: *const ProfilePreparationSession) ?*const OpticsPrepare.BorrowedProfilePreparation {
+        if (!self.captured) return null;
+        return &self.borrowed;
+    }
+
+    fn captureFromPrepared(
+        self: *ProfilePreparationSession,
+        prepared: *OpticsPrepare.PreparedOpticalState,
+    ) void {
+        if (self.captured or prepared.spectroscopy_profile_altitudes_km.len == 0) return;
+        if (!prepared.owns_spectroscopy_profile_arrays) return;
+
+        self.borrowed.altitudes_km = prepared.spectroscopy_profile_altitudes_km;
+        self.borrowed.pressures_hpa = prepared.spectroscopy_profile_pressures_hpa;
+        self.borrowed.temperatures_k = prepared.spectroscopy_profile_temperatures_k;
+        prepared.spectroscopy_profile_altitudes_km = &.{};
+        prepared.spectroscopy_profile_pressures_hpa = &.{};
+        prepared.spectroscopy_profile_temperatures_k = &.{};
+        prepared.owns_spectroscopy_profile_arrays = false;
+
+        if (prepared.owns_spectroscopy_profile_strong_line_states) {
+            self.borrowed.strong_line_states = prepared.spectroscopy_profile_strong_line_states;
+            prepared.spectroscopy_profile_strong_line_states = null;
+            prepared.owns_spectroscopy_profile_strong_line_states = false;
+        }
+        if (prepared.owns_spectroscopy_profile_weak_line_states) {
+            self.borrowed.weak_line_states = prepared.spectroscopy_profile_weak_line_states;
+            prepared.spectroscopy_profile_weak_line_states = null;
+            prepared.owns_spectroscopy_profile_weak_line_states = false;
+        }
+        self.captured = true;
+    }
+
+    fn deinit(self: *ProfilePreparationSession, allocator: Allocator) void {
+        if (self.borrowed.strong_line_states) |states| {
+            for (states) |*state| state.deinit(allocator);
+            allocator.free(states);
+        }
+        if (self.borrowed.weak_line_states) |states| {
+            for (states) |*state| state.deinit(allocator);
+            allocator.free(states);
+        }
+        if (self.borrowed.altitudes_km.len != 0) allocator.free(self.borrowed.altitudes_km);
+        if (self.borrowed.pressures_hpa.len != 0) allocator.free(self.borrowed.pressures_hpa);
+        if (self.borrowed.temperatures_k.len != 0) allocator.free(self.borrowed.temperatures_k);
+        self.* = undefined;
+    }
+};
+
 // Retrieval-owned preparation for one inverse problem. State evaluations still
 // rebuild the state-dependent scene and optical state, but route selection and
 // long-lived input/measurement ownership are outside the iteration loop.
@@ -265,6 +330,7 @@ const RetrievalPreparedCase = struct {
     scene: Scene,
     weak_cutoff_grid: o2a_runtime.WeakCutoffGridCache = .{},
     solar_rewindowed: bool = false,
+    profile_preparation: ProfilePreparationSession = .{},
     route: o2a_types.Route,
 
     fn init(
@@ -314,6 +380,7 @@ const RetrievalPreparedCase = struct {
     }
 
     fn deinit(self: *RetrievalPreparedCase, allocator: Allocator) void {
+        self.profile_preparation.deinit(allocator);
         self.weak_cutoff_grid.deinit(allocator);
         self.scene.deinitOwned(allocator);
         allocator.free(self.mutable_intervals);
@@ -539,13 +606,23 @@ fn evaluateO2AState(
         // The mutable scene is retrieval-owned. Solar rewindow support is
         // derived from the instrument grid and line-list plan, so it is
         // installed once and then reused while optical state is refreshed.
-        break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
-            allocator,
-            &prepared_case.scene,
-            &prepared_case.loaded_inputs,
-            &prepared_case.weak_cutoff_grid,
-            &prepared_case.solar_rewindowed,
-        );
+        break :prepared_runtime_optics if (prepared_case.profile_preparation.borrowedPreparation()) |profile_preparation|
+            try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
+                allocator,
+                &prepared_case.scene,
+                &prepared_case.loaded_inputs,
+                &prepared_case.weak_cutoff_grid,
+                &prepared_case.solar_rewindowed,
+                profile_preparation,
+            )
+        else
+            try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
+                allocator,
+                &prepared_case.scene,
+                &prepared_case.loaded_inputs,
+                &prepared_case.weak_cutoff_grid,
+                &prepared_case.solar_rewindowed,
+            );
     };
     defer prepared_optics.deinit(allocator);
     const view = simulated_forward_view: {
@@ -560,6 +637,7 @@ fn evaluateO2AState(
             implementations.exact(),
         );
     };
+    prepared_case.profile_preparation.captureFromPrepared(&prepared_optics);
     return .{
         .view = view,
         .solar_mu0 = prepared_case.scene.geometry.solarCosineAtAltitude(0.0),

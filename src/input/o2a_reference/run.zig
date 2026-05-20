@@ -738,6 +738,7 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
         inputs,
         weak_cutoff_grid,
         &solar_rewindowed,
+        null,
     );
     errdefer prepared.deinit(allocator);
 
@@ -760,6 +761,25 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
         inputs,
         weak_cutoff_grid,
         solar_rewindowed,
+        null,
+    );
+}
+
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: *const OpticsPrepare.BorrowedProfilePreparation,
+) !OpticsPrepare.PreparedOpticalState {
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
     );
 }
 
@@ -769,6 +789,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     inputs: *const LoadedVendorO2AInputs,
     weak_cutoff_grid: ?*WeakCutoffGridCache,
     solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
 ) !OpticsPrepare.PreparedOpticalState {
     var prepared = prepared: {
         const zone = Trace.staticZone(@src(), "prepare.optical");
@@ -780,6 +801,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
             .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
+            .borrowed_profile_preparation = borrowed_profile_preparation,
         });
     };
     errdefer prepared.deinit(allocator);

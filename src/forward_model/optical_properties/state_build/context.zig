@@ -10,13 +10,13 @@ const VerticalGrid = @import("vertical_grid.zig");
 const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
-//   size: 64 B, align: 8 B
-//   field storage: 64 B across 8 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 0 B (0 bits)
+//   size: 72 B, align: 8 B
+//   field storage: 72 B across 9 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: profile, spectroscopy_profile, cross_sections, lut, collision_induced_absorption, +3 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
+//   out-of-line: profile, spectroscopy_profile, cross_sections, lut, collision_induced_absorption, +4 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
+//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
     spectroscopy_profile: ?*const ReferenceData.ClimatologyProfile = null,
@@ -26,17 +26,56 @@ pub const PreparationInputs = struct {
     spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList = null,
     aerosol_mie: ?*const ReferenceData.MiePhaseTable = null,
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
+    borrowed_profile_preparation: ?*const BorrowedProfilePreparation = null,
+};
+
+// Retrieval sessions can borrow profile spectroscopy support across state
+// evaluations. Pressure-placement states change the vertical grid and layer
+// optical depths, but these profile rows and prepared line states are keyed
+// only by the static spectroscopy profile and filtered line list.
+// layout(64-bit):
+//   size: 80 B, align: 8 B
+//   field storage: 80 B across 5 slice fields; padding: 0 B
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: profile arrays and prepared line-state arrays remain session-owned
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: at most one borrowed profile-preparation view per retrieval-owned optical refresh
+//   footprint: per instance = 80 B (0.078 KiB); referenced arrays live in the retrieval session
+pub const BorrowedProfilePreparation = struct {
+    altitudes_km: []f64 = &.{},
+    pressures_hpa: []f64 = &.{},
+    temperatures_k: []f64 = &.{},
+    weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
+    strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+
+    fn validate(self: BorrowedProfilePreparation, expected_node_count: usize) !void {
+        if (self.altitudes_km.len != expected_node_count or
+            self.pressures_hpa.len != expected_node_count or
+            self.temperatures_k.len != expected_node_count)
+        {
+            return error.InvalidRequest;
+        }
+        if (self.weak_line_states) |states| {
+            if (states.len != expected_node_count) return error.InvalidRequest;
+        }
+        if (self.strong_line_states) |states| {
+            if (states.len != expected_node_count) return error.InvalidRequest;
+        }
+        if ((self.weak_line_states == null) != (self.strong_line_states == null)) {
+            return error.InvalidRequest;
+        }
+    }
 };
 
 // layout(64-bit):
-//   size: 3392 B, align: 8 B
-//   field storage: 3392 B across 22 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 3432 B, align: 8 B
+//   field storage: 3425 B across 25 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
 //   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
-//   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +7 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 53 cache line(s) at 64 B per line
+//   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +9 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 54 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3392 B (3.312 KiB); total also includes referenced storage above
+//   footprint: per instance = 3432 B (3.352 KiB); total also includes referenced storage above
 pub const PreparationContext = struct {
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
@@ -53,6 +92,9 @@ pub const PreparationContext = struct {
     spectroscopy_profile_altitudes_km: []f64 = &.{},
     spectroscopy_profile_pressures_hpa: []f64 = &.{},
     spectroscopy_profile_temperatures_k: []f64 = &.{},
+    owns_spectroscopy_profile_arrays: bool = true,
+    borrowed_profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
+    borrowed_profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
     cloud_fraction_control: AtmosphereModel.FractionControl = .{},
     aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
@@ -66,9 +108,11 @@ pub const PreparationContext = struct {
         if (self.layers.len != 0) allocator.free(self.layers);
         if (self.sublayers.len != 0) allocator.free(self.sublayers);
         if (self.continuum_points.len != 0) allocator.free(self.continuum_points);
-        if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
-        if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
-        if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
+        if (self.owns_spectroscopy_profile_arrays) {
+            if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
+            if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
+            if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
+        }
         if (self.collision_induced_absorption) |cia| {
             var owned = cia;
             owned.deinit(allocator);
@@ -111,25 +155,36 @@ pub fn init(
     errdefer if (continuum_points.len != 0) allocator.free(continuum_points);
     const spectroscopy_profile = inputs.spectroscopy_profile orelse inputs.profile;
     const profile_node_count = spectroscopy_profile.rows.len;
-    const spectroscopy_profile_altitudes_km: []f64 = if (profile_node_count != 0)
+    const borrowed_profile_preparation = inputs.borrowed_profile_preparation;
+    if (borrowed_profile_preparation) |borrowed| try borrowed.validate(profile_node_count);
+    const owns_spectroscopy_profile_arrays = borrowed_profile_preparation == null;
+    const spectroscopy_profile_altitudes_km: []f64 = if (borrowed_profile_preparation) |borrowed|
+        borrowed.altitudes_km
+    else if (profile_node_count != 0)
         try allocator.alloc(f64, profile_node_count)
     else
         &.{};
-    errdefer if (spectroscopy_profile_altitudes_km.len != 0) allocator.free(spectroscopy_profile_altitudes_km);
-    const spectroscopy_profile_pressures_hpa: []f64 = if (profile_node_count != 0)
+    errdefer if (owns_spectroscopy_profile_arrays and spectroscopy_profile_altitudes_km.len != 0) allocator.free(spectroscopy_profile_altitudes_km);
+    const spectroscopy_profile_pressures_hpa: []f64 = if (borrowed_profile_preparation) |borrowed|
+        borrowed.pressures_hpa
+    else if (profile_node_count != 0)
         try allocator.alloc(f64, profile_node_count)
     else
         &.{};
-    errdefer if (spectroscopy_profile_pressures_hpa.len != 0) allocator.free(spectroscopy_profile_pressures_hpa);
-    const spectroscopy_profile_temperatures_k: []f64 = if (profile_node_count != 0)
+    errdefer if (owns_spectroscopy_profile_arrays and spectroscopy_profile_pressures_hpa.len != 0) allocator.free(spectroscopy_profile_pressures_hpa);
+    const spectroscopy_profile_temperatures_k: []f64 = if (borrowed_profile_preparation) |borrowed|
+        borrowed.temperatures_k
+    else if (profile_node_count != 0)
         try allocator.alloc(f64, profile_node_count)
     else
         &.{};
-    errdefer if (spectroscopy_profile_temperatures_k.len != 0) allocator.free(spectroscopy_profile_temperatures_k);
-    for (spectroscopy_profile.rows, 0..) |row, index| {
-        spectroscopy_profile_altitudes_km[index] = row.altitude_km;
-        spectroscopy_profile_pressures_hpa[index] = row.pressure_hpa;
-        spectroscopy_profile_temperatures_k[index] = row.temperature_k;
+    errdefer if (owns_spectroscopy_profile_arrays and spectroscopy_profile_temperatures_k.len != 0) allocator.free(spectroscopy_profile_temperatures_k);
+    if (owns_spectroscopy_profile_arrays) {
+        for (spectroscopy_profile.rows, 0..) |row, index| {
+            spectroscopy_profile_altitudes_km[index] = row.altitude_km;
+            spectroscopy_profile_pressures_hpa[index] = row.pressure_hpa;
+            spectroscopy_profile_temperatures_k[index] = row.temperature_k;
+        }
     }
 
     const collision_induced_absorption = if (inputs.collision_induced_absorption) |cia|
@@ -189,6 +244,9 @@ pub fn init(
         .spectroscopy_profile_altitudes_km = spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = spectroscopy_profile_pressures_hpa,
         .spectroscopy_profile_temperatures_k = spectroscopy_profile_temperatures_k,
+        .owns_spectroscopy_profile_arrays = owns_spectroscopy_profile_arrays,
+        .borrowed_profile_weak_line_states = if (borrowed_profile_preparation) |borrowed| borrowed.weak_line_states else null,
+        .borrowed_profile_strong_line_states = if (borrowed_profile_preparation) |borrowed| borrowed.strong_line_states else null,
         .aerosol_fraction_control = aerosol_fraction_control,
         .cloud_fraction_control = cloud_fraction_control,
         .operational_o2_lut = operational_o2_lut,
