@@ -392,6 +392,7 @@ pub fn populate(
     const collision_complex_cache = try CollisionComplexProfileCache.init(context);
 
     if (usesDisamarParitySupportGrid(context)) {
+        seedParitySupportRowLayerIndices(context);
         if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
             try populateParitySupportRowsParallel(
                 allocator,
@@ -480,6 +481,7 @@ fn populateParitySupportRows(
     cloud_fraction: f64,
 ) !void {
     for (0..context.sublayers.len) |write_index| {
+        const current_layer_index: usize = @intCast(context.sublayers[write_index].parent_layer_index);
         try populateParitySupportRow(
             allocator,
             context,
@@ -495,6 +497,8 @@ fn populateParitySupportRows(
             cloud_extinction_scale,
             aerosol_fraction,
             cloud_fraction,
+            current_layer_index,
+            @intCast(context.sublayers[write_index].sublayer_index),
             write_index,
         );
     }
@@ -610,6 +614,11 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
             defer chunk_zone.end();
 
             for (chunk.start..chunk.end) |write_index| {
+                // Hot path:
+                //   Parent-layer ownership is seeded into the support-row
+                //   output buffer before fanout. Workers then load the row-local
+                //   indexes directly instead of scanning layer starts.
+                const current_layer_index: usize = @intCast(worker.context.sublayers[write_index].parent_layer_index);
                 populateParitySupportRow(
                     worker.allocator,
                     worker.context,
@@ -625,6 +634,8 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                     worker.cloud_extinction_scale,
                     worker.aerosol_fraction,
                     worker.cloud_fraction,
+                    current_layer_index,
+                    @intCast(worker.context.sublayers[write_index].sublayer_index),
                     write_index,
                 ) catch |err| {
                     worker.error_state.store(err);
@@ -650,16 +661,16 @@ fn populateParitySupportRow(
     cloud_extinction_scale: f64,
     aerosol_fraction: f64,
     cloud_fraction: f64,
+    current_layer_index: usize,
+    current_sublayer_index: usize,
     write_index: usize,
 ) !void {
-    const current_layer_index = layerIndexForSublayer(context, write_index);
     const layer_thickness_km = @max(
         context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
             context.vertical_grid.layer_bottom_altitudes_km[current_layer_index],
         1.0e-9,
     );
     var ignored_layer_sums: LayerSums = .{};
-    const layer_start_index = @as(usize, @intCast(context.layers[current_layer_index].sublayer_start_index));
     try populateSublayer(
         allocator,
         context,
@@ -677,7 +688,7 @@ fn populateParitySupportRow(
         cloud_fraction,
         layer_thickness_km,
         current_layer_index,
-        if (write_index >= layer_start_index) write_index - layer_start_index else 0,
+        current_sublayer_index,
         write_index,
         &ignored_layer_sums,
     );
@@ -699,14 +710,22 @@ fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
     return work_partition.preferredWorkerCount(row_count, min_parallel_parity_support_row_count);
 }
 
-fn layerIndexForSublayer(context: *const Context, write_index: usize) usize {
+fn seedParitySupportRowLayerIndices(context: *Context) void {
+    if (context.layers.len == 0) return;
     var layer_index: usize = 0;
-    while (layer_index + 1 < context.layers.len and
-        write_index >= @as(usize, @intCast(context.layers[layer_index + 1].sublayer_start_index)))
-    {
-        layer_index += 1;
+    for (0..context.sublayers.len) |write_index| {
+        while (layer_index + 1 < context.layers.len and
+            write_index >= @as(usize, @intCast(context.layers[layer_index + 1].sublayer_start_index)))
+        {
+            layer_index += 1;
+        }
+        const layer_start_index = @as(usize, @intCast(context.layers[layer_index].sublayer_start_index));
+        context.sublayers[write_index].parent_layer_index = @intCast(layer_index);
+        context.sublayers[write_index].sublayer_index = @intCast(if (write_index >= layer_start_index)
+            write_index - layer_start_index
+        else
+            0);
     }
-    return layer_index;
 }
 
 fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
