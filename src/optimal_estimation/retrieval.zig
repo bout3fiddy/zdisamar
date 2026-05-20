@@ -608,23 +608,14 @@ fn evaluateO2AState(
         // The mutable scene is retrieval-owned. Solar rewindow support is
         // derived from the instrument grid and line-list plan, so it is
         // installed once and then reused while optical state is refreshed.
-        break :prepared_runtime_optics if (prepared_case.profile_preparation.borrowedPreparation()) |profile_preparation|
-            try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
-                allocator,
-                &prepared_case.scene,
-                &prepared_case.loaded_inputs,
-                &prepared_case.weak_cutoff_grid,
-                &prepared_case.solar_rewindowed,
-                profile_preparation,
-            )
-        else
-            try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
-                allocator,
-                &prepared_case.scene,
-                &prepared_case.loaded_inputs,
-                &prepared_case.weak_cutoff_grid,
-                &prepared_case.solar_rewindowed,
-            );
+        break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
+            allocator,
+            &prepared_case.scene,
+            &prepared_case.loaded_inputs,
+            &prepared_case.weak_cutoff_grid,
+            &prepared_case.solar_rewindowed,
+            prepared_case.profile_preparation.borrowedPreparation(),
+        );
     };
     defer prepared_optics.deinit(allocator);
     const view = simulated_forward_view: {

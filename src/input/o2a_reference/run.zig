@@ -739,6 +739,7 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
         weak_cutoff_grid,
         &solar_rewindowed,
         null,
+        .clone_input_tables,
     );
     errdefer prepared.deinit(allocator);
 
@@ -762,6 +763,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
         weak_cutoff_grid,
         solar_rewindowed,
         null,
+        .clone_input_tables,
     );
 }
 
@@ -780,8 +782,35 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
         weak_cutoff_grid,
         solar_rewindowed,
         borrowed_profile_preparation,
+        .clone_input_tables,
     );
 }
+
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+) !OpticsPrepare.PreparedOpticalState {
+    // Retrieval sessions own loaded inputs for the full OE run, so each optical
+    // refresh can borrow immutable continuum/CIA tables instead of cloning them.
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
+        .borrow_input_tables,
+    );
+}
+
+const StaticInputTableMode = enum {
+    clone_input_tables,
+    borrow_input_tables,
+};
 
 fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     allocator: Allocator,
@@ -790,6 +819,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     weak_cutoff_grid: ?*WeakCutoffGridCache,
     solar_rewindowed: *bool,
     borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+    static_input_table_mode: StaticInputTableMode,
 ) !OpticsPrepare.PreparedOpticalState {
     var prepared = prepared: {
         const zone = Trace.staticZone(@src(), "prepare.optical");
@@ -802,6 +832,8 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
             .borrowed_profile_preparation = borrowed_profile_preparation,
+            .borrow_continuum_points = static_input_table_mode == .borrow_input_tables,
+            .borrow_collision_induced_absorption = static_input_table_mode == .borrow_input_tables,
         });
     };
     errdefer prepared.deinit(allocator);

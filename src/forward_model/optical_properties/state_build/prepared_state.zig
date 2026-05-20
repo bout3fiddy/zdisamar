@@ -14,8 +14,8 @@ const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
 //   size: 3480 B, align: 8 B
-//   field storage: 3473 B across 64 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 56 bool-storage slack = 112 bits
+//   field storage: 3475 B across 66 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 70 bool-storage slack = 110 bits
 //   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 55 cache line(s) at 64 B per line
@@ -28,8 +28,10 @@ pub const PreparedOpticalState = struct {
     spectroscopy_profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
     spectroscopy_profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     shared_rtm_geometry: Types.SharedRtmGeometry = .{},
-    continuum_points: []ReferenceData.CrossSectionPoint,
+    continuum_points: []const ReferenceData.CrossSectionPoint,
+    owns_continuum_points: bool = true,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
+    owns_collision_induced_absorption: bool = true,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
     spectroscopy_profile_altitudes_km: []f64 = &.{},
     spectroscopy_profile_pressures_hpa: []f64 = &.{},
@@ -91,8 +93,9 @@ pub const PreparedOpticalState = struct {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
         self.shared_rtm_geometry.deinit(allocator);
-        allocator.free(self.continuum_points);
-        if (self.collision_induced_absorption) |cia| {
+        if (self.owns_continuum_points) allocator.free(self.continuum_points);
+        if (self.owns_collision_induced_absorption and self.collision_induced_absorption != null) {
+            const cia = self.collision_induced_absorption.?;
             var owned_cia = cia;
             owned_cia.deinit(allocator);
         }

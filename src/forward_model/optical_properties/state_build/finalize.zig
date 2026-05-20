@@ -32,7 +32,9 @@ pub fn assemble(
         .spectroscopy_profile_strong_line_states = absorbers.profile_strong_line_states,
         .spectroscopy_profile_weak_line_states = absorbers.profile_weak_line_states,
         .continuum_points = context.continuum_points,
+        .owns_continuum_points = context.owns_continuum_points,
         .collision_induced_absorption = context.collision_induced_absorption,
+        .owns_collision_induced_absorption = context.owns_collision_induced_absorption,
         .spectroscopy_lines = absorbers.owned_lines,
         .spectroscopy_profile_altitudes_km = context.spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = context.spectroscopy_profile_pressures_hpa,
@@ -104,11 +106,13 @@ pub fn assemble(
     context.layers = &.{};
     context.sublayers = &.{};
     context.continuum_points = &.{};
+    context.owns_continuum_points = false;
     context.spectroscopy_profile_altitudes_km = &.{};
     context.spectroscopy_profile_pressures_hpa = &.{};
     context.spectroscopy_profile_temperatures_k = &.{};
     context.owns_spectroscopy_profile_arrays = false;
     context.collision_induced_absorption = null;
+    context.owns_collision_induced_absorption = false;
     context.spectroscopy_lines = null;
     context.aerosol_fraction_control = .{};
     context.cloud_fraction_control = .{};

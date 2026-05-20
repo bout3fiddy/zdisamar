@@ -10,13 +10,13 @@ const VerticalGrid = @import("vertical_grid.zig");
 const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 72 B across 9 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 80 B, align: 8 B
+//   field storage: 74 B across 11 fields; largest: profile=8 B, spectroscopy_profile=8 B, cross_sections=8 B; padding: 6 B (48 bits)
+//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
 //   out-of-line: profile, spectroscopy_profile, cross_sections, lut, collision_induced_absorption, +4 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
+//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced storage above
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
     spectroscopy_profile: ?*const ReferenceData.ClimatologyProfile = null,
@@ -27,6 +27,8 @@ pub const PreparationInputs = struct {
     aerosol_mie: ?*const ReferenceData.MiePhaseTable = null,
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
     borrowed_profile_preparation: ?*const BorrowedProfilePreparation = null,
+    borrow_continuum_points: bool = false,
+    borrow_collision_induced_absorption: bool = false,
 };
 
 // Retrieval sessions can borrow profile spectroscopy support across state
@@ -71,8 +73,8 @@ pub const BorrowedProfilePreparation = struct {
 
 // layout(64-bit):
 //   size: 3448 B, align: 8 B
-//   field storage: 3441 B across 27 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   field storage: 3443 B across 29 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 21 bool-storage slack = 61 bits
 //   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +9 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 54 cache line(s) at 64 B per line
@@ -84,13 +86,15 @@ pub const PreparationContext = struct {
     cross_sections: *const ReferenceData.CrossSectionTable,
     lut: *const ReferenceData.AirmassFactorLut,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
+    owns_collision_induced_absorption: bool = true,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
     aerosol_mie: ?*const ReferenceData.MiePhaseTable = null,
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
     vertical_grid: VerticalGrid.OwnedVerticalGrid = undefined,
     layers: []State.PreparedLayer = &.{},
     sublayers: []State.PreparedSublayer = &.{},
-    continuum_points: []ReferenceData.CrossSectionPoint = &.{},
+    continuum_points: []const ReferenceData.CrossSectionPoint = &.{},
+    owns_continuum_points: bool = true,
     spectroscopy_profile_altitudes_km: []f64 = &.{},
     spectroscopy_profile_pressures_hpa: []f64 = &.{},
     spectroscopy_profile_temperatures_k: []f64 = &.{},
@@ -111,13 +115,14 @@ pub const PreparationContext = struct {
         self.vertical_grid.deinit(allocator);
         if (self.layers.len != 0) allocator.free(self.layers);
         if (self.sublayers.len != 0) allocator.free(self.sublayers);
-        if (self.continuum_points.len != 0) allocator.free(self.continuum_points);
+        if (self.owns_continuum_points and self.continuum_points.len != 0) allocator.free(self.continuum_points);
         if (self.owns_spectroscopy_profile_arrays) {
             if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
             if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
             if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
         }
-        if (self.collision_induced_absorption) |cia| {
+        if (self.owns_collision_induced_absorption and self.collision_induced_absorption != null) {
+            const cia = self.collision_induced_absorption.?;
             var owned = cia;
             owned.deinit(allocator);
         }
@@ -155,8 +160,12 @@ pub fn init(
     errdefer if (layers.len != 0) allocator.free(layers);
     const sublayers = try allocator.alloc(State.PreparedSublayer, total_sublayer_count);
     errdefer if (sublayers.len != 0) allocator.free(sublayers);
-    const continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, inputs.cross_sections.points);
-    errdefer if (continuum_points.len != 0) allocator.free(continuum_points);
+    const owns_continuum_points = !inputs.borrow_continuum_points;
+    const continuum_points: []const ReferenceData.CrossSectionPoint = if (inputs.borrow_continuum_points)
+        inputs.cross_sections.points
+    else
+        try allocator.dupe(ReferenceData.CrossSectionPoint, inputs.cross_sections.points);
+    errdefer if (owns_continuum_points and continuum_points.len != 0) allocator.free(continuum_points);
     const spectroscopy_profile = inputs.spectroscopy_profile orelse inputs.profile;
     const profile_node_count = spectroscopy_profile.rows.len;
     const borrowed_profile_preparation = inputs.borrowed_profile_preparation;
@@ -191,11 +200,16 @@ pub fn init(
         }
     }
 
+    const owns_collision_induced_absorption = !inputs.borrow_collision_induced_absorption;
     const collision_induced_absorption = if (inputs.collision_induced_absorption) |cia|
-        try cia.clone(allocator)
+        if (inputs.borrow_collision_induced_absorption)
+            cia.*
+        else
+            try cia.clone(allocator)
     else
         null;
-    errdefer if (collision_induced_absorption) |cia| {
+    errdefer if (owns_collision_induced_absorption and collision_induced_absorption != null) {
+        const cia = collision_induced_absorption.?;
         var owned = cia;
         owned.deinit(allocator);
     };
@@ -238,6 +252,7 @@ pub fn init(
         .cross_sections = inputs.cross_sections,
         .lut = inputs.lut,
         .collision_induced_absorption = collision_induced_absorption,
+        .owns_collision_induced_absorption = owns_collision_induced_absorption,
         .spectroscopy_lines = spectroscopy_lines,
         .aerosol_mie = inputs.aerosol_mie,
         .cloud_mie = inputs.cloud_mie,
@@ -245,6 +260,7 @@ pub fn init(
         .layers = layers,
         .sublayers = sublayers,
         .continuum_points = continuum_points,
+        .owns_continuum_points = owns_continuum_points,
         .spectroscopy_profile_altitudes_km = spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = spectroscopy_profile_pressures_hpa,
         .spectroscopy_profile_temperatures_k = spectroscopy_profile_temperatures_k,
