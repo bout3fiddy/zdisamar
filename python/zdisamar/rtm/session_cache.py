@@ -31,6 +31,11 @@ class SessionCache:
         self._handle.load_o2a_case(case, copy_case=copy_case)
         self._loaded = True
 
+    def has_loaded_case(self, case: O2AInput) -> bool:
+        """Return whether this cache already owns the prepared native case."""
+
+        return self._loaded and self._handle.loaded_o2a_case_matches(case)
+
     def spectrum(
         self,
         case: O2AInput | None = None,

@@ -261,6 +261,12 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     class Cache:
         _handle = Handle()
 
+        def has_loaded_case(self, case) -> bool:
+
+            events.append(("has_loaded_case", case, None))
+
+            return False
+
         def load(self, case, *, copy_case: bool = True) -> None:
 
             events.append(("load", case, copy_case))
@@ -279,7 +285,66 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     assert result is native_result
     assert events == [
+        ("has_loaded_case", requested_case, None),
         ("load", requested_case, False),
+        ("optimal_estimation", measurement, controls),
+    ]
+
+
+def assert_native_oe_reuses_matching_supplied_cache() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Measurement,
+        Result,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.rtm.session_cache import SessionCache
+
+    events: list[tuple[str, object, object]] = []
+    requested_case = SimpleNamespace(scene_id="requested")
+    measurement = Measurement((), (), ())
+    state_vector = SimpleNamespace(parameters=())
+    controls = RetrievalControls(max_iterations=1)
+    native_result = Result((), (), 0, True, (), (), ())
+
+    class Handle:
+        def optimal_estimation(self, *, measurement, state_vector, controls):
+
+            events.append(("optimal_estimation", measurement, controls))
+
+            return {"state_count": 0}
+
+    class Cache:
+        _handle = Handle()
+
+        def has_loaded_case(self, case) -> bool:
+
+            events.append(("has_loaded_case", case, None))
+
+            return True
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            raise AssertionError("matching OE cache reloaded its prepared case")
+
+    with (
+        patch.object(o2a_oe, "_result_from_native", return_value=native_result),
+        patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
+    ):
+        result = o2a_oe._disamar_oe(  # noqa: SLF001
+            case=cast(O2AInput, requested_case),
+            measurement=measurement,
+            state_vector=cast(StateVector, state_vector),
+            controls=controls,
+            cache=cast(SessionCache, Cache()),
+        )
+
+    assert result is native_result
+    assert events == [
+        ("has_loaded_case", requested_case, None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -544,6 +609,7 @@ def main() -> int:
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
     assert_native_oe_loads_requested_case_into_supplied_cache()
+    assert_native_oe_reuses_matching_supplied_cache()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()

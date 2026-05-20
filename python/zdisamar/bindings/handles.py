@@ -107,6 +107,7 @@ class RtmHandle:
         self._lib = configure(load_library())
         self._ctx = self._lib.zds_context_create()
         self._case: O2AInput | None = None
+        self._case_fingerprint: bytes | None = None
         self._solar_mu0: float | None = None
 
         if not self._ctx:
@@ -148,7 +149,23 @@ class RtmHandle:
             )
         )
         self._case = copy.deepcopy(case) if copy_case else None
+        self._case_fingerprint = payload
         self._solar_mu0 = case.geometry.solar_mu0
+
+    def loaded_o2a_case_matches(self, case: O2AInput) -> bool:
+        """Return whether the native handle already owns this prepared case.
+
+        The fingerprint uses the resolved deterministic payload passed to Zig.
+        That lets session users avoid a duplicate prepare without retaining a
+        Python case copy solely for invalidation.
+        """
+
+        if self._case_fingerprint is None:
+            return False
+
+        resolved = case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+
+        return resolved.to_json_bytes() == self._case_fingerprint
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
@@ -434,6 +451,7 @@ class RtmHandle:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
             self._case = None
+            self._case_fingerprint = None
             self._solar_mu0 = None
 
     def _copied_spectrum(
