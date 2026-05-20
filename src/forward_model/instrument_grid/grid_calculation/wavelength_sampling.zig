@@ -114,8 +114,8 @@ const KernelStorageBuilder = struct {
             ) catch initial_side_storage_sample_cap;
             const capacity_hint = @min(raw_capacity_hint, initial_side_storage_sample_cap);
             const reserved_capacity = @max(required_capacity, capacity_hint);
-            try self.offsets_nm.ensureTotalCapacity(allocator, reserved_capacity);
-            try self.weights.ensureTotalCapacity(allocator, reserved_capacity);
+            try self.offsets_nm.ensureTotalCapacityPrecise(allocator, reserved_capacity);
+            try self.weights.ensureTotalCapacityPrecise(allocator, reserved_capacity);
             return;
         }
         try self.offsets_nm.ensureUnusedCapacity(allocator, count);
