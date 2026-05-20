@@ -92,8 +92,14 @@ pub fn assemble(
         .aerosol_fraction_control = context.aerosol_fraction_control,
         .cloud_fraction_control = context.cloud_fraction_control,
     };
-    prepared.spectroscopy_plan_key = prepared.computeSpectroscopyPlanKey();
-    prepared.spectroscopy_profile_cache_inputs_key = prepared.computeSpectroscopyProfileCacheInputsKey();
+    prepared.spectroscopy_plan_key = if (context.borrowed_spectroscopy_plan_key != 0)
+        context.borrowed_spectroscopy_plan_key
+    else
+        prepared.computeSpectroscopyPlanKey();
+    prepared.spectroscopy_profile_cache_inputs_key = if (context.borrowed_spectroscopy_profile_cache_inputs_key != 0)
+        context.borrowed_spectroscopy_profile_cache_inputs_key
+    else
+        prepared.computeSpectroscopyProfileCacheInputsKey();
 
     context.layers = &.{};
     context.sublayers = &.{};

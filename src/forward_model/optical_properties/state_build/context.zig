@@ -34,19 +34,21 @@ pub const PreparationInputs = struct {
 // optical depths, but these profile rows and prepared line states are keyed
 // only by the static spectroscopy profile and filtered line list.
 // layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: 80 B across 5 slice fields; padding: 0 B
+//   size: 96 B, align: 8 B
+//   field storage: 96 B across 7 fields; padding: 0 B
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: profile arrays and prepared line-state arrays remain session-owned
+//   out-of-line: profile arrays and prepared line-state arrays remain session-owned; keys summarize the same borrowed support
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: at most one borrowed profile-preparation view per retrieval-owned optical refresh
-//   footprint: per instance = 80 B (0.078 KiB); referenced arrays live in the retrieval session
+//   footprint: per instance = 96 B (0.094 KiB); referenced arrays live in the retrieval session
 pub const BorrowedProfilePreparation = struct {
     altitudes_km: []f64 = &.{},
     pressures_hpa: []f64 = &.{},
     temperatures_k: []f64 = &.{},
     weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    spectroscopy_plan_key: u64 = 0,
+    spectroscopy_profile_cache_inputs_key: u64 = 0,
 
     fn validate(self: BorrowedProfilePreparation, expected_node_count: usize) !void {
         if (self.altitudes_km.len != expected_node_count or
@@ -68,14 +70,14 @@ pub const BorrowedProfilePreparation = struct {
 };
 
 // layout(64-bit):
-//   size: 3432 B, align: 8 B
-//   field storage: 3425 B across 25 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 7 B (56 bits)
+//   size: 3448 B, align: 8 B
+//   field storage: 3441 B across 27 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
 //   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +9 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 54 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3432 B (3.352 KiB); total also includes referenced storage above
+//   footprint: per instance = 3448 B (3.367 KiB); total also includes referenced storage above
 pub const PreparationContext = struct {
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
@@ -95,6 +97,8 @@ pub const PreparationContext = struct {
     owns_spectroscopy_profile_arrays: bool = true,
     borrowed_profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     borrowed_profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    borrowed_spectroscopy_plan_key: u64 = 0,
+    borrowed_spectroscopy_profile_cache_inputs_key: u64 = 0,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
     cloud_fraction_control: AtmosphereModel.FractionControl = .{},
     aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
@@ -247,6 +251,8 @@ pub fn init(
         .owns_spectroscopy_profile_arrays = owns_spectroscopy_profile_arrays,
         .borrowed_profile_weak_line_states = if (borrowed_profile_preparation) |borrowed| borrowed.weak_line_states else null,
         .borrowed_profile_strong_line_states = if (borrowed_profile_preparation) |borrowed| borrowed.strong_line_states else null,
+        .borrowed_spectroscopy_plan_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_plan_key else 0,
+        .borrowed_spectroscopy_profile_cache_inputs_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_profile_cache_inputs_key else 0,
         .aerosol_fraction_control = aerosol_fraction_control,
         .cloud_fraction_control = cloud_fraction_control,
         .operational_o2_lut = operational_o2_lut,

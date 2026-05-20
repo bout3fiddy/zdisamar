@@ -256,13 +256,13 @@ pub const Controls = struct {
 
 // Retrieval-session cache for profile spectroscopy support.
 // layout(64-bit):
-//   size: 88 B, align: 8 B
-//   field storage: borrowed=80 B, captured=1 B; padding: 7 B
+//   size: 104 B, align: 8 B
+//   field storage: borrowed=96 B, captured=1 B; padding: 7 B
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays
+//   out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays; keys summarize invariant spectroscopy support
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: one per retrieval, reused across all OE state evaluations
-//   footprint: per instance = 88 B (0.086 KiB); referenced arrays are captured from the first prepared optical state
+//   footprint: per instance = 104 B (0.102 KiB); referenced arrays are captured from the first prepared optical state
 //   invariant: pressure-placement refreshes vertical-grid rows, not these profile thermodynamic rows
 const ProfilePreparationSession = struct {
     borrowed: OpticsPrepare.BorrowedProfilePreparation = .{},
@@ -298,6 +298,8 @@ const ProfilePreparationSession = struct {
             prepared.spectroscopy_profile_weak_line_states = null;
             prepared.owns_spectroscopy_profile_weak_line_states = false;
         }
+        self.borrowed.spectroscopy_plan_key = prepared.spectroscopy_plan_key;
+        self.borrowed.spectroscopy_profile_cache_inputs_key = prepared.spectroscopy_profile_cache_inputs_key;
         self.captured = true;
     }
 
