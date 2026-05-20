@@ -418,6 +418,23 @@ fn mainInner() !void {
     var product_storage: InstrumentGrid.ProductStorage = .{};
     defer product_storage.deinit(allocator);
 
+    var warm_route = prepared_case.route;
+    warm_route.derivative_mode = .semi_analytical;
+    warm_route.derivative_state_mask = derivativeStateMask(&state_specs);
+    var warm_timer = try std.time.Timer.start();
+    const warm_alloc_start = counting_allocator.resetPhasePeak();
+    try InstrumentGrid.product.warmProductWorkspace(
+        allocator,
+        &product_storage,
+        &prepared_case.scene,
+        warm_route,
+        &prepared_case.prepared,
+        internal.forward_model.implementations.exact(),
+    );
+    const session_warm_ns = warm_timer.read();
+    const session_warm_allocations = counting_allocator.delta(warm_alloc_start);
+    const session_warm_allocation_sites = counting_allocator.allocationSiteReport();
+
     var retrieval_timer = try std.time.Timer.start();
     const retrieval_alloc_start = counting_allocator.resetPhasePeak();
     var result = try OptimalEstimation.runO2A(
@@ -443,6 +460,7 @@ fn mainInner() !void {
     try writeSummary(
         config.output_dir,
         reference_prepare_ns,
+        session_warm_ns,
         retrieval_ns,
         sample_count,
         config.max_iterations,
@@ -450,8 +468,10 @@ fn mainInner() !void {
         reference_mid_pressure_hpa,
         &result,
         reference_allocations,
+        session_warm_allocations,
         retrieval_allocations,
         reference_allocation_sites,
+        session_warm_allocation_sites,
         retrieval_allocation_sites,
         wavelength_plan_stats,
     );
@@ -464,6 +484,12 @@ fn mainInner() !void {
             result.iteration_count,
         },
     );
+}
+
+fn derivativeStateMask(state_specs: []const OptimalEstimation.StateSpec) u8 {
+    var mask: u8 = 0;
+    for (state_specs) |spec| mask |= @as(u8, 1) << @intCast(@intFromEnum(spec.state));
+    return mask;
 }
 
 fn parseArgs(args: []const []const u8) !Config {
@@ -489,6 +515,7 @@ fn parseArgs(args: []const []const u8) !Config {
 fn writeSummary(
     output_dir: []const u8,
     reference_prepare_ns: u64,
+    session_warm_ns: u64,
     retrieval_ns: u64,
     sample_count: usize,
     max_iterations: usize,
@@ -496,8 +523,10 @@ fn writeSummary(
     reference_mid_pressure_hpa: f64,
     result: *const OptimalEstimation.Result,
     reference_allocations: AllocationDelta,
+    session_warm_allocations: AllocationDelta,
     retrieval_allocations: AllocationDelta,
     reference_allocation_sites: AllocationSiteReport,
+    session_warm_allocation_sites: AllocationSiteReport,
     retrieval_allocation_sites: AllocationSiteReport,
     wavelength_plan_stats: WavelengthPlanStats,
 ) !void {
@@ -518,6 +547,8 @@ fn writeSummary(
         \\  "executable_vmaddr_slide": "0x{x}",
         \\  "reference_prepare_ns": {},
         \\  "reference_prepare_s": {d:.9},
+        \\  "session_warm_ns": {},
+        \\  "session_warm_s": {d:.9},
         \\  "retrieval_wall_ns": {},
         \\  "retrieval_wall_s": {d:.9},
         \\  "measurement_sigma_reflectance": {e:.17},
@@ -545,6 +576,8 @@ fn writeSummary(
             executableVmaddrSlide(),
             reference_prepare_ns,
             @as(f64, @floatFromInt(reference_prepare_ns)) / 1.0e9,
+            session_warm_ns,
+            @as(f64, @floatFromInt(session_warm_ns)) / 1.0e9,
             retrieval_ns,
             @as(f64, @floatFromInt(retrieval_ns)) / 1.0e9,
             measurement_sigma_reflectance,
@@ -557,6 +590,7 @@ fn writeSummary(
         },
     );
     try writeAllocationDelta(&writer.interface, "reference_prepare", reference_allocations, true);
+    try writeAllocationDelta(&writer.interface, "session_warm", session_warm_allocations, true);
     try writeAllocationDelta(&writer.interface, "retrieval", retrieval_allocations, false);
     try writer.interface.writeAll(
         \\  },
@@ -564,6 +598,7 @@ fn writeSummary(
         \\
     );
     try writeAllocationSiteReport(&writer.interface, "reference_prepare", reference_allocation_sites, true);
+    try writeAllocationSiteReport(&writer.interface, "session_warm", session_warm_allocation_sites, true);
     try writeAllocationSiteReport(&writer.interface, "retrieval", retrieval_allocation_sites, false);
     try writer.interface.writeAll(
         \\  },
