@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const Matrix = algebra.Matrix;
 const Vector = algebra.Vector;
 const VerticalInterval = @import("../input/Atmosphere.zig").VerticalInterval;
+const Scene = @import("../input/Scene.zig").Scene;
 
 pub const max_state_count = algebra.max_state_count;
 pub const max_iteration_count: usize = 1000;
@@ -261,6 +262,9 @@ const RetrievalPreparedCase = struct {
     loaded_inputs: o2a_types.LoadedVendorO2AInputs,
     mutable_input: o2a_types.ResolvedVendorO2ACase,
     mutable_intervals: []VerticalInterval,
+    scene: Scene,
+    weak_cutoff_grid: o2a_runtime.WeakCutoffGridCache = .{},
+    solar_rewindowed: bool = false,
     route: o2a_types.Route,
 
     fn init(
@@ -290,6 +294,13 @@ const RetrievalPreparedCase = struct {
         var mutable_input = base_input.*;
         mutable_input.intervals = mutable_intervals;
 
+        var scene = try o2a_runtime.buildResolvedVendorO2AScene(
+            allocator,
+            &mutable_input,
+            loaded_inputs.raw_solar_spectrum,
+        );
+        errdefer scene.deinitOwned(allocator);
+
         return .{
             .state_specs = state_specs,
             .forward_storage = forward_storage,
@@ -297,11 +308,14 @@ const RetrievalPreparedCase = struct {
             .loaded_inputs = loaded_inputs,
             .mutable_input = mutable_input,
             .mutable_intervals = mutable_intervals,
+            .scene = scene,
             .route = try o2a_runtime.prepareResolvedVendorO2ARouteFromResolved(base_input),
         };
     }
 
     fn deinit(self: *RetrievalPreparedCase, allocator: Allocator) void {
+        self.weak_cutoff_grid.deinit(allocator);
+        self.scene.deinitOwned(allocator);
         allocator.free(self.mutable_intervals);
         self.loaded_inputs.deinit(allocator);
         self.measurement.deinit(allocator);
@@ -512,34 +526,56 @@ fn evaluateO2AState(
             prepared_case.state_specs,
             state,
         );
+        writeStateToScene(&prepared_case.scene, &prepared_case.mutable_input);
     }
 
-    var runtime_optics = prepared_runtime_optics: {
+    var prepared_optics = prepared_runtime_optics: {
         const zone = Trace.staticZone(@src(), "optimal_estimation.prepare_evaluation");
         defer zone.end();
-        break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticsWithInputs(
+        // OE state updates do not change the adaptive weak-line cutoff grid.
+        // Cache that support once per retrieval while rebuilding the optical
+        // layers that depend on aerosol amount and pressure placement.
+        //
+        // The mutable scene is retrieval-owned. Solar rewindow support is
+        // derived from the instrument grid and line-list plan, so it is
+        // installed once and then reused while optical state is refreshed.
+        break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
             allocator,
-            &prepared_case.mutable_input,
+            &prepared_case.scene,
             &prepared_case.loaded_inputs,
+            &prepared_case.weak_cutoff_grid,
+            &prepared_case.solar_rewindowed,
         );
     };
-    defer runtime_optics.deinit(allocator);
+    defer prepared_optics.deinit(allocator);
     const view = simulated_forward_view: {
         const zone = Trace.staticZone(@src(), "optimal_estimation.forward_jacobian_product");
         defer zone.end();
         break :simulated_forward_view try InstrumentGrid.simulateProductWithWorkspace(
             allocator,
             prepared_case.forward_storage,
-            &runtime_optics.scene,
+            &prepared_case.scene,
             prepared_case.route,
-            &runtime_optics.prepared,
+            &prepared_optics,
             implementations.exact(),
         );
     };
     return .{
         .view = view,
-        .solar_mu0 = runtime_optics.scene.geometry.solarCosineAtAltitude(0.0),
+        .solar_mu0 = prepared_case.scene.geometry.solarCosineAtAltitude(0.0),
     };
+}
+
+fn writeStateToScene(
+    scene: *Scene,
+    input: *const o2a_types.ResolvedVendorO2ACase,
+) void {
+    scene.surface.albedo = input.surface_albedo;
+    scene.aerosol.optical_depth = input.aerosol.optical_depth;
+    scene.aerosol.placement = input.aerosol.placement;
+    if (input.intervals.len != 0) {
+        scene.atmosphere.interval_grid.intervals = input.intervals;
+    }
 }
 
 fn writeStateToInput(

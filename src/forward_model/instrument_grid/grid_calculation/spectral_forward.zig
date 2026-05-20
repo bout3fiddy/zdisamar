@@ -23,7 +23,9 @@ pub const ForwardIntegratedSample = Types.ForwardIntegratedSample;
 
 pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
 const forward_prefetch_chunk_size: usize = 8;
-const forward_prefetch_pooled_chunk_size: usize = 16;
+// Pooled workers handle reused OE/session runs. Smaller chunks trade a little
+// more queue traffic for less tail imbalance across thousands of LABOS misses.
+const forward_prefetch_pooled_chunk_size: usize = 8;
 
 // hot path:
 //   when: allocated once per forward prefetch worker
@@ -31,13 +33,13 @@ const forward_prefetch_pooled_chunk_size: usize = 16;
 //   data: per-worker scratch slices and labos.Workspace
 //   follow: reuse inside prefetchForwardWorkerMain across forward misses
 // layout(64-bit):
-//   size: 3296 B, align: 8 B
-//   field storage: 3296 B across 9 fields; largest: labos_workspace=3168 B, layer_inputs=16 B, source_interfaces=16 B; padding: 0 B (0 bits)
+//   size: 3304 B, align: 8 B
+//   field storage: 3304 B across 8 fields; largest: labos_workspace=3168 B, support_carrier_cache=40 B, layer_inputs=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: layer_inputs always owns transport rows; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
 //   cache span: 52 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3296 B (3.219 KiB); total also includes referenced storage above
+//   footprint: per instance = 3304 B (3.227 KiB); total also includes referenced storage above
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -45,8 +47,7 @@ const ForwardSampleScratch = struct {
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
-    support_carrier_valid: []bool,
-    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
+    support_carrier_cache: CarrierEval.SupportRowScalarCache,
     labos_workspace: labos.Workspace,
 
     fn init(
@@ -89,10 +90,8 @@ const ForwardSampleScratch = struct {
         else
             @constCast(&[_]f64{});
         errdefer if (pseudo_spherical_level_altitudes.len != 0) allocator.free(pseudo_spherical_level_altitudes);
-        const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
-        errdefer allocator.free(support_carrier_valid);
-        const support_carrier_scalars = try allocator.alloc(CarrierEval.SharedOpticalScalars, support_cache_count);
-        errdefer allocator.free(support_carrier_scalars);
+        var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(allocator, support_cache_count);
+        errdefer support_carrier_cache.deinit(allocator);
 
         return .{
             .layer_inputs = layer_inputs,
@@ -101,8 +100,7 @@ const ForwardSampleScratch = struct {
             .pseudo_spherical_samples = pseudo_spherical_samples,
             .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
             .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
-            .support_carrier_valid = support_carrier_valid,
-            .support_carrier_scalars = support_carrier_scalars,
+            .support_carrier_cache = support_carrier_cache,
             .labos_workspace = labos.Workspace.init(allocator),
         };
     }
@@ -115,8 +113,7 @@ const ForwardSampleScratch = struct {
         if (self.pseudo_spherical_samples.len != 0) allocator.free(self.pseudo_spherical_samples);
         if (self.pseudo_spherical_level_starts.len != 0) allocator.free(self.pseudo_spherical_level_starts);
         if (self.pseudo_spherical_level_altitudes.len != 0) allocator.free(self.pseudo_spherical_level_altitudes);
-        allocator.free(self.support_carrier_valid);
-        allocator.free(self.support_carrier_scalars);
+        self.support_carrier_cache.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -225,10 +222,8 @@ pub fn computeForwardSampleAtWavelength(
     pseudo_spherical_level_altitudes: []f64,
 ) Error!ForwardIntegratedSample {
     const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_inputs.len;
-    const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
-    defer allocator.free(support_carrier_valid);
-    const support_carrier_scalars = try allocator.alloc(CarrierEval.SharedOpticalScalars, support_cache_count);
-    defer allocator.free(support_carrier_scalars);
+    var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(allocator, support_cache_count);
+    defer support_carrier_cache.deinit(allocator);
     var labos_workspace = labos.Workspace.init(allocator);
     defer labos_workspace.deinit();
     return computeForwardSampleAtWavelengthWithScratch(
@@ -245,8 +240,7 @@ pub fn computeForwardSampleAtWavelength(
         pseudo_spherical_samples,
         pseudo_spherical_level_starts,
         pseudo_spherical_level_altitudes,
-        support_carrier_valid,
-        support_carrier_scalars,
+        &support_carrier_cache,
         null,
         &labos_workspace,
     );
@@ -271,8 +265,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
-    support_carrier_valid: []bool,
-    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
+    support_carrier_cache: *CarrierEval.SupportRowScalarCache,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
@@ -294,8 +287,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
             pseudo_spherical_samples,
             pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes,
-            support_carrier_valid,
-            support_carrier_scalars,
+            support_carrier_cache,
             profile_spectroscopy_cache,
         );
     };
@@ -371,8 +363,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                     scratch.pseudo_spherical_samples,
                     scratch.pseudo_spherical_level_starts,
                     scratch.pseudo_spherical_level_altitudes,
-                    scratch.support_carrier_valid,
-                    scratch.support_carrier_scalars,
+                    &scratch.support_carrier_cache,
                     profile_spectroscopy_cache,
                     &scratch.labos_workspace,
                 ) catch |err| {
@@ -441,8 +432,7 @@ pub fn prefetchForwardSamples(
                 scratch.pseudo_spherical_samples,
                 scratch.pseudo_spherical_level_starts,
                 scratch.pseudo_spherical_level_altitudes,
-                scratch.support_carrier_valid,
-                scratch.support_carrier_scalars,
+                &scratch.support_carrier_cache,
                 profile_spectroscopy_cache,
                 &scratch.labos_workspace,
             );
