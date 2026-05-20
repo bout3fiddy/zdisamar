@@ -234,6 +234,7 @@ fn buildExplicitDisamarParity(
 
     var layer_cursor: usize = 0;
     var support_cursor: usize = 0;
+    var stack_rtm_nodes: [gauss_legendre.max_disamar_division_points]f64 = undefined;
     var source_interval_index = intervals.len;
     while (source_interval_index > 0) {
         source_interval_index -= 1;
@@ -251,12 +252,14 @@ fn buildExplicitDisamarParity(
         const interval_layer_count: usize = @as(usize, interval.altitude_divisions) + 1;
         const interior_node_count = interval_layer_count - 1;
 
-        var empty_rtm_nodes: [0]f64 = .{};
-        const rtm_nodes: []f64 = if (interior_node_count > 0)
-            try allocator.alloc(f64, interior_node_count)
-        else
-            empty_rtm_nodes[0..];
-        defer if (rtm_nodes.len != 0) allocator.free(rtm_nodes);
+        var dynamic_rtm_nodes: []f64 = &.{};
+        defer if (dynamic_rtm_nodes.len != 0) allocator.free(dynamic_rtm_nodes);
+        const rtm_nodes: []f64 = if (interior_node_count <= stack_rtm_nodes.len)
+            stack_rtm_nodes[0..interior_node_count]
+        else dynamic: {
+            dynamic_rtm_nodes = try allocator.alloc(f64, interior_node_count);
+            break :dynamic dynamic_rtm_nodes;
+        };
         if (interior_node_count > 0) {
             try gauss_legendre.fillDisamarDivPointsIntervalNodes(
                 @intCast(interior_node_count),

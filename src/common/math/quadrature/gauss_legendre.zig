@@ -56,7 +56,7 @@ pub fn fillNodesAndWeights(
     }
 }
 
-const max_disamar_division_points: usize = 256;
+pub const max_disamar_division_points: usize = 256;
 
 // hot path:
 //   when: adaptive instrument sampling needs DISAMAR-style unit interval division points
