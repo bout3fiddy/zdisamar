@@ -202,15 +202,35 @@ fn buildExplicitDisamarParity(
     sublayer_order: usize,
 ) !OwnedVerticalGrid {
     const intervals = scene.atmosphere.interval_grid.intervals;
-    const support_nodes = try allocator.alloc(f64, sublayer_order);
-    defer allocator.free(support_nodes);
-    const support_weights = try allocator.alloc(f64, sublayer_order);
-    defer allocator.free(support_weights);
-    try gauss_legendre.fillNodesAndWeights(
-        @intCast(sublayer_order),
-        support_nodes,
-        support_weights,
-    );
+    // Hot path:
+    //   O2 A retrievals refresh this grid every state evaluation. Keep the
+    //   dynamic rule math for bit-identical nodes, but avoid heap churn for
+    //   the common small support orders.
+    var stack_support_nodes: [10]f64 = undefined;
+    var stack_support_weights: [10]f64 = undefined;
+    var dynamic_support_nodes: []f64 = &.{};
+    defer if (dynamic_support_nodes.len != 0) allocator.free(dynamic_support_nodes);
+    var dynamic_support_weights: []f64 = &.{};
+    defer if (dynamic_support_weights.len != 0) allocator.free(dynamic_support_weights);
+    const support_nodes, const support_weights = if (sublayer_order <= stack_support_nodes.len) stack: {
+        const nodes = stack_support_nodes[0..sublayer_order];
+        const weights = stack_support_weights[0..sublayer_order];
+        try gauss_legendre.fillNodesAndWeights(
+            @intCast(sublayer_order),
+            nodes,
+            weights,
+        );
+        break :stack .{ nodes, weights };
+    } else dynamic: {
+        dynamic_support_nodes = try allocator.alloc(f64, sublayer_order);
+        dynamic_support_weights = try allocator.alloc(f64, sublayer_order);
+        try gauss_legendre.fillNodesAndWeights(
+            @intCast(sublayer_order),
+            dynamic_support_nodes,
+            dynamic_support_weights,
+        );
+        break :dynamic .{ dynamic_support_nodes, dynamic_support_weights };
+    };
 
     var layer_cursor: usize = 0;
     var support_cursor: usize = 0;
