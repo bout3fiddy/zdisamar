@@ -84,7 +84,7 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
 //   when: active derivative routes integrate high-resolution forward samples
 //   work: adds only requested derivative lanes into a fixed-size accumulator
 //   data: route state mask, jacobian vector cells, accumulator cells, scalar factor
-//   follow: spectral_eval.integrateForwardAtNominal and active-state product buffers
+//   follow: spectral_eval.integratePrefetchedForwardAtNominal and active-state product buffers
 pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: StateMask) void {
     const active_mask = sanitizedMask(mask);
     for (0..state_count) |index| {

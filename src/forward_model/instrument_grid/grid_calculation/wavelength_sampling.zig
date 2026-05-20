@@ -133,7 +133,7 @@ const KernelStorageBuilder = struct {
 //   when: once per simulation plan, often reused across OE iterations
 //   work: expands output wavelengths into radiance and irradiance integration plans
 //   data: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
-//   follow: fillWavelengthSamplingPlans and collectUniqueForwardMisses
+//   follow: fillWavelengthSamplingPlans and buildForwardMissPlan
 pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
@@ -472,42 +472,94 @@ fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
 
 // hot path:
 //   when: once per wavelength plan before forward prefetch
-//   work: deduplicates high-resolution radiance integration wavelengths into cache misses
-//   data: radiance integration offsets, quantized cache keys, forward miss array
-//   follow: miss ordering consumed by SpectralEval.prefetchForwardSamples
-pub fn collectUniqueForwardMisses(
+//   work: deduplicates radiance integration wavelengths and records dense miss indexes per nominal row
+//   data: radiance integration offsets, quantized cache keys, forward miss array, per-sample result indexes
+//   follow: SpectralEval.prefetchForwardSamples and direct radiance integration
+pub fn buildForwardMissPlan(
     allocator: Allocator,
     table: WavelengthSamplingTable,
-) ![]Plan.ForwardCacheMiss {
-    var seen = std.AutoHashMap(u64, void).init(allocator);
-    defer seen.deinit();
+) !Plan.OwnedForwardMissPlan {
+    var miss_indices = std.AutoHashMap(u64, u32).init(allocator);
+    defer miss_indices.deinit();
     var misses = std.ArrayList(Plan.ForwardCacheMiss).empty;
     errdefer misses.deinit(allocator);
+    var sample_indices = std.ArrayList(u32).empty;
+    errdefer sample_indices.deinit(allocator);
+    try sample_indices.ensureTotalCapacityPrecise(allocator, radianceSampleIndexCount(table));
+    const rows = try allocator.alloc(Plan.ForwardSampleIndexRef, table.rows.len);
+    errdefer allocator.free(rows);
 
-    for (table.rows) |plan| {
+    for (table.rows, rows) |plan, *row| {
         const integration = &plan.radiance_integration;
+        const start = sample_indices.items.len;
         if (!integration.enabled()) {
-            const key = SpectralEval.SpectralEvaluationCache.keyFor(plan.radiance_wavelength_nm);
-            const entry = try seen.getOrPut(key);
-            if (entry.found_existing) continue;
-            try misses.append(allocator, .{
-                .key = key,
-                .wavelength_nm = plan.radiance_wavelength_nm,
-            });
+            try appendForwardMissIndex(allocator, &miss_indices, &misses, &sample_indices, plan.radiance_wavelength_nm);
+            row.* = .{
+                .start = try castForwardSampleIndexStart(start),
+            };
             continue;
         }
         const samples = integration.samples(table.kernel_storage);
         for (samples.offsets_nm) |offset_nm| {
-            const wavelength_nm = plan.radiance_wavelength_nm + offset_nm;
-            const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
-            const entry = try seen.getOrPut(key);
-            if (entry.found_existing) continue;
-            try misses.append(allocator, .{
-                .key = key,
-                .wavelength_nm = wavelength_nm,
-            });
+            try appendForwardMissIndex(
+                allocator,
+                &miss_indices,
+                &misses,
+                &sample_indices,
+                plan.radiance_wavelength_nm + offset_nm,
+            );
         }
+        row.* = .{
+            .start = try castForwardSampleIndexStart(start),
+        };
     }
 
-    return misses.toOwnedSlice(allocator);
+    return .{
+        .rows = rows,
+        .sample_indices = try sample_indices.toOwnedSlice(allocator),
+        .misses = try misses.toOwnedSlice(allocator),
+    };
+}
+
+fn radianceSampleIndexCount(table: WavelengthSamplingTable) usize {
+    var count: usize = 0;
+    for (table.rows) |plan| {
+        count += plan.radiance_integration.activeSampleCount();
+    }
+    return count;
+}
+
+fn castForwardSampleIndexStart(start: usize) !u32 {
+    if (start > std.math.maxInt(u32)) return error.OutOfMemory;
+    return @intCast(start);
+}
+
+fn appendForwardMissIndex(
+    allocator: Allocator,
+    miss_indices: *std.AutoHashMap(u64, u32),
+    misses: *std.ArrayList(Plan.ForwardCacheMiss),
+    sample_indices: *std.ArrayList(u32),
+    wavelength_nm: f64,
+) !void {
+    const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
+    if (miss_indices.get(key)) |miss_index| {
+        sample_indices.appendAssumeCapacity(miss_index);
+        return;
+    }
+    if (misses.items.len > std.math.maxInt(u32)) return error.OutOfMemory;
+    const miss_index: u32 = @intCast(misses.items.len);
+    const entry = try miss_indices.getOrPut(key);
+    if (entry.found_existing) {
+        sample_indices.appendAssumeCapacity(entry.value_ptr.*);
+        return;
+    }
+    misses.append(allocator, .{
+        .key = key,
+        .wavelength_nm = wavelength_nm,
+    }) catch |err| {
+        _ = miss_indices.remove(key);
+        return err;
+    };
+    entry.value_ptr.* = miss_index;
+    sample_indices.appendAssumeCapacity(miss_index);
 }

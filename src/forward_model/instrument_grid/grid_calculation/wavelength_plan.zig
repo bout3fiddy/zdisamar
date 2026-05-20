@@ -165,6 +165,57 @@ pub const OwnedWavelengthSampling = struct {
 };
 
 // layout(64-bit):
+//   size: 4 B, align: 4 B
+//   field storage: start=4 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one per nominal wavelength in a forward-miss plan
+//   footprint: per instance = 4 B (0.004 KiB); dense rows point into ForwardMissPlan.sample_indices
+pub const ForwardSampleIndexRef = struct {
+    start: u32 = 0,
+};
+
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: rows=16 B, sample_indices=16 B, misses=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: rows, sample_indices, and misses carry borrowed slice descriptors
+//   count: one transient view per simulation plan
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+pub const ForwardMissPlan = struct {
+    rows: []const ForwardSampleIndexRef = &.{},
+    sample_indices: []const u32 = &.{},
+    misses: []const ForwardCacheMiss = &.{},
+};
+
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: rows=16 B, sample_indices=16 B, misses=16 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: rows, sample_indices, and misses own backing storage
+//   count: one retained wavelength-plan cache owner
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+pub const OwnedForwardMissPlan = struct {
+    rows: []ForwardSampleIndexRef = &.{},
+    sample_indices: []u32 = &.{},
+    misses: []ForwardCacheMiss = &.{},
+
+    pub fn view(self: *const OwnedForwardMissPlan) ForwardMissPlan {
+        return .{
+            .rows = self.rows,
+            .sample_indices = self.sample_indices,
+            .misses = self.misses,
+        };
+    }
+
+    pub fn deinit(self: *OwnedForwardMissPlan, allocator: @import("std").mem.Allocator) void {
+        allocator.free(self.rows);
+        allocator.free(self.sample_indices);
+        allocator.free(self.misses);
+        self.* = .{};
+    }
+};
+
+// layout(64-bit):
 //   size: 16 B, align: 8 B
 //   field storage: key=8 B, wavelength_nm=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits

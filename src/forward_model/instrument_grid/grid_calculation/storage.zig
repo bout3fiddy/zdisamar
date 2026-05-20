@@ -71,13 +71,13 @@ pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 616 B, align: 8 B
-//   field storage: 612 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
+//   size: 624 B, align: 8 B
+//   field storage: 604 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B, wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
+//   unused bits: 160 padding + 28 bool-storage slack = 188 bits
 //   out-of-line: product/noise/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 616 B (0.602 KiB); total also includes referenced storage above
+//   footprint: per instance = 624 B (0.609 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -99,11 +99,11 @@ pub const SummaryStorage = struct {
     reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
     wavelength_sampling: Plan.OwnedWavelengthSampling = .{},
-    forward_misses: []Plan.ForwardCacheMiss = &.{},
+    forward_miss_plan: Plan.OwnedForwardMissPlan = .{},
     profile_spectroscopy_caches: []SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
     wavelength_plan_key: u64 = 0,
     wavelength_plan_valid: bool = false,
-    forward_misses_valid: bool = false,
+    forward_miss_plan_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
     forward_prefetch_pool: std.Thread.Pool = undefined,
@@ -134,7 +134,7 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.reflectance_noise_sigma);
         if (self.evaluation_cache) |*cache| cache.deinit();
         self.wavelength_sampling.deinit(allocator);
-        allocator.free(self.forward_misses);
+        self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
     }
@@ -170,14 +170,14 @@ pub const SummaryStorage = struct {
 
     pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {
         self.wavelength_sampling.deinit(allocator);
-        allocator.free(self.forward_misses);
+        self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
         self.wavelength_sampling = .{};
-        self.forward_misses = &.{};
+        self.forward_miss_plan = .{};
         self.profile_spectroscopy_caches = &.{};
         self.wavelength_plan_key = 0;
         self.wavelength_plan_valid = false;
-        self.forward_misses_valid = false;
+        self.forward_miss_plan_valid = false;
         self.profile_spectroscopy_cache_key = 0;
         self.profile_spectroscopy_cache_valid = false;
     }

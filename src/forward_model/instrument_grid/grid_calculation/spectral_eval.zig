@@ -32,72 +32,45 @@ fn irradianceAtWavelength(
 }
 
 // hot path:
-//   when: once per nominal radiance wavelength, with one or more integration samples
-//   work: accumulates weighted cached forward samples into radiance and Jacobian totals
-//   data: integration offsets, weights, spectral forward cache, jacobian vector accumulator
-//   follow: cachedForwardAtWavelength and the active instrument integration payload
-pub fn integrateForwardAtNominal(
-    allocator: Allocator,
-    scene: *const Scene,
+//   when: once per nominal radiance wavelength after all forward misses are prefetched
+//   work: accumulates weighted dense forward results into radiance and Jacobian totals
+//   data: row-local result indexes, weights, dense forward result buffer, Jacobian accumulator
+//   follow: buildForwardMissPlan and spectral_forward.prefetchForwardSamples
+pub fn integratePrefetchedForwardAtNominal(
     route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    nominal_wavelength_nm: f64,
-    safe_span: f64,
-    implementations: Types.Implementations,
-    layer_inputs: []common.LayerInput,
-    source_interfaces: []common.SourceInterfaceInput,
-    rtm_quadrature_levels: []common.RtmQuadratureLevel,
-    pseudo_spherical_samples: []common.PseudoSphericalSample,
-    pseudo_spherical_level_starts: []usize,
-    pseudo_spherical_level_altitudes: []f64,
-    cache: *SpectralEvaluationCache,
+    results: []const ForwardIntegratedSample,
+    row_ref: Plan.ForwardSampleIndexRef,
+    sample_indices: []const u32,
     integration: *const Plan.IntegrationKernelRef,
     kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!ForwardIntegratedSample {
-    // DECISION:
-    //   When the instrument has no internal integration routine, fall back to
-    //   the quantized cached forward sample at the nominal wavelength.
-    if (!integration.enabled()) {
-        return cachedForwardAtWavelength(
-            allocator,
-            scene,
-            route,
-            prepared,
-            nominal_wavelength_nm,
-            safe_span,
-            implementations,
-            layer_inputs,
-            source_interfaces,
-            rtm_quadrature_levels,
-            pseudo_spherical_samples,
-            pseudo_spherical_level_starts,
-            pseudo_spherical_level_altitudes,
-            cache,
-        );
+    const start: usize = @intCast(row_ref.start);
+    const count = integration.activeSampleCount();
+    if (count == 0 or start > sample_indices.len or count > sample_indices.len - start) {
+        return error.ShapeMismatch;
     }
+    const indices = sample_indices[start .. start + count];
+
+    // Hot path:
+    //   Wavelength planning already deduplicated forward misses and recorded
+    //   dense result indexes. The radiance loop reads results directly instead
+    //   of hashing each integration wavelength back through the forward cache.
+    if (!integration.enabled()) {
+        const result_index: usize = @intCast(indices[0]);
+        if (result_index >= results.len) return error.ShapeMismatch;
+        return results[result_index];
+    }
+
+    const samples = integration.samples(kernel_storage);
+    if (samples.weights.len != indices.len) return error.ShapeMismatch;
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian.zero();
     const wants_jacobian = route.derivative_mode != .none and jacobian.activeStateCount(route.derivative_state_mask) != 0;
-    const samples = integration.samples(kernel_storage);
-    for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
-        const wavelength_nm = nominal_wavelength_nm + offset_nm;
-        const sample = try cachedForwardAtWavelength(
-            allocator,
-            scene,
-            route,
-            prepared,
-            wavelength_nm,
-            safe_span,
-            implementations,
-            layer_inputs,
-            source_interfaces,
-            rtm_quadrature_levels,
-            pseudo_spherical_samples,
-            pseudo_spherical_level_starts,
-            pseudo_spherical_level_altitudes,
-            cache,
-        );
+    for (indices, samples.weights) |result_index_u32, weight| {
+        const result_index: usize = @intCast(result_index_u32);
+        if (result_index >= results.len) return error.ShapeMismatch;
+        const sample = results[result_index];
         radiance_sum += weight * sample.radiance;
         if (wants_jacobian) {
             jacobian.addScaledMasked(&jacobian_sum, sample.jacobian, weight, route.derivative_state_mask);
@@ -147,9 +120,9 @@ pub fn integrateIrradianceAtNominal(
 
 // hot path:
 //   when: once per simulation plan before nominal wavelength integration
-//   work: reserves cache capacity, computes all forward misses, and inserts dense results by key
-//   data: forward miss array, profile spectroscopy caches, temporary result array, spectral cache map
-//   follow: spectral_forward.prefetchForwardSamples and cache.forward.put
+//   work: computes all forward misses into dense result slots
+//   data: forward miss array, profile spectroscopy caches, temporary result array
+//   follow: spectral_forward.prefetchForwardSamples and direct-index radiance integration
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -160,13 +133,10 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
-    cache: *SpectralEvaluationCache,
     thread_pool: ?*std.Thread.Pool,
 ) Error!void {
     if (misses.len == 0) return;
     if (results.len != misses.len) return error.ShapeMismatch;
-
-    try cache.reserveForward(misses.len);
 
     try spectral_forward.prefetchForwardSamples(
         allocator,
@@ -180,52 +150,6 @@ pub fn prefetchForwardSamples(
         results,
         thread_pool,
     );
-    for (misses, results) |miss, result| {
-        try cache.forward.put(miss.key, result);
-    }
-}
-
-// hot path:
-//   when: on each high-resolution forward cache miss
-//   work: computes a wavelength-specific forward sample when the quantized key is absent
-//   data: layer/source/quadrature scratch arrays, pseudo-spherical arrays, spectral cache
-//   follow: spectral_forward.computeForwardSampleAtWavelength and cache key reuse
-pub fn cachedForwardAtWavelength(
-    allocator: Allocator,
-    scene: *const Scene,
-    route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    wavelength_nm: f64,
-    safe_span: f64,
-    implementations: Types.Implementations,
-    layer_inputs: []common.LayerInput,
-    source_interfaces: []common.SourceInterfaceInput,
-    rtm_quadrature_levels: []common.RtmQuadratureLevel,
-    pseudo_spherical_samples: []common.PseudoSphericalSample,
-    pseudo_spherical_level_starts: []usize,
-    pseudo_spherical_level_altitudes: []f64,
-    cache: *SpectralEvaluationCache,
-) Error!ForwardIntegratedSample {
-    const key = SpectralEvaluationCache.keyFor(wavelength_nm);
-    if (cache.forward.get(key)) |cached| return cached;
-
-    const sample = try spectral_forward.computeForwardSampleAtWavelength(
-        allocator,
-        scene,
-        route,
-        prepared,
-        wavelength_nm,
-        safe_span,
-        implementations,
-        layer_inputs,
-        source_interfaces,
-        rtm_quadrature_levels,
-        pseudo_spherical_samples,
-        pseudo_spherical_level_starts,
-        pseudo_spherical_level_altitudes,
-    );
-    try cache.forward.put(key, sample);
-    return sample;
 }
 
 // hot path:

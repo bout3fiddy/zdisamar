@@ -202,51 +202,6 @@ fn integratedSampleFromForward(
 }
 
 // hot path:
-//   when: fallback path for a single uncached high-resolution wavelength
-//   work: allocates temporary carrier and LABOS scratch, then delegates to the scratch-based solver
-//   data: support carrier valid bits, support carriers, labos workspace
-//   follow: callers that bypass batch prefetch and reach this per wavelength
-pub fn computeForwardSampleAtWavelength(
-    allocator: Allocator,
-    scene: *const Scene,
-    route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    wavelength_nm: f64,
-    safe_span: f64,
-    implementations: Types.Implementations,
-    layer_inputs: []common.LayerInput,
-    source_interfaces: []common.SourceInterfaceInput,
-    rtm_quadrature_levels: []common.RtmQuadratureLevel,
-    pseudo_spherical_samples: []common.PseudoSphericalSample,
-    pseudo_spherical_level_starts: []usize,
-    pseudo_spherical_level_altitudes: []f64,
-) Error!ForwardIntegratedSample {
-    const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_inputs.len;
-    var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(allocator, support_cache_count);
-    defer support_carrier_cache.deinit(allocator);
-    var labos_workspace = labos.Workspace.init(allocator);
-    defer labos_workspace.deinit();
-    return computeForwardSampleAtWavelengthWithScratch(
-        allocator,
-        scene,
-        route,
-        prepared,
-        wavelength_nm,
-        safe_span,
-        implementations,
-        layer_inputs,
-        source_interfaces,
-        rtm_quadrature_levels,
-        pseudo_spherical_samples,
-        pseudo_spherical_level_starts,
-        pseudo_spherical_level_altitudes,
-        &support_carrier_cache,
-        null,
-        &labos_workspace,
-    );
-}
-
-// hot path:
 //   when: once per high-resolution wavelength cache miss in forward/retrieval runs
 //   work: builds wavelength-specific forward input and executes LABOS transport
 //   data: layer inputs, carrier cache arrays, pseudo-spherical buffers, labos workspace

@@ -656,7 +656,7 @@ fn collectWavelengthPlanStats(storage: *const InstrumentGrid.ProductStorage) Wav
         .row_count = plan.rows.len,
         .kernel_ref_count = plan.rows.len * 2,
         .side_sample_count = plan.kernel_storage.offsets_nm.len,
-        .forward_miss_count = storage.forward_misses.len,
+        .forward_miss_count = storage.forward_miss_plan.misses.len,
     };
     for (plan.rows) |row| {
         updateWavelengthPlanStats(&stats, row.radiance_integration);
