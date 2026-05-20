@@ -24,6 +24,7 @@ const calcReflectance = reflectance_mod.calcReflectance;
 const calcIntegratedReflectanceWithBasis = reflectance_mod.calcIntegratedReflectanceWithBasis;
 const calcAerosolOpticalDepthWeightingWithBasis = reflectance_mod.calcAerosolOpticalDepthWeightingWithBasis;
 const calcAerosolLayerPressureShiftWeightingWithBasis = reflectance_mod.calcAerosolLayerPressureShiftWeightingWithBasis;
+const calcAerosolDerivativeWeightingWithBasis = reflectance_mod.calcAerosolDerivativeWeightingWithBasis;
 const fillAdjacentLayerPhaseMaxIndices = reflectance_mod.fillAdjacentLayerPhaseMaxIndices;
 const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
@@ -434,7 +435,33 @@ fn layerResolvedLabosWithWorkspace(
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
-            if (wants_aerosol_optical_depth) {
+            const use_paired_aerosol_weighting =
+                use_integrated_source and wants_aerosol_optical_depth and wants_aerosol_layer_mid_pressure;
+            if (use_paired_aerosol_weighting) {
+                const tangent_refl_fc = tangent_refl_fc: {
+                    const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aerosol_weighting");
+                    defer zone.end();
+                    break :tangent_refl_fc calcAerosolDerivativeWeightingWithBasis(
+                        input.layers,
+                        input.rtm_quadrature,
+                        orders_result.ud,
+                        orders_result.ud_sum_local,
+                        nlayer,
+                        i_fourier,
+                        controls.use_spherical_correction,
+                        geo,
+                        plm_basis,
+                    );
+                };
+                if (i_fourier == 0) {
+                    aerosol_optical_depth_tangent += tangent_refl_fc.aerosol_optical_depth;
+                    aerosol_layer_mid_pressure_tangent += tangent_refl_fc.aerosol_layer_mid_pressure_hpa;
+                } else {
+                    const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+                    aerosol_optical_depth_tangent += (2.0 * tangent_refl_fc.aerosol_optical_depth) * cos_m_dphi;
+                    aerosol_layer_mid_pressure_tangent += (2.0 * tangent_refl_fc.aerosol_layer_mid_pressure_hpa) * cos_m_dphi;
+                }
+            } else if (wants_aerosol_optical_depth) {
                 const tangent_refl_fc = tangent_refl_fc: {
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
                     defer zone.end();
@@ -473,7 +500,7 @@ fn layerResolvedLabosWithWorkspace(
                     (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
                 aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
             }
-            if (wants_aerosol_layer_mid_pressure) {
+            if (!use_paired_aerosol_weighting and wants_aerosol_layer_mid_pressure) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
                     defer zone.end();

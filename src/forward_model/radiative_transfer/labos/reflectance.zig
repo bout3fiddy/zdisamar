@@ -43,6 +43,20 @@ const UnitPhase = struct {
     max_index: usize,
 };
 
+// Paired integrated-source aerosol Jacobian contribution for the common OE
+// two-state path. The fields are transport-native derivative lanes; OE applies
+// pressure-to-altitude scaling after the forward product is assembled.
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: aerosol_optical_depth=8 B, aerosol_layer_mid_pressure_hpa=8 B; padding: 0 B
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: one stack value per Fourier term when both aerosol derivative lanes are requested
+//   footprint: per instance = 16 B (0.016 KiB)
+pub const AerosolDerivativeWeighting = struct {
+    aerosol_optical_depth: f64 = 0.0,
+    aerosol_layer_mid_pressure_hpa: f64 = 0.0,
+};
+
 // layout(64-bit):
 //   size: 32 B, align: 8 B
 //   field storage: pplusplus_ed=8 B, pminplus_ed=8 B, pminmin_u=8 B, pplusmin_u=8 B; padding: 0 B (0 bits)
@@ -727,6 +741,28 @@ fn scatteringCoefficientInterfaceWeightingFromPhaseRows(
     );
 }
 
+fn scatteringCoefficientInterfaceWeightingFromPhaseRowsIfActive(
+    aerosol_ksca_per_km: f64,
+    phase_rows: *const PhaseRowCache,
+    ud: []const basis.UDField,
+    ud_sum_local: []const basis.UDLocal,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ilevel: usize,
+    use_pseudo_spherical: bool,
+    geo: *const basis.Geometry,
+) f64 {
+    if (aerosol_ksca_per_km <= 0.0) return 0.0;
+    return scatteringCoefficientInterfaceWeightingFromPhaseRows(
+        phase_rows,
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        ilevel,
+        use_pseudo_spherical,
+        geo,
+    );
+}
+
 fn aerosolTotalExtinctionInterfaceWeighting(
     scattering_weighting: f64,
     absorption_weighting: f64,
@@ -777,6 +813,148 @@ fn scatteringSourceWeightingFromPhaseRows(
     );
     sum += level.E.get(view_idx) * (view_row.pminplus_ed + view_row.pminmin_u);
     return sum;
+}
+
+fn cachedCommonAerosolPhaseRows(
+    rtm_quadrature: common.RtmQuadratureGrid,
+    bounds: AerosolIntervalBounds,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+    storage: *PhaseRowCache,
+) ?*const PhaseRowCache {
+    const unit_phase = commonActiveAerosolUnitPhase(rtm_quadrature, bounds) orelse return null;
+    if (i_fourier > unit_phase.max_index) return null;
+    storage.* = buildPhaseRowCache(unit_phase.coefficients, unit_phase.max_index, i_fourier, geo, plm_basis);
+    return storage;
+}
+
+fn calcAerosolOpticalDepthWeightingFromPhaseRows(
+    layers: []const common.LayerInput,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ud: []const basis.UDField,
+    ud_sum_local: []const basis.UDLocal,
+    bounds: AerosolIntervalBounds,
+    use_pseudo_spherical: bool,
+    geo: *const basis.Geometry,
+    phase_rows: *const PhaseRowCache,
+) f64 {
+    if (bounds.top <= bounds.bottom + 1) return 0.0;
+    const aerosol_ssa = aerosolSingleScatteringAlbedo(layers);
+    const needs_absorption_weighting = (1.0 - aerosol_ssa) != 0.0;
+    const denominator =
+        rtm_quadrature.levels[bounds.top - 1].altitude_km -
+        rtm_quadrature.levels[bounds.bottom].altitude_km;
+    if (denominator <= 0.0) return 0.0;
+
+    var integral: f64 = 0.0;
+    var previous = aerosolTotalExtinctionInterfaceWeighting(
+        scatteringCoefficientInterfaceWeightingFromPhaseRows(
+            phase_rows,
+            ud,
+            ud_sum_local,
+            rtm_quadrature,
+            bounds.bottom,
+            use_pseudo_spherical,
+            geo,
+        ),
+        if (needs_absorption_weighting)
+            absorptionInterfaceWeighting(
+                ud,
+                ud_sum_local,
+                rtm_quadrature,
+                bounds.bottom,
+                use_pseudo_spherical,
+                geo,
+            )
+        else
+            0.0,
+        aerosol_ssa,
+    );
+    for (bounds.bottom + 1..bounds.top) |ilevel| {
+        const current = aerosolTotalExtinctionInterfaceWeighting(
+            scatteringCoefficientInterfaceWeightingFromPhaseRows(
+                phase_rows,
+                ud,
+                ud_sum_local,
+                rtm_quadrature,
+                ilevel,
+                use_pseudo_spherical,
+                geo,
+            ),
+            if (needs_absorption_weighting)
+                absorptionInterfaceWeighting(
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    ilevel,
+                    use_pseudo_spherical,
+                    geo,
+                )
+            else
+                0.0,
+            aerosol_ssa,
+        );
+        const dz = rtm_quadrature.levels[ilevel].altitude_km -
+            rtm_quadrature.levels[ilevel - 1].altitude_km;
+        if (dz > 0.0) integral += 0.5 * (previous + current) * dz;
+        previous = current;
+    }
+    return integral / denominator;
+}
+
+fn calcAerosolLayerPressureShiftWeightingFromPhaseRows(
+    layers: []const common.LayerInput,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ud: []const basis.UDField,
+    ud_sum_local: []const basis.UDLocal,
+    bounds: AerosolIntervalBounds,
+    use_pseudo_spherical: bool,
+    geo: *const basis.Geometry,
+    phase_rows: *const PhaseRowCache,
+) f64 {
+    const aerosol_ssa = aerosolSingleScatteringAlbedo(layers);
+    const top_sca_weighting = scatteringCoefficientInterfaceWeightingFromPhaseRowsIfActive(
+        rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km,
+        phase_rows,
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.top,
+        use_pseudo_spherical,
+        geo,
+    );
+    const bottom_sca_weighting = scatteringCoefficientInterfaceWeightingFromPhaseRowsIfActive(
+        rtm_quadrature.levels[bounds.bottom].aerosol_ksca_above_per_km,
+        phase_rows,
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.bottom,
+        use_pseudo_spherical,
+        geo,
+    );
+    const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km;
+    const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
+    if (kabs == 0.0) return (top_sca_weighting - bottom_sca_weighting) * ksca;
+    const top_abs_weighting = absorptionInterfaceWeighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.top,
+        use_pseudo_spherical,
+        geo,
+    );
+    const bottom_abs_weighting = absorptionInterfaceWeighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.bottom,
+        use_pseudo_spherical,
+        geo,
+    );
+    return (top_sca_weighting - bottom_sca_weighting) * ksca +
+        (top_abs_weighting - bottom_abs_weighting) * kabs;
 }
 
 // hot path:
@@ -924,6 +1102,96 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
         weighting += level.weight * (source_weighting + extinction_weighting);
     }
     return weighting;
+}
+
+// hot path:
+//   when: integrated-source retrieval requests both aerosol AOD and layer-pressure columns
+//   work: computes the paired aerosol derivative weighting with one common aerosol phase-row cache
+//   data: active aerosol bounds, RTM quadrature rows, order fields, cached phase rows
+//   follow: execute.layerResolvedLabosWithWorkspace two-state Jacobian route
+pub fn calcAerosolDerivativeWeightingWithBasis(
+    layers: []const common.LayerInput,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ud: []const basis.UDField,
+    ud_sum_local: []const basis.UDLocal,
+    end_level: usize,
+    i_fourier: usize,
+    use_pseudo_spherical: bool,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+) AerosolDerivativeWeighting {
+    if (!rtm_quadrature.isValidFor(layers.len)) return .{};
+    const bounds = activeAerosolInteriorBounds(rtm_quadrature, end_level) orelse return .{
+        .aerosol_optical_depth = calcAerosolOpticalDepthWeightingWithBasis(
+            layers,
+            rtm_quadrature,
+            ud,
+            ud_sum_local,
+            end_level,
+            i_fourier,
+            use_pseudo_spherical,
+            geo,
+            plm_basis,
+            null,
+        ),
+    };
+
+    var phase_row_storage: PhaseRowCache = undefined;
+    const phase_rows = cachedCommonAerosolPhaseRows(
+        rtm_quadrature,
+        bounds,
+        i_fourier,
+        geo,
+        plm_basis,
+        &phase_row_storage,
+    ) orelse return .{
+        .aerosol_optical_depth = calcAerosolOpticalDepthWeightingWithBasis(
+            layers,
+            rtm_quadrature,
+            ud,
+            ud_sum_local,
+            end_level,
+            i_fourier,
+            use_pseudo_spherical,
+            geo,
+            plm_basis,
+            null,
+        ),
+        .aerosol_layer_mid_pressure_hpa = calcAerosolLayerPressureShiftWeightingWithBasis(
+            layers,
+            rtm_quadrature,
+            ud,
+            ud_sum_local,
+            end_level,
+            i_fourier,
+            use_pseudo_spherical,
+            geo,
+            plm_basis,
+        ),
+    };
+
+    return .{
+        .aerosol_optical_depth = calcAerosolOpticalDepthWeightingFromPhaseRows(
+            layers,
+            rtm_quadrature,
+            ud,
+            ud_sum_local,
+            bounds,
+            use_pseudo_spherical,
+            geo,
+            phase_rows,
+        ),
+        .aerosol_layer_mid_pressure_hpa = calcAerosolLayerPressureShiftWeightingFromPhaseRows(
+            layers,
+            rtm_quadrature,
+            ud,
+            ud_sum_local,
+            bounds,
+            use_pseudo_spherical,
+            geo,
+            phase_rows,
+        ),
+    };
 }
 
 // hot path:
