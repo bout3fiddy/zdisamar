@@ -231,17 +231,18 @@ fn buildExplicitDisamarParity(
         const interval_layer_count: usize = @as(usize, interval.altitude_divisions) + 1;
         const interior_node_count = interval_layer_count - 1;
 
-        const rtm_nodes = try allocator.alloc(f64, interior_node_count);
-        defer allocator.free(rtm_nodes);
+        var empty_rtm_nodes: [0]f64 = .{};
+        const rtm_nodes: []f64 = if (interior_node_count > 0)
+            try allocator.alloc(f64, interior_node_count)
+        else
+            empty_rtm_nodes[0..];
+        defer if (rtm_nodes.len != 0) allocator.free(rtm_nodes);
         if (interior_node_count > 0) {
-            const rtm_weights = try allocator.alloc(f64, interior_node_count);
-            defer allocator.free(rtm_weights);
-            try gauss_legendre.fillDisamarDivPointsInterval(
+            try gauss_legendre.fillDisamarDivPointsIntervalNodes(
                 @intCast(interior_node_count),
                 interval_bottom_altitude_km,
                 interval_top_altitude_km,
                 rtm_nodes,
-                rtm_weights,
             );
         }
 
