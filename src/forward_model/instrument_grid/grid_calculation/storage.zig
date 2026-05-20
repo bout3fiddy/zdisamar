@@ -71,13 +71,13 @@ pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 600 B, align: 8 B
-//   field storage: 596 B across 29 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
+//   size: 616 B, align: 8 B
+//   field storage: 612 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 28 bool-storage slack = 60 bits
-//   out-of-line: product/noise/cache slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
+//   out-of-line: product/noise/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
+//   footprint: per instance = 616 B (0.602 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -85,6 +85,7 @@ pub const SummaryStorage = struct {
     reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
     scratch_aux: []f64 = &.{},
+    forward_results: []Types.ForwardIntegratedSample = &.{},
     layer_inputs: []common.LayerInput = &.{},
     source_interfaces: []common.SourceInterfaceInput = &.{},
     rtm_quadrature_levels: []common.RtmQuadratureLevel = &.{},
@@ -119,6 +120,7 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.reflectance);
         freeBuffer(allocator, self.scratch);
         freeBuffer(allocator, self.scratch_aux);
+        freeForwardResultBuffer(allocator, self.forward_results);
         freeLayerBuffer(allocator, self.layer_inputs);
         freeSourceInterfaceBuffer(allocator, self.source_interfaces);
         freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
@@ -186,6 +188,20 @@ pub const SummaryStorage = struct {
         }
         self.evaluation_cache.?.reset();
         return &(self.evaluation_cache.?);
+    }
+
+    pub fn forwardResultBuffer(
+        self: *SummaryStorage,
+        allocator: Allocator,
+        capacity: usize,
+    ) Error![]Types.ForwardIntegratedSample {
+        // hot path:
+        //   when: OE iterations reuse the same high-resolution miss plan
+        //   work: retains the dense prefetch result staging array between batches
+        //   data: one ForwardIntegratedSample per unique forward-cache miss
+        //   follow: spectral_eval.prefetchForwardSamples cache insertion
+        try ensureForwardResultCapacity(allocator, &self.forward_results, capacity);
+        return self.forward_results[0..capacity];
     }
 
     pub fn buffers(
@@ -406,6 +422,17 @@ fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput,
     buffer.* = replacement;
 }
 
+fn ensureForwardResultCapacity(
+    allocator: Allocator,
+    buffer: *[]Types.ForwardIntegratedSample,
+    capacity: usize,
+) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(Types.ForwardIntegratedSample, capacity);
+    freeForwardResultBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
 fn ensureSourceInterfaceBufferCapacity(
     allocator: Allocator,
     buffer: *[]common.SourceInterfaceInput,
@@ -451,6 +478,10 @@ fn freeBuffer(allocator: Allocator, buffer: []f64) void {
 }
 
 fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freeForwardResultBuffer(allocator: Allocator, buffer: []Types.ForwardIntegratedSample) void {
     if (buffer.len != 0) allocator.free(buffer);
 }
 

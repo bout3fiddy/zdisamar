@@ -19,17 +19,7 @@ const Error = Storage.Error;
 // PUB FOR TEST: re-exported via measurement/internal.zig.
 pub const min_parallel_forward_miss_count: usize = 32;
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: radiance=8 B, jacobian=24 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: jacobian:[3]f64=24 B
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
-pub const ForwardIntegratedSample = struct {
-    radiance: f64,
-    jacobian: jacobian.Vector = jacobian.zero(),
-};
+pub const ForwardIntegratedSample = Types.ForwardIntegratedSample;
 
 pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
 const forward_prefetch_chunk_size: usize = 8;

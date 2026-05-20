@@ -1,8 +1,8 @@
 const std = @import("std");
-const spectral_forward = @import("spectral_forward.zig");
+const Types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
-const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
+const ForwardIntegratedSample = Types.ForwardIntegratedSample;
 
 // Exact-wavelength spectral cache for repeated forward and irradiance samples.
 // layout(64-bit):

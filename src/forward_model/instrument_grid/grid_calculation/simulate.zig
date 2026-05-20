@@ -572,6 +572,14 @@ fn prefetchSimulationPlan(
             storage.forwardPrefetchPool(allocator, worker_count)
         else
             null;
+        var owned_results: []SpectralEval.ForwardIntegratedSample = &.{};
+        defer allocator.free(owned_results);
+        const results = if (wavelength_plan_storage) |storage|
+            try storage.forwardResultBuffer(allocator, simulation_plan.forward_misses.len)
+        else blk: {
+            owned_results = try allocator.alloc(SpectralEval.ForwardIntegratedSample, simulation_plan.forward_misses.len);
+            break :blk owned_results;
+        };
         try SpectralEval.prefetchForwardSamples(
             allocator,
             scene,
@@ -581,6 +589,7 @@ fn prefetchSimulationPlan(
             setup.safe_span,
             simulation_plan.forward_misses,
             simulation_plan.profile_spectroscopy_caches,
+            results,
             evaluation_cache,
             thread_pool,
         );

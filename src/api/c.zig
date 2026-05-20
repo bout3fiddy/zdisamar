@@ -850,18 +850,26 @@ fn runSpectrumJacobianForStateIds(
         return @intFromEnum(ZdsStatus.failure);
     }
     const state_slice = if (state_ids) |ids| ids[0..requested_state_count] else &.{};
-    const derivative_state_mask = jacobianStateMask(state_slice) catch |err| {
+    const selection = jacobianStateSelection(state_slice) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     var prepared = resolved.prepared.?;
     prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = derivative_state_mask;
+    prepared.route.derivative_state_mask = selection.mask;
     const result = allocator.create(zdisamar.Output) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    result.* = zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, &prepared) catch |err| {
+    result.* = (if (selection.count == 0)
+        zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, &prepared)
+    else
+        zdisamar.o2a.runO2AWithSessionStorageJacobianStates(
+            allocator,
+            &resolved.o2a_session_storage,
+            &prepared,
+            selection.slice(),
+        )) catch |err| {
         allocator.destroy(result);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
@@ -872,19 +880,10 @@ fn runSpectrumJacobianForStateIds(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    const output_state_count = if (requested_state_count == 0)
+    const output_state_count = if (selection.count == 0)
         zdisamar.RadiativeTransferJacobian.state_count
     else
-        requested_state_count;
-    if (state_slice.len != 0) {
-        compactResultJacobian(result, state_slice) catch |err| {
-            _ = resolved.removeResult(result);
-            result.deinit(allocator);
-            allocator.destroy(result);
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-    }
+        selection.count;
     output.* = .{
         .len = result.wavelengths.len,
         .wavelength_nm = result.wavelengths.ptr,
@@ -1405,31 +1404,29 @@ fn jacobianStateFromId(state_id: u8) !zdisamar.RadiativeTransferJacobian.State {
     };
 }
 
-fn jacobianStateMask(state_ids: []const u8) !zdisamar.RadiativeTransferJacobian.StateMask {
-    if (state_ids.len == 0) return zdisamar.RadiativeTransferJacobian.all_states_mask;
-    var mask: zdisamar.RadiativeTransferJacobian.StateMask = 0;
+const JacobianStateSelection = struct {
+    states: [zdisamar.RadiativeTransferJacobian.state_count]zdisamar.RadiativeTransferJacobian.State = undefined,
+    count: usize = 0,
+    mask: zdisamar.RadiativeTransferJacobian.StateMask = zdisamar.RadiativeTransferJacobian.all_states_mask,
+
+    fn slice(self: *const JacobianStateSelection) []const zdisamar.RadiativeTransferJacobian.State {
+        return self.states[0..self.count];
+    }
+};
+
+fn jacobianStateSelection(state_ids: []const u8) !JacobianStateSelection {
+    if (state_ids.len == 0) return .{};
+    if (state_ids.len > zdisamar.RadiativeTransferJacobian.state_count) return error.TooManyJacobianStates;
+
+    var selection: JacobianStateSelection = .{
+        .mask = 0,
+    };
     for (state_ids) |state_id| {
         const state = try jacobianStateFromId(state_id);
-        mask |= zdisamar.RadiativeTransferJacobian.stateMask(state);
+        selection.states[selection.count] = state;
+        selection.count += 1;
+        selection.mask |= zdisamar.RadiativeTransferJacobian.stateMask(state);
     }
-    return zdisamar.RadiativeTransferJacobian.sanitizedMask(mask);
-}
-
-fn compactResultJacobian(result: *zdisamar.Output, state_ids: []const u8) !void {
-    const full = result.jacobian orelse return error.MissingJacobian;
-    if (full.len != result.wavelengths.len * zdisamar.RadiativeTransferJacobian.state_count) return error.ShapeMismatch;
-    const compact = try allocator.alloc(f64, result.wavelengths.len * state_ids.len);
-    errdefer allocator.free(compact);
-    for (0..result.wavelengths.len) |sample_index| {
-        for (state_ids, 0..) |state_id, output_index| {
-            const state = try jacobianStateFromId(state_id);
-            compact[sample_index * state_ids.len + output_index] =
-                full[
-                    sample_index * zdisamar.RadiativeTransferJacobian.state_count +
-                        zdisamar.RadiativeTransferJacobian.stateIndex(state)
-                ];
-        }
-    }
-    allocator.free(full);
-    result.jacobian = compact;
+    selection.mask = zdisamar.RadiativeTransferJacobian.sanitizedMask(selection.mask);
+    return selection;
 }
