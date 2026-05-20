@@ -568,7 +568,7 @@ pub fn calcRTlayersIntoWithBasis(
 ) void {
     const nlayer = layers.len;
     if (rt_active) |active| active[0] = false;
-    if (phase_row_valid) |valid| @memset(valid, false);
+    if (phase_row_valid) |valid| valid[0] = false;
 
     for (0..nlayer) |layer_idx| {
         Trace.plotU("layer_visits", 1);
@@ -576,7 +576,7 @@ pub fn calcRTlayersIntoWithBasis(
         const layer = &layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
         }
 
@@ -587,12 +587,12 @@ pub fn calcRTlayersIntoWithBasis(
             phase.maxIndex();
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
             Trace.plotU("layer_skipped_empty_optics", 1);
-            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
         }
 
@@ -615,6 +615,8 @@ pub fn calcRTlayersIntoWithBasis(
         if (phase_row_cache) |cache| {
             cachePhaseKernelViewRow(cache, rt_idx, &z, geo.viewIdx());
             if (phase_row_valid) |valid| valid[rt_idx] = true;
+        } else if (phase_row_valid) |valid| {
+            valid[rt_idx] = false;
         }
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
@@ -707,10 +709,12 @@ pub fn calcRTlayersIntoWithBasis(
 
 inline fn markInactiveLayer(
     rt: []LayerRT,
+    phase_row_valid: ?[]bool,
     rt_active: ?[]bool,
     rt_idx: usize,
     nmutot: usize,
 ) void {
+    if (phase_row_valid) |valid| valid[rt_idx] = false;
     if (rt_active) |active| {
         // Hot path:
         //   Paired LABOS layer/order execution carries an active mask for the
