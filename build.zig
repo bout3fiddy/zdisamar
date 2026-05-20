@@ -79,6 +79,9 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_ztracy", false);
     const build_options_module = build_options.createModule();
 
+    // Boundary: shipped library/CLI modules always receive the stub trace module
+    // and enable_ztracy=false. Only explicit validation trace executables below
+    // use trace_build_options, so profiling never changes the product build.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
@@ -335,6 +338,38 @@ pub fn build(b: *std.Build) void {
         "Build the O2A LABOS bottleneck executable for profiling and disassembly",
     );
     labos_bottleneck_trace_bin_step.dependOn(&labos_bottleneck_trace_install.step);
+
+    const optimal_estimation_trace_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/optimal_estimation_trace_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = trace_internal_module,
+            },
+        },
+    });
+    const optimal_estimation_trace_exe = b.addExecutable(.{
+        .name = "optimal-estimation-trace",
+        .root_module = optimal_estimation_trace_module,
+    });
+    if (trace_ztracy_dependency) |dependency| {
+        optimal_estimation_trace_exe.root_module.linkLibrary(dependency.artifact("tracy"));
+    }
+    const run_optimal_estimation_trace = b.addRunArtifact(optimal_estimation_trace_exe);
+    if (b.args) |args| run_optimal_estimation_trace.addArgs(args);
+    const optimal_estimation_trace_step = b.step(
+        "optimal-estimation-trace",
+        "Run the trace-enabled O2A optimal-estimation research harness",
+    );
+    optimal_estimation_trace_step.dependOn(&run_optimal_estimation_trace.step);
+    const optimal_estimation_trace_install = b.addInstallArtifact(optimal_estimation_trace_exe, .{});
+    const optimal_estimation_trace_bin_step = b.step(
+        "optimal-estimation-trace-bin",
+        "Build the O2A optimal-estimation trace executable for profiling and disassembly",
+    );
+    optimal_estimation_trace_bin_step.dependOn(&optimal_estimation_trace_install.step);
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,

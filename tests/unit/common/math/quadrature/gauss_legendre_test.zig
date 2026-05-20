@@ -5,6 +5,8 @@ const gauss_legendre = internal.common.math.quadrature.gauss_legendre;
 const rule = gauss_legendre.rule;
 const fillNodesAndWeights = gauss_legendre.fillNodesAndWeights;
 const fillDisamarDivPoints01 = gauss_legendre.fillDisamarDivPoints01;
+const fillDisamarDivPointsInterval = gauss_legendre.fillDisamarDivPointsInterval;
+const fillDisamarDivPointsIntervalNodes = gauss_legendre.fillDisamarDivPointsIntervalNodes;
 
 test "gauss-legendre rules expose stable nodes and weights" {
     const one_point = try rule(1);
@@ -54,4 +56,17 @@ test "disamar gauss division points are scaled to unit interval" {
     try std.testing.expect(nodes[2] < nodes[3]);
     try std.testing.expect(nodes[3] < nodes[4]);
     try std.testing.expectApproxEqRel(@as(f64, 1.0), sum_weights, 1e-12);
+}
+
+test "disamar interval node-only fill matches full node and weight fill" {
+    var full_nodes = [_]f64{0.0} ** 28;
+    var weights = [_]f64{0.0} ** 28;
+    var node_only = [_]f64{0.0} ** 28;
+
+    try fillDisamarDivPointsInterval(28, 2.3, 17.9, full_nodes[0..], weights[0..]);
+    try fillDisamarDivPointsIntervalNodes(28, 2.3, 17.9, node_only[0..]);
+
+    for (0..28) |index| {
+        try std.testing.expectApproxEqAbs(full_nodes[index], node_only[index], 0.0);
+    }
 }

@@ -177,7 +177,7 @@ test "generated cross-section LUT reproduces direct table values" {
         .{ .wavelength_nm = 431.0, .sigma_cm2_per_molecule = 3.0e-19 },
         .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 4.0e-19 },
     };
-    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+    const table: ReferenceData.CrossSectionTable = .{ .points = points[0..] };
     const lut = try OperationalCrossSectionLut.buildFromSource(
         std.testing.allocator,
         wavelengths[0..],
@@ -209,7 +209,7 @@ test "generated cross-section LUT rejects consume-mode source builds" {
     const points = [_]ReferenceData.CrossSectionPoint{
         .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
     };
-    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+    const table: ReferenceData.CrossSectionTable = .{ .points = points[0..] };
 
     try std.testing.expectError(errors.Error.InvalidRequest, OperationalCrossSectionLut.buildFromSource(
         std.testing.allocator,

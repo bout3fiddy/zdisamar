@@ -1,23 +1,22 @@
 """O2 A wavelength-band helpers for optimal estimation."""
 
 import copy
-from collections.abc import Callable
+import math
+from array import array
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-
-import numpy as np
 
 from ... import rtm
 from ...input.wavelength_band.o2a import O2AInput
-from .core import retrieve
 from .measurement import require_matching_wavelength_grid
-from .retrieval import Measurement, Result, RetrievalControls
+from .retrieval import Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import PressureAltitudeProfile, StateVector
 
 
 def case_for_state(
     template: O2AInput,
-    state: np.ndarray,
+    state: Sequence[float],
     state_vector: StateVector,
 ) -> O2AInput:
     """Create a wavelength-band case for one retrieval state."""
@@ -35,7 +34,7 @@ def case_for_state(
 
 def evaluate_state(
     template: O2AInput,
-    state: np.ndarray,
+    state: Sequence[float],
     state_vector: StateVector,
     *,
     cache: rtm.SessionCache | None = None,
@@ -70,6 +69,7 @@ def disamar_oe(
                 state_vector=state_vector,
                 controls=controls,
                 cache=local_cache,
+                load_case=False,
             )
 
     return _disamar_oe(
@@ -78,6 +78,7 @@ def disamar_oe(
         state_vector=state_vector,
         controls=controls,
         cache=cache,
+        load_case=True,
     )
 
 
@@ -88,17 +89,22 @@ def _disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None,
     cache: rtm.SessionCache,
+    load_case: bool = True,
 ) -> Result:
     """Bind the O2 A RTM relation to the generic OE solver."""
 
     final_evaluate_state = _lazy_final_evaluator(case, state_vector)
-    result = retrieve(
-        lambda state: evaluate_state(case, state, state_vector, cache=cache),
-        measurement,
-        state_vector,
-        controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
+    active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
+
+    if load_case and not cache.has_loaded_case(case):
+        cache.load(case, copy_case=False)
+
+    raw = cache._handle.optimal_estimation(  # noqa: SLF001
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=active_controls,
     )
-    result = replace(result, measurement=measurement)
+    result = _result_from_native(raw, state_vector, measurement)
 
     return attach_final_evaluation(
         result,
@@ -109,12 +115,12 @@ def _disamar_oe(
 def _lazy_final_evaluator(
     case: O2AInput,
     state_vector: StateVector,
-) -> Callable[[np.ndarray], RtmEvaluation]:
+) -> Callable[[Sequence[float]], RtmEvaluation]:
     """Keep a way to evaluate the final retrieval state after the run ends."""
 
     template = copy.deepcopy(case)
 
-    def evaluate_with_fresh_cache(state: np.ndarray) -> RtmEvaluation:
+    def evaluate_with_fresh_cache(state: Sequence[float]) -> RtmEvaluation:
 
         return evaluate_state(template, state, state_vector)
 
@@ -123,7 +129,7 @@ def _lazy_final_evaluator(
 
 def attach_final_evaluation(
     result: Result,
-    evaluate_state: Callable[[np.ndarray], RtmEvaluation],
+    evaluate_state: Callable[[Sequence[float]], RtmEvaluation],
 ) -> Result:
     """Attach the final-state spectrum needed by OE result plots.
 
@@ -135,7 +141,7 @@ def attach_final_evaluation(
     if (
         result.last_evaluation is not None
         and result.last_evaluated_state is not None
-        and np.array_equal(result.state, result.last_evaluated_state)
+        and tuple(result.state) == tuple(result.last_evaluated_state)
     ):
         return replace(
             result,
@@ -143,7 +149,7 @@ def attach_final_evaluation(
             _final_evaluation_factory=None,
         )
 
-    final_state = np.array(result.state, copy=True)
+    final_state = tuple(result.state)
 
     return replace(
         result,
@@ -191,17 +197,28 @@ def evaluate_reflectance(
 
 def scale_reflectance_jacobian(
     evaluation: RtmEvaluation,
-    scales: np.ndarray,
+    scales: Sequence[float],
 ) -> RtmEvaluation:
     """Scale reflectance Jacobians into the retrieval variables."""
 
-    if evaluation.reflectance_jacobian.shape[1] != scales.size:
-        raise ValueError("Jacobian scale count does not match state vector dimension")
+    scale_values = tuple(float(value) for value in scales)
+    scaled_rows = []
+
+    for row in evaluation.reflectance_jacobian:
+        if len(row) != len(scale_values):
+            raise ValueError("Jacobian scale count does not match state vector dimension")
+
+        scaled_rows.append(
+            array(
+                "d",
+                (float(value) * scale for value, scale in zip(row, scale_values, strict=True)),
+            )
+        )
 
     return RtmEvaluation(
         wavelength_nm=evaluation.wavelength_nm,
         reflectance=evaluation.reflectance,
-        reflectance_jacobian=evaluation.reflectance_jacobian * scales[None, :],
+        reflectance_jacobian=tuple(scaled_rows),
     )
 
 
@@ -215,9 +232,9 @@ def measurement_from_case(
     spectrum = rtm.spectrum(case)
 
     return Measurement(
-        wavelength_nm=spectrum.wavelength_nm.copy(),
-        reflectance=spectrum.reflectance.copy(),
-        variance=np.full(spectrum.wavelength_nm.shape, reflectance_variance, dtype=np.float64),
+        wavelength_nm=array("d", spectrum.wavelength_nm),
+        reflectance=array("d", spectrum.reflectance),
+        variance=array("d", (float(reflectance_variance) for _ in spectrum.wavelength_nm)),
     )
 
 
@@ -226,7 +243,7 @@ def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfi
 
     budget = rtm.atmospheric_budget(
         case,
-        np.array([case.spectral_grid.start_nm], dtype=np.float64),
+        [case.spectral_grid.start_nm],
     )
     table = budget.table
     levels_by_pressure: dict[float, float] = {}
@@ -242,40 +259,39 @@ def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfi
     levels = sorted((altitude, pressure) for pressure, altitude in levels_by_pressure.items())
 
     return PressureAltitudeProfile(
-        altitude_km=np.array([altitude for altitude, _pressure in levels]),
-        pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
+        altitude_km=tuple(altitude for altitude, _pressure in levels),
+        pressure_hpa=tuple(pressure for _altitude, pressure in levels),
     )
 
 
 def measurement_from_sun_normalized_radiance_noise(
     case: O2AInput,
     *,
-    wavelength_nm: np.ndarray,
-    sun_normalized_radiance_noise: np.ndarray,
+    wavelength_nm: Sequence[float],
+    sun_normalized_radiance_noise: Sequence[float],
 ) -> Measurement:
     """Put measurement noise in the same reflectance space as the retrieval."""
 
-    source_wavelength = np.asarray(wavelength_nm, dtype=np.float64)
-    source_noise = np.asarray(sun_normalized_radiance_noise, dtype=np.float64)
+    source_wavelength = array("d", (float(value) for value in wavelength_nm))
+    source_noise = array("d", (float(value) for value in sun_normalized_radiance_noise))
 
-    if source_wavelength.ndim != 1 or source_noise.ndim != 1:
-        raise ValueError("noise wavelength and values must be one-dimensional")
-
-    if source_wavelength.size != source_noise.size:
+    if len(source_wavelength) != len(source_noise):
         raise ValueError("noise wavelength and values must have the same length")
 
-    if source_wavelength.size == 0:
+    if not source_wavelength:
         raise ValueError("noise reference must contain at least one sample")
 
-    if not np.all(np.isfinite(source_wavelength)) or not np.all(np.isfinite(source_noise)):
+    if any(not math.isfinite(value) for value in source_wavelength) or any(
+        not math.isfinite(value) for value in source_noise
+    ):
         raise ValueError("noise wavelength and values must be finite")
 
-    if np.any(source_noise <= 0.0):
+    if any(value <= 0.0 for value in source_noise):
         raise ValueError("sun-normalized radiance noise must be positive")
 
     spectrum = rtm.spectrum(case)
-    measurement_wavelength = spectrum.wavelength_nm.copy()
-    reflectance = spectrum.reflectance.copy()
+    measurement_wavelength = array("d", spectrum.wavelength_nm)
+    reflectance = array("d", spectrum.reflectance)
 
     require_matching_wavelength_grid(
         measurement_wavelength,
@@ -291,5 +307,110 @@ def measurement_from_sun_normalized_radiance_noise(
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,
-        variance=reflectance_noise**2,
+        variance=array("d", (value * value for value in reflectance_noise)),
+    )
+
+
+def _result_from_native(
+    raw: Mapping[str, object],
+    state_vector: StateVector,
+    measurement: Measurement,
+) -> Result:
+    """Translate the native retrieval output without recreating Python algebra arrays."""
+
+    state_count = _native_int(raw, "state_count")
+    iteration_count = _native_int(raw, "iteration_count")
+    history_state = _native_floats(raw, "history_state")
+    history_chi2 = _native_floats(raw, "history_chi2")
+    history_chi2_reflectance = _native_floats(raw, "history_chi2_reflectance")
+    history_chi2_state_vector = _native_floats(raw, "history_chi2_state_vector")
+    history_state_vector_convergence = _native_floats(
+        raw,
+        "history_state_vector_convergence",
+    )
+    history_snr_normal = _native_ints(raw, "history_snr_normal")
+    state_names = state_vector.names
+
+    if state_count != len(state_names):
+        raise RuntimeError("native optimal-estimation state count does not match request")
+
+    history = tuple(
+        Iteration(
+            index=index + 1,
+            state=history_state[index * state_count : (index + 1) * state_count],
+            chi2=history_chi2[index],
+            chi2_reflectance=history_chi2_reflectance[index],
+            chi2_state_vector=history_chi2_state_vector[index],
+            state_vector_convergence=history_state_vector_convergence[index],
+            snr_normal=bool(history_snr_normal[index]),
+        )
+        for index in range(iteration_count)
+    )
+
+    return Result(
+        state_names=state_names,
+        state=_native_floats(raw, "state"),
+        iterations=iteration_count,
+        converged=_native_bool(raw, "converged"),
+        history=history,
+        posterior_covariance=_matrix_rows(
+            _native_floats(raw, "posterior_covariance"),
+            state_count,
+        ),
+        averaging_kernel=_matrix_rows(_native_floats(raw, "averaging_kernel"), state_count),
+        measurement=measurement,
+        initial_state=_native_floats(raw, "initial_state"),
+    )
+
+
+def _native_int(raw: Mapping[str, object], key: str) -> int:
+
+    value = raw[key]
+
+    if not isinstance(value, int | float | str):
+        raise RuntimeError(f"native optimal-estimation field is not an integer: {key}")
+
+    return int(value)
+
+
+def _native_bool(raw: Mapping[str, object], key: str) -> bool:
+
+    return bool(raw[key])
+
+
+def _native_sequence(raw: Mapping[str, object], key: str) -> Sequence[object]:
+
+    values = raw[key]
+
+    if not isinstance(values, Sequence):
+        raise RuntimeError(f"native optimal-estimation field is not a sequence: {key}")
+
+    return values
+
+
+def _native_floats(raw: Mapping[str, object], key: str) -> tuple[float, ...]:
+
+    return tuple(float(_native_number(value, key)) for value in _native_sequence(raw, key))
+
+
+def _native_ints(raw: Mapping[str, object], key: str) -> tuple[int, ...]:
+
+    return tuple(int(_native_number(value, key)) for value in _native_sequence(raw, key))
+
+
+def _native_number(value: object, key: str) -> int | float | str:
+
+    if not isinstance(value, int | float | str):
+        raise RuntimeError(f"native optimal-estimation field is not numeric: {key}")
+
+    return value
+
+
+def _matrix_rows(
+    flat: tuple[float, ...],
+    state_count: int,
+) -> tuple[tuple[float, ...], ...]:
+
+    return tuple(
+        flat[index * state_count : (index + 1) * state_count] for index in range(state_count)
     )

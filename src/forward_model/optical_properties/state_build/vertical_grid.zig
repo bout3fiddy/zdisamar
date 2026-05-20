@@ -202,18 +202,39 @@ fn buildExplicitDisamarParity(
     sublayer_order: usize,
 ) !OwnedVerticalGrid {
     const intervals = scene.atmosphere.interval_grid.intervals;
-    const support_nodes = try allocator.alloc(f64, sublayer_order);
-    defer allocator.free(support_nodes);
-    const support_weights = try allocator.alloc(f64, sublayer_order);
-    defer allocator.free(support_weights);
-    try gauss_legendre.fillNodesAndWeights(
-        @intCast(sublayer_order),
-        support_nodes,
-        support_weights,
-    );
+    // Hot path:
+    //   O2 A retrievals refresh this grid every state evaluation. Keep the
+    //   dynamic rule math for bit-identical nodes, but avoid heap churn for
+    //   the common small support orders.
+    var stack_support_nodes: [10]f64 = undefined;
+    var stack_support_weights: [10]f64 = undefined;
+    var dynamic_support_nodes: []f64 = &.{};
+    defer if (dynamic_support_nodes.len != 0) allocator.free(dynamic_support_nodes);
+    var dynamic_support_weights: []f64 = &.{};
+    defer if (dynamic_support_weights.len != 0) allocator.free(dynamic_support_weights);
+    const support_nodes, const support_weights = if (sublayer_order <= stack_support_nodes.len) stack: {
+        const nodes = stack_support_nodes[0..sublayer_order];
+        const weights = stack_support_weights[0..sublayer_order];
+        try gauss_legendre.fillNodesAndWeights(
+            @intCast(sublayer_order),
+            nodes,
+            weights,
+        );
+        break :stack .{ nodes, weights };
+    } else dynamic: {
+        dynamic_support_nodes = try allocator.alloc(f64, sublayer_order);
+        dynamic_support_weights = try allocator.alloc(f64, sublayer_order);
+        try gauss_legendre.fillNodesAndWeights(
+            @intCast(sublayer_order),
+            dynamic_support_nodes,
+            dynamic_support_weights,
+        );
+        break :dynamic .{ dynamic_support_nodes, dynamic_support_weights };
+    };
 
     var layer_cursor: usize = 0;
     var support_cursor: usize = 0;
+    var stack_rtm_nodes: [gauss_legendre.max_disamar_division_points]f64 = undefined;
     var source_interval_index = intervals.len;
     while (source_interval_index > 0) {
         source_interval_index -= 1;
@@ -231,17 +252,20 @@ fn buildExplicitDisamarParity(
         const interval_layer_count: usize = @as(usize, interval.altitude_divisions) + 1;
         const interior_node_count = interval_layer_count - 1;
 
-        const rtm_nodes = try allocator.alloc(f64, interior_node_count);
-        defer allocator.free(rtm_nodes);
+        var dynamic_rtm_nodes: []f64 = &.{};
+        defer if (dynamic_rtm_nodes.len != 0) allocator.free(dynamic_rtm_nodes);
+        const rtm_nodes: []f64 = if (interior_node_count <= stack_rtm_nodes.len)
+            stack_rtm_nodes[0..interior_node_count]
+        else dynamic: {
+            dynamic_rtm_nodes = try allocator.alloc(f64, interior_node_count);
+            break :dynamic dynamic_rtm_nodes;
+        };
         if (interior_node_count > 0) {
-            const rtm_weights = try allocator.alloc(f64, interior_node_count);
-            defer allocator.free(rtm_weights);
-            try gauss_legendre.fillDisamarDivPointsInterval(
+            try gauss_legendre.fillDisamarDivPointsIntervalNodes(
                 @intCast(interior_node_count),
                 interval_bottom_altitude_km,
                 interval_top_altitude_km,
                 rtm_nodes,
-                rtm_weights,
             );
         }
 

@@ -36,8 +36,8 @@ const ProfileLineStateWorker = struct {
 
 // layout(64-bit):
 //   size: 568 B, align: 8 B
-//   field storage: 565 B across 20 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B, active_line_absorbers=16 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 7 bool-storage slack = 31 bits
+//   field storage: 567 B across 22 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B, active_line_absorbers=16 B; padding: 1 B (8 bits)
+//   unused bits: 8 padding + 21 bool-storage slack = 29 bits
 //   out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers, owned_line_absorbers carry references/descriptors; referenced storage is not included in size
 //   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -56,6 +56,8 @@ pub const AbsorberBuildState = struct {
     profile_strong_line_state_count: usize = 0,
     profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     profile_weak_line_state_count: usize = 0,
+    owns_profile_strong_line_states: bool = true,
+    owns_profile_weak_line_states: bool = true,
     owned_lines: ?ReferenceData.SpectroscopyLineList = null,
     active_line_species: ?AbsorberModel.AbsorberSpecies = null,
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
@@ -70,12 +72,16 @@ pub const AbsorberBuildState = struct {
             if (states.len != 0) allocator.free(states);
         }
         if (self.profile_strong_line_states) |states| {
-            for (states[0..self.profile_strong_line_state_count]) |*state| state.deinit(allocator);
-            if (states.len != 0) allocator.free(states);
+            if (self.owns_profile_strong_line_states) {
+                for (states[0..self.profile_strong_line_state_count]) |*state| state.deinit(allocator);
+                if (states.len != 0) allocator.free(states);
+            }
         }
         if (self.profile_weak_line_states) |states| {
-            for (states[0..self.profile_weak_line_state_count]) |*state| state.deinit(allocator);
-            if (states.len != 0) allocator.free(states);
+            if (self.owns_profile_weak_line_states) {
+                for (states[0..self.profile_weak_line_state_count]) |*state| state.deinit(allocator);
+                if (states.len != 0) allocator.free(states);
+            }
         }
         if (self.owned_line_absorbers.len != 0) {
             for (self.owned_line_absorbers[0..self.owned_line_absorber_count]) |*line_absorber| {
@@ -157,41 +163,55 @@ pub fn build(
             null
     else
         null;
-    state.profile_strong_line_states = if (state.owned_line_absorbers.len == 0)
-        if (state.owned_lines) |line_list|
-            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
-                try allocator.alloc(ReferenceData.StrongLinePreparedState, context.spectroscopy_profile_temperatures_k.len)
-            else
-                null
-        else
-            null
-    else
-        null;
-    state.profile_weak_line_states = if (state.owned_line_absorbers.len == 0)
-        if (state.owned_lines) |line_list|
-            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
-                try allocator.alloc(ReferenceData.WeakLinePreparedState, context.spectroscopy_profile_temperatures_k.len)
-            else
-                null
-        else
-            null
-    else
-        null;
+    const should_prepare_profile_line_states = state.owned_line_absorbers.len == 0 and
+        state.owned_lines != null and
+        !operational_o2_lut.enabled() and
+        state.owned_lines.?.hasStrongLineSidecars() and
+        context.spectroscopy_profile_temperatures_k.len != 0;
     var loaded_profile_states = false;
-    if (state.profile_weak_line_states) |weak_states| {
-        if (state.profile_strong_line_states) |strong_states| {
-            const line_list = state.owned_lines.?;
-            loaded_profile_states = try ProfileStateCache.load(
-                allocator,
-                line_list,
-                context.spectroscopy_profile_temperatures_k,
-                context.spectroscopy_profile_pressures_hpa,
-                weak_states,
-                strong_states,
+    if (should_prepare_profile_line_states) {
+        if (context.borrowed_profile_strong_line_states) |strong_states| {
+            const weak_states = context.borrowed_profile_weak_line_states orelse return error.InvalidRequest;
+            if (strong_states.len != context.spectroscopy_profile_temperatures_k.len or
+                weak_states.len != context.spectroscopy_profile_temperatures_k.len)
+            {
+                return error.InvalidRequest;
+            }
+            state.profile_strong_line_states = strong_states;
+            state.profile_weak_line_states = weak_states;
+            state.profile_strong_line_state_count = strong_states.len;
+            state.profile_weak_line_state_count = weak_states.len;
+            state.owns_profile_strong_line_states = false;
+            state.owns_profile_weak_line_states = false;
+            loaded_profile_states = true;
+        } else {
+            if (context.borrowed_profile_weak_line_states != null) return error.InvalidRequest;
+            state.profile_strong_line_states = try allocator.alloc(
+                ReferenceData.StrongLinePreparedState,
+                context.spectroscopy_profile_temperatures_k.len,
             );
-            if (loaded_profile_states) {
-                state.profile_weak_line_state_count = weak_states.len;
-                state.profile_strong_line_state_count = strong_states.len;
+            state.profile_weak_line_states = try allocator.alloc(
+                ReferenceData.WeakLinePreparedState,
+                context.spectroscopy_profile_temperatures_k.len,
+            );
+        }
+    }
+    if (!loaded_profile_states) {
+        if (state.profile_weak_line_states) |weak_states| {
+            if (state.profile_strong_line_states) |strong_states| {
+                const line_list = state.owned_lines.?;
+                loaded_profile_states = try ProfileStateCache.load(
+                    allocator,
+                    line_list,
+                    context.spectroscopy_profile_temperatures_k,
+                    context.spectroscopy_profile_pressures_hpa,
+                    weak_states,
+                    strong_states,
+                );
+                if (loaded_profile_states) {
+                    state.profile_weak_line_state_count = weak_states.len;
+                    state.profile_strong_line_state_count = strong_states.len;
+                }
             }
         }
     }

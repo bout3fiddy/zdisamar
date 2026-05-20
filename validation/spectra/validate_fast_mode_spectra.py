@@ -143,10 +143,10 @@ def evaluate_spectrum(case: Any) -> SpectrumRun:
 
     start = time.perf_counter()
     spectrum = rtm.spectrum(case)
-    wavelength_nm = spectrum.wavelength_nm.copy()
-    reflectance = spectrum.reflectance.copy()
-    radiance = spectrum.radiance.copy()
-    irradiance = spectrum.irradiance.copy()
+    wavelength_nm = np.asarray(spectrum.wavelength_nm, dtype=np.float64).copy()
+    reflectance = np.asarray(spectrum.reflectance, dtype=np.float64).copy()
+    radiance = np.asarray(spectrum.radiance, dtype=np.float64).copy()
+    irradiance = np.asarray(spectrum.irradiance, dtype=np.float64).copy()
 
     return SpectrumRun(
         wavelength_nm=wavelength_nm,

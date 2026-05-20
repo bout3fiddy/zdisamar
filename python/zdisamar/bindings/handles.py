@@ -2,6 +2,9 @@
 
 import copy
 import ctypes
+import math
+from array import array
+from numbers import Integral
 from typing import Self
 
 from .. import reference_data
@@ -29,27 +32,25 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    COptimalEstimationControls,
+    COptimalEstimationRequest,
+    COptimalEstimationResult,
+    COptimalEstimationStateSpec,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
 )
 
+_MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
+_MAX_UINT32 = 2**32 - 1
+_NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
+
 
 def contiguous_wavelengths(wavelengths_nm):
     """Prepare a one-dimensional wavelength grid for the zdisamar model."""
 
-    import numpy as np
-
-    wavelengths = np.ascontiguousarray(wavelengths_nm, dtype=np.float64)
-
-    if wavelengths.ndim != 1:
-        raise ValueError("wavelengths_nm must be one-dimensional")
-
-    if wavelengths.size == 0:
-        raise ValueError("wavelengths_nm must not be empty")
-
-    return wavelengths
+    return double_array(wavelengths_nm, "wavelengths_nm")
 
 
 def channel_mask(channels: tuple[str, ...]) -> int:
@@ -84,6 +85,20 @@ def jacobian_state_ids(state_names: tuple[str, ...]):
     return (ctypes.c_uint8 * len(ids))(*ids)
 
 
+def double_array(values, name: str):
+    """Copy a Python numeric sequence into a contiguous C double buffer."""
+
+    copied = [float(value) for value in values]
+
+    if not copied:
+        raise ValueError(f"{name} must not be empty")
+
+    if any(not math.isfinite(value) for value in copied):
+        raise ValueError(f"{name} values must be finite")
+
+    return (ctypes.c_double * len(copied))(*copied)
+
+
 class RtmHandle:
     """Own the opaque Zig RTM handle used by the C ABI."""
 
@@ -92,6 +107,7 @@ class RtmHandle:
         self._lib = configure(load_library())
         self._ctx = self._lib.zds_context_create()
         self._case: O2AInput | None = None
+        self._case_fingerprint: bytes | None = None
         self._solar_mu0: float | None = None
 
         if not self._ctx:
@@ -133,7 +149,23 @@ class RtmHandle:
             )
         )
         self._case = copy.deepcopy(case) if copy_case else None
+        self._case_fingerprint = payload
         self._solar_mu0 = case.geometry.solar_mu0
+
+    def loaded_o2a_case_matches(self, case: O2AInput) -> bool:
+        """Return whether the native handle already owns this prepared case.
+
+        The fingerprint uses the resolved deterministic payload passed to Zig.
+        That lets session users avoid a duplicate prepare without retaining a
+        Python case copy solely for invalidation.
+        """
+
+        if self._case_fingerprint is None:
+            return False
+
+        resolved = case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+
+        return resolved.to_json_bytes() == self._case_fingerprint
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
@@ -187,8 +219,8 @@ class RtmHandle:
         self._check(
             self._lib.zds_atmospheric_budget(
                 self._ctx,
-                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-                wavelengths.size,
+                wavelengths,
+                len(wavelengths),
                 ctypes.byref(raw),
             )
         )
@@ -207,8 +239,8 @@ class RtmHandle:
         self._check(
             self._lib.zds_o2_line_contributions(
                 self._ctx,
-                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-                wavelengths.size,
+                wavelengths,
+                len(wavelengths),
                 max_rows,
                 ctypes.byref(raw),
             )
@@ -235,8 +267,8 @@ class RtmHandle:
         self._check(
             self._lib.zds_instrument_response_sampling(
                 self._ctx,
-                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-                wavelengths.size,
+                wavelengths,
+                len(wavelengths),
                 channel_mask(channels),
                 ctypes.byref(raw),
             )
@@ -257,8 +289,8 @@ class RtmHandle:
         self._check(
             self._lib.zds_o2_o2_cia_diagnostics(
                 self._ctx,
-                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-                wavelengths.size,
+                wavelengths,
+                len(wavelengths),
                 ctypes.byref(raw),
             )
         )
@@ -275,8 +307,8 @@ class RtmHandle:
         self._check(
             self._lib.zds_radiative_transfer_diagnostics(
                 self._ctx,
-                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-                wavelengths.size,
+                wavelengths,
+                len(wavelengths),
                 None,
                 ctypes.byref(raw),
             )
@@ -286,6 +318,132 @@ class RtmHandle:
             self._copied_rows(raw, self._lib.zds_radiative_transfer_diagnostics_free)
         )
 
+    def optimal_estimation(self, *, measurement, state_vector, controls):
+        """Run native O2 A optimal estimation for the loaded case."""
+
+        wavelength = double_array(measurement.wavelength_nm, "measurement wavelengths")
+        reflectance = double_array(measurement.reflectance, "measurement reflectance")
+        variance = double_array(measurement.variance, "measurement variance")
+
+        if len(wavelength) != len(reflectance) or len(wavelength) != len(variance):
+            raise ValueError("measurement arrays must have the same length")
+
+        state_buffers = []
+        state_specs = []
+        raw_max_iterations = controls.max_iterations
+
+        if not isinstance(raw_max_iterations, Integral) or isinstance(raw_max_iterations, bool):
+            raise ValueError("optimal-estimation max_iterations must be an integer")
+
+        max_iterations = int(raw_max_iterations)
+
+        if max_iterations <= 0 or max_iterations > _MAX_OPTIMAL_ESTIMATION_ITERATIONS:
+            raise ValueError(
+                "optimal-estimation max_iterations must be between "
+                f"1 and {_MAX_OPTIMAL_ESTIMATION_ITERATIONS}"
+            )
+
+        for parameter in state_vector.parameters:
+            parameter_name = parameter.name
+            state_name = getattr(parameter, "jacobian_name", parameter_name)
+
+            if state_name != parameter_name:
+                raise ValueError(
+                    "native optimal estimation requires direct state parameters; "
+                    "transformed state-vector parameters are not supported"
+                )
+
+            if (
+                getattr(parameter, "jacobian_scale", None) is not None
+                and state_name != _NATIVE_PRESSURE_STATE
+            ):
+                raise ValueError(
+                    "native optimal estimation does not support custom jacobian_scale transforms"
+                )
+
+            try:
+                state_id = JACOBIAN_STATE_NAMES.index(state_name)
+            except ValueError as exc:
+                raise ValueError(f"unsupported optimal-estimation state: {state_name}") from exc
+
+            profile = getattr(parameter, "pressure_altitude_profile", None)
+            profile_altitude = None
+            profile_pressure = None
+            profile_count = 0
+
+            if profile is not None:
+                profile_altitude = double_array(profile.altitude_km, "pressure-profile altitude")
+                profile_pressure = double_array(profile.pressure_hpa, "pressure-profile pressure")
+
+                if len(profile_altitude) != len(profile_pressure):
+                    raise ValueError("pressure-profile arrays must have the same length")
+
+                profile_count = len(profile_altitude)
+                state_buffers.extend([profile_altitude, profile_pressure])
+
+            lower = getattr(parameter, "lower", None)
+            upper = getattr(parameter, "upper", None)
+            raw_interval_index = getattr(parameter, "interval_index_1based", 0)
+
+            if not isinstance(raw_interval_index, Integral) or isinstance(raw_interval_index, bool):
+                raise ValueError("optimal-estimation interval_index_1based must be an integer")
+
+            interval_index_1based = int(raw_interval_index)
+
+            if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
+                raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")
+
+            state_specs.append(
+                COptimalEstimationStateSpec(
+                    state_id=state_id,
+                    has_lower=0 if lower is None else 1,
+                    has_upper=0 if upper is None else 1,
+                    interval_index_1based=interval_index_1based,
+                    initial=float(parameter.initial),
+                    prior=float(parameter.prior),
+                    variance=float(parameter.variance),
+                    lower=0.0 if lower is None else float(lower),
+                    upper=0.0 if upper is None else float(upper),
+                    thickness_hpa=float(getattr(parameter, "thickness_hpa", 0.0)),
+                    pressure_profile_count=profile_count,
+                    pressure_profile_altitude_km=profile_altitude,
+                    pressure_profile_pressure_hpa=profile_pressure,
+                )
+            )
+
+        if not state_specs:
+            raise ValueError("state vector must contain at least one parameter")
+
+        state_spec_array = (COptimalEstimationStateSpec * len(state_specs))(*state_specs)
+        request = COptimalEstimationRequest(
+            sample_count=len(wavelength),
+            wavelength_nm=wavelength,
+            reflectance=reflectance,
+            variance=variance,
+            state_count=len(state_specs),
+            states=state_spec_array,
+            controls=COptimalEstimationControls(
+                max_iterations=max_iterations,
+                state_vector_convergence_threshold=float(
+                    controls.state_vector_convergence_threshold
+                ),
+                max_change_transformed_state=float(controls.max_change_transformed_state),
+            ),
+        )
+        raw = COptimalEstimationResult()
+        self._check(
+            self._lib.zds_run_o2a_optimal_estimation(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_result(raw)
+        finally:
+            self._lib.zds_optimal_estimation_result_free(self._ctx, ctypes.byref(raw))
+
     def close(self) -> None:
         """Release the opaque Zig RTM handle."""
 
@@ -293,6 +451,7 @@ class RtmHandle:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
             self._case = None
+            self._case_fingerprint = None
             self._solar_mu0 = None
 
     def _copied_spectrum(
@@ -303,22 +462,27 @@ class RtmHandle:
         include_case: bool = True,
     ) -> Spectrum:
 
-        import numpy as np
-
         try:
-            wavelength_nm = np.ctypeslib.as_array(raw.wavelength_nm, shape=(raw.len,)).copy()
-            radiance = np.ctypeslib.as_array(raw.radiance, shape=(raw.len,)).copy()
-            irradiance = np.ctypeslib.as_array(raw.irradiance, shape=(raw.len,)).copy()
-            reflectance = np.ctypeslib.as_array(raw.reflectance, shape=(raw.len,)).copy()
+            length = int(raw.len)
+            wavelength_nm = self._copied_double_array(raw.wavelength_nm, length)
+            radiance = self._copied_double_array(raw.radiance, length)
+            irradiance = self._copied_double_array(raw.irradiance, length)
+            reflectance = self._copied_double_array(raw.reflectance, length)
             state_names = self._jacobian_names(raw, jacobian_state_names)
             radiance_jacobian = None
 
             if raw.jacobian and raw.jacobian_state_count != 0:
-                flat = np.ctypeslib.as_array(
-                    raw.jacobian,
-                    shape=(raw.len * raw.jacobian_state_count,),
+                state_count = int(raw.jacobian_state_count)
+                radiance_jacobian = tuple(
+                    array(
+                        "d",
+                        (
+                            float(raw.jacobian[sample_index * state_count + state_index])
+                            for state_index in range(state_count)
+                        ),
+                    )
+                    for sample_index in range(length)
                 )
-                radiance_jacobian = flat.reshape((raw.len, raw.jacobian_state_count)).copy()
 
             report = self._spectrum_report(raw)
         finally:
@@ -338,6 +502,10 @@ class RtmHandle:
                 else RadianceJacobian(radiance_jacobian, state_names)
             ),
         )
+
+    def _copied_double_array(self, pointer, count: int) -> array:
+
+        return array("d", (float(pointer[index]) for index in range(count)))
 
     def _jacobian_names(
         self,
@@ -374,16 +542,55 @@ class RtmHandle:
 
     def _copied_rows(self, raw, free):
 
-        import numpy as np
-
         try:
-            return np.ctypeslib.as_array(raw.rows, shape=(raw.len,)).copy()
+            rows = []
+
+            for row_index in range(int(raw.len)):
+                source = raw.rows[row_index]
+                rows.append({name: getattr(source, name) for name, _ctype in type(source)._fields_})
+
+            return tuple(rows)
         finally:
             free(self._ctx, ctypes.byref(raw))
 
     def _free_spectrum(self, raw: CSpectrum) -> None:
 
         self._lib.zds_spectrum_free(self._ctx, ctypes.byref(raw))
+
+    def _copied_optimal_estimation_result(self, raw: COptimalEstimationResult):
+
+        state_count = int(raw.state_count)
+        iteration_count = int(raw.iteration_count)
+        matrix_count = state_count * state_count
+        history_count = iteration_count * state_count
+
+        def doubles(pointer, count: int) -> list[float]:
+
+            return [float(pointer[index]) for index in range(count)]
+
+        def uint8s(pointer, count: int) -> list[int]:
+
+            return [int(pointer[index]) for index in range(count)]
+
+        return {
+            "state_count": state_count,
+            "iteration_count": iteration_count,
+            "converged": bool(raw.converged),
+            "state_ids": uint8s(raw.state_ids, state_count),
+            "state": doubles(raw.state, state_count),
+            "initial_state": doubles(raw.initial_state, state_count),
+            "posterior_covariance": doubles(raw.posterior_covariance, matrix_count),
+            "averaging_kernel": doubles(raw.averaging_kernel, matrix_count),
+            "history_state": doubles(raw.history_state, history_count),
+            "history_chi2": doubles(raw.history_chi2, iteration_count),
+            "history_chi2_reflectance": doubles(raw.history_chi2_reflectance, iteration_count),
+            "history_chi2_state_vector": doubles(raw.history_chi2_state_vector, iteration_count),
+            "history_state_vector_convergence": doubles(
+                raw.history_state_vector_convergence,
+                iteration_count,
+            ),
+            "history_snr_normal": uint8s(raw.history_snr_normal, iteration_count),
+        }
 
     def _check(self, status: int) -> None:
 

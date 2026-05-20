@@ -11,6 +11,7 @@ const Postprocess = @import("postprocess.zig");
 const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
+const Plan = @import("wavelength_plan.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Trace = @import("../../performance_trace.zig");
@@ -42,24 +43,57 @@ const SimulationSetup = struct {
 };
 
 // layout(64-bit):
-//   size: 144 B, align: 8 B
-//   field storage: 144 B across 5 fields; largest: wavelength_sampling=48 B, owned_wavelength_sampling=48 B, forward_misses=16 B; padding: 0 B (0 bits)
+//   size: 240 B, align: 8 B
+//   field storage: 240 B across 7 fields; largest: forward_miss_plan=48 B, owned_forward_miss_plan=48 B, wavelength_sampling=48 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength_sampling, forward_misses, profile_spectroscopy_caches, owned_wavelength_sampling, owned_forward_misses carry references/descriptors; referenced storage is not included in size
-//   cache span: 3 cache line(s) at 64 B per line
+//   out-of-line: wavelength_sampling, forward_miss_plan, forward_results, profile_spectroscopy_caches, and owned fields carry references/descriptors
+//   cache span: 4 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 144 B (0.141 KiB); total also includes referenced storage above
+//   footprint: per instance = 240 B (0.234 KiB); total also includes referenced storage above
 const ResolvedSimulationPlan = struct {
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable = .{},
-    forward_misses: []const SpectralEval.ForwardCacheMiss = &.{},
+    forward_miss_plan: Plan.ForwardMissPlan = .{},
+    forward_results: []const SpectralEval.ForwardIntegratedSample = &.{},
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
     owned_wavelength_sampling: WavelengthSampling.OwnedWavelengthSampling = .{},
-    owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{},
+    owned_forward_miss_plan: Plan.OwnedForwardMissPlan = .{},
+    owned_forward_results: []SpectralEval.ForwardIntegratedSample = &.{},
 
     fn deinit(self: *ResolvedSimulationPlan, allocator: Allocator) void {
         self.owned_wavelength_sampling.deinit(allocator);
-        allocator.free(self.owned_forward_misses);
+        self.owned_forward_miss_plan.deinit(allocator);
+        allocator.free(self.owned_forward_results);
         self.* = undefined;
+    }
+};
+
+// Active Jacobian states resolved once per simulation from the route/storage mask.
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: count=8 B, states=3 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
+//   inline arrays: states:[3]jacobian.State=3 B
+//   count: one stack value in Jacobian-producing simulations
+//   footprint: per instance = 16 B (0.016 KiB)
+const ActiveJacobianStates = struct {
+    count: usize = 0,
+    states: [jacobian.state_count]jacobian.State = undefined,
+
+    fn init(mask: jacobian.StateMask) ActiveJacobianStates {
+        const active_mask = jacobian.sanitizedMask(mask);
+        var result = ActiveJacobianStates{};
+        for (0..jacobian.state_count) |state_index| {
+            const state: jacobian.State = @enumFromInt(state_index);
+            if (!jacobian.includes(active_mask, state)) continue;
+            result.states[result.count] = state;
+            result.count += 1;
+        }
+        return result;
+    }
+
+    fn at(self: ActiveJacobianStates, active_index: usize) ?jacobian.State {
+        if (active_index >= self.count) return null;
+        return self.states[active_index];
     }
 };
 
@@ -95,10 +129,6 @@ const RunningSummary = struct {
 
     fn addNoiseSigma(self: *RunningSummary, values: []const f64) void {
         for (values) |value| self.noise_sum += value;
-    }
-
-    fn addJacobianRow(self: *RunningSummary, values: jacobian.Vector) void {
-        jacobian.addScaled(&self.jacobian_sum, values, 1.0);
     }
 
     fn toInstrumentGridSummary(
@@ -189,7 +219,7 @@ pub fn warmWavelengthPlan(
 
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
     if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
-        _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+        _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_miss_plan.misses);
         return;
     }
 
@@ -205,12 +235,12 @@ pub fn warmWavelengthPlan(
         implementations.instrument.calibrationForScene(scene, .irradiance),
         implementations,
     );
-    storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+    storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
         allocator,
         storage.wavelength_sampling.view(),
     );
-    storage.forward_misses_valid = true;
-    _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+    storage.forward_miss_plan_valid = true;
+    _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_miss_plan.misses);
     storage.wavelength_plan_key = plan_key;
     storage.wavelength_plan_valid = true;
 }
@@ -346,24 +376,21 @@ pub fn simulateInternal(
         prepared,
         implementations,
         setup,
-        simulation_plan,
-        evaluation_cache,
+        &simulation_plan,
         wavelength_plan_storage,
     );
 
     var summary = RunningSummary.init();
-    const transport_layer_count = try validateTransportBuffers(scene, route, prepared, buffers);
+    _ = try validateTransportBuffers(scene, route, prepared, buffers);
     try fillRadianceSamples(
-        allocator,
         scene,
         route,
         prepared,
-        implementations,
         setup,
         simulation_plan.wavelength_sampling,
-        transport_layer_count,
+        simulation_plan.forward_miss_plan,
+        simulation_plan.forward_results,
         buffers,
-        evaluation_cache,
     );
     try fillIrradianceSamples(
         scene,
@@ -494,32 +521,32 @@ fn resolveSimulationPlan(
         );
         break :blk plan.owned_wavelength_sampling.view();
     };
-    plan.forward_misses = blk: {
+    plan.forward_miss_plan = blk: {
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
         defer zone.end();
 
         if (wavelength_plan_storage) |storage| {
-            if (!storage.forward_misses_valid) {
-                storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+            if (!storage.forward_miss_plan_valid) {
+                storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
                     allocator,
                     plan.wavelength_sampling,
                 );
-                storage.forward_misses_valid = true;
+                storage.forward_miss_plan_valid = true;
             }
-            break :blk storage.forward_misses;
+            break :blk storage.forward_miss_plan.view();
         }
-        plan.owned_forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+        plan.owned_forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
             allocator,
             plan.wavelength_sampling,
         );
-        break :blk plan.owned_forward_misses;
+        break :blk plan.owned_forward_miss_plan.view();
     };
     plan.profile_spectroscopy_caches = blk: {
         const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
         defer zone.end();
 
         if (wavelength_plan_storage) |storage| {
-            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, plan.forward_misses);
+            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, plan.forward_miss_plan.misses);
         }
         break :blk &.{};
     };
@@ -533,19 +560,27 @@ fn prefetchSimulationPlan(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
     setup: SimulationSetup,
-    simulation_plan: ResolvedSimulationPlan,
-    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    simulation_plan: *ResolvedSimulationPlan,
     wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
-        zone.value(@intCast(simulation_plan.forward_misses.len));
+        zone.value(@intCast(simulation_plan.forward_miss_plan.misses.len));
         defer zone.end();
-        const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_misses.len);
+        const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_miss_plan.misses.len);
         const thread_pool = if (wavelength_plan_storage) |storage|
             storage.forwardPrefetchPool(allocator, worker_count)
         else
             null;
+        const results = if (wavelength_plan_storage) |storage|
+            try storage.forwardResultBuffer(allocator, simulation_plan.forward_miss_plan.misses.len)
+        else blk: {
+            simulation_plan.owned_forward_results = try allocator.alloc(
+                SpectralEval.ForwardIntegratedSample,
+                simulation_plan.forward_miss_plan.misses.len,
+            );
+            break :blk simulation_plan.owned_forward_results;
+        };
         try SpectralEval.prefetchForwardSamples(
             allocator,
             scene,
@@ -553,11 +588,12 @@ fn prefetchSimulationPlan(
             prepared,
             implementations,
             setup.safe_span,
-            simulation_plan.forward_misses,
+            simulation_plan.forward_miss_plan.misses,
             simulation_plan.profile_spectroscopy_caches,
-            evaluation_cache,
+            results,
             thread_pool,
         );
+        simulation_plan.forward_results = results;
     }
 }
 
@@ -592,40 +628,22 @@ fn validateTransportBuffers(
 // hot path:
 //   when: once per output wavelength after forward misses have been prefetched
 //   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
-//   data: wavelength sampling rows, layer/source/quadrature buffers, spectral cache, jacobian buffer
-//   follow: SpectralEval.integrateForwardAtNominal and convolution/postprocess passes
+//   data: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
+//   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
 fn fillRadianceSamples(
-    allocator: Allocator,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     setup: SimulationSetup,
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
-    transport_layer_count: usize,
+    forward_miss_plan: Plan.ForwardMissPlan,
+    forward_results: []const SpectralEval.ForwardIntegratedSample,
     buffers: Storage.Buffers,
-    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!void {
-    const source_interfaces = if (Storage.routeMayUseSourceInterfaces(scene, route))
-        buffers.source_interfaces[0 .. transport_layer_count + 1]
+    const active_jacobians = if (buffers.jacobian != null)
+        ActiveJacobianStates.init(buffers.jacobian_state_mask)
     else
-        @constCast(&[_]common.SourceInterfaceInput{});
-    const rtm_quadrature_levels = if (Storage.routeUsesRtmQuadrature(route))
-        buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1]
-    else
-        @constCast(&[_]common.RtmQuadratureLevel{});
-    const pseudo_spherical_samples = if (Storage.routeUsesPseudoSphericalGrid(route))
-        buffers.pseudo_spherical_samples
-    else
-        @constCast(&[_]common.PseudoSphericalSample{});
-    const pseudo_spherical_level_starts = if (Storage.routeUsesPseudoSphericalGrid(route))
-        buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1]
-    else
-        @constCast(&[_]usize{});
-    const pseudo_spherical_level_altitudes = if (Storage.routeUsesPseudoSphericalGrid(route))
-        buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1]
-    else
-        @constCast(&[_]f64{});
+        ActiveJacobianStates{};
 
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
@@ -634,26 +652,25 @@ fn fillRadianceSamples(
             const nominal_wavelength_nm = plan.nominal_wavelength_nm;
             buffers.wavelengths[index] = nominal_wavelength_nm;
 
-            const integrated = try SpectralEval.integrateForwardAtNominal(
-                allocator,
-                scene,
+            if (index >= forward_miss_plan.rows.len) return error.ShapeMismatch;
+            const integrated = try SpectralEval.integratePrefetchedForwardAtNominal(
                 route,
-                prepared,
-                plan.radiance_wavelength_nm,
-                setup.safe_span,
-                implementations,
-                buffers.layer_inputs[0..transport_layer_count],
-                source_interfaces,
-                rtm_quadrature_levels,
-                pseudo_spherical_samples,
-                pseudo_spherical_level_starts,
-                pseudo_spherical_level_altitudes,
-                evaluation_cache,
+                forward_results,
+                forward_miss_plan.rows[index],
+                forward_miss_plan.sample_indices,
                 &plan.radiance_integration,
                 wavelength_sampling.kernel_storage,
             );
             buffers.scratch[index] = integrated.radiance;
-            if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
+            if (buffers.jacobian) |jacobian_buffer| {
+                writeJacobianSample(
+                    jacobian_buffer,
+                    active_jacobians,
+                    setup.sample_count,
+                    index,
+                    integrated.jacobian,
+                );
+            }
         }
     }
     if (setup.uses_integrated_radiance_sampling) {
@@ -862,8 +879,8 @@ fn materializeNoiseSamples(
 // hot path:
 //   when: once per simulation when a Jacobian buffer is requested
 //   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
-//   data: derivative state mask, column-major scratch views, jacobian buffer, wavelength array
-//   follow: copyJacobianColumnToScratch and Postprocess.applyChannelJacobianCorrections
+//   data: derivative state mask, state-major active-column buffer, wavelength array
+//   follow: jacobianColumn and Postprocess.applyChannelJacobianCorrections
 fn processJacobianSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -876,33 +893,39 @@ fn processJacobianSamples(
         {
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
+            const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
+            if (active_jacobians.count == 0 or jacobian_buffer.len != setup.sample_count * active_jacobians.count) return error.ShapeMismatch;
             if (!setup.uses_integrated_radiance_sampling) {
-                for (0..jacobian.state_count) |state_index| {
-                    if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
-                    copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
-                    try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
-                    copyScratchToJacobianColumn(buffers.scratch_aux, jacobian_buffer, state_index);
+                for (0..active_jacobians.count) |active_index| {
+                    const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
+                    if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
+                    const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                    try convolution.apply(column, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
+                    @memcpy(column, buffers.scratch_aux);
                 }
             }
-            for (0..jacobian.state_count) |state_index| {
-                if (!jacobian.includes(derivative_state_mask, @enumFromInt(state_index))) continue;
-                copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
+            for (0..active_jacobians.count) |active_index| {
+                const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
+                if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
+                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 try Postprocess.applyChannelJacobianCorrections(
                     scene,
                     .radiance,
                     setup.radiance_calibration,
                     prepared.depolarization_factor,
                     buffers.wavelengths,
-                    buffers.scratch,
+                    column,
                     buffers.scratch_aux,
                 );
-                copyScratchToJacobianColumn(buffers.scratch, jacobian_buffer, state_index);
             }
             // DECISION:
             //   Ring synthesis uses the irradiance-only basis from the current
             //   forward model, so it does not change the routed radiance Jacobian.
-            for (0..setup.sample_count) |index| {
-                summary.addJacobianRow(readJacobianRow(jacobian_buffer, index));
+            for (0..active_jacobians.count) |active_index| {
+                const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
+                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                const state_index = jacobian.stateIndex(state);
+                for (column) |value| summary.jacobian_sum[state_index] += value;
             }
             return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
         }
@@ -1004,33 +1027,20 @@ fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
     hash.update(std.mem.asBytes(&bits));
 }
 
-fn jacobianOffset(sample_index: usize, state_index: usize) usize {
-    return sample_index * jacobian.state_count + state_index;
+fn jacobianColumn(buffer: []f64, sample_count: usize, active_index: usize) []f64 {
+    return buffer[active_index * sample_count ..][0..sample_count];
 }
 
-fn writeJacobianRow(buffer: []f64, sample_index: usize, values: jacobian.Vector) void {
-    for (0..jacobian.state_count) |state_index| {
-        buffer[jacobianOffset(sample_index, state_index)] = values[state_index];
-    }
-}
-
-fn readJacobianRow(buffer: []const f64, sample_index: usize) jacobian.Vector {
-    var values = jacobian.zero();
-    for (0..jacobian.state_count) |state_index| {
-        values[state_index] = buffer[jacobianOffset(sample_index, state_index)];
-    }
-    return values;
-}
-
-fn copyJacobianColumnToScratch(buffer: []const f64, state_index: usize, scratch: []f64) void {
-    for (scratch, 0..) |*value, sample_index| {
-        value.* = buffer[jacobianOffset(sample_index, state_index)];
-    }
-}
-
-fn copyScratchToJacobianColumn(scratch: []const f64, buffer: []f64, state_index: usize) void {
-    for (scratch, 0..) |value, sample_index| {
-        buffer[jacobianOffset(sample_index, state_index)] = value;
+fn writeJacobianSample(
+    buffer: []f64,
+    active_jacobians: ActiveJacobianStates,
+    sample_count: usize,
+    sample_index: usize,
+    values: jacobian.Vector,
+) void {
+    for (0..active_jacobians.count) |active_index| {
+        const state = active_jacobians.at(active_index) orelse unreachable;
+        buffer[active_index * sample_count + sample_index] = values[jacobian.stateIndex(state)];
     }
 }
 

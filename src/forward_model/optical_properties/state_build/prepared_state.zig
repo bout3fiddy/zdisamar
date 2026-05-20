@@ -13,14 +13,14 @@ const Types = @import("state_types.zig");
 const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
-//   size: 3472 B, align: 8 B
-//   field storage: 3470 B across 61 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 2 B (16 bits)
-//   unused bits: 16 padding + 35 bool-storage slack = 51 bits
+//   size: 3480 B, align: 8 B
+//   field storage: 3475 B across 66 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 5 B (40 bits)
+//   unused bits: 40 padding + 70 bool-storage slack = 110 bits
 //   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
 //   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 55 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3472 B (3.391 KiB); total also includes referenced storage above
+//   footprint: per instance = 3480 B (3.398 KiB); total also includes referenced storage above
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -28,12 +28,17 @@ pub const PreparedOpticalState = struct {
     spectroscopy_profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
     spectroscopy_profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     shared_rtm_geometry: Types.SharedRtmGeometry = .{},
-    continuum_points: []ReferenceData.CrossSectionPoint,
+    continuum_points: []const ReferenceData.CrossSectionPoint,
+    owns_continuum_points: bool = true,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
+    owns_collision_induced_absorption: bool = true,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
     spectroscopy_profile_altitudes_km: []f64 = &.{},
     spectroscopy_profile_pressures_hpa: []f64 = &.{},
     spectroscopy_profile_temperatures_k: []f64 = &.{},
+    owns_spectroscopy_profile_arrays: bool = true,
+    owns_spectroscopy_profile_strong_line_states: bool = true,
+    owns_spectroscopy_profile_weak_line_states: bool = true,
     spectroscopy_plan_key: u64 = 0,
     spectroscopy_profile_cache_inputs_key: u64 = 0,
     cross_section_absorbers: []Types.PreparedCrossSectionAbsorber = &.{},
@@ -88,8 +93,9 @@ pub const PreparedOpticalState = struct {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
         self.shared_rtm_geometry.deinit(allocator);
-        allocator.free(self.continuum_points);
-        if (self.collision_induced_absorption) |cia| {
+        if (self.owns_continuum_points) allocator.free(self.continuum_points);
+        if (self.owns_collision_induced_absorption and self.collision_induced_absorption != null) {
+            const cia = self.collision_induced_absorption.?;
             var owned_cia = cia;
             owned_cia.deinit(allocator);
         }
@@ -110,21 +116,27 @@ pub const PreparedOpticalState = struct {
                 allocator.free(states);
             }
             if (self.spectroscopy_profile_strong_line_states) |states| {
-                for (states) |*state| state.deinit(allocator);
-                allocator.free(states);
+                if (self.owns_spectroscopy_profile_strong_line_states) {
+                    for (states) |*state| state.deinit(allocator);
+                    allocator.free(states);
+                }
             }
             if (self.spectroscopy_profile_weak_line_states) |states| {
-                for (states) |*state| state.deinit(allocator);
-                allocator.free(states);
+                if (self.owns_spectroscopy_profile_weak_line_states) {
+                    for (states) |*state| state.deinit(allocator);
+                    allocator.free(states);
+                }
             }
             if (self.spectroscopy_lines) |line_list| {
                 var owned = line_list;
                 owned.deinit(allocator);
             }
         }
-        if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
-        if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
-        if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
+        if (self.owns_spectroscopy_profile_arrays) {
+            if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
+            if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
+            if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
+        }
         self.aerosol_fraction_control.deinitOwned(allocator);
         self.cloud_fraction_control.deinitOwned(allocator);
         if (self.owns_operational_o2_lut) {

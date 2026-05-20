@@ -1,10 +1,8 @@
 """Retrieval data objects and diagnostics."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Self
-
-import numpy as np
 
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
@@ -20,9 +18,9 @@ class Measurement:
     can be added later without changing the public meaning of this type.
     """
 
-    wavelength_nm: np.ndarray
-    reflectance: np.ndarray
-    variance: np.ndarray
+    wavelength_nm: Sequence[float]
+    reflectance: Sequence[float]
+    variance: Sequence[float]
 
 
 @dataclass(frozen=True)
@@ -32,7 +30,6 @@ class RetrievalControls:
     max_iterations: int = 10
     state_vector_convergence_threshold: float = 1.0
     max_change_transformed_state: float = 1.0
-    collect_timing: bool = False
 
     @classmethod
     def from_disamar_retrieval_specs(cls) -> Self:
@@ -56,7 +53,7 @@ class Iteration:
     """
 
     index: int
-    state: np.ndarray
+    state: Sequence[float]
     chi2: float
     chi2_reflectance: float
     chi2_state_vector: float
@@ -65,32 +62,21 @@ class Iteration:
 
 
 @dataclass(frozen=True)
-class IterationTiming:
-    """Wall-clock timing for the two expensive phases of one retrieval update."""
-
-    index: int
-    rtm_and_jacobian_s: float
-    solver_update_s: float
-    total_iteration_s: float
-
-
-@dataclass(frozen=True)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
     state_names: tuple[StateName, ...]
-    state: np.ndarray
+    state: Sequence[float]
     iterations: int
     converged: bool
     history: tuple[Iteration, ...]
-    posterior_covariance: np.ndarray
-    averaging_kernel: np.ndarray
-    timing: tuple[IterationTiming, ...] = ()
+    posterior_covariance: Sequence[Sequence[float]]
+    averaging_kernel: Sequence[Sequence[float]]
     measurement: Measurement | None = None
     final_evaluation: RtmEvaluation | None = None
-    last_evaluated_state: np.ndarray | None = None
+    last_evaluated_state: Sequence[float] | None = None
     last_evaluation: RtmEvaluation | None = None
-    initial_state: np.ndarray | None = None
+    initial_state: Sequence[float] | None = None
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,

@@ -83,22 +83,70 @@ pub const SharedOpticalCarrier = struct {
 };
 
 // hot path:
+//   when: one cache is owned by each forward-prefetch worker scratch
+//   work: tags wavelength-local scalar cache rows without clearing the tag array per wavelength
+//   data: dense u8 epochs parallel to dense scalar rows
+//   follow: WavelengthCarrierCache.init and cachedSupportRowScalarsRef
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: epochs=16 B, scalars=16 B, epoch=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   out-of-line: epochs is one byte per support row; scalars is one SharedOpticalScalars row per support row
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one per forward-prefetch worker scratch
+//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+pub const SupportRowScalarCache = struct {
+    epochs: []u8,
+    scalars: []SharedOpticalScalars,
+    epoch: u8 = 0,
+
+    pub fn init(allocator: std.mem.Allocator, row_count: usize) !SupportRowScalarCache {
+        const epochs = try allocator.alloc(u8, row_count);
+        errdefer allocator.free(epochs);
+        @memset(epochs, 0);
+        const scalars = try allocator.alloc(SharedOpticalScalars, row_count);
+        errdefer allocator.free(scalars);
+        return .{
+            .epochs = epochs,
+            .scalars = scalars,
+        };
+    }
+
+    pub fn deinit(self: *SupportRowScalarCache, allocator: std.mem.Allocator) void {
+        allocator.free(self.epochs);
+        allocator.free(self.scalars);
+        self.* = undefined;
+    }
+
+    fn nextEpoch(self: *SupportRowScalarCache) u8 {
+        if (self.epoch == std.math.maxInt(u8)) {
+            @memset(self.epochs, 0);
+            self.epoch = 1;
+            return self.epoch;
+        }
+        self.epoch += 1;
+        return self.epoch;
+    }
+};
+
+// hot path:
 //   when: once per high-resolution wavelength and reused across layer/source passes
 //   work: memoizes support-row optical-depth scalars for the current wavelength
-//   data: valid-bit slice, scalar carrier slice, prepared state, profile spectroscopy cache
+//   data: epoch-tag slice, scalar carrier slice, prepared state, profile spectroscopy cache
 //   follow: cachedSupportRowScalarsRef; full carriers are rebuilt only for callers that need phase rows
 // layout(64-bit):
-//   size: 120 B, align: 8 B
-//   field storage: 120 B across 8 fields; largest: cia_coefficients=40 B, support_row_valid=16 B, support_row_scalars=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: profile_cache, support_row_valid, support_row_scalars carry references/descriptors; referenced storage is not included in size
+//   size: 128 B, align: 8 B
+//   field storage: 121 B across 9 fields; largest: cia_coefficients=40 B, support_row_epochs=16 B, support_row_scalars=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   out-of-line: profile_cache, support_row_epochs, support_row_scalars carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 120 B (0.117 KiB); total also includes referenced storage above
+//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
 pub const WavelengthCarrierCache = struct {
     profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    support_row_valid: []bool,
+    support_row_epochs: []u8,
     support_row_scalars: []SharedOpticalScalars,
+    support_row_epoch: u8,
     continuum_sigma: f64,
     cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
@@ -108,16 +156,16 @@ pub const WavelengthCarrierCache = struct {
     pub fn init(
         prepared: *const State.PreparedOpticalState,
         wavelength_nm: f64,
-        support_row_valid: []bool,
-        support_row_scalars: []SharedOpticalScalars,
+        support_row_cache: *SupportRowScalarCache,
         profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     ) WavelengthCarrierCache {
-        @memset(support_row_valid, false);
+        const epoch = support_row_cache.nextEpoch();
         const continuum_table: ReferenceData.CrossSectionTable = .{ .points = prepared.continuum_points };
         return .{
             .profile_cache = profile_cache,
-            .support_row_valid = support_row_valid,
-            .support_row_scalars = support_row_scalars,
+            .support_row_epochs = support_row_cache.epochs,
+            .support_row_scalars = support_row_cache.scalars,
+            .support_row_epoch = epoch,
             .continuum_sigma = if (prepared.cross_section_absorbers.len == 0)
                 continuum_table.interpolateSigma(wavelength_nm)
             else
@@ -158,7 +206,7 @@ pub const WavelengthCarrierCache = struct {
         strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
         fallback: *SharedOpticalScalars,
     ) *const SharedOpticalScalars {
-        if (global_sublayer_index >= self.support_row_valid.len or
+        if (global_sublayer_index >= self.support_row_epochs.len or
             global_sublayer_index >= self.support_row_scalars.len)
         {
             fallback.* = sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
@@ -171,7 +219,7 @@ pub const WavelengthCarrierCache = struct {
             );
             return fallback;
         }
-        if (!self.support_row_valid[global_sublayer_index]) {
+        if (self.support_row_epochs[global_sublayer_index] != self.support_row_epoch) {
             fillSharedOpticalScalarsAtSupportRowWithScalarCache(
                 &self.support_row_scalars[global_sublayer_index],
                 prepared,
@@ -185,7 +233,7 @@ pub const WavelengthCarrierCache = struct {
                 self.rayleigh_cross_section_cm2,
                 self.particle_scales,
             );
-            self.support_row_valid[global_sublayer_index] = true;
+            self.support_row_epochs[global_sublayer_index] = self.support_row_epoch;
         }
         return &self.support_row_scalars[global_sublayer_index];
     }

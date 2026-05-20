@@ -46,10 +46,10 @@ def instrument_sampling_layout() -> dict[str, Any]:
     case = cases.forward_case()
     nominal_wavelengths_nm = rtm.nominal_wavelengths(case)
     response = rtm.instrument_response(case, nominal_wavelengths_nm)
-    rows = response.data
-    kernel_rows = rows[rows["sample_index"] == 0]
-    support_counts = kernel_rows["support_count"].astype(np.int64)
-    nominal_sample_count = int(nominal_wavelengths_nm.size)
+    rows = response.to_rows()
+    kernel_rows = [row for row in rows if int(row["sample_index"]) == 0]
+    support_counts = np.asarray([row["support_count"] for row in kernel_rows], dtype=np.int64)
+    nominal_sample_count = len(nominal_wavelengths_nm)
     kernel_count = int(support_counts.size)
     side_sample_count = int(support_counts[support_counts > INLINE_INTEGRATION_SAMPLE_COUNT].sum())
     side_kernel_count = int(np.count_nonzero(support_counts > INLINE_INTEGRATION_SAMPLE_COUNT))
@@ -71,11 +71,11 @@ def instrument_sampling_layout() -> dict[str, Any]:
         "source": "instrument_response_sampling over benchmark forward_case nominal grid",
         "nominal_sample_count": nominal_sample_count,
         "kernel_count": kernel_count,
-        "support_sample_count": int(rows.shape[0]),
+        "support_sample_count": len(rows),
         "support_count_stats": int_stats(support_counts),
         "support_count_histogram": int_histogram(support_counts),
         "integration_mode_histogram": labeled_histogram(
-            kernel_rows["integration_mode"].astype(np.int64),
+            np.asarray([row["integration_mode"] for row in kernel_rows], dtype=np.int64),
             INTEGRATION_MODE_LABELS,
         ),
         "channel_stats": channel_stats(kernel_rows),
@@ -131,13 +131,13 @@ def optical_accumulation_layout() -> dict[str, Any]:
     }
 
 
-def channel_stats(kernel_rows: np.ndarray) -> dict[str, Any]:
+def channel_stats(kernel_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     result = {}
 
     for channel_code, label in CHANNEL_LABELS.items():
-        rows = kernel_rows[kernel_rows["channel"] == channel_code]
-        counts = rows["support_count"].astype(np.int64)
+        rows = [row for row in kernel_rows if int(row["channel"]) == channel_code]
+        counts = np.asarray([row["support_count"] for row in rows], dtype=np.int64)
         side_counts = counts[counts > INLINE_INTEGRATION_SAMPLE_COUNT]
         result[label] = {
             "kernel_count": int(counts.size),

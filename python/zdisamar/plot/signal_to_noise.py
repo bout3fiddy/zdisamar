@@ -1,7 +1,5 @@
 """Signal-to-noise plots."""
 
-import numpy as np
-
 from . import fields
 from .data import column_values, spectrum_frame
 from .properties import PLOT
@@ -28,9 +26,9 @@ def noise_envelope(spectrum, noise_table):
 
     data = snr_frame(spectrum, noise_table)
     x = column_values(data, fields.WAVELENGTH_NM)
-    signal = np.asarray(column_values(data, fields.SUN_NORMALIZED_RADIANCE), dtype=float)
-    snr_values = np.asarray(column_values(data, fields.SNR), dtype=float)
-    sigma = signal / snr_values
+    signal = column_values(data, fields.SUN_NORMALIZED_RADIANCE)
+    snr_values = column_values(data, fields.SNR)
+    sigma = [value / snr for value, snr in zip(signal, snr_values, strict=True)]
     title = "Sun-normalized radiance noise envelope"
     y_title = fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE]
     panel = SvgPanel(
@@ -38,7 +36,12 @@ def noise_envelope(spectrum, noise_table):
         x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
         y_title=y_title,
         series=(
-            SvgSeries.band("noise envelope", x, signal - sigma, signal + sigma),
+            SvgSeries.band(
+                "noise envelope",
+                x,
+                [value - spread for value, spread in zip(signal, sigma, strict=True)],
+                [value + spread for value, spread in zip(signal, sigma, strict=True)],
+            ),
             SvgSeries.line(
                 y_title,
                 x,
@@ -57,16 +60,19 @@ def snr_frame(spectrum, noise_table):
     data = spectrum_frame(spectrum)
     wavelengths, snr_values = noise_arrays(noise_table)
 
-    if wavelengths.size != snr_values.size:
+    if len(wavelengths) != len(snr_values):
         raise ValueError("noise_table wavelengths and SNR values must have the same length")
 
-    if wavelengths.size == 0:
+    if not wavelengths:
         raise ValueError("noise_table must not be empty")
 
-    if np.any(snr_values <= 0.0):
+    if any(value <= 0.0 for value in snr_values):
         raise ValueError("noise_table SNR values must be positive")
 
-    interpolated = np.interp(column_values(data, fields.WAVELENGTH_NM), wavelengths, snr_values)
+    interpolated = [
+        _interpolate(float(wavelength), wavelengths, snr_values)
+        for wavelength in column_values(data, fields.WAVELENGTH_NM)
+    ]
 
     return [
         {**row, fields.SNR: float(value)} for row, value in zip(data, interpolated, strict=True)
@@ -77,11 +83,30 @@ def noise_arrays(noise_table):
 
     if isinstance(noise_table, tuple) and len(noise_table) == 2:
         return (
-            np.asarray(noise_table[0], dtype=float),
-            np.asarray(noise_table[1], dtype=float),
+            tuple(float(value) for value in noise_table[0]),
+            tuple(float(value) for value in noise_table[1]),
         )
 
     return (
-        np.asarray(getattr(noise_table, "snr_wavelengths_nm"), dtype=float),  # noqa: B009
-        np.asarray(getattr(noise_table, "snr_values"), dtype=float),  # noqa: B009
+        tuple(float(value) for value in getattr(noise_table, "snr_wavelengths_nm")),  # noqa: B009
+        tuple(float(value) for value in getattr(noise_table, "snr_values")),  # noqa: B009
     )
+
+
+def _interpolate(x_value: float, x: tuple[float, ...], y: tuple[float, ...]) -> float:
+
+    if x_value <= x[0]:
+        return y[0]
+
+    if x_value >= x[-1]:
+        return y[-1]
+
+    for index in range(1, len(x)):
+        if x_value <= x[index]:
+            lower_x = x[index - 1]
+            upper_x = x[index]
+            fraction = (x_value - lower_x) / (upper_x - lower_x)
+
+            return y[index - 1] + fraction * (y[index] - y[index - 1])
+
+    return y[-1]

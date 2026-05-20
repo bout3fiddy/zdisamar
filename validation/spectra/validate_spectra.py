@@ -91,8 +91,8 @@ class MetricRow(TypedDict):
 def run_zdisamar_validation(case) -> dict[str, np.ndarray]:
 
     spectrum = rtm.spectrum(case, jacobian=True, jacobian_state_names=STATE_NAMES)
-    wavelength_nm = spectrum.wavelength_nm.copy()
-    reflectance = spectrum.reflectance.copy()
+    wavelength_nm = np.asarray(spectrum.wavelength_nm, dtype=np.float64).copy()
+    reflectance = np.asarray(spectrum.reflectance, dtype=np.float64).copy()
     state_names = spectrum.jacobian_state_names
     reflectance_jacobian = np.column_stack(
         [spectrum.reflectance_jacobian(state_name) for state_name in STATE_NAMES]

@@ -28,13 +28,13 @@ pub const Error =
     };
 
 // layout(64-bit):
-//   size: 272 B, align: 8 B
-//   field storage: 272 B across 17 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 280 B, align: 8 B
+//   field storage: 273 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: wavelength/product slices are always active; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
+//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
 pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
@@ -49,6 +49,7 @@ pub const Buffers = struct {
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
     jacobian: ?[]f64 = null,
+    jacobian_state_mask: jacobian.StateMask = 0,
     noise_sigma: ?[]f64 = null,
     radiance_noise_sigma: ?[]f64 = null,
     irradiance_noise_sigma: ?[]f64 = null,
@@ -70,13 +71,13 @@ pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 600 B, align: 8 B
-//   field storage: 596 B across 29 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=104 B, wavelength_sampling=48 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
-//   out-of-line: product/noise/cache slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
+//   size: 624 B, align: 8 B
+//   field storage: 604 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B, wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
+//   unused bits: 160 padding + 28 bool-storage slack = 188 bits
+//   out-of-line: product/noise/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
 //   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
+//   footprint: per instance = 624 B (0.609 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -84,6 +85,7 @@ pub const SummaryStorage = struct {
     reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
     scratch_aux: []f64 = &.{},
+    forward_results: []Types.ForwardIntegratedSample = &.{},
     layer_inputs: []common.LayerInput = &.{},
     source_interfaces: []common.SourceInterfaceInput = &.{},
     rtm_quadrature_levels: []common.RtmQuadratureLevel = &.{},
@@ -97,11 +99,11 @@ pub const SummaryStorage = struct {
     reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
     wavelength_sampling: Plan.OwnedWavelengthSampling = .{},
-    forward_misses: []Plan.ForwardCacheMiss = &.{},
+    forward_miss_plan: Plan.OwnedForwardMissPlan = .{},
     profile_spectroscopy_caches: []SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
     wavelength_plan_key: u64 = 0,
     wavelength_plan_valid: bool = false,
-    forward_misses_valid: bool = false,
+    forward_miss_plan_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
     forward_prefetch_pool: std.Thread.Pool = undefined,
@@ -118,6 +120,7 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.reflectance);
         freeBuffer(allocator, self.scratch);
         freeBuffer(allocator, self.scratch_aux);
+        freeForwardResultBuffer(allocator, self.forward_results);
         freeLayerBuffer(allocator, self.layer_inputs);
         freeSourceInterfaceBuffer(allocator, self.source_interfaces);
         freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
@@ -131,7 +134,7 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.reflectance_noise_sigma);
         if (self.evaluation_cache) |*cache| cache.deinit();
         self.wavelength_sampling.deinit(allocator);
-        allocator.free(self.forward_misses);
+        self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
     }
@@ -167,14 +170,14 @@ pub const SummaryStorage = struct {
 
     pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {
         self.wavelength_sampling.deinit(allocator);
-        allocator.free(self.forward_misses);
+        self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
         self.wavelength_sampling = .{};
-        self.forward_misses = &.{};
+        self.forward_miss_plan = .{};
         self.profile_spectroscopy_caches = &.{};
         self.wavelength_plan_key = 0;
         self.wavelength_plan_valid = false;
-        self.forward_misses_valid = false;
+        self.forward_miss_plan_valid = false;
         self.profile_spectroscopy_cache_key = 0;
         self.profile_spectroscopy_cache_valid = false;
     }
@@ -185,6 +188,20 @@ pub const SummaryStorage = struct {
         }
         self.evaluation_cache.?.reset();
         return &(self.evaluation_cache.?);
+    }
+
+    pub fn forwardResultBuffer(
+        self: *SummaryStorage,
+        allocator: Allocator,
+        capacity: usize,
+    ) Error![]Types.ForwardIntegratedSample {
+        // hot path:
+        //   when: OE iterations reuse the same high-resolution miss plan
+        //   work: retains the dense prefetch result staging array between batches
+        //   data: one ForwardIntegratedSample per unique forward-cache miss
+        //   follow: spectral_eval.prefetchForwardSamples cache insertion
+        try ensureForwardResultCapacity(allocator, &self.forward_results, capacity);
+        return self.forward_results[0..capacity];
     }
 
     pub fn buffers(
@@ -203,7 +220,12 @@ pub const SummaryStorage = struct {
             pseudoSphericalSampleCountHint(scene, route)
         else
             0;
-        const wants_jacobian = route.derivative_mode != .none;
+        const active_jacobian_mask = if (route.derivative_mode != .none)
+            jacobian.sanitizedMask(route.derivative_state_mask)
+        else
+            0;
+        const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
+        const wants_jacobian = active_jacobian_count != 0;
         const wants_radiance_noise = implementations.noise.materializesSigma(scene, .radiance);
         const wants_irradiance_noise = implementations.noise.materializesSigma(scene, .irradiance);
         const wants_noise = wants_radiance_noise or
@@ -242,7 +264,7 @@ pub const SummaryStorage = struct {
             self.pseudo_spherical_level_altitudes = &.{};
         }
         if (wants_jacobian) {
-            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * jacobian.state_count);
+            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
         }
         if (wants_noise) {
             try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
@@ -264,7 +286,8 @@ pub const SummaryStorage = struct {
             .pseudo_spherical_samples = if (needs_pseudo_spherical_grid) self.pseudo_spherical_samples[0..pseudo_spherical_sample_count] else &.{},
             .pseudo_spherical_level_starts = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_starts[0 .. layer_count + 1] else &.{},
             .pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_altitudes[0 .. layer_count + 1] else &.{},
-            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * jacobian.state_count] else null,
+            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * active_jacobian_count] else null,
+            .jacobian_state_mask = if (wants_jacobian) active_jacobian_mask else 0,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
             .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
             .irradiance_noise_sigma = if (wants_noise) self.irradiance_noise_sigma[0..sample_count] else null,
@@ -366,7 +389,10 @@ pub fn validateBuffers(scene: *const Scene, route: common.Route, sample_count: u
         return error.ShapeMismatch;
     }
     if (buffers.jacobian) |values| {
-        if (values.len != sample_count * jacobian.state_count) return error.ShapeMismatch;
+        const active_jacobian_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
+        if (active_jacobian_count == 0 or values.len != sample_count * active_jacobian_count) return error.ShapeMismatch;
+    } else if (buffers.jacobian_state_mask != 0) {
+        return error.ShapeMismatch;
     }
     if (buffers.noise_sigma) |noise_sigma| {
         if (noise_sigma.len != sample_count) return error.ShapeMismatch;
@@ -393,6 +419,17 @@ fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput,
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(common.LayerInput, capacity);
     freeLayerBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
+fn ensureForwardResultCapacity(
+    allocator: Allocator,
+    buffer: *[]Types.ForwardIntegratedSample,
+    capacity: usize,
+) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(Types.ForwardIntegratedSample, capacity);
+    freeForwardResultBuffer(allocator, buffer.*);
     buffer.* = replacement;
 }
 
@@ -441,6 +478,10 @@ fn freeBuffer(allocator: Allocator, buffer: []f64) void {
 }
 
 fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freeForwardResultBuffer(allocator: Allocator, buffer: []Types.ForwardIntegratedSample) void {
     if (buffer.len != 0) allocator.free(buffer);
 }
 

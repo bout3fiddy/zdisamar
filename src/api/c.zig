@@ -44,6 +44,87 @@ pub const ZdsDiagnosticReport = extern struct {
 };
 
 // layout(64-bit):
+//   size: 96 B, align: 8 B
+//   field storage: 88 B across 13 fields; largest: initial=8 B, prior=8 B, variance=8 B; padding: 8 B (64 bits)
+//   unused bits: 64 padding + 0 bool-storage slack = 64 bits
+//   out-of-line: pressure_profile_altitude_km and pressure_profile_pressure_hpa borrow caller buffers
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: retrieval state count, currently 1..3
+//   footprint: per instance = 96 B (0.094 KiB); total also includes borrowed profile arrays
+pub const ZdsOptimalEstimationStateSpec = extern struct {
+    state_id: u8 = 0,
+    has_lower: u8 = 0,
+    has_upper: u8 = 0,
+    interval_index_1based: u32 = 0,
+    initial: f64 = 0.0,
+    prior: f64 = 0.0,
+    variance: f64 = 0.0,
+    lower: f64 = 0.0,
+    upper: f64 = 0.0,
+    thickness_hpa: f64 = 0.0,
+    pressure_profile_count: usize = 0,
+    pressure_profile_altitude_km: ?[*]const f64 = null,
+    pressure_profile_pressure_hpa: ?[*]const f64 = null,
+};
+
+// layout(64-bit):
+//   size: 24 B, align: 8 B
+//   field storage: 24 B across 3 fields; largest: max_iterations=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one per native OE request
+//   footprint: per instance = 24 B (0.023 KiB)
+pub const ZdsOptimalEstimationControls = extern struct {
+    max_iterations: usize = 10,
+    state_vector_convergence_threshold: f64 = 1.0,
+    max_change_transformed_state: f64 = 1.0,
+};
+
+// layout(64-bit):
+//   size: 72 B, align: 8 B
+//   field storage: 72 B across 8 fields; largest: sample_count=8 B, wavelength_nm=8 B, reflectance=8 B; padding: 0 B
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: measurement arrays and state specs borrow caller buffers
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one per native OE request
+//   footprint: per instance = 72 B (0.070 KiB); total also includes borrowed buffers
+pub const ZdsOptimalEstimationRequest = extern struct {
+    sample_count: usize = 0,
+    wavelength_nm: ?[*]const f64 = null,
+    reflectance: ?[*]const f64 = null,
+    variance: ?[*]const f64 = null,
+    state_count: usize = 0,
+    states: ?[*]const ZdsOptimalEstimationStateSpec = null,
+    controls: ZdsOptimalEstimationControls = .{},
+};
+
+// layout(64-bit):
+//   size: 120 B, align: 8 B
+//   field storage: 113 B across 15 fields; largest: state_count=8 B, iteration_count=8 B, state_ids=8 B; padding: 7 B
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   out-of-line: all pointer fields borrow the native result handle until freed
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one per native OE result
+//   footprint: per instance = 120 B (0.117 KiB); total also includes native result arrays
+pub const ZdsOptimalEstimationResult = extern struct {
+    state_count: usize = 0,
+    iteration_count: usize = 0,
+    converged: u8 = 0,
+    state_ids: ?[*]const u8 = null,
+    state: ?[*]const f64 = null,
+    initial_state: ?[*]const f64 = null,
+    posterior_covariance: ?[*]const f64 = null,
+    averaging_kernel: ?[*]const f64 = null,
+    history_state: ?[*]const f64 = null,
+    history_chi2: ?[*]const f64 = null,
+    history_chi2_reflectance: ?[*]const f64 = null,
+    history_chi2_state_vector: ?[*]const f64 = null,
+    history_state_vector_convergence: ?[*]const f64 = null,
+    history_snr_normal: ?[*]const u8 = null,
+    result_handle: ?*anyopaque = null,
+};
+
+// layout(64-bit):
 //   size: 240 B, align: 8 B
 //   field storage: 240 B across 33 fields; largest: wavelength_nm=8 B, altitude_km=8 B, top_altitude_km=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
@@ -269,19 +350,20 @@ pub const ZdsRadiativeTransferDiagnostics = extern struct {
 };
 
 // layout(64-bit):
-//   size: 5816 B, align: 8 B
-//   field storage: 5809 B across 10 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=616 B; padding: 7 B (56 bits)
+//   size: 5840 B, align: 8 B
+//   field storage: 5833 B across 11 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=616 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   inline arrays: last_error:[256:0]u8=257 B
-//   out-of-line: results, atmospheric_budgets, o2_line_contribution_tables, instrument_response_tables, o2_o2_cia_tables, +1 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 91 cache line(s) at 64 B per line
+//   out-of-line: results, oe_results, atmospheric_budgets, o2_line_contribution_tables, instrument_response_tables, o2_o2_cia_tables, +1 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 92 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 5816 B (5.680 KiB); total also includes referenced storage above
+//   footprint: per instance = 5840 B (5.703 KiB); total also includes referenced storage above
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
     o2a_session_storage: zdisamar.O2ASessionStorage = .{},
     results: std.ArrayList(*zdisamar.Output) = .empty,
+    oe_results: std.ArrayList(*zdisamar.optimal_estimation.Result) = .empty,
     atmospheric_budgets: std.ArrayList([]ZdsAtmosphericBudgetRow) = .empty,
     o2_line_contribution_tables: std.ArrayList([]ZdsO2LineContributionRow) = .empty,
     instrument_response_tables: std.ArrayList([]ZdsInstrumentResponseRow) = .empty,
@@ -295,6 +377,14 @@ const Context = struct {
             allocator.destroy(result);
         }
         self.results.clearAndFree(allocator);
+    }
+
+    fn clearOptimalEstimationResults(self: *Context) void {
+        for (self.oe_results.items) |result| {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+        self.oe_results.clearAndFree(allocator);
     }
 
     fn clearAtmosphericBudgets(self: *Context) void {
@@ -321,6 +411,16 @@ const Context = struct {
         for (self.results.items, 0..) |stored, index| {
             if (stored == result) {
                 _ = self.results.swapRemove(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn removeOptimalEstimationResult(self: *Context, result: *zdisamar.optimal_estimation.Result) bool {
+        for (self.oe_results.items, 0..) |stored, index| {
+            if (stored == result) {
+                _ = self.oe_results.swapRemove(index);
                 return true;
             }
         }
@@ -455,6 +555,7 @@ export fn zds_context_create() ?*Context {
 export fn zds_context_destroy(ctx: ?*Context) void {
     const resolved = ctx orelse return;
     resolved.clearResults();
+    resolved.clearOptimalEstimationResults();
     resolved.clearAtmosphericBudgets();
     resolved.clearO2LineContributionTables();
     resolved.clearInstrumentResponseTables();
@@ -597,6 +698,145 @@ export fn zds_run_spectrum_jacobian_for_states(
     return runSpectrumJacobianForStateIds(ctx, out, state_ids, state_count);
 }
 
+export fn zds_run_o2a_optimal_estimation(
+    ctx: ?*Context,
+    request: ?*const ZdsOptimalEstimationRequest,
+    out: ?*ZdsOptimalEstimationResult,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_request = request orelse {
+        resolved.setError("null optimal-estimation request");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const resolved_out = out orelse {
+        resolved.setError("null optimal-estimation result");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    var default_input: zdisamar.O2AInput = undefined;
+    const input = if (resolved.parsed_input) |*parsed|
+        &parsed.value
+    else input: {
+        if (resolved.prepared == null) {
+            resolved.setError("not prepared");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        default_input = zdisamar.defaultO2AInput();
+        break :input &default_input;
+    };
+    const wavelengths_ptr = resolved_request.wavelength_nm orelse {
+        resolved.setError("null measurement wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const reflectance_ptr = resolved_request.reflectance orelse {
+        resolved.setError("null measurement reflectance");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const variance_ptr = resolved_request.variance orelse {
+        resolved.setError("null measurement variance");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const state_specs_ptr = resolved_request.states orelse {
+        resolved.setError("null state specs");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (resolved_request.sample_count == 0) {
+        resolved.setError("empty measurement");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved_request.state_count == 0 or resolved_request.state_count > zdisamar.optimal_estimation.max_state_count) {
+        resolved.setError("invalid state count");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    var profiles = [_]zdisamar.optimal_estimation.PressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count;
+    defer {
+        for (&profiles) |*profile| {
+            if (profile.hasSamples()) {
+                zdisamar.optimal_estimation.freePressureProfile(allocator, profile.*);
+                profile.* = .{};
+            }
+        }
+    }
+    var state_specs: [zdisamar.optimal_estimation.max_state_count]zdisamar.optimal_estimation.StateSpec = undefined;
+    const raw_states = state_specs_ptr[0..resolved_request.state_count];
+    for (raw_states, 0..) |raw, index| {
+        const state = std.meta.intToEnum(zdisamar.RadiativeTransferJacobian.State, raw.state_id) catch |err| {
+            resolved.setError(@errorName(err));
+            return @intFromEnum(ZdsStatus.failure);
+        };
+        if (state == .aerosol_layer_mid_pressure_hpa) {
+            const altitude_ptr = raw.pressure_profile_altitude_km orelse {
+                resolved.setError("missing pressure profile altitude");
+                return @intFromEnum(ZdsStatus.failure);
+            };
+            const pressure_ptr = raw.pressure_profile_pressure_hpa orelse {
+                resolved.setError("missing pressure profile pressure");
+                return @intFromEnum(ZdsStatus.failure);
+            };
+            profiles[index] = zdisamar.optimal_estimation.buildPressureProfile(
+                allocator,
+                altitude_ptr[0..raw.pressure_profile_count],
+                pressure_ptr[0..raw.pressure_profile_count],
+            ) catch |err| {
+                resolved.setError(@errorName(err));
+                return @intFromEnum(ZdsStatus.failure);
+            };
+        }
+        if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
+            resolved.setError("invalid optimal-estimation lower bound");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
+            resolved.setError("invalid optimal-estimation upper bound");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        state_specs[index] = .{
+            .state = state,
+            .initial = raw.initial,
+            .prior = raw.prior,
+            .variance = raw.variance,
+            .lower_bound = if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound,
+            .upper_bound = if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound,
+            .thickness_hpa = raw.thickness_hpa,
+            .interval_index_1based = raw.interval_index_1based,
+            .pressure_altitude_profile = profiles[index],
+        };
+    }
+
+    const native = allocator.create(zdisamar.optimal_estimation.Result) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    native.* = zdisamar.optimal_estimation.runO2A(
+        allocator,
+        input,
+        wavelengths_ptr[0..resolved_request.sample_count],
+        reflectance_ptr[0..resolved_request.sample_count],
+        variance_ptr[0..resolved_request.sample_count],
+        state_specs[0..resolved_request.state_count],
+        &resolved.o2a_session_storage,
+        .{
+            .max_iterations = resolved_request.controls.max_iterations,
+            .state_vector_convergence_threshold = resolved_request.controls.state_vector_convergence_threshold,
+            .max_change_transformed_state = resolved_request.controls.max_change_transformed_state,
+        },
+    ) catch |err| {
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.oe_results.append(allocator, native) catch |err| {
+        native.deinit(allocator);
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    resolved_out.* = optimalEstimationResultView(native);
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
 fn runSpectrumJacobianForStateIds(
     ctx: ?*Context,
     out: ?*ZdsSpectrum,
@@ -610,18 +850,26 @@ fn runSpectrumJacobianForStateIds(
         return @intFromEnum(ZdsStatus.failure);
     }
     const state_slice = if (state_ids) |ids| ids[0..requested_state_count] else &.{};
-    const derivative_state_mask = jacobianStateMask(state_slice) catch |err| {
+    const selection = jacobianStateSelection(state_slice) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     var prepared = resolved.prepared.?;
     prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = derivative_state_mask;
+    prepared.route.derivative_state_mask = selection.mask;
     const result = allocator.create(zdisamar.Output) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    result.* = zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, &prepared) catch |err| {
+    result.* = (if (selection.count == 0)
+        zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, &prepared)
+    else
+        zdisamar.o2a.runO2AWithSessionStorageJacobianStates(
+            allocator,
+            &resolved.o2a_session_storage,
+            &prepared,
+            selection.slice(),
+        )) catch |err| {
         allocator.destroy(result);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
@@ -632,19 +880,10 @@ fn runSpectrumJacobianForStateIds(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    const output_state_count = if (requested_state_count == 0)
+    const output_state_count = if (selection.count == 0)
         zdisamar.RadiativeTransferJacobian.state_count
     else
-        requested_state_count;
-    if (state_slice.len != 0) {
-        compactResultJacobian(result, state_slice) catch |err| {
-            _ = resolved.removeResult(result);
-            result.deinit(allocator);
-            allocator.destroy(result);
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-    }
+        selection.count;
     output.* = .{
         .len = result.wavelengths.len,
         .wavelength_nm = result.wavelengths.ptr,
@@ -926,6 +1165,19 @@ export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
     output.* = .{};
 }
 
+export fn zds_optimal_estimation_result_free(ctx: ?*Context, out: ?*ZdsOptimalEstimationResult) void {
+    const resolved = ctx orelse return;
+    const output = out orelse return;
+    if (output.result_handle) |handle| {
+        const result: *zdisamar.optimal_estimation.Result = @ptrCast(@alignCast(handle));
+        if (resolved.removeOptimalEstimationResult(result)) {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+    }
+    output.* = .{};
+}
+
 export fn zds_atmospheric_budget_free(ctx: ?*Context, out: ?*ZdsAtmosphericBudget) void {
     const resolved = ctx orelse return;
     const budget = out orelse return;
@@ -985,6 +1237,26 @@ fn spectrumView(resolved: *const Context, spectrum: ?*const ZdsSpectrum) !?zdisa
         .wavelength_nm = raw.wavelength_nm[0..raw.len],
         .reflectance = raw.reflectance[0..raw.len],
         .radiance = raw.radiance[0..raw.len],
+    };
+}
+
+fn optimalEstimationResultView(native: *zdisamar.optimal_estimation.Result) ZdsOptimalEstimationResult {
+    return .{
+        .state_count = @intCast(native.state_count),
+        .iteration_count = @intCast(native.iteration_count),
+        .converged = if (native.converged) 1 else 0,
+        .state_ids = @ptrCast(native.state_ids.ptr),
+        .state = native.state.ptr,
+        .initial_state = native.initial_state.ptr,
+        .posterior_covariance = native.posterior_covariance.ptr,
+        .averaging_kernel = native.averaging_kernel.ptr,
+        .history_state = native.history_state.ptr,
+        .history_chi2 = native.history_chi2.ptr,
+        .history_chi2_reflectance = native.history_chi2_reflectance.ptr,
+        .history_chi2_state_vector = native.history_chi2_state_vector.ptr,
+        .history_state_vector_convergence = native.history_state_vector_convergence.ptr,
+        .history_snr_normal = native.history_snr_normal.ptr,
+        .result_handle = @ptrCast(native),
     };
 }
 
@@ -1132,31 +1404,29 @@ fn jacobianStateFromId(state_id: u8) !zdisamar.RadiativeTransferJacobian.State {
     };
 }
 
-fn jacobianStateMask(state_ids: []const u8) !zdisamar.RadiativeTransferJacobian.StateMask {
-    if (state_ids.len == 0) return zdisamar.RadiativeTransferJacobian.all_states_mask;
-    var mask: zdisamar.RadiativeTransferJacobian.StateMask = 0;
+const JacobianStateSelection = struct {
+    states: [zdisamar.RadiativeTransferJacobian.state_count]zdisamar.RadiativeTransferJacobian.State = undefined,
+    count: usize = 0,
+    mask: zdisamar.RadiativeTransferJacobian.StateMask = zdisamar.RadiativeTransferJacobian.all_states_mask,
+
+    fn slice(self: *const JacobianStateSelection) []const zdisamar.RadiativeTransferJacobian.State {
+        return self.states[0..self.count];
+    }
+};
+
+fn jacobianStateSelection(state_ids: []const u8) !JacobianStateSelection {
+    if (state_ids.len == 0) return .{};
+    if (state_ids.len > zdisamar.RadiativeTransferJacobian.state_count) return error.TooManyJacobianStates;
+
+    var selection: JacobianStateSelection = .{
+        .mask = 0,
+    };
     for (state_ids) |state_id| {
         const state = try jacobianStateFromId(state_id);
-        mask |= zdisamar.RadiativeTransferJacobian.stateMask(state);
+        selection.states[selection.count] = state;
+        selection.count += 1;
+        selection.mask |= zdisamar.RadiativeTransferJacobian.stateMask(state);
     }
-    return zdisamar.RadiativeTransferJacobian.sanitizedMask(mask);
-}
-
-fn compactResultJacobian(result: *zdisamar.Output, state_ids: []const u8) !void {
-    const full = result.jacobian orelse return error.MissingJacobian;
-    if (full.len != result.wavelengths.len * zdisamar.RadiativeTransferJacobian.state_count) return error.ShapeMismatch;
-    const compact = try allocator.alloc(f64, result.wavelengths.len * state_ids.len);
-    errdefer allocator.free(compact);
-    for (0..result.wavelengths.len) |sample_index| {
-        for (state_ids, 0..) |state_id, output_index| {
-            const state = try jacobianStateFromId(state_id);
-            compact[sample_index * state_ids.len + output_index] =
-                full[
-                    sample_index * zdisamar.RadiativeTransferJacobian.state_count +
-                        zdisamar.RadiativeTransferJacobian.stateIndex(state)
-                ];
-        }
-    }
-    allocator.free(full);
-    result.jacobian = compact;
+    selection.mask = zdisamar.RadiativeTransferJacobian.sanitizedMask(selection.mask);
+    return selection;
 }

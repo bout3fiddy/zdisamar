@@ -76,6 +76,7 @@ pub fn simulateProductWithWorkspace(
         .irradiance_noise_sigma = if (buffers.irradiance_noise_sigma) |sigma| sigma else &.{},
         .reflectance_noise_sigma = if (buffers.reflectance_noise_sigma) |sigma| sigma else &.{},
         .jacobian = if (buffers.jacobian) |values| values else null,
+        .jacobian_state_mask = buffers.jacobian_state_mask,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
         .effective_single_scatter_albedo = prepared.effective_single_scatter_albedo,
         .effective_temperature_k = prepared.effective_temperature_k,

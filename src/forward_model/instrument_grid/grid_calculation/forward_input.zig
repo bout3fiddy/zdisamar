@@ -21,8 +21,7 @@ pub fn configuredForwardInput(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
-    support_carrier_valid: []bool,
-    support_carrier_scalars: []CarrierEval.SharedOpticalScalars,
+    support_carrier_cache: *CarrierEval.SupportRowScalarCache,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
     const compute_jacobian = route.derivative_mode != .none;
@@ -36,8 +35,7 @@ pub fn configuredForwardInput(
     var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
         prepared,
         wavelength_nm,
-        support_carrier_valid,
-        support_carrier_scalars,
+        support_carrier_cache,
         resolved_profile_cache,
     );
     const optical_depths = optical_depths: {

@@ -129,9 +129,6 @@ def run_sweep() -> dict[str, Any]:
             "converged": bool(result.converged) if result is not None else False,
             "iterations": int(result.iterations) if result is not None else 0,
             "retrieval_s": retrieval_s,
-            "rtm_and_jacobian_s": (
-                sum(t.rtm_and_jacobian_s for t in result.timing) if result is not None else math.nan
-            ),
             "final_state_vector_convergence": (
                 result.history[-1].state_vector_convergence
                 if result is not None and result.history
@@ -186,7 +183,6 @@ def run_sweep() -> dict[str, Any]:
             "aerosol_mid_pressure_abs_error_hpa": stats(
                 [float(row["aerosol_mid_pressure_abs_error_hpa"]) for row in ok_rows]
             ),
-            "rtm_and_jacobian_s": stats([float(row["rtm_and_jacobian_s"]) for row in ok_rows]),
         },
         "worst_aod_abs_error_runs": sorted(
             ok_rows,

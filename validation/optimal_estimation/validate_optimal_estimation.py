@@ -199,8 +199,6 @@ def timing_report(
     result: optimal_estimation.Result,
 ) -> JsonObject:
 
-    rtm_and_jacobian_s = sum(timing.rtm_and_jacobian_s for timing in result.timing)
-
     return {
         "phases_s": phase_timings,
         "retrieval": {
@@ -208,18 +206,8 @@ def timing_report(
             "retrieval_s": phase_timings["retrieval_s"],
             "first_use_retrieval_s": phase_timings["session_create_s"]
             + phase_timings["retrieval_s"],
-            "rtm_and_jacobian_s": rtm_and_jacobian_s,
             "iterations": result.iterations,
         },
-        "iterations": [
-            {
-                "index": timing.index,
-                "rtm_and_jacobian_s": timing.rtm_and_jacobian_s,
-                "solver_update_s": timing.solver_update_s,
-                "total_iteration_s": timing.total_iteration_s,
-            }
-            for timing in result.timing
-        ],
     }
 
 
@@ -230,7 +218,6 @@ def print_retrieval_timing(report: JsonObject) -> None:
     print(
         "  Retrieval loop: "
         f"{retrieval['retrieval_s']:.6f} s total, "
-        f"{retrieval['rtm_and_jacobian_s']:.6f} s RTM+jacobian, "
         f"{retrieval['iterations']} iterations"
     )
     print(

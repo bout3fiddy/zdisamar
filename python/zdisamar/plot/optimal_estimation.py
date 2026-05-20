@@ -158,7 +158,7 @@ def jacobian_frame(result) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
 
     for index, state_name in enumerate(result.state_names):
-        values = evaluation.reflectance_jacobian[:, index]
+        values = [row[index] for row in evaluation.reflectance_jacobian]
 
         for wavelength, value in zip(wavelength_nm, values, strict=True):
             rows.append(

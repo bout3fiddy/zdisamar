@@ -146,8 +146,6 @@ def build_compact_report(
                 "case": "OE, session",
                 "timing": (
                     f"retrieval {retrieval_session['timing_s']['retrieval_s']['median']:.6f}s; "
-                    "RTM+jac "
-                    f"{retrieval_session['timing_s']['rtm_and_jacobian_s']['median']:.6f}s; "
                     f"setup {retrieval_session['timing_s']['setup_s']['median']:.6f}s"
                 ),
                 "residuals": format_retrieval_truth_residuals(retrieval_session),

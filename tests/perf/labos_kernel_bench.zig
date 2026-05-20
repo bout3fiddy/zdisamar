@@ -277,7 +277,7 @@ fn matrixSeed(base: f64, delta: f64) labos.Mat {
 }
 
 fn vecSeed() labos.Vec {
-    var vec = labos.Vec{ .data = undefined, .n = n };
+    var vec = labos.Vec{ .data = undefined };
     for (0..n) |i| {
         vec.data[i] = 0.77 + 0.01 * @as(f64, @floatFromInt(i));
     }

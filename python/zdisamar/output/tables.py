@@ -4,9 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import ClassVar
 
-import numpy as np
-from numpy.typing import NDArray
-
 from ..bindings.structures import (
     CAtmosphericBudgetRow,
     CInstrumentResponseRow,
@@ -32,7 +29,7 @@ def field_names(structure: type[object]) -> tuple[str, ...]:
 class RtmTable:
     """Copied RTM diagnostic rows."""
 
-    data: NDArray[np.void]
+    data: tuple[dict[str, object], ...]
 
     columns: ClassVar[tuple[str, ...]]
     label_columns: ClassVar[Mapping[str, tuple[str, Mapping[int, str]]]] = {}
@@ -40,20 +37,20 @@ class RtmTable:
     @property
     def row_count(self) -> int:
 
-        return int(self.data.shape[0])
+        return len(self.data)
 
     @property
-    def table(self) -> NDArray[np.void]:
+    def table(self) -> tuple[dict[str, object], ...]:
         """Return a copy so analysis code cannot mutate the stored table."""
 
-        return self.data.copy()
+        return tuple(dict(row) for row in self.data)
 
-    def column(self, name: str) -> NDArray[np.generic]:
+    def column(self, name: str) -> tuple[object, ...]:
 
         if name not in self.columns:
             raise KeyError(name)
 
-        return self.data[name].copy()
+        return tuple(row[name] for row in self.data)
 
     def to_rows(self) -> list[dict[str, object]]:
         """Return rows with labels for coded model fields."""
@@ -61,10 +58,15 @@ class RtmTable:
         rows: list[dict[str, object]] = []
 
         for row in self.data:
-            item = {name: row[name].item() for name in self.columns}
+            item = {name: row[name] for name in self.columns}
 
             for label_name, (source_name, labels) in self.label_columns.items():
-                item[label_name] = labels.get(int(item[source_name]), "unknown")
+                source_value = item[source_name]
+
+                if not isinstance(source_value, int | float | str):
+                    item[label_name] = "unknown"
+                else:
+                    item[label_name] = labels.get(int(source_value), "unknown")
 
             rows.append(item)
 
@@ -74,7 +76,7 @@ class RtmTable:
         """Create a DataFrame when the caller has installed pandas."""
 
         try:
-            import pandas as pd
+            import pandas as pd  # pyright: ignore[reportMissingImports]
         except ModuleNotFoundError as error:
             if error.name != "pandas":
                 raise

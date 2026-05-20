@@ -1,8 +1,7 @@
 """RTM values used by inverse-method solvers."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-
-import numpy as np
 
 
 @dataclass(frozen=True)
@@ -13,6 +12,6 @@ class RtmEvaluation:
     K = dy/dx for the same retrieval quantity as `reflectance`.
     """
 
-    wavelength_nm: np.ndarray
-    reflectance: np.ndarray
-    reflectance_jacobian: np.ndarray
+    wavelength_nm: Sequence[float]
+    reflectance: Sequence[float]
+    reflectance_jacobian: Sequence[Sequence[float]]

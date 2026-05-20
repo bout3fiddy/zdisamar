@@ -181,7 +181,6 @@ def run_once(
     if not result.converged:
         raise RuntimeError(f"retrieval did not converge: {mode} {case_id}")
 
-    rtm_and_jacobian_s = sum(timing.rtm_and_jacobian_s for timing in result.timing)
     first_use_total = combine([setup_timing, retrieval_timing])
     db.sample(
         run_id,
@@ -199,7 +198,6 @@ def run_once(
             "retrieval_average_active_cores": retrieval_timing.average_active_cores,
             "first_use_total_process_cpu_s": first_use_total.process_cpu_s,
             "first_use_total_average_active_cores": first_use_total.average_active_cores,
-            "rtm_and_jacobian_s": rtm_and_jacobian_s,
         },
     )
     progress.log(
@@ -221,7 +219,6 @@ def run_once(
         "first_use_total_s": first_use_total.wall_s,
         "first_use_total_process_cpu_s": first_use_total.process_cpu_s,
         "first_use_total_average_active_cores": first_use_total.average_active_cores,
-        "rtm_and_jacobian_s": rtm_and_jacobian_s,
     }
 
 
@@ -240,7 +237,6 @@ def single_summary(
             "setup_s": timing_stats(run["setup_s"] for run in runs),
             "retrieval_s": timing_stats(run["retrieval_s"] for run in runs),
             "first_use_total_s": timing_stats(run["first_use_total_s"] for run in runs),
-            "rtm_and_jacobian_s": timing_stats(run["rtm_and_jacobian_s"] for run in runs),
         },
         "process_cpu_s": {
             "setup_s": timing_stats(run["setup_process_cpu_s"] for run in runs),
@@ -270,7 +266,6 @@ def sweep_summary(label: str, mode: str, rows: list[dict[str, Any]]) -> dict[str
             "total_wall_s": sum(row["first_use_total_s"] for row in rows),
             "first_use_total_s": timing_stats(row["first_use_total_s"] for row in rows),
             "retrieval_s": timing_stats(row["retrieval_s"] for row in rows),
-            "rtm_and_jacobian_s": timing_stats(row["rtm_and_jacobian_s"] for row in rows),
         },
         "process_cpu_s": {
             "total_process_cpu_s": sum(row["first_use_total_process_cpu_s"] for row in rows),
@@ -319,7 +314,6 @@ def sweep_row(index: int, truth: dict[str, float], run: dict[str, Any]) -> dict[
         "first_use_total_s": run["first_use_total_s"],
         "first_use_total_process_cpu_s": run["first_use_total_process_cpu_s"],
         "first_use_total_average_active_cores": run["first_use_total_average_active_cores"],
-        "rtm_and_jacobian_s": run["rtm_and_jacobian_s"],
         "retrieved_aerosol_optical_depth": retrieved_aod,
         "retrieved_aerosol_mid_pressure_hpa": retrieved_mid_pressure,
         "aerosol_optical_depth_error": retrieved_aod - truth["aerosol_optical_depth"],
@@ -337,7 +331,6 @@ def sweep_delta(
     pressure_deltas = []
     retrieval_savings = []
     first_use_savings = []
-    rtm_jacobian_savings = []
 
     for session, fast in zip(session_rows, fast_rows, strict=True):
         aod_deltas.append(
@@ -349,14 +342,12 @@ def sweep_delta(
         )
         retrieval_savings.append(session["retrieval_s"] - fast["retrieval_s"])
         first_use_savings.append(session["first_use_total_s"] - fast["first_use_total_s"])
-        rtm_jacobian_savings.append(session["rtm_and_jacobian_s"] - fast["rtm_and_jacobian_s"])
 
     return {
         "aerosol_optical_depth_delta": signed_stats(aod_deltas),
         "aerosol_mid_pressure_delta_hpa": signed_stats(pressure_deltas),
         "retrieval_speedup_s": signed_stats(retrieval_savings),
         "first_use_total_speedup_s": signed_stats(first_use_savings),
-        "rtm_jacobian_speedup_s": signed_stats(rtm_jacobian_savings),
         "total_retrieval_wall_s_saved": sum(first_use_savings),
     }
 

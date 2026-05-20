@@ -22,7 +22,7 @@ pub const CrossSectionPoint = struct {
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
 pub const CrossSectionTable = struct {
-    points: []CrossSectionPoint,
+    points: []const CrossSectionPoint,
 
     pub fn deinit(self: *CrossSectionTable, allocator: Allocator) void {
         allocator.free(self.points);

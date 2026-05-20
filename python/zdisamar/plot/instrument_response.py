@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import numpy as np
-
 from . import fields
 from .data import as_float, with_channel_labels
 from .properties import PLOT, PlotAccessor
@@ -48,12 +46,11 @@ def curve_figure(response):
     if not data:
         raise ValueError("no radiance instrument response rows")
 
-    nominal_wavelengths = np.asarray([row["nominal_wavelength_nm"] for row in data], dtype=float)
-    nearest = int(np.argmin(np.abs(nominal_wavelengths - 760.76)))
-    selected = float(nominal_wavelengths[nearest])
+    nominal_wavelengths = [as_float(row["nominal_wavelength_nm"]) for row in data]
+    selected = min(nominal_wavelengths, key=lambda value: abs(value - 760.76))
     data = [row for row in data if as_float(row["nominal_wavelength_nm"]) == selected]
     data = sorted(data, key=lambda row: as_float(row["offset_nm"]))
-    max_weight = float(np.max(np.asarray([row["weight"] for row in data], dtype=float)))
+    max_weight = max(as_float(row["weight"]) for row in data)
 
     if max_weight <= 0.0:
         raise ValueError("instrument response weights are not positive")
@@ -64,9 +61,9 @@ def curve_figure(response):
     if not plot_data:
         plot_data = data
 
-    offsets = np.asarray([row["offset_nm"] for row in plot_data], dtype=float)
-    x_min = float(np.min(offsets))
-    x_max = float(np.max(offsets))
+    offsets = [as_float(row["offset_nm"]) for row in plot_data]
+    x_min = min(offsets)
+    x_max = max(offsets)
     x_pad = max((x_max - x_min) * 0.04, 0.01)
     title = f"Instrument spectral response function (ISRF), {selected:.5f} nm"
 

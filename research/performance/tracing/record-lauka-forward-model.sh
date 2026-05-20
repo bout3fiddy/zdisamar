@@ -150,7 +150,7 @@ rm -f "$report_path" "$manifest_path" "$command_path"
 
 (
   cd "$repo_root"
-  zig build labos-bottleneck-trace-bin -Dtrace-optimize=ReleaseFast
+  zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast
 )
 
 forward_exe="$repo_root/zig-out/bin/labos-bottleneck-trace"

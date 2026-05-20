@@ -4,22 +4,22 @@
     "forward_fast_mode": {
       "average_active_cores": {
         "baseline_reference_run": {
-          "max": 1.9560345728152733,
-          "mean": 1.9560345728152733,
-          "median": 1.9560345728152733,
-          "min": 1.9560345728152733,
-          "p90": 1.9560345728152733,
+          "max": 1.956597727189294,
+          "mean": 1.956597727189294,
+          "median": 1.956597727189294,
+          "min": 1.956597727189294,
+          "p90": 1.956597727189294,
           "runs": 1,
-          "total": 1.9560345728152733
+          "total": 1.956597727189294
         },
         "four_scene_fast_total": {
-          "max": 1.9294908248473173,
-          "mean": 1.928622339803401,
-          "median": 1.9289499964590706,
-          "min": 1.925290835255237,
-          "p90": 1.929383627378861,
+          "max": 1.9258704344878583,
+          "mean": 1.9247052988423778,
+          "median": 1.9244298527066799,
+          "min": 1.9238763018545182,
+          "p90": 1.9257315861155975,
           "runs": 10,
-          "total": 19.28622339803401
+          "total": 19.24705298842378
         }
       },
       "kind": "forward",
@@ -27,22 +27,22 @@
       "mode": "fast_mode",
       "process_cpu_s": {
         "baseline_reference_run_s": {
-          "max": 3.929260000000003,
-          "mean": 3.929260000000003,
-          "median": 3.929260000000003,
-          "min": 3.929260000000003,
-          "p90": 3.929260000000003,
+          "max": 3.8434199999999983,
+          "mean": 3.8434199999999983,
+          "median": 3.8434199999999983,
+          "min": 3.8434199999999983,
+          "p90": 3.8434199999999983,
           "runs": 1,
-          "total": 3.929260000000003
+          "total": 3.8434199999999983
         },
         "four_scene_fast_total_s": {
-          "max": 8.959099999999992,
-          "mean": 8.913918299999997,
-          "median": 8.910303999999996,
-          "min": 8.898857,
-          "p90": 8.923042399999991,
+          "max": 8.940902000000008,
+          "mean": 8.916999100000007,
+          "median": 8.916038500000013,
+          "min": 8.907245000000003,
+          "p90": 8.927463200000007,
           "runs": 10,
-          "total": 89.13918299999997
+          "total": 89.16999100000007
         }
       },
       "residuals": {
@@ -93,46 +93,46 @@
       },
       "timing_s": {
         "baseline_reference_run_s": {
-          "max": 2.0087886250112206,
-          "mean": 2.0087886250112206,
-          "median": 2.0087886250112206,
-          "min": 2.0087886250112206,
-          "p90": 2.0087886250112206,
+          "max": 1.9643383750226349,
+          "mean": 1.9643383750226349,
+          "median": 1.9643383750226349,
+          "min": 1.9643383750226349,
+          "p90": 1.9643383750226349,
           "runs": 1,
-          "total": 2.0087886250112206
+          "total": 1.9643383750226349
         },
         "four_scene_fast_total_s": {
-          "max": 4.653374875080772,
-          "mean": 4.6219162123044955,
-          "median": 4.619003353989683,
-          "min": 4.613153292099014,
-          "p90": 4.628169888118282,
+          "max": 4.64578725094907,
+          "mean": 4.632918038044591,
+          "median": 4.631852916616481,
+          "min": 4.625797167071141,
+          "p90": 4.640196976775769,
           "runs": 10,
-          "total": 46.21916212304495
+          "total": 46.329180380445905
         }
       }
     },
     "forward_no_session": {
       "average_active_cores": {
-        "max": 1.916248585396735,
-        "mean": 1.8546391780721323,
-        "median": 1.915062954538735,
-        "min": 1.3089956956541757,
-        "p90": 1.916181957448839,
+        "max": 1.9148710634296149,
+        "mean": 1.8716808182025264,
+        "median": 1.9138640589274063,
+        "min": 1.494255420397564,
+        "p90": 1.9145596194240242,
         "runs": 10,
-        "total": 18.546391780721322
+        "total": 18.716808182025265
       },
       "kind": "forward",
       "label": "Forward, no session",
       "mode": "no_session",
       "process_cpu_s": {
-        "max": 2.07019,
-        "mean": 1.8656768,
-        "median": 1.8417105000000005,
-        "min": 1.8349130000000002,
-        "p90": 1.8743175999999995,
+        "max": 2.045355,
+        "mean": 1.8526466,
+        "median": 1.8328819999999997,
+        "min": 1.8225829999999998,
+        "p90": 1.8618189,
         "runs": 10,
-        "total": 18.656768
+        "total": 18.526466
       },
       "residuals": {
         "disamar_reference": {
@@ -163,46 +163,46 @@
         }
       },
       "timing_s": {
-        "max": 1.5815101660555229,
-        "mean": 1.0241702709230593,
-        "median": 0.9617563750362024,
-        "min": 0.9580196250462905,
-        "p90": 1.028235729364678,
+        "max": 1.3688121669692919,
+        "mean": 0.998136937408708,
+        "median": 0.9576432500616647,
+        "min": 0.9521538330009207,
+        "p90": 1.0042342792614363,
         "runs": 10,
-        "total": 10.241702709230594
+        "total": 9.98136937408708
       }
     },
     "forward_session": {
       "average_active_cores": {
         "cached_run": {
-          "max": 1.9939306066117957,
-          "mean": 1.9925468349192865,
-          "median": 1.9923017376753767,
-          "min": 1.9918623589088666,
-          "p90": 1.9932668668984712,
+          "max": 1.9924623845905423,
+          "mean": 1.9919301282728483,
+          "median": 1.9918827940272552,
+          "min": 1.9915928936181853,
+          "p90": 1.9924047336506772,
           "runs": 10,
-          "total": 19.925468349192865
+          "total": 19.919301282728483
         },
-        "first_cached_run": 1.991406462351467,
-        "first_use_total": 1.91518272824549,
-        "setup": 1.8875430375243087
+        "first_cached_run": 1.9910032075606898,
+        "first_use_total": 1.9163556910644028,
+        "setup": 1.8897519314777118
       },
       "kind": "forward",
       "label": "Forward, session",
       "mode": "session",
       "process_cpu_s": {
         "cached_run_s": {
-          "max": 0.5146300000000004,
-          "mean": 0.5128840999999997,
-          "median": 0.5131170000000012,
-          "min": 0.5108630000000005,
-          "p90": 0.5140729,
+          "max": 0.5044189999999986,
+          "mean": 0.5001003999999994,
+          "median": 0.5000069999999983,
+          "min": 0.49778399999999934,
+          "p90": 0.5026667000000007,
           "runs": 10,
-          "total": 5.128840999999998
+          "total": 5.001003999999995
         },
-        "first_cached_run_s": 0.510817000000003,
-        "first_use_total_s": 1.8460570000000018,
-        "setup_s": 1.3352399999999989
+        "first_cached_run_s": 0.5059690000000003,
+        "first_use_total_s": 1.8534700000000015,
+        "setup_s": 1.3475010000000012
       },
       "residuals": {
         "vs_no_session": {
@@ -215,47 +215,47 @@
       },
       "timing_s": {
         "cached_run_s": {
-          "max": 0.2580982499057427,
-          "mean": 0.2574012249009684,
-          "median": 0.25756622903281823,
-          "min": 0.25643187505193055,
-          "p90": 0.2580110256210901,
+          "max": 0.2531636250205338,
+          "mean": 0.25106319999322296,
+          "median": 0.2510189585154876,
+          "min": 0.2499076669337228,
+          "p90": 0.2523832502425648,
           "runs": 10,
-          "total": 2.5740122490096837
+          "total": 2.5106319999322295
         },
-        "first_cached_run_s": 0.2565106670372188,
-        "first_use_total_s": 0.9639064579969272,
-        "setup_s": 0.7073957909597084
+        "first_cached_run_s": 0.254127666936256,
+        "first_use_total_s": 0.9671847500139847,
+        "setup_s": 0.7130570830777287
       }
     },
     "retrieval_fast_mode": {
       "average_active_cores": {
         "first_use_total": {
-          "max": 1.907016185406665,
-          "mean": 1.9059981201429217,
-          "median": 1.9058388468714473,
-          "min": 1.9050035415783038,
-          "p90": 1.9069382284150396,
+          "max": 1.9122440996289587,
+          "mean": 1.911153728137884,
+          "median": 1.911205008968069,
+          "min": 1.9099996695457007,
+          "p90": 1.912173115079475,
           "runs": 10,
-          "total": 19.059981201429217
+          "total": 19.11153728137884
         },
         "retrieval": {
-          "max": 1.9365613913143032,
-          "mean": 1.9357216006097222,
-          "median": 1.935841791675884,
-          "min": 1.9341597335536285,
-          "p90": 1.9364733416359925,
+          "max": 1.951242802243974,
+          "mean": 1.950421130510985,
+          "median": 1.9505337030631005,
+          "min": 1.948979782793907,
+          "p90": 1.9510223697866678,
           "runs": 10,
-          "total": 19.35721600609722
+          "total": 19.504211305109852
         },
         "setup": {
-          "max": 1.8666662341241815,
-          "mean": 1.8645474630265526,
-          "median": 1.864376420266873,
-          "min": 1.8629169645731625,
-          "p90": 1.8659074345097766,
+          "max": 1.8606039290150518,
+          "mean": 1.858390612293282,
+          "median": 1.858492380998253,
+          "min": 1.8564343213379875,
+          "p90": 1.8598565432499823,
           "runs": 10,
-          "total": 18.645474630265525
+          "total": 18.58390612293282
         }
       },
       "kind": "optimal_estimation",
@@ -263,104 +263,95 @@
       "mode": "fast_mode",
       "process_cpu_s": {
         "first_use_total_s": {
-          "max": 2.722126000000003,
-          "mean": 2.718608899999995,
-          "median": 2.718383000000003,
-          "min": 2.715428000000003,
-          "p90": 2.7212205999999868,
+          "max": 2.6878690000000063,
+          "mean": 2.6822582999999924,
+          "median": 2.6817344999999904,
+          "min": 2.678566999999987,
+          "p90": 2.6849601999999835,
           "runs": 10,
-          "total": 27.186088999999953
+          "total": 26.822582999999923
         },
         "retrieval_s": {
-          "max": 1.6091910000000098,
-          "mean": 1.6079774000000016,
-          "median": 1.6080074999999994,
-          "min": 1.6066350000000114,
-          "p90": 1.6090676999999887,
+          "max": 1.5750779999999907,
+          "mean": 1.5694002999999923,
+          "median": 1.5688689999999923,
+          "min": 1.5671299999999917,
+          "p90": 1.5716831999999925,
           "runs": 10,
-          "total": 16.079774000000015
+          "total": 15.694002999999924
         },
         "setup_s": {
-          "max": 1.1129349999999931,
-          "mean": 1.1106314999999938,
-          "median": 1.1108909999999952,
-          "min": 1.1080949999999916,
-          "p90": 1.1125992999999965,
+          "max": 1.115760999999992,
+          "mean": 1.112858,
+          "median": 1.1128055000000074,
+          "min": 1.1104190000000074,
+          "p90": 1.1145639999999957,
           "runs": 10,
-          "total": 11.106314999999938
+          "total": 11.12858
         }
       },
       "residuals": {
-        "aerosol_layer_mid_pressure_delta_hpa": -1.1097679642849698,
-        "aerosol_optical_depth_delta": 0.00019770803718743846
+        "aerosol_layer_mid_pressure_delta_hpa": -1.1097679642581397,
+        "aerosol_optical_depth_delta": 0.00019770803700724926
       },
       "timing_s": {
         "first_use_total_s": {
-          "max": 1.428703207988292,
-          "mean": 1.4263443416915833,
-          "median": 1.4263664165046066,
-          "min": 1.423914500977844,
-          "p90": 1.4280976952170021,
+          "max": 1.4072615000186488,
+          "mean": 1.4034765960881486,
+          "median": 1.403417041990906,
+          "min": 1.4007453339872882,
+          "p90": 1.4054318008595146,
           "runs": 10,
-          "total": 14.263443416915834
+          "total": 14.034765960881487
         },
         "retrieval_s": {
-          "max": 0.8319845419609919,
-          "mean": 0.8306865124963224,
-          "median": 0.8304723334731534,
-          "min": 0.8296747920103371,
-          "p90": 0.8315992285963147,
+          "max": 0.8081551250070333,
+          "mean": 0.8046472710906528,
+          "median": 0.8044272919651121,
+          "min": 0.8034302499145269,
+          "p90": 0.8060535872122273,
           "runs": 10,
-          "total": 8.306865124963224
-        },
-        "rtm_and_jacobian_s": {
-          "max": 0.831061625154689,
-          "mean": 0.8297724413685501,
-          "median": 0.8295835405006073,
-          "min": 0.8288028328679502,
-          "p90": 0.8307314743520692,
-          "runs": 10,
-          "total": 8.2977244136855
+          "total": 8.046472710906528
         },
         "setup_s": {
-          "max": 0.5967186660273001,
-          "mean": 0.595657829195261,
-          "median": 0.5960618329700083,
-          "min": 0.5936224589822814,
-          "p90": 0.5966185040655546,
+          "max": 0.6009552920004353,
+          "mean": 0.5988293249974959,
+          "median": 0.5989937499980442,
+          "min": 0.5972194999922067,
+          "p90": 0.5997714166995138,
           "runs": 10,
-          "total": 5.95657829195261
+          "total": 5.988293249974959
         }
       }
     },
     "retrieval_session": {
       "average_active_cores": {
         "first_use_total": {
-          "max": 1.922895243005894,
-          "mean": 1.9226093938740647,
-          "median": 1.9225864105601895,
-          "min": 1.9223116139433578,
-          "p90": 1.9228638774445286,
+          "max": 1.9296376822395094,
+          "mean": 1.926590634885852,
+          "median": 1.9286487102145564,
+          "min": 1.9091803387751276,
+          "p90": 1.9294785441922648,
           "runs": 10,
-          "total": 19.226093938740647
+          "total": 19.26590634885852
         },
         "retrieval": {
-          "max": 1.9468819988524824,
-          "mean": 1.946377429638924,
-          "median": 1.946419555209733,
-          "min": 1.9459515311594702,
-          "p90": 1.9468133144317523,
+          "max": 1.9585130773774975,
+          "mean": 1.9577062590863676,
+          "median": 1.9575497566942213,
+          "min": 1.9572403856508844,
+          "p90": 1.9583767635977287,
           "runs": 10,
-          "total": 19.46377429638924
+          "total": 19.577062590863676
         },
         "setup": {
-          "max": 1.887765606900525,
-          "mean": 1.8867993449531855,
-          "median": 1.8868058085437842,
-          "min": 1.886134377699999,
-          "p90": 1.8872814787688028,
+          "max": 1.888996777817074,
+          "mean": 1.8816753773996262,
+          "median": 1.8860947065799105,
+          "min": 1.8411163864751736,
+          "p90": 1.8887607175781485,
           "runs": 10,
-          "total": 18.867993449531856
+          "total": 18.81675377399626
         }
       },
       "kind": "optimal_estimation",
@@ -368,96 +359,87 @@
       "mode": "session",
       "process_cpu_s": {
         "first_use_total_s": {
-          "max": 3.442007999999987,
-          "mean": 3.4358087999999922,
-          "median": 3.435090499999987,
-          "min": 3.433579000000009,
-          "p90": 3.437311799999975,
+          "max": 3.430541000000005,
+          "mean": 3.3969756000000046,
+          "median": 3.3950075000000055,
+          "min": 3.38174699999999,
+          "p90": 3.40138280000003,
           "runs": 10,
-          "total": 34.358087999999924
+          "total": 33.96975600000005
         },
         "retrieval_s": {
-          "max": 2.09208000000001,
-          "mean": 2.090664799999993,
-          "median": 2.0905679999999904,
-          "min": 2.0898289999999804,
-          "p90": 2.091380699999985,
+          "max": 2.0446030000000235,
+          "mean": 2.0414966000000048,
+          "median": 2.040673500000011,
+          "min": 2.039375000000007,
+          "p90": 2.043163000000001,
           "runs": 10,
-          "total": 20.906647999999933
+          "total": 20.41496600000005
         },
         "setup_s": {
-          "max": 1.3499279999999771,
-          "mean": 1.345143999999999,
-          "median": 1.3446519999999964,
-          "min": 1.3431920000000162,
-          "p90": 1.3464872999999926,
+          "max": 1.3877190000000041,
+          "mean": 1.3554789999999997,
+          "median": 1.3528339999999872,
+          "min": 1.3423719999999832,
+          "p90": 1.3604832000000102,
           "runs": 10,
-          "total": 13.451439999999991
+          "total": 13.554789999999997
         }
       },
       "residuals": {
-        "aerosol_layer_mid_pressure_abs_diff_hpa": 0.00017332863944830024,
-        "aerosol_layer_top_pressure_abs_diff_hpa": 0.00017332863944830024,
-        "aerosol_optical_depth_abs_diff": 8.698664405448753e-08
+        "aerosol_layer_mid_pressure_abs_diff_hpa": 0.00017332866809738334,
+        "aerosol_layer_top_pressure_abs_diff_hpa": 0.00017332866809738334,
+        "aerosol_optical_depth_abs_diff": 8.698646986049496e-08
       },
       "timing_s": {
         "first_use_total_s": {
-          "max": 1.7901782500557601,
-          "mean": 1.78705504151294,
-          "median": 1.786775520478841,
-          "min": 1.7859381248708814,
-          "p90": 1.788075886957813,
+          "max": 1.7968658750178292,
+          "mean": 1.7632407958153635,
+          "median": 1.7601849164930172,
+          "min": 1.7526901251403615,
+          "p90": 1.7681372378021478,
           "runs": 10,
-          "total": 17.8705504151294
+          "total": 17.632407958153635
         },
         "retrieval_s": {
-          "max": 1.0747729579452425,
-          "mean": 1.0741312748985365,
-          "median": 1.074261937465053,
-          "min": 1.0736171660246328,
-          "p90": 1.0745713958051055,
+          "max": 1.0444789580069482,
+          "mean": 1.0428002832923084,
+          "median": 1.0424330209498294,
+          "min": 1.0418985829455778,
+          "p90": 1.0437363086035476,
           "runs": 10,
-          "total": 10.741312748985365
-        },
-        "rtm_and_jacobian_s": {
-          "max": 1.073751582764089,
-          "mean": 1.0731324332766234,
-          "median": 1.0730935418978333,
-          "min": 1.0726121659390628,
-          "p90": 1.073555346170906,
-          "runs": 10,
-          "total": 10.731324332766235
+          "total": 10.428002832923084
         },
         "setup_s": {
-          "max": 0.7154052921105176,
-          "mean": 0.7129237666144036,
-          "median": 0.7127075210446492,
-          "min": 0.7117275829659775,
-          "p90": 0.7136595539515838,
+          "max": 0.7537377920234576,
+          "mean": 0.7204405125230551,
+          "median": 0.7169084374909289,
+          "min": 0.7107256250455976,
+          "p90": 0.7256024042260834,
           "runs": 10,
-          "total": 7.129237666144036
+          "total": 7.204405125230551
         }
       }
     },
     "retrieval_sweep_fast_mode": {
       "average_active_cores": {
         "first_use_total": {
-          "max": 1.9527522606103156,
-          "mean": 1.9428904099872084,
-          "median": 1.9423596196243118,
-          "min": 1.9333132661221564,
-          "p90": 1.9519794073716998,
+          "max": 1.9540058010695691,
+          "mean": 1.9434972264179404,
+          "median": 1.9443846935512084,
+          "min": 1.9319709314106641,
+          "p90": 1.953194913230553,
           "runs": 5,
-          "total": 9.714452049936042
+          "total": 9.717486132089702
         },
         "retrieval": {
-          "max": 1.9791411409687691,
-          "mean": 1.9755538941587023,
-          "median": 1.9744186810145279,
-          "min": 1.9729248374665571,
-          "p90": 1.9783961638645884,
+          "max": 1.9837345463915135,
+          "mean": 1.9799871782706937,
+          "median": 1.97891233635877,
+          "min": 1.9759340941736683,
+          "p90": 1.983540352654293,
           "runs": 5,
-          "total": 9.877769470793512
+          "total": 9.899935891353469
         }
       },
       "converged_count": 5,
@@ -466,98 +448,89 @@
       "mode": "fast_mode",
       "process_cpu_s": {
         "first_use_total_s": {
-          "max": 5.033457999999996,
-          "mean": 4.100121999999999,
-          "median": 4.148578999999984,
-          "min": 3.1401500000000055,
-          "p90": 5.000820799999997,
+          "max": 4.925937000000005,
+          "mean": 4.008103800000003,
+          "median": 4.040278999999998,
+          "min": 3.0743029999999862,
+          "p90": 4.8930977999999925,
           "runs": 5,
-          "total": 20.500609999999995
+          "total": 20.040519000000018
         },
         "retrieval_s": {
-          "max": 3.920783,
-          "mean": 2.987440799999996,
-          "median": 3.0355169999999703,
-          "min": 2.0283569999999997,
-          "p90": 3.8883786000000042,
+          "max": 3.8125809999999944,
+          "mean": 2.894625400000001,
+          "median": 2.9276570000000106,
+          "min": 1.9611559999999884,
+          "p90": 3.7791801999999906,
           "runs": 5,
-          "total": 14.93720399999998
+          "total": 14.473127000000005
         },
-        "total_process_cpu_s": 20.500609999999995
+        "total_process_cpu_s": 20.040519000000018
       },
       "residuals": {
         "truth_aerosol_mid_pressure_abs_error_hpa": {
-          "max_abs": 5.098655326851144,
-          "mean_abs": 1.4104126699451285,
+          "max_abs": 5.098655326627977,
+          "mean_abs": 1.4104126698888308,
           "median_abs": 0.6223810211153022,
           "runs": 5
         },
         "truth_aerosol_optical_depth_abs_error": {
-          "max_abs": 0.0037776894548125495,
-          "mean_abs": 0.0013625159081669864,
-          "median_abs": 0.0011137874718169377,
+          "max_abs": 0.0037776894547703888,
+          "mean_abs": 0.0013625159081414651,
+          "median_abs": 0.0011137874718220864,
           "runs": 5
         },
         "worst_aerosol_mid_pressure_case": {
-          "abs_value": 5.098655326851144,
+          "abs_value": 5.098655326627977,
           "case": 4
         },
         "worst_aerosol_optical_depth_case": {
-          "abs_value": 0.0037776894548125495,
+          "abs_value": 0.0037776894547703888,
           "case": 4
         }
       },
       "run_count": 5,
       "timing_s": {
         "first_use_total_s": {
-          "max": 2.5776224160799757,
-          "mean": 2.1086687579751016,
-          "median": 2.135844957898371,
-          "min": 1.62423237611074,
-          "p90": 2.5619135991903024,
+          "max": 2.5209428740199655,
+          "mean": 2.0605224995873868,
+          "median": 2.0779216239461675,
+          "min": 1.5912780829239637,
+          "p90": 2.505166574846953,
           "runs": 5,
-          "total": 10.543343789875507
+          "total": 10.302612497936934
         },
         "retrieval_s": {
-          "max": 1.981052750023082,
-          "mean": 1.511839108192362,
-          "median": 1.5385872499318793,
-          "min": 1.0275332920718938,
-          "p90": 1.9654107663780451,
+          "max": 1.9219209580915049,
+          "mean": 1.4613576664123684,
+          "median": 1.4794273329898715,
+          "min": 0.9925209579523653,
+          "p90": 1.9052676916820928,
           "runs": 5,
-          "total": 7.5591955409618095
+          "total": 7.306788332061842
         },
-        "rtm_and_jacobian_s": {
-          "max": 1.9802475001197308,
-          "mean": 1.5110579166328535,
-          "median": 1.5378136659273878,
-          "min": 1.0268727910006419,
-          "p90": 1.9645842337049544,
-          "runs": 5,
-          "total": 7.555289583164267
-        },
-        "total_wall_s": 10.543343789875507
+        "total_wall_s": 10.302612497936934
       }
     },
     "retrieval_sweep_session": {
       "average_active_cores": {
         "first_use_total": {
-          "max": 1.9734968717008974,
-          "mean": 1.9650663813259484,
-          "median": 1.9629824042682775,
-          "min": 1.9574236800430347,
-          "p90": 1.9728011100904268,
+          "max": 1.9741992432110147,
+          "mean": 1.9657880459597017,
+          "median": 1.9626074118217118,
+          "min": 1.9595519408665565,
+          "p90": 1.9735063343346275,
           "runs": 5,
-          "total": 9.825331906629742
+          "total": 9.828940229798508
         },
         "retrieval": {
-          "max": 1.986895235672166,
-          "mean": 1.9840087142489018,
-          "median": 1.985244337400192,
-          "min": 1.978530425544524,
-          "p90": 1.9867559517495987,
+          "max": 1.9885288212527028,
+          "mean": 1.9858729067065437,
+          "median": 1.9858520640466268,
+          "min": 1.981968976520205,
+          "p90": 1.9882823220506098,
           "runs": 5,
-          "total": 9.92004357124451
+          "total": 9.929364533532718
         }
       },
       "converged_count": 5,
@@ -566,141 +539,124 @@
       "mode": "session",
       "process_cpu_s": {
         "first_use_total_s": {
-          "max": 10.358890999999971,
-          "mean": 7.585468399999991,
-          "median": 6.2029039999999895,
-          "min": 5.789974000000001,
-          "p90": 9.994816599999979,
+          "max": 9.902033999999986,
+          "mean": 7.278755799999994,
+          "median": 5.933891999999986,
+          "min": 5.5302269999999965,
+          "p90": 9.586147999999998,
           "runs": 5,
-          "total": 37.92734199999995
+          "total": 36.39377899999997
         },
         "retrieval_s": {
-          "max": 9.010376999999977,
-          "mean": 6.236814199999992,
-          "median": 4.854626999999994,
-          "min": 4.4389970000000005,
-          "p90": 8.646392599999984,
+          "max": 8.55720599999998,
+          "mean": 5.933415999999994,
+          "median": 4.591081000000003,
+          "min": 4.1822819999999865,
+          "p90": 8.24258519999999,
           "runs": 5,
-          "total": 31.18407099999996
+          "total": 29.66707999999997
         },
-        "total_process_cpu_s": 37.92734199999995
+        "total_process_cpu_s": 36.39377899999997
       },
       "residuals": {
         "truth_aerosol_mid_pressure_abs_error_hpa": {
-          "max_abs": 0.07379376658946057,
-          "mean_abs": 0.022114487115527482,
-          "median_abs": 0.014000438486959865,
+          "max_abs": 0.07379376660099979,
+          "mean_abs": 0.022114487054068377,
+          "median_abs": 0.01400043842352261,
           "runs": 5
         },
         "truth_aerosol_optical_depth_abs_error": {
-          "max_abs": 7.025145231764895e-05,
-          "mean_abs": 1.6486842526169943e-05,
+          "max_abs": 7.02514523076847e-05,
+          "mean_abs": 1.6486842582236205e-05,
           "median_abs": 4.0562253977860507e-07,
           "runs": 5
         },
         "worst_aerosol_mid_pressure_case": {
-          "abs_value": 0.07379376658946057,
+          "abs_value": 0.07379376660099979,
           "case": 2
         },
         "worst_aerosol_optical_depth_case": {
-          "abs_value": 7.025145231764895e-05,
+          "abs_value": 7.02514523076847e-05,
           "case": 2
         }
       },
       "run_count": 5,
       "timing_s": {
         "first_use_total_s": {
-          "max": 5.249002999975346,
-          "mean": 3.857118908385746,
-          "median": 3.159938666038215,
-          "min": 2.9545635839458555,
-          "p90": 5.0662105667637665,
+          "max": 5.0157217079540715,
+          "mean": 3.699810174992308,
+          "median": 3.0281881670234725,
+          "min": 2.821379332919605,
+          "p90": 4.85733600796666,
           "runs": 5,
-          "total": 19.28559454192873
+          "total": 18.49905087496154
         },
         "retrieval_s": {
-          "max": 4.534902916988358,
-          "mean": 3.142475091596134,
-          "median": 2.445354916038923,
-          "min": 2.238721792004071,
-          "p90": 4.351996216969565,
+          "max": 4.303284875000827,
+          "mean": 2.9869376666145397,
+          "median": 2.3164242500206456,
+          "min": 2.106834708014503,
+          "p90": 4.145551558188163,
           "runs": 5,
-          "total": 15.71237545798067
+          "total": 14.9346883330727
         },
-        "rtm_and_jacobian_s": {
-          "max": 4.533864374854602,
-          "mean": 3.1416637249989434,
-          "median": 2.4446427089860663,
-          "min": 2.238077916088514,
-          "p90": 4.351051458134316,
-          "runs": 5,
-          "total": 15.708318624994718
-        },
-        "total_wall_s": 19.28559454192873
+        "total_wall_s": 18.49905087496154
       }
     }
   },
   "command": "uv run benchmark/run_benchmark.py",
   "comparisons": {
     "retrieval_fast_minus_session_single_case": {
-      "aerosol_layer_mid_pressure_delta_hpa": -1.1097679642849698,
-      "aerosol_optical_depth_delta": 0.00019770803718743846
+      "aerosol_layer_mid_pressure_delta_hpa": -1.1097679642581397,
+      "aerosol_optical_depth_delta": 0.00019770803700724926
     },
     "retrieval_sweep_fast_minus_session": {
       "aerosol_mid_pressure_delta_hpa": {
-        "max": 0.5836888038495545,
-        "max_abs": 5.084654888364184,
-        "mean": -1.1625496346970863,
-        "median": -0.415719355601766,
-        "min": -5.084654888364184,
+        "max": 0.583688803823577,
+        "max_abs": 5.084654888204454,
+        "mean": -1.1625496346164141,
+        "median": -0.41571935557647066,
+        "min": -5.084654888204454,
         "runs": 5
       },
       "aerosol_optical_depth_delta": {
-        "max": 0.001184327816031172,
-        "max_abs": 0.003766442682341886,
-        "mean": -0.0002292195497088728,
-        "median": 0.0004948444898242865,
-        "min": -0.003766442682341886,
+        "max": 0.0011843278162850246,
+        "max_abs": 0.0037664426823124653,
+        "mean": -0.00022921954964303382,
+        "median": 0.0004948444898289495,
+        "min": -0.0037664426823124653,
         "runs": 5
       },
       "first_use_total_speedup_s": {
-        "max": 2.710652626119554,
-        "max_abs": 2.710652626119554,
-        "mean": 1.7484501504106447,
-        "median": 1.4926450001075864,
-        "min": 0.9942224171245471,
+        "max": 2.534219581866637,
+        "max_abs": 2.534219581866637,
+        "mean": 1.6392876754049213,
+        "median": 1.3830364181194454,
+        "min": 0.950266543077305,
         "runs": 5
       },
       "retrieval_speedup_s": {
-        "max": 2.592955126077868,
-        "max_abs": 2.592955126077868,
-        "mean": 1.630635983403772,
-        "median": 1.3752804580144584,
-        "min": 0.8771724160760641,
+        "max": 2.422997082932852,
+        "max_abs": 2.422997082932852,
+        "mean": 1.5255800002021715,
+        "median": 1.266561626107432,
+        "min": 0.8369969170307741,
         "runs": 5
       },
-      "rtm_jacobian_speedup_s": {
-        "max": 2.592775040771812,
-        "max_abs": 2.592775040771812,
-        "mean": 1.6306058083660901,
-        "median": 1.3753764169523492,
-        "min": 0.8770878760842606,
-        "runs": 5
-      },
-      "total_retrieval_wall_s_saved": 8.742250752053224
+      "total_retrieval_wall_s_saved": 8.196438377024606
     }
   },
-  "created_at_unix_s": 1779202417.9350631,
-  "finished_at_unix_s": 1779202558.6162822,
+  "created_at_unix_s": 1779304249.37965,
+  "finished_at_unix_s": 1779304399.6059158,
   "memory": {
-    "peak_rss_bytes": 88719360,
-    "peak_rss_delta_bytes": 51986432,
-    "peak_rss_delta_mib": 49.578125,
-    "peak_rss_mib": 84.609375,
+    "peak_rss_bytes": 86654976,
+    "peak_rss_delta_bytes": 50511872,
+    "peak_rss_delta_mib": 48.171875,
+    "peak_rss_mib": 82.640625,
     "peak_rss_source": "resource.getrusage(RUSAGE_SELF).ru_maxrss",
     "peak_rss_supported": true,
-    "start_peak_rss_bytes": 36732928,
-    "start_peak_rss_mib": 35.03125
+    "start_peak_rss_bytes": 36143104,
+    "start_peak_rss_mib": 34.46875
   },
   "memory_layout": {
     "instrument_sampling": {
@@ -1065,7 +1021,7 @@
   },
   "native_binding": {
     "command": "zig build sync-python-package -Doptimize=ReleaseFast",
-    "elapsed_s": 0.1483649160945788
+    "elapsed_s": 11.356679875054397
   },
   "output": "benchmark/results.json",
   "report": {
@@ -1073,27 +1029,27 @@
       {
         "case": "Forward, no session",
         "residuals": "DISAMAR fixture worst interior max_abs 9.569e-14; RTM reflectance 5.393e-14",
-        "timing": "median 0.962s"
+        "timing": "median 0.958s"
       },
       {
         "case": "Forward, session",
         "residuals": "vs no-session: radiance max_abs 0.000e+00; reflectance max_abs 0.000e+00",
-        "timing": "setup 0.707s; cached run 0.258s; first-use 0.964s"
+        "timing": "setup 0.713s; cached run 0.251s; first-use 0.967s"
       },
       {
         "case": "Forward, fast mode",
         "residuals": "baseline max_abs 2.203e-04; 4-scene worst 4.963e-04, 1.600x noise",
-        "timing": "baseline reference 2.009s; 4-scene fast median 4.619s"
+        "timing": "baseline reference 1.964s; 4-scene fast median 4.632s"
       },
       {
         "case": "OE, session",
         "residuals": "AOD diff 8.699e-08; mid-pressure diff 1.733e-04 hPa",
-        "timing": "retrieval 1.074262s; RTM+jac 1.073094s; setup 0.712708s"
+        "timing": "retrieval 1.042433s; setup 0.716908s"
       },
       {
         "case": "OE, fast mode",
         "residuals": "single fast-vs-session AOD delta 1.977e-04; sweep max AOD delta 3.766e-03; pressure delta 5.085e+00 hPa",
-        "timing": "5-case median 2.135845s; mean 2.108669s; range 1.624232-2.577622s"
+        "timing": "5-case median 2.077922s; mean 2.060522s; range 1.591278-2.520943s"
       }
     ],
     "memory_layout_rows": [
@@ -1117,58 +1073,58 @@
       {
         "benchmark": "Full benchmark process",
         "process_cpu": "see top-level totals",
-        "process_memory": "peak RSS 84.6 MiB; delta since benchmark start 49.6 MiB"
+        "process_memory": "peak RSS 82.6 MiB; delta since benchmark start 48.2 MiB"
       },
       {
         "benchmark": "Forward, no session",
-        "process_cpu": "median CPU 1.842s; median active cores 1.92",
+        "process_cpu": "median CPU 1.833s; median active cores 1.91",
         "process_memory": "included in full benchmark process peak RSS"
       },
       {
         "benchmark": "Forward, session cached run",
-        "process_cpu": "median CPU 0.513s; median active cores 1.99",
+        "process_cpu": "median CPU 0.500s; median active cores 1.99",
         "process_memory": "included in full benchmark process peak RSS"
       },
       {
         "benchmark": "Forward, fast mode",
-        "process_cpu": "median CPU 8.910s; median active cores 1.93",
+        "process_cpu": "median CPU 8.916s; median active cores 1.92",
         "process_memory": "included in full benchmark process peak RSS"
       },
       {
         "benchmark": "OE, no fast mode sweep",
-        "process_cpu": "total CPU 37.927s; median active cores 1.96",
+        "process_cpu": "total CPU 36.394s; median active cores 1.96",
         "process_memory": "included in full benchmark process peak RSS"
       },
       {
         "benchmark": "OE, fast mode sweep",
-        "process_cpu": "total CPU 20.501s; median active cores 1.94",
+        "process_cpu": "total CPU 20.041s; median active cores 1.94",
         "process_memory": "included in full benchmark process peak RSS"
       }
     ],
     "total_wall_clock_rows": [
       {
         "benchmark": "Forward, no session",
-        "total": "0.962s per baseline run median"
+        "total": "0.958s per baseline run median"
       },
       {
         "benchmark": "Forward, session",
-        "total": "0.964s first-use total, or 0.258s cached run only"
+        "total": "0.967s first-use total, or 0.251s cached run only"
       },
       {
         "benchmark": "Forward, fast mode",
-        "total": "4.619s median over 4 scenes"
+        "total": "4.632s median over 4 scenes"
       },
       {
         "benchmark": "OE, no fast mode",
-        "total": "19.286s over 5 retrievals"
+        "total": "18.499s over 5 retrievals"
       },
       {
         "benchmark": "OE, fast mode",
-        "total": "10.543s over 5 retrievals"
+        "total": "10.303s over 5 retrievals"
       },
       {
         "benchmark": "OE fast-mode savings",
-        "total": "8.742s over 5 retrievals"
+        "total": "8.196s over 5 retrievals"
       }
     ]
   },
@@ -1183,10 +1139,10 @@
     "retrieval_sweep_fast_mode_count": 5,
     "retrieval_sweep_session_count": 5
   },
-  "run_id": "7a9d2b513dbd495db47a23f03bd64545",
+  "run_id": "f96dad561a54442f810cc41dd395601b",
   "schema_version": 4,
   "scratch_db": "benchmark/.runs/benchmark.sqlite",
-  "total_benchmark_average_active_cores": 1.9265395424484857,
-  "total_benchmark_process_cpu_s": 270.54591999999997,
-  "total_benchmark_wall_s": 140.43102362495847
+  "total_benchmark_average_active_cores": 1.92883430903305,
+  "total_benchmark_process_cpu_s": 267.213794,
+  "total_benchmark_wall_s": 138.53641691699158
 }

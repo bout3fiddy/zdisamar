@@ -56,7 +56,7 @@ pub fn fillNodesAndWeights(
     }
 }
 
-const max_disamar_division_points: usize = 256;
+pub const max_disamar_division_points: usize = 256;
 
 // hot path:
 //   when: adaptive instrument sampling needs DISAMAR-style unit interval division points
@@ -81,17 +81,8 @@ pub fn fillDisamarDivPoints01(
     var off_diagonal: [max_disamar_division_points]f64 = undefined;
     var first_row: [max_disamar_division_points]f64 = undefined;
 
-    if (order_usize > 1) {
-        for (0..order_usize - 1) |index| {
-            const abi: f64 = @floatFromInt(index + 1);
-            diagonal[index] = 0.0;
-            off_diagonal[index] = abi / @sqrt(4.0 * abi * abi - 1.0);
-        }
-    }
-    diagonal[order_usize - 1] = 0.0;
-    off_diagonal[order_usize - 1] = 0.0;
-    first_row[0] = 1.0;
-    if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
+    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
+    initDisamarFirstRow(order_usize, &first_row);
 
     try gausq2Disamar(
         diagonal[0..order_usize],
@@ -130,17 +121,8 @@ pub fn fillDisamarDivPointsInterval(
     var off_diagonal: [max_disamar_division_points]f64 = undefined;
     var first_row: [max_disamar_division_points]f64 = undefined;
 
-    if (order_usize > 1) {
-        for (0..order_usize - 1) |index| {
-            const abi: f64 = @floatFromInt(index + 1);
-            diagonal[index] = 0.0;
-            off_diagonal[index] = abi / @sqrt(4.0 * abi * abi - 1.0);
-        }
-    }
-    diagonal[order_usize - 1] = 0.0;
-    off_diagonal[order_usize - 1] = 0.0;
-    first_row[0] = 1.0;
-    if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
+    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
+    initDisamarFirstRow(order_usize, &first_row);
 
     try gausq2Disamar(
         diagonal[0..order_usize],
@@ -156,6 +138,41 @@ pub fn fillDisamarDivPointsInterval(
 }
 
 // hot path:
+//   when: parity vertical-grid preparation needs RTM division points but never
+//   consumes quadrature weights
+//   work: computes DISAMAR interval nodes without tracking first-row weights
+//   data: diagonal/off-diagonal work arrays and output node slice
+//   follow: optical_properties.state_build.vertical_grid buildExplicitDisamarParity
+pub fn fillDisamarDivPointsIntervalNodes(
+    order: u32,
+    a0: f64,
+    b0: f64,
+    nodes_out: []f64,
+) error{InvalidOrder}!void {
+    if (order == 0 or
+        nodes_out.len < order or
+        order > max_disamar_division_points)
+    {
+        return error.InvalidOrder;
+    }
+
+    const order_usize: usize = @intCast(order);
+    var diagonal: [max_disamar_division_points]f64 = undefined;
+    var off_diagonal: [max_disamar_division_points]f64 = undefined;
+
+    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
+    try gausq2DisamarNodes(
+        diagonal[0..order_usize],
+        off_diagonal[0..order_usize],
+    );
+
+    const span = b0 - a0;
+    for (0..order_usize) |index| {
+        nodes_out[index] = (diagonal[index] + 1.0) / 2.0 * span + a0;
+    }
+}
+
+// hot path:
 //   when: DISAMAR-style division points are computed for dynamic quadrature
 //   work: diagonalizes the tridiagonal quadrature system and sorts eigenvalues
 //   data: diagonal, off-diagonal, and first-row work arrays
@@ -165,8 +182,26 @@ fn gausq2Disamar(
     off_diagonal: []f64,
     first_row: []f64,
 ) error{InvalidOrder}!void {
+    return gausq2DisamarImpl(true, diagonal, off_diagonal, first_row);
+}
+
+fn gausq2DisamarNodes(
+    diagonal: []f64,
+    off_diagonal: []f64,
+) error{InvalidOrder}!void {
+    var empty_first_row: [0]f64 = .{};
+    return gausq2DisamarImpl(false, diagonal, off_diagonal, empty_first_row[0..]);
+}
+
+fn gausq2DisamarImpl(
+    comptime track_first_row: bool,
+    diagonal: []f64,
+    off_diagonal: []f64,
+    first_row: []f64,
+) error{InvalidOrder}!void {
     const n = diagonal.len;
-    if (n == 0 or off_diagonal.len != n or first_row.len != n) return error.InvalidOrder;
+    if (n == 0 or off_diagonal.len != n) return error.InvalidOrder;
+    if (track_first_row and first_row.len != n) return error.InvalidOrder;
     if (n == 1) return;
 
     const machep = 2.0e-16;
@@ -218,9 +253,11 @@ fn gausq2Disamar(
                 diagonal[i + 1] = g + p;
                 g = c * r - b;
 
-                const f_component = first_row[i + 1];
-                first_row[i + 1] = s * first_row[i] + c * f_component;
-                first_row[i] = c * first_row[i] - s * f_component;
+                if (track_first_row) {
+                    const f_component = first_row[i + 1];
+                    first_row[i + 1] = s * first_row[i] + c * f_component;
+                    first_row[i] = c * first_row[i] - s * f_component;
+                }
             }
 
             diagonal[l] -= p;
@@ -243,10 +280,36 @@ fn gausq2Disamar(
         if (k == i) continue;
         diagonal[k] = diagonal[i];
         diagonal[i] = p;
-        const first_row_i = first_row[i];
-        first_row[i] = first_row[k];
-        first_row[k] = first_row_i;
+        if (track_first_row) {
+            const first_row_i = first_row[i];
+            first_row[i] = first_row[k];
+            first_row[k] = first_row_i;
+        }
     }
+}
+
+fn initDisamarTridiagonal(
+    order_usize: usize,
+    diagonal: *[max_disamar_division_points]f64,
+    off_diagonal: *[max_disamar_division_points]f64,
+) void {
+    if (order_usize > 1) {
+        for (0..order_usize - 1) |index| {
+            const abi: f64 = @floatFromInt(index + 1);
+            diagonal[index] = 0.0;
+            off_diagonal[index] = abi / @sqrt(4.0 * abi * abi - 1.0);
+        }
+    }
+    diagonal[order_usize - 1] = 0.0;
+    off_diagonal[order_usize - 1] = 0.0;
+}
+
+fn initDisamarFirstRow(
+    order_usize: usize,
+    first_row: *[max_disamar_division_points]f64,
+) void {
+    first_row[0] = 1.0;
+    if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
 }
 
 fn disamarSign(magnitude: f64, sign_source: f64) f64 {

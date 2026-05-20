@@ -2,6 +2,7 @@ const std = @import("std");
 const AtmosphereModel = @import("../Atmosphere.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const implementations = @import("../../forward_model/implementations/root.zig");
+const Jacobian = @import("../../forward_model/jacobian/root.zig");
 const metrics = @import("metrics.zig");
 const reference_types = @import("types.zig");
 
@@ -276,6 +277,23 @@ pub fn runO2AWithSessionStorage(
         implementations.exact(),
     );
     return view.toOwned(allocator);
+}
+
+pub fn runO2AWithSessionStorageJacobianStates(
+    allocator: Allocator,
+    storage: *SessionStorage,
+    prepared: *const PreparedO2A,
+    output_states: []const Jacobian.State,
+) !Output {
+    const view = try InstrumentGrid.simulateProductWithWorkspace(
+        allocator,
+        storage,
+        &prepared.scene,
+        prepared.route,
+        &prepared.prepared,
+        implementations.exact(),
+    );
+    return view.toOwnedWithJacobianStates(allocator, output_states);
 }
 
 pub fn warmO2ASessionStorage(

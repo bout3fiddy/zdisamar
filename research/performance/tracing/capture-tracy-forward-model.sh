@@ -86,7 +86,7 @@ rm -f "$trace_file"
 build_args=(
   labos-bottleneck-trace-bin
   -Denable-ztracy=true
-  -Dtrace-optimize=ReleaseFast
+  -Doptimize=ReleaseFast
 )
 
 echo "building trace executable"

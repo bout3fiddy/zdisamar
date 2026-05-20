@@ -29,12 +29,12 @@ def jacobian_frame(spectrum, state: str):
         raise ValueError(f"unknown Jacobian state: {state}")
 
     index = names.index(state)
-    wavelength_nm = spectrum.wavelength_nm.copy()
+    wavelength_nm = tuple(spectrum.wavelength_nm)
 
     try:
-        reflectance_jacobian = spectrum.reflectance_jacobian(state).copy()
+        reflectance_jacobian = tuple(spectrum.reflectance_jacobian(state))
     except RuntimeError:
-        radiance_jacobian = spectrum.radiance_jacobian[:, index].copy()
+        radiance_jacobian = tuple(row[index] for row in spectrum.radiance_jacobian)
 
         return (
             [

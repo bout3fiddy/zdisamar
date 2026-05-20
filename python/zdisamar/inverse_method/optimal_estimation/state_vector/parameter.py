@@ -4,8 +4,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-import numpy as np
-
 StateName = str
 
 
@@ -57,7 +55,7 @@ class StateVector:
             getattr(parameter, "jacobian_name", parameter.name) for parameter in self.parameters
         )
 
-    def jacobian_scales(self, state: np.ndarray) -> np.ndarray:
+    def jacobian_scales(self, state: Sequence[float]) -> tuple[float, ...]:
         """Scale model Jacobians into the chosen retrieval variables."""
 
         if len(state) != len(self.parameters):
@@ -69,27 +67,33 @@ class StateVector:
             scale = getattr(parameter, "jacobian_scale", None)
             scales.append(1.0 if scale is None else float(scale(float(value))))
 
-        return np.asarray(scales, dtype=np.float64)
+        return tuple(scales)
 
-    def initial_state(self) -> np.ndarray:
+    def initial_state(self) -> tuple[float, ...]:
         """Return the starting retrieval state."""
 
-        return np.array([parameter.initial for parameter in self.parameters], dtype=np.float64)
+        return tuple(float(parameter.initial) for parameter in self.parameters)
 
-    def prior_state(self) -> np.ndarray:
+    def prior_state(self) -> tuple[float, ...]:
         """Return the prior retrieval state."""
 
-        return np.array([parameter.prior for parameter in self.parameters], dtype=np.float64)
+        return tuple(float(parameter.prior) for parameter in self.parameters)
 
-    def prior_covariance(self) -> np.ndarray:
+    def prior_covariance(self) -> tuple[tuple[float, ...], ...]:
         """Return the diagonal prior covariance used by this OE solver."""
 
-        return np.diag([parameter.variance for parameter in self.parameters]).astype(np.float64)
+        return tuple(
+            tuple(
+                float(parameter.variance) if row == column else 0.0
+                for column, _ in enumerate(self.parameters)
+            )
+            for row, parameter in enumerate(self.parameters)
+        )
 
-    def clip_to_bounds(self, state: np.ndarray) -> np.ndarray:
+    def clip_to_bounds(self, state: Sequence[float]) -> tuple[float, ...]:
         """Keep updated retrieval variables within their physical bounds."""
 
-        bounded = np.array(state, copy=True)
+        bounded = [float(value) for value in state]
 
         for index, parameter in enumerate(self.parameters):
             if parameter.lower is not None:
@@ -98,9 +102,9 @@ class StateVector:
             if parameter.upper is not None:
                 bounded[index] = min(float(parameter.upper), bounded[index])
 
-        return bounded
+        return tuple(bounded)
 
-    def write_to(self, target: object, state: np.ndarray) -> None:
+    def write_to(self, target: object, state: Sequence[float]) -> None:
         """Write all retrieval variables into one O2 A scene."""
 
         if len(state) != len(self.parameters):

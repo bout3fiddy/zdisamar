@@ -88,14 +88,8 @@ def run_retrieval(
 
 def retrieval_record(result: optimal_estimation.Result, wall_s: float) -> dict[str, Any]:
 
-    rtm_s = sum(timing.rtm_and_jacobian_s for timing in result.timing)
-    solver_s = sum(timing.solver_update_s for timing in result.timing)
-
     return {
         "wall_s": wall_s,
-        "rtm_and_jacobian_s": rtm_s,
-        "solver_update_s": solver_s,
-        "other_retrieval_s": wall_s - rtm_s - solver_s,
         "iterations": result.iterations,
         "converged": result.converged,
         "state_names": list(result.state_names),
@@ -103,15 +97,6 @@ def retrieval_record(result: optimal_estimation.Result, wall_s: float) -> dict[s
             "aerosol_optical_depth": result.value("aerosol_optical_depth"),
             "aerosol_layer_mid_pressure_hpa": result.value("aerosol_layer_mid_pressure_hpa"),
         },
-        "iterations_detail": [
-            {
-                "index": timing.index,
-                "rtm_and_jacobian_s": timing.rtm_and_jacobian_s,
-                "solver_update_s": timing.solver_update_s,
-                "total_iteration_s": timing.total_iteration_s,
-            }
-            for timing in result.timing
-        ],
     }
 
 
@@ -144,7 +129,7 @@ def probe_rtm_calls(
     def radiance_reflectance_only() -> None:
 
         spectrum = rtm.spectrum(state_case, cache=cache)
-        _ = spectrum.reflectance.copy()
+        _ = list(spectrum.reflectance)
 
     def radiance_reflectance_and_jacobian() -> None:
 
@@ -217,11 +202,7 @@ def main() -> int:
 
     print("Slow RTM+jacobian latency benchmark:")
     print(f"  measurement build: {measurement_s:.6f} s")
-    print(
-        "  cache reused retrieval: "
-        f"{report['cache']['reused_retrieval']['wall_s']:.6f} s total, "
-        f"{report['cache']['reused_retrieval']['rtm_and_jacobian_s']:.6f} s RTM+jacobian"
-    )
+    print(f"  cache reused retrieval: {report['cache']['reused_retrieval']['wall_s']:.6f} s total")
     print(f"  lazy final evaluation: {lazy_final_evaluation_s:.6f} s when requested")
     print(
         "  RTM probe median: "

@@ -32,11 +32,16 @@ pub fn assemble(
         .spectroscopy_profile_strong_line_states = absorbers.profile_strong_line_states,
         .spectroscopy_profile_weak_line_states = absorbers.profile_weak_line_states,
         .continuum_points = context.continuum_points,
+        .owns_continuum_points = context.owns_continuum_points,
         .collision_induced_absorption = context.collision_induced_absorption,
+        .owns_collision_induced_absorption = context.owns_collision_induced_absorption,
         .spectroscopy_lines = absorbers.owned_lines,
         .spectroscopy_profile_altitudes_km = context.spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = context.spectroscopy_profile_pressures_hpa,
         .spectroscopy_profile_temperatures_k = context.spectroscopy_profile_temperatures_k,
+        .owns_spectroscopy_profile_arrays = context.owns_spectroscopy_profile_arrays,
+        .owns_spectroscopy_profile_strong_line_states = absorbers.owns_profile_strong_line_states,
+        .owns_spectroscopy_profile_weak_line_states = absorbers.owns_profile_weak_line_states,
         .cross_section_absorbers = absorbers.owned_cross_section_absorbers,
         .line_absorbers = absorbers.owned_line_absorbers,
         .continuum_owner_species = absorbers.continuum_owner_species,
@@ -89,16 +94,25 @@ pub fn assemble(
         .aerosol_fraction_control = context.aerosol_fraction_control,
         .cloud_fraction_control = context.cloud_fraction_control,
     };
-    prepared.spectroscopy_plan_key = prepared.computeSpectroscopyPlanKey();
-    prepared.spectroscopy_profile_cache_inputs_key = prepared.computeSpectroscopyProfileCacheInputsKey();
+    prepared.spectroscopy_plan_key = if (context.borrowed_spectroscopy_plan_key != 0)
+        context.borrowed_spectroscopy_plan_key
+    else
+        prepared.computeSpectroscopyPlanKey();
+    prepared.spectroscopy_profile_cache_inputs_key = if (context.borrowed_spectroscopy_profile_cache_inputs_key != 0)
+        context.borrowed_spectroscopy_profile_cache_inputs_key
+    else
+        prepared.computeSpectroscopyProfileCacheInputsKey();
 
     context.layers = &.{};
     context.sublayers = &.{};
     context.continuum_points = &.{};
+    context.owns_continuum_points = false;
     context.spectroscopy_profile_altitudes_km = &.{};
     context.spectroscopy_profile_pressures_hpa = &.{};
     context.spectroscopy_profile_temperatures_k = &.{};
+    context.owns_spectroscopy_profile_arrays = false;
     context.collision_induced_absorption = null;
+    context.owns_collision_induced_absorption = false;
     context.spectroscopy_lines = null;
     context.aerosol_fraction_control = .{};
     context.cloud_fraction_control = .{};
@@ -115,6 +129,8 @@ pub fn assemble(
     absorbers.profile_strong_line_state_count = 0;
     absorbers.profile_weak_line_states = null;
     absorbers.profile_weak_line_state_count = 0;
+    absorbers.owns_profile_strong_line_states = true;
+    absorbers.owns_profile_weak_line_states = true;
     absorbers.owned_lines = null;
 
     return prepared;

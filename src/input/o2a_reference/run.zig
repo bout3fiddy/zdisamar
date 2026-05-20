@@ -55,6 +55,80 @@ pub const PreparedRuntimeCase = struct {
     prepared: OpticsPrepare.PreparedOpticalState,
 };
 
+// Runtime-prepared O2 A case for repeated native retrieval evaluations.
+// layout(64-bit):
+//   size: 3808 B, align: 8 B
+//   field storage: scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: scene and prepared carry owned buffers; referenced storage is not included in size
+//   cache span: 60 cache line(s) at 64 B per line
+//   count: one live value per native OE forward evaluation
+//   footprint: per instance = 3808 B (3.719 KiB); total also includes referenced storage above
+pub const PreparedRuntimeEvaluation = struct {
+    scene: Scene,
+    route: Route,
+    prepared: OpticsPrepare.PreparedOpticalState,
+
+    pub fn deinit(self: *PreparedRuntimeEvaluation, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const PreparedRuntimeOptics = struct {
+    scene: Scene,
+    prepared: OpticsPrepare.PreparedOpticalState,
+
+    pub fn deinit(self: *PreparedRuntimeOptics, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
+
+// Retrieval-scoped weak-line cutoff support reused across state evaluations.
+// layout(64-bit):
+//   size: 32 B, align: 8 B
+//   field storage: two slice descriptors at 16 B each; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelength and wavenumber grids are owned dense f64 buffers
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one per O2 A retrieval case when vendor weak cutoff is active
+//   footprint: per instance = 32 B (0.031 KiB); total also includes 2 * support_count * 8 B
+pub const WeakCutoffGridCache = struct {
+    wavelengths_nm: []f64 = &.{},
+    wavenumbers_cm1: []f64 = &.{},
+
+    pub fn deinit(self: *WeakCutoffGridCache, allocator: Allocator) void {
+        allocator.free(self.wavelengths_nm);
+        allocator.free(self.wavenumbers_cm1);
+        self.* = .{};
+    }
+
+    fn valid(self: WeakCutoffGridCache) bool {
+        return self.wavelengths_nm.len >= 2 and self.wavelengths_nm.len == self.wavenumbers_cm1.len;
+    }
+
+    fn replaceFromSupport(
+        self: *WeakCutoffGridCache,
+        allocator: Allocator,
+        support_wavelengths_nm: []const f64,
+    ) !void {
+        const owned_wavelengths = try allocator.dupe(f64, support_wavelengths_nm);
+        errdefer allocator.free(owned_wavelengths);
+        const owned_wavenumbers = try allocator.alloc(f64, support_wavelengths_nm.len);
+        errdefer allocator.free(owned_wavenumbers);
+        for (support_wavelengths_nm, owned_wavenumbers) |wavelength_nm, *wavenumber_cm1| {
+            wavenumber_cm1.* = 1.0e7 / @max(wavelength_nm, 1.0e-9);
+        }
+
+        self.deinit(allocator);
+        self.wavelengths_nm = owned_wavelengths;
+        self.wavenumbers_cm1 = owned_wavenumbers;
+    }
+};
+
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
@@ -487,6 +561,15 @@ pub fn prepareResolvedVendorO2ARoute(
     });
 }
 
+pub fn prepareResolvedVendorO2ARouteFromResolved(resolved: *const ResolvedVendorO2ACase) !Route {
+    return transport_common.prepareRoute(.{
+        .regime = resolved.observation.regime,
+        .execution_mode = try resolved.plan.executionMode(),
+        .derivative_mode = try resolved.plan.derivativeMode(),
+        .rtm_controls = resolved.rtm_controls,
+    });
+}
+
 pub fn runResolvedVendorO2AReflectanceCase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
@@ -564,7 +647,7 @@ pub fn prepareResolvedVendorO2ACase(
     {
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
-        try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
+        try installVendorWeakCutoffGrid(allocator, &scene, &prepared, null);
     }
 
     {
@@ -587,10 +670,195 @@ pub fn prepareResolvedVendorO2ACase(
     };
 }
 
+pub fn prepareResolvedVendorO2AEvaluationWithInputs(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+) !PreparedRuntimeEvaluation {
+    var optics = try prepareResolvedVendorO2AOpticsWithInputs(allocator, resolved, inputs);
+    errdefer optics.deinit(allocator);
+
+    const route = route: {
+        const zone = Trace.staticZone(@src(), "prepare.route");
+        defer zone.end();
+        break :route try prepareResolvedVendorO2ARoute(&optics.scene, resolved.plan, resolved.rtm_controls);
+    };
+
+    return .{
+        .scene = optics.scene,
+        .route = route,
+        .prepared = optics.prepared,
+    };
+}
+
+pub fn prepareResolvedVendorO2AOpticsWithInputs(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+) !PreparedRuntimeOptics {
+    return prepareResolvedVendorO2AOpticsWithInputsInternal(
+        allocator,
+        resolved,
+        inputs,
+        null,
+    );
+}
+
+pub fn prepareResolvedVendorO2AOpticsWithInputsAndWeakCutoffCache(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+) !PreparedRuntimeOptics {
+    return prepareResolvedVendorO2AOpticsWithInputsInternal(
+        allocator,
+        resolved,
+        inputs,
+        weak_cutoff_grid,
+    );
+}
+
+fn prepareResolvedVendorO2AOpticsWithInputsInternal(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: ?*WeakCutoffGridCache,
+) !PreparedRuntimeOptics {
+    var scene = scene: {
+        const zone = Trace.staticZone(@src(), "prepare.build_scene");
+        defer zone.end();
+        break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
+    };
+    errdefer scene.deinitOwned(allocator);
+
+    var solar_rewindowed = false;
+    var prepared = try prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        &scene,
+        inputs,
+        weak_cutoff_grid,
+        &solar_rewindowed,
+        null,
+        .clone_input_tables,
+    );
+    errdefer prepared.deinit(allocator);
+
+    return .{
+        .scene = scene,
+        .prepared = prepared,
+    };
+}
+
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+) !OpticsPrepare.PreparedOpticalState {
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        null,
+        .clone_input_tables,
+    );
+}
+
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: *const OpticsPrepare.BorrowedProfilePreparation,
+) !OpticsPrepare.PreparedOpticalState {
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
+        .clone_input_tables,
+    );
+}
+
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+) !OpticsPrepare.PreparedOpticalState {
+    // Retrieval sessions own loaded inputs for the full OE run, so each optical
+    // refresh can borrow immutable continuum/CIA tables instead of cloning them.
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
+        .borrow_input_tables,
+    );
+}
+
+const StaticInputTableMode = enum {
+    clone_input_tables,
+    borrow_input_tables,
+};
+
+fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: ?*WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+    static_input_table_mode: StaticInputTableMode,
+) !OpticsPrepare.PreparedOpticalState {
+    var prepared = prepared: {
+        const zone = Trace.staticZone(@src(), "prepare.optical");
+        defer zone.end();
+        break :prepared try OpticsPrepare.prepare(allocator, scene, .{
+            .profile = &inputs.profile,
+            .spectroscopy_profile = &inputs.spectroscopy_profile,
+            .cross_sections = &inputs.cross_sections,
+            .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+            .spectroscopy_lines = &inputs.line_list,
+            .lut = &inputs.lut,
+            .borrowed_profile_preparation = borrowed_profile_preparation,
+            .borrow_continuum_points = static_input_table_mode == .borrow_input_tables,
+            .borrow_collision_induced_absorption = static_input_table_mode == .borrow_input_tables,
+        });
+    };
+    errdefer prepared.deinit(allocator);
+
+    {
+        const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
+        defer zone.end();
+        try installVendorWeakCutoffGrid(allocator, scene, &prepared, weak_cutoff_grid);
+    }
+
+    if (!solar_rewindowed.*) {
+        const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
+        defer zone.end();
+        try rewindowParitySolarSupportToMeasurementKernel(allocator, scene, &prepared);
+        solar_rewindowed.* = true;
+    }
+
+    return prepared;
+}
+
 fn installVendorWeakCutoffGrid(
     allocator: Allocator,
     scene: *const Scene,
     prepared: *OpticsPrepare.PreparedOpticalState,
+    weak_cutoff_grid: ?*WeakCutoffGridCache,
 ) !void {
     const response = scene.observation_model.resolvedChannelControls(.radiance).response;
     var has_cutoff_line_list = false;
@@ -601,6 +869,13 @@ fn installVendorWeakCutoffGrid(
         has_cutoff_line_list = has_cutoff_line_list or line_absorber.line_list.runtime_controls.cutoff_cm1 != null;
     }
     if (!has_cutoff_line_list) return;
+
+    if (weak_cutoff_grid) |grid| {
+        if (grid.valid()) {
+            try installCutoffGridOnPreparedLineLists(allocator, prepared, grid.*);
+            return;
+        }
+    }
 
     const support = try adaptive_plan.buildAdaptiveSupportWavelengths(
         allocator,
@@ -613,11 +888,31 @@ fn installVendorWeakCutoffGrid(
     defer allocator.free(support);
     if (support.len < 2) return error.DisamarKernelRealizationFailed;
 
+    if (weak_cutoff_grid) |grid| {
+        try grid.replaceFromSupport(allocator, support);
+        try installCutoffGridOnPreparedLineLists(allocator, prepared, grid.*);
+        return;
+    }
+
     if (prepared.spectroscopy_lines) |*line_list| {
         try installCutoffGridOnLineList(allocator, line_list, support);
     }
     for (prepared.line_absorbers) |*line_absorber| {
         try installCutoffGridOnLineList(allocator, &line_absorber.line_list, support);
+    }
+}
+
+fn installCutoffGridOnPreparedLineLists(
+    allocator: Allocator,
+    prepared: *OpticsPrepare.PreparedOpticalState,
+    grid: WeakCutoffGridCache,
+) !void {
+    if (!grid.valid()) return error.DisamarKernelRealizationFailed;
+    if (prepared.spectroscopy_lines) |*line_list| {
+        try installCutoffGridOnLineListFromGrid(allocator, line_list, grid);
+    }
+    for (prepared.line_absorbers) |*line_absorber| {
+        try installCutoffGridOnLineListFromGrid(allocator, &line_absorber.line_list, grid);
     }
 }
 
@@ -634,6 +929,26 @@ fn installCutoffGridOnLineList(
     for (support_wavelengths_nm, owned_support_wavenumbers) |wavelength_nm, *wavenumber_cm1| {
         wavenumber_cm1.* = 1.0e7 / @max(wavelength_nm, 1.0e-9);
     }
+    if (line_list.runtime_controls.cutoff_grid_wavelengths_nm.len != 0) {
+        allocator.free(line_list.runtime_controls.cutoff_grid_wavelengths_nm);
+    }
+    if (line_list.runtime_controls.cutoff_grid_wavenumbers_cm1.len != 0) {
+        allocator.free(line_list.runtime_controls.cutoff_grid_wavenumbers_cm1);
+    }
+    line_list.runtime_controls.cutoff_grid_wavelengths_nm = owned_support;
+    line_list.runtime_controls.cutoff_grid_wavenumbers_cm1 = owned_support_wavenumbers;
+}
+
+fn installCutoffGridOnLineListFromGrid(
+    allocator: Allocator,
+    line_list: *ReferenceDataModel.SpectroscopyLineList,
+    grid: WeakCutoffGridCache,
+) !void {
+    if (line_list.runtime_controls.cutoff_cm1 == null) return;
+    const owned_support = try allocator.dupe(f64, grid.wavelengths_nm);
+    errdefer allocator.free(owned_support);
+    const owned_support_wavenumbers = try allocator.dupe(f64, grid.wavenumbers_cm1);
+    errdefer allocator.free(owned_support_wavenumbers);
     if (line_list.runtime_controls.cutoff_grid_wavelengths_nm.len != 0) {
         allocator.free(line_list.runtime_controls.cutoff_grid_wavelengths_nm);
     }
