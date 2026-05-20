@@ -567,7 +567,6 @@ pub fn calcRTlayersIntoWithBasis(
     rt_active: ?[]bool,
 ) void {
     const nlayer = layers.len;
-    rt[0] = zeroLayerRt(geo.nmutot);
     if (rt_active) |active| active[0] = false;
     if (phase_row_valid) |valid| @memset(valid, false);
 
@@ -577,8 +576,7 @@ pub fn calcRTlayersIntoWithBasis(
         const layer = &layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            if (rt_active) |active| active[rt_idx] = false;
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
             continue;
         }
 
@@ -589,14 +587,12 @@ pub fn calcRTlayersIntoWithBasis(
             phase.maxIndex();
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            if (rt_active) |active| active[rt_idx] = false;
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
             Trace.plotU("layer_skipped_empty_optics", 1);
-            if (rt_active) |active| active[rt_idx] = false;
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            markInactiveLayer(rt, rt_active, rt_idx, geo.nmutot);
             continue;
         }
 
@@ -706,6 +702,25 @@ pub fn calcRTlayersIntoWithBasis(
         }
 
         if (rt_active) |active| active[rt_idx] = a != 0.0;
+    }
+}
+
+inline fn markInactiveLayer(
+    rt: []LayerRT,
+    rt_active: ?[]bool,
+    rt_idx: usize,
+    nmutot: usize,
+) void {
+    if (rt_active) |active| {
+        // Hot path:
+        //   Paired LABOS layer/order execution carries an active mask for the
+        //   same Fourier term. Inactive layers are skipped by ordersScat, so
+        //   avoid clearing the 2.3 KiB LayerRT payload on every high-Fourier
+        //   miss. Callers without a ready active mask still receive zeros so
+        //   their later RT scan observes the same inactive state.
+        active[rt_idx] = false;
+    } else {
+        rt[rt_idx] = zeroLayerRt(nmutot);
     }
 }
 
