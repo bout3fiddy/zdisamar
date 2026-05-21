@@ -16,8 +16,6 @@ from zdisamar.plot.optimal_estimation import (
 from zdisamar.plot.profiles import interval_profile_rows
 from zdisamar.plot.properties import PLOT
 from zdisamar.plot.svg import (
-    INTER_ROW_TEXT_GAP,
-    PANEL_TITLE_Y,
     Y_AXIS_TITLE_X,
     SvgFigure,
     SvgPanel,
@@ -102,6 +100,8 @@ def main() -> int:
     assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
     assert fit["panels"][0]["show_x_axis"] is False
     assert fit["panels"][1]["show_x_axis"] is True
+    assert fit["panels"][0]["show_title"] is False
+    assert fit["panels"][1]["show_title"] is False
     assert fit["height"] < 900
     assert (
         fit["height"]
@@ -110,9 +110,8 @@ def main() -> int:
     assert fit["panels"][1]["marker_x"] == []
     fit_residual_domain = fit["panels"][1]["y_domain"]
     assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
-    measurement_fit_row_gap = abs(PANEL_TITLE_Y) + PLOT.panel_title_font_size + INTER_ROW_TEXT_GAP
     assert fit["panels"][1]["origin"][1] == (
-        fit["panels"][0]["origin"][1] + MEASUREMENT_FIT_HEIGHT + measurement_fit_row_gap
+        fit["panels"][0]["origin"][1] + MEASUREMENT_FIT_HEIGHT + fit_chart.row_spacing_after(0)
     )
     assert fit["panels"][0]["origin"][0] + Y_AXIS_TITLE_X >= 40
 
@@ -134,6 +133,8 @@ def main() -> int:
     assert jacobian["panels"][1]["origin"][0] == (
         jacobian["panels"][0]["origin"][0] + JACOBIAN_PANEL_WIDTH + JACOBIAN_PANEL_SPACING
     )
+    assert jacobian["panels"][0]["marker_x"] == []
+    assert jacobian["panels"][1]["marker_x"] == []
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
     assert "x1e-5" in jacobian_spec

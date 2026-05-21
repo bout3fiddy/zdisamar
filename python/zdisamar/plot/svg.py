@@ -123,6 +123,7 @@ class SvgPanel:
     rule_y: tuple[float, ...] = ()
     y_axis_multiplier: str | None = None
     show_x_axis: bool = True
+    show_title: bool = True
 
     def resolved_x_domain(self) -> tuple[float, float]:
 
@@ -177,6 +178,7 @@ class SvgPanel:
             rule_y=self.rule_y,
             y_axis_multiplier=self.y_axis_multiplier,
             show_x_axis=self.show_x_axis,
+            show_title=self.show_title,
         )
 
 
@@ -310,6 +312,7 @@ class SvgFigure:
             "rule_y": list(panel.rule_y),
             "axis_multiplier": panel.y_axis_multiplier,
             "show_x_axis": panel.show_x_axis,
+            "show_title": panel.show_title,
             "series": [
                 {
                     "name": series.name,
@@ -432,7 +435,7 @@ class SvgFigure:
 
     def draw_panel_title(self, panel: SvgPanel) -> bool:
 
-        return not (len(self.panels) == 1 and panel.title == self.title)
+        return panel.show_title and not (len(self.panels) == 1 and panel.title == self.title)
 
     def effective_margin_top(self) -> int:
 
@@ -463,6 +466,7 @@ def line_panel(
     height: int | None = None,
     marker_x: bool = True,
     rule_y: tuple[float, ...] = (),
+    show_title: bool = True,
 ) -> SvgPanel:
     """Build one line panel with zdisamar defaults."""
 
@@ -478,6 +482,7 @@ def line_panel(
         marker_x=tuple(marker_values(x)) if marker_x else (),
         rule_y=rule_y,
         y_axis_multiplier=y_axis_multiplier,
+        show_title=show_title,
     )
 
 

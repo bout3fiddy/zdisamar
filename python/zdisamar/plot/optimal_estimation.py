@@ -247,6 +247,7 @@ def measurement_fit_figure(result) -> SvgFigure:
         height=MEASUREMENT_FIT_HEIGHT,
         y_axis_multiplier=axis_multiplier(reflectance_values),
         show_x_axis=False,
+        show_title=False,
     )
     residual_panel = line_panel(
         title="Residual",
@@ -260,6 +261,7 @@ def measurement_fit_figure(result) -> SvgFigure:
         height=MEASUREMENT_RESIDUAL_HEIGHT,
         marker_x=False,
         rule_y=(0.0,),
+        show_title=False,
     )
 
     return SvgFigure(
@@ -311,6 +313,7 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
             color=state_color_at(index),
             width=jacobian_panel_width(columns),
             height=JACOBIAN_PANEL_HEIGHT,
+            marker_x=False,
         )
         panels.append(panel)
 
