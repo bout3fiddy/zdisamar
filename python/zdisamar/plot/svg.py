@@ -10,11 +10,16 @@ from typing import Self
 from .axes import axis_exponent, finite_padded_domain, marker_values
 from .properties import PLOT
 
-X_TICK_LABEL_Y_OFFSET = 34
-X_AXIS_TITLE_Y_OFFSET = 82
-Y_TICK_LABEL_X = -22
+FIGURE_TITLE_Y = 34
+FIGURE_TO_PANEL_TEXT_GAP = 20
+INTER_ROW_TEXT_GAP = 20
+X_TICK_LABEL_Y_OFFSET = 36
+X_AXIS_TITLE_Y_OFFSET = 86
+Y_TICK_LABEL_X = -28
 Y_AXIS_TITLE_X = -126
-PANEL_TITLE_Y = -24
+PANEL_TITLE_Y = -54
+LEGEND_Y_WITH_PANEL_TITLE = -20
+LEGEND_Y_WITHOUT_PANEL_TITLE = -24
 
 
 @dataclass(frozen=True)
@@ -184,10 +189,10 @@ class SvgFigure:
     columns: int = 1
     panel_spacing: int = 44
     y_independent: bool = False
-    margin_left: int = 138
-    margin_right: int = 28
-    margin_top: int = 68
-    margin_bottom: int = 112
+    margin_left: int = 178
+    margin_right: int = 36
+    margin_top: int = 96
+    margin_bottom: int = 122
 
     @property
     def width(self) -> int:
@@ -211,7 +216,7 @@ class SvgFigure:
             self.effective_margin_top()
             + self.margin_bottom
             + sum(self.row_height(index) for index in range(rows))
-            + (rows - 1) * self.panel_spacing
+            + sum(self.row_spacing_after(index) for index in range(rows - 1))
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -273,7 +278,7 @@ class SvgFigure:
             self.svg_css,
             f'<rect class="figure-bg" x="0" y="0" width="{self.width}" height="{self.height}" />',
             (
-                f'<text class="plot-title" x="{self.width / 2:.3f}" y="34" '
+                f'<text class="plot-title" x="{self.width / 2:.3f}" y="{FIGURE_TITLE_Y}" '
                 f'text-anchor="middle">{escape(self.title)}</text>'
             ),
         ]
@@ -375,7 +380,8 @@ class SvgFigure:
         column = index % columns
         row = index // columns
         previous_row_height = sum(
-            self.row_height(row_index) + self.panel_spacing for row_index in range(row)
+            self.row_height(row_index) + self.row_spacing_after(row_index)
+            for row_index in range(row)
         )
 
         return (
@@ -400,16 +406,48 @@ class SvgFigure:
 
         return max((panel.height for panel in self.panels[start:stop]), default=PLOT.height)
 
+    def row_spacing_after(self, row: int) -> int:
+
+        bottom_content = max(
+            (panel_bottom_content_depth(panel) for panel in self.row_panels(row)),
+            default=0,
+        )
+        top_content = max(
+            (
+                panel_top_content_height(panel, self.draw_panel_title(panel))
+                for panel in self.row_panels(row + 1)
+            ),
+            default=0,
+        )
+
+        return max(self.panel_spacing, bottom_content + top_content + INTER_ROW_TEXT_GAP)
+
+    def row_panels(self, row: int) -> tuple[SvgPanel, ...]:
+
+        columns = max(self.columns, 1)
+        start = row * columns
+        stop = min(start + columns, len(self.panels))
+
+        return self.panels[start:stop]
+
     def draw_panel_title(self, panel: SvgPanel) -> bool:
 
         return not (len(self.panels) == 1 and panel.title == self.title)
 
     def effective_margin_top(self) -> int:
 
-        if any(self.draw_panel_title(panel) for panel in self.panels):
-            return 104
+        first_row_top_content = max(
+            (
+                panel_top_content_height(panel, self.draw_panel_title(panel))
+                for panel in self.row_panels(0)
+            ),
+            default=0,
+        )
+        top_for_figure_title = (
+            FIGURE_TITLE_Y + PLOT.title_font_size + FIGURE_TO_PANEL_TEXT_GAP + first_row_top_content
+        )
 
-        return self.margin_top
+        return max(self.margin_top, top_for_figure_title)
 
 
 def line_panel(
@@ -457,7 +495,7 @@ def legend_svg(panel: SvgPanel, has_panel_title: bool) -> list[str]:
     item_widths = [legend_item_width(label) for label, _kind, _color in items]
     total_width = sum(item_widths)
     x = max(0, panel.width - total_width)
-    y = -6 if has_panel_title else -12
+    y = LEGEND_Y_WITH_PANEL_TITLE if has_panel_title else LEGEND_Y_WITHOUT_PANEL_TITLE
     elements = [f'<g class="legend" transform="translate({x:.3f},{y:.3f})">']
 
     cursor = 0
@@ -508,6 +546,31 @@ def legend_item_svg(x: int, label: str, kind: str, color: str) -> list[str]:
         swatch,
         f'<text class="legend-label" x="{text_x}" y="0">{escape(label)}</text>',
     ]
+
+
+def panel_top_content_height(panel: SvgPanel, has_panel_title: bool) -> int:
+
+    text_height = 0
+
+    if has_panel_title:
+        text_height = max(text_height, abs(PANEL_TITLE_Y) + PLOT.panel_title_font_size)
+
+    if unique_legend_items(panel.series):
+        legend_y = LEGEND_Y_WITH_PANEL_TITLE if has_panel_title else LEGEND_Y_WITHOUT_PANEL_TITLE
+        text_height = max(text_height, abs(legend_y) + PLOT.legend_font_size)
+
+    if panel.y_axis_multiplier is not None:
+        text_height = max(text_height, 8 + PLOT.axis_label_font_size)
+
+    return text_height
+
+
+def panel_bottom_content_depth(panel: SvgPanel) -> int:
+
+    if not panel.show_x_axis:
+        return 0
+
+    return X_AXIS_TITLE_Y_OFFSET + PLOT.axis_title_font_size
 
 
 def axis_multiplier(values: Iterable[float]) -> str | None:

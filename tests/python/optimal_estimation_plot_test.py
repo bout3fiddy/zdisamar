@@ -8,13 +8,21 @@ from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluat
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
 from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
 from zdisamar.plot.optimal_estimation import (
+    JACOBIAN_PANEL_SPACING,
     JACOBIAN_PANEL_WIDTH,
     MEASUREMENT_FIT_HEIGHT,
     MEASUREMENT_RESIDUAL_HEIGHT,
 )
 from zdisamar.plot.profiles import interval_profile_rows
 from zdisamar.plot.properties import PLOT
-from zdisamar.plot.svg import SvgFigure, SvgPanel, SvgSeries
+from zdisamar.plot.svg import (
+    INTER_ROW_TEXT_GAP,
+    PANEL_TITLE_Y,
+    Y_AXIS_TITLE_X,
+    SvgFigure,
+    SvgPanel,
+    SvgSeries,
+)
 
 
 def build_result() -> Result:
@@ -82,7 +90,8 @@ def main() -> int:
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
 
-    fit = result.plot.measurement_fit().to_dict()
+    fit_chart = result.plot.measurement_fit()
+    fit = fit_chart.to_dict()
     fit_spec = json.dumps(fit)
     assert fit["title"]["text"] == "Measurement fit"
     assert len(fit["panels"]) == 2
@@ -93,14 +102,19 @@ def main() -> int:
     assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
     assert fit["panels"][0]["show_x_axis"] is False
     assert fit["panels"][1]["show_x_axis"] is True
-    assert fit["height"] < 800
-    assert fit["height"] == fit["panels"][1]["origin"][1] + MEASUREMENT_RESIDUAL_HEIGHT + 112
+    assert fit["height"] < 900
+    assert (
+        fit["height"]
+        == fit["panels"][1]["origin"][1] + MEASUREMENT_RESIDUAL_HEIGHT + fit_chart.margin_bottom
+    )
     assert fit["panels"][1]["marker_x"] == []
     fit_residual_domain = fit["panels"][1]["y_domain"]
     assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
+    measurement_fit_row_gap = abs(PANEL_TITLE_Y) + PLOT.panel_title_font_size + INTER_ROW_TEXT_GAP
     assert fit["panels"][1]["origin"][1] == (
-        fit["panels"][0]["origin"][1] + MEASUREMENT_FIT_HEIGHT + 44
+        fit["panels"][0]["origin"][1] + MEASUREMENT_FIT_HEIGHT + measurement_fit_row_gap
     )
+    assert fit["panels"][0]["origin"][0] + Y_AXIS_TITLE_X >= 40
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
@@ -117,6 +131,9 @@ def main() -> int:
     assert jacobian["resolve"]["scale"]["y"] == "independent"
     assert jacobian["panels"][0]["width"] == JACOBIAN_PANEL_WIDTH
     assert jacobian["panels"][1]["width"] == JACOBIAN_PANEL_WIDTH
+    assert jacobian["panels"][1]["origin"][0] == (
+        jacobian["panels"][0]["origin"][0] + JACOBIAN_PANEL_WIDTH + JACOBIAN_PANEL_SPACING
+    )
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
     assert "x1e-5" in jacobian_spec

@@ -39,6 +39,7 @@ STATE_DERIVATIVE_TITLES = {
 
 JACOBIAN_PANEL_HEIGHT = 320
 JACOBIAN_PANEL_WIDTH = 520
+JACOBIAN_PANEL_SPACING = 180
 STATE_TRACE_PANEL_HEIGHT = 300
 STATE_TRACE_COLUMNS = 2
 MEASUREMENT_FIT_HEIGHT = 315
@@ -317,7 +318,7 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
         title="Final reflectance Jacobians",
         panels=tuple(panels),
         columns=columns,
-        panel_spacing=112,
+        panel_spacing=JACOBIAN_PANEL_SPACING,
         y_independent=True,
     )
 
