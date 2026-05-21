@@ -232,6 +232,26 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
     assert observed_solar_zenith == [original_solar_zenith]
 
 
+def assert_o2a_case_aerosol_state_properties() -> None:
+
+    from zdisamar.wavelength_bands import o2a
+
+    case = o2a.reference_case()
+    case.aerosol_optical_depth_550_nm = 0.31
+    case.aerosol_layer_pressure_thickness_hpa = 50.0
+    case.aerosol_layer_mid_pressure_hpa = 900.0
+
+    assert case.aerosol.optical_depth_550_nm == 0.31
+    assert case.aerosol_layer_pressure_thickness_hpa == 50.0
+    assert case.aerosol_layer_mid_pressure_hpa == 900.0
+    assert case.aerosol.placement.top_pressure_hpa == 875.0
+    assert case.aerosol.placement.bottom_pressure_hpa == 925.0
+    assert case.atmosphere.intervals[0].bottom_pressure_hpa == 875.0
+    assert case.atmosphere.intervals[1].top_pressure_hpa == 875.0
+    assert case.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
+    assert case.atmosphere.intervals[2].top_pressure_hpa == 925.0
+
+
 def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     from zdisamar.input.wavelength_band.o2a import O2AInput
@@ -608,6 +628,7 @@ def main() -> int:
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
+    assert_o2a_case_aerosol_state_properties()
     assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
     assert_native_oe_marshaling_bounds()

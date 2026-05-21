@@ -49,6 +49,7 @@ def configure_case(case) -> None:
         STRONG_LINE_MAX_DIVISIONS
     )
     case.radiative_transfer.n_streams = ZDISAMAR_N_STREAMS
+    case.aerosol_layer_pressure_thickness_hpa = LAYER_THICKNESS_HPA
 
     for interval in case.atmosphere.intervals:
         if interval.index_1based == 1:
