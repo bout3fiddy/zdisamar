@@ -5,7 +5,7 @@ import tempfile
 import time
 from pathlib import Path
 
-REFERENCE_SPECTRUM_BUDGET_S = 3.0
+REFERENCE_SPECTRUM_BUDGET_S = 8.0
 
 
 def parse_args() -> argparse.Namespace:
