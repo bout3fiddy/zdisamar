@@ -17,6 +17,8 @@ test "default O2A input renders and parses as strict JSON" {
 
     const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
+    try std.testing.expectEqual(null, std.mem.indexOf(u8, json, "layer_center_km"));
+    try std.testing.expectEqual(null, std.mem.indexOf(u8, json, "layer_width_km"));
 
     var parsed = try zdisamar.parseO2AInputJson(std.testing.allocator, json);
     defer parsed.deinit();
@@ -46,6 +48,25 @@ test "O2A JSON rejects unknown fields" {
     try std.testing.expectError(
         error.UnknownField,
         zdisamar.parseO2AInputJson(std.testing.allocator, with_unknown),
+    );
+}
+
+test "O2A JSON rejects legacy aerosol placement fields" {
+    const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+
+    const marker = "\"placement\"";
+    const placement_index = std.mem.indexOf(u8, json, marker) orelse return error.TestUnexpectedResult;
+    const with_legacy = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{s}\"layer_center_km\":5.4,{s}",
+        .{ json[0..placement_index], json[placement_index..] },
+    );
+    defer std.testing.allocator.free(with_legacy);
+
+    try std.testing.expectError(
+        error.UnknownField,
+        zdisamar.parseO2AInputJson(std.testing.allocator, with_legacy),
     );
 }
 

@@ -127,8 +127,8 @@ pub const GeometrySpec = struct {
 };
 
 // layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 96 B across 8 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
+//   size: 80 B, align: 8 B
+//   field storage: 80 B across 6 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -139,8 +139,6 @@ pub const AerosolSpec = struct {
     asymmetry_factor: f64,
     angstrom_exponent: f64,
     reference_wavelength_nm: f64,
-    layer_center_km: f64,
-    layer_width_km: f64,
     placement: AtmosphereModel.IntervalPlacement,
 };
 
@@ -220,13 +218,13 @@ pub const SolarSpectrumSample = struct {
 };
 
 // layout(64-bit):
-//   size: 928 B, align: 8 B
-//   field storage: 924 B across 19 fields; largest: o2=208 B, inputs=192 B, aerosol=96 B; padding: 4 B (32 bits)
+//   size: 912 B, align: 8 B
+//   field storage: 908 B across 19 fields; largest: o2=208 B, inputs=192 B, aerosol=80 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   out-of-line: scene_id, intervals, outputs carry references/descriptors; referenced storage is not included in size
 //   cache span: 15 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 928 B (0.906 KiB); total also includes referenced storage above
+//   footprint: per instance = 912 B (0.891 KiB); total also includes referenced storage above
 pub const ResolvedVendorO2ACase = struct {
     metadata: Metadata,
     plan: PlanSpec,

@@ -51,12 +51,16 @@ class Aerosol:
     asymmetry_factor: float
     angstrom_exponent: float
     reference_wavelength_nm: float
-    layer_center_km: float
-    layer_width_km: float
     placement: AerosolPlacement
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
+
+        legacy_keys = {"layer_center_km", "layer_width_km"}.intersection(data)
+
+        if legacy_keys:
+            joined = ", ".join(sorted(legacy_keys))
+            raise ValueError(f"unsupported aerosol placement fields: {joined}; use placement")
 
         return cls(
             optical_depth_550_nm=to_float(data["optical_depth"]),
@@ -64,8 +68,6 @@ class Aerosol:
             asymmetry_factor=to_float(data["asymmetry_factor"]),
             angstrom_exponent=to_float(data["angstrom_exponent"]),
             reference_wavelength_nm=to_float(data["reference_wavelength_nm"]),
-            layer_center_km=to_float(data["layer_center_km"]),
-            layer_width_km=to_float(data["layer_width_km"]),
             placement=AerosolPlacement.from_dict(object_dict(data["placement"])),
         )
 
@@ -77,7 +79,5 @@ class Aerosol:
             "asymmetry_factor": self.asymmetry_factor,
             "angstrom_exponent": self.angstrom_exponent,
             "reference_wavelength_nm": self.reference_wavelength_nm,
-            "layer_center_km": self.layer_center_km,
-            "layer_width_km": self.layer_width_km,
             "placement": self.placement.to_dict(),
         }

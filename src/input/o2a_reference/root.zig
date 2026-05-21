@@ -119,8 +119,6 @@ pub fn defaultInput() O2AInput {
             .asymmetry_factor = 0.7,
             .angstrom_exponent = 0.0,
             .reference_wavelength_nm = 550.0,
-            .layer_center_km = 5.4,
-            .layer_width_km = 0.4,
             .placement = .{
                 .semantics = .explicit_interval_bounds,
                 .interval_index_1based = 2,

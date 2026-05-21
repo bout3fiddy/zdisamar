@@ -237,6 +237,10 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     from zdisamar.wavelength_bands import o2a
 
     case = o2a.reference_case()
+    serialized_aerosol = case.aerosol.to_dict()
+    assert "layer_center_km" not in serialized_aerosol
+    assert "layer_width_km" not in serialized_aerosol
+
     case.aerosol_optical_depth_550_nm = 0.31
     case.aerosol_layer_pressure_thickness_hpa = 50.0
     case.aerosol_layer_mid_pressure_hpa = 900.0
@@ -250,6 +254,53 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     assert case.atmosphere.intervals[1].top_pressure_hpa == 875.0
     assert case.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
     assert case.atmosphere.intervals[2].top_pressure_hpa == 925.0
+
+    legacy = cast(dict[str, object], copy.deepcopy(serialized_aerosol))
+    legacy["layer_center_km"] = 5.4
+
+    try:
+        o2a.Aerosol.from_dict(legacy)
+    except ValueError as error:
+        assert "unsupported aerosol placement fields" in str(error)
+    else:
+        raise AssertionError("legacy aerosol placement fields were accepted")
+
+    invalid_case = copy.deepcopy(case)
+    invalid_case.aerosol.placement.semantics = "altitude_center_width_approximation"
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=875.0,
+            bottom_pressure_hpa=925.0,
+        )
+    except ValueError as error:
+        assert "explicit interval bounds" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted altitude placement semantics")
+
+    invalid_case = copy.deepcopy(case)
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=math.nan,
+            bottom_pressure_hpa=925.0,
+        )
+    except ValueError as error:
+        assert "finite" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted non-finite pressure")
+
+    invalid_case = copy.deepcopy(case)
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=875.0,
+            bottom_pressure_hpa=1200.0,
+        )
+    except ValueError as error:
+        assert "atmosphere ordering" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted inverted neighboring intervals")
 
 
 def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:

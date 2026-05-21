@@ -75,6 +75,30 @@ class Atmosphere:
         if fit_interval.index_1based != fit_index:
             raise ValueError("atmosphere intervals are not ordered by index")
 
+        if not math.isfinite(top_pressure_hpa) or not math.isfinite(bottom_pressure_hpa):
+            raise ValueError("fit interval pressure bounds must be finite")
+
+        if bottom_pressure_hpa <= top_pressure_hpa:
+            raise ValueError("fit interval bottom pressure must exceed top pressure")
+
+        if fit_index > 1:
+            previous_interval = self.intervals[fit_index - 2]
+
+            if previous_interval.index_1based != fit_index - 1:
+                raise ValueError("atmosphere intervals are not ordered by index")
+
+            if top_pressure_hpa <= previous_interval.top_pressure_hpa:
+                raise ValueError("fit interval top pressure violates atmosphere ordering")
+
+        if fit_index < len(self.intervals):
+            next_interval = self.intervals[fit_index]
+
+            if next_interval.index_1based != fit_index + 1:
+                raise ValueError("atmosphere intervals are not ordered by index")
+
+            if next_interval.bottom_pressure_hpa <= bottom_pressure_hpa:
+                raise ValueError("fit interval bottom pressure violates atmosphere ordering")
+
         fit_interval.top_pressure_hpa = top_pressure_hpa
         fit_interval.bottom_pressure_hpa = bottom_pressure_hpa
 

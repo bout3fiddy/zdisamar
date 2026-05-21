@@ -1,6 +1,7 @@
 """Typed O2 A wavelength-band input object and JSON conversion."""
 
 import json
+import math
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,10 +117,19 @@ class O2AInput(NotebookDisplay):
     ) -> None:
         """Set aerosol layer pressure bounds and keep the fit interval aligned."""
 
+        top_pressure_hpa = float(top_pressure_hpa)
+        bottom_pressure_hpa = float(bottom_pressure_hpa)
+
+        if not math.isfinite(top_pressure_hpa) or not math.isfinite(bottom_pressure_hpa):
+            raise ValueError("aerosol layer pressure bounds must be finite")
+
         if bottom_pressure_hpa <= top_pressure_hpa:
             raise ValueError("aerosol layer bottom pressure must exceed top pressure")
 
         placement = self.aerosol.placement
+
+        if placement.semantics != "explicit_interval_bounds":
+            raise ValueError("aerosol pressure setters require explicit interval bounds placement")
 
         if placement.interval_index_1based != self.atmosphere.fit_interval_index_1based:
             raise ValueError("aerosol placement interval does not match atmosphere fit interval")
@@ -151,8 +161,8 @@ class O2AInput(NotebookDisplay):
             f"relative azimuth {self.geometry.relative_azimuth_deg:g} deg,\n"
             "  aerosol="
             f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
-            f"center {self.aerosol.layer_center_km:g} km, "
-            f"width {self.aerosol.layer_width_km:g} km,\n"
+            f"placement {self.aerosol.placement.top_pressure_hpa:g}-"
+            f"{self.aerosol.placement.bottom_pressure_hpa:g} hPa,\n"
             "  instrument="
             f"{self.instrument_response.instrument_name!r}, "
             f"FWHM {self.instrument_response.instrument_line_fwhm_nm:g} nm, "
