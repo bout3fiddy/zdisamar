@@ -49,6 +49,12 @@ class InstrumentResponse:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
 
+        legacy_keys = {"noise_model"}.intersection(data)
+
+        if legacy_keys:
+            joined = ", ".join(sorted(legacy_keys))
+            raise ValueError(f"unsupported observation fields: {joined}")
+
         return cls(
             instrument_name=str(data["instrument_name"]),
             regime=str(data["regime"]),

@@ -195,6 +195,12 @@ class RadiativeTransferControls:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
 
+        legacy_keys = {"stokes_dimension", "use_adding"}.intersection(data)
+
+        if legacy_keys:
+            joined = ", ".join(sorted(legacy_keys))
+            raise ValueError(f"unsupported radiative-transfer fields: {joined}")
+
         return cls(
             scattering=str(data["scattering"]),
             n_streams=to_int(data["n_streams"]),

@@ -134,12 +134,12 @@ class O2AInput(NotebookDisplay):
         if placement.interval_index_1based != self.atmosphere.fit_interval_index_1based:
             raise ValueError("aerosol placement interval does not match atmosphere fit interval")
 
-        placement.top_pressure_hpa = top_pressure_hpa
-        placement.bottom_pressure_hpa = bottom_pressure_hpa
         self.atmosphere.set_fit_interval_pressure_bounds(
             top_pressure_hpa=top_pressure_hpa,
             bottom_pressure_hpa=bottom_pressure_hpa,
         )
+        placement.top_pressure_hpa = top_pressure_hpa
+        placement.bottom_pressure_hpa = bottom_pressure_hpa
 
     def __repr__(self) -> str:
 
