@@ -65,6 +65,7 @@ def optical_depth_profile(
                 opacity=PLOT.profile_point_opacity,
             ),
         ),
+        show_legend=False,
     )
 
     return SvgFigure(title=title, panels=(panel,))

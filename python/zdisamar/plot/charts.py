@@ -26,6 +26,8 @@ def wavelength_line_chart(
                 (float(row[x_encoding.field]) for row in data),
                 (float(row[y.field]) for row in data),
                 color=color or PLOT.colors["blue"],
+                show_legend=False,
             ),
         ),
+        show_legend=False,
     )

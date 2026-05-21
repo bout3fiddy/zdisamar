@@ -202,6 +202,7 @@ def convergence_figure(result) -> SvgFigure:
             x_domain=iteration_domain(x_values),
             x_ticks=tuple(sorted(set(x_values))),
             marker_x=(),
+            show_legend=False,
         )
         panels.append(panel)
 
@@ -223,12 +224,12 @@ def measurement_fit_figure(result) -> SvgFigure:
     residual = [row["residual"] for row in rows]
     reflectance_values = [*measurement, *retrieved]
     fit_panel = SvgPanel(
-        title="Retrieved model with measurement samples",
+        title="Fit with measurement samples",
         x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
         y_title="Reflectance",
         series=(
             SvgSeries.line(
-                "Retrieved model",
+                "Fit",
                 wavelength,
                 retrieved,
                 color=PLOT.colors["orange"],
@@ -262,6 +263,7 @@ def measurement_fit_figure(result) -> SvgFigure:
         marker_x=False,
         rule_y=(0.0,),
         show_title=False,
+        show_legend=False,
     )
 
     return SvgFigure(
@@ -288,6 +290,7 @@ def residual_figure(result) -> SvgFigure:
         height=PLOT.height,
         marker_x=False,
         rule_y=(0.0,),
+        show_legend=False,
     )
 
     return SvgFigure(title="Final residual", panels=(panel,))
@@ -314,6 +317,7 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
             width=jacobian_panel_width(columns),
             height=JACOBIAN_PANEL_HEIGHT,
             marker_x=False,
+            show_legend=False,
         )
         panels.append(panel)
 

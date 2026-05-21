@@ -17,6 +17,7 @@ def snr(spectrum, noise_table):
         x=column_values(data, fields.WAVELENGTH_NM),
         y=column_values(data, fields.SNR),
         name=title,
+        show_legend=False,
     )
 
     return SvgFigure(title="Signal-to-noise ratio", panels=(panel,))

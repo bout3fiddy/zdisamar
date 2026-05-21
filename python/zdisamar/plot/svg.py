@@ -36,6 +36,7 @@ class SvgSeries:
     dash: tuple[float, ...] = ()
     y2: tuple[float, ...] = ()
     point_size: float = field(default_factory=lambda: PLOT.default_point_size)
+    show_legend: bool = True
 
     @classmethod
     def line(
@@ -48,6 +49,7 @@ class SvgSeries:
         stroke_width: float | None = None,
         opacity: float = 1.0,
         dash: tuple[float, ...] = (),
+        show_legend: bool = True,
     ) -> Self:
 
         return cls(
@@ -59,6 +61,7 @@ class SvgSeries:
             stroke_width=stroke_width or PLOT.line_width,
             opacity=opacity,
             dash=dash,
+            show_legend=show_legend,
         )
 
     @classmethod
@@ -71,6 +74,7 @@ class SvgSeries:
         color: str | None = None,
         point_size: float | None = None,
         opacity: float = 1.0,
+        show_legend: bool = True,
     ) -> Self:
 
         return cls(
@@ -81,6 +85,7 @@ class SvgSeries:
             color=color or PLOT.colors["blue"],
             opacity=opacity,
             point_size=point_size or PLOT.default_point_size,
+            show_legend=show_legend,
         )
 
     @classmethod
@@ -93,6 +98,7 @@ class SvgSeries:
         *,
         color: str | None = None,
         opacity: float | None = None,
+        show_legend: bool = True,
     ) -> Self:
 
         return cls(
@@ -103,6 +109,7 @@ class SvgSeries:
             y2=tuple(float(value) for value in y_high),
             color=color or PLOT.colors["band"],
             opacity=PLOT.noise_band_opacity if opacity is None else opacity,
+            show_legend=show_legend,
         )
 
 
@@ -124,6 +131,7 @@ class SvgPanel:
     y_axis_multiplier: str | None = None
     show_x_axis: bool = True
     show_title: bool = True
+    show_legend: bool = True
 
     def resolved_x_domain(self) -> tuple[float, float]:
 
@@ -179,6 +187,7 @@ class SvgPanel:
             y_axis_multiplier=self.y_axis_multiplier,
             show_x_axis=self.show_x_axis,
             show_title=self.show_title,
+            show_legend=self.show_legend,
         )
 
 
@@ -313,6 +322,7 @@ class SvgFigure:
             "axis_multiplier": panel.y_axis_multiplier,
             "show_x_axis": panel.show_x_axis,
             "show_title": panel.show_title,
+            "show_legend": panel.show_legend,
             "series": [
                 {
                     "name": series.name,
@@ -321,6 +331,7 @@ class SvgFigure:
                     "color": series.color,
                     "stroke_width": series.stroke_width,
                     "opacity": series.opacity,
+                    "show_legend": series.show_legend,
                 }
                 for series in panel.series
             ],
@@ -467,6 +478,8 @@ def line_panel(
     marker_x: bool = True,
     rule_y: tuple[float, ...] = (),
     show_title: bool = True,
+    show_legend: bool = True,
+    series_show_legend: bool = True,
 ) -> SvgPanel:
     """Build one line panel with zdisamar defaults."""
 
@@ -476,23 +489,21 @@ def line_panel(
         title=title,
         x_title=x_title,
         y_title=y_title,
-        series=(SvgSeries.line(name, x, y, color=color),),
+        series=(SvgSeries.line(name, x, y, color=color, show_legend=series_show_legend),),
         width=width or PLOT.width,
         height=height or PLOT.height,
         marker_x=tuple(marker_values(x)) if marker_x else (),
         rule_y=rule_y,
         y_axis_multiplier=y_axis_multiplier,
         show_title=show_title,
+        show_legend=show_legend,
     )
 
 
 def legend_svg(panel: SvgPanel, has_panel_title: bool) -> list[str]:
     """Render one compact per-panel legend above the plotting box."""
 
-    if not panel.series:
-        return []
-
-    items = unique_legend_items(panel.series)
+    items = legend_items(panel)
 
     if not items:
         return []
@@ -514,11 +525,22 @@ def legend_svg(panel: SvgPanel, has_panel_title: bool) -> list[str]:
     return elements
 
 
+def legend_items(panel: SvgPanel) -> list[tuple[str, str, str]]:
+
+    if not panel.show_legend:
+        return []
+
+    return unique_legend_items(panel.series)
+
+
 def unique_legend_items(series: Sequence[SvgSeries]) -> list[tuple[str, str, str]]:
 
     items: list[tuple[str, str, str]] = []
 
     for item in series:
+        if not item.show_legend:
+            continue
+
         key = (item.name, item.kind, item.color)
 
         if key not in items:
@@ -560,7 +582,7 @@ def panel_top_content_height(panel: SvgPanel, has_panel_title: bool) -> int:
     if has_panel_title:
         text_height = max(text_height, abs(PANEL_TITLE_Y) + PLOT.panel_title_font_size)
 
-    if unique_legend_items(panel.series):
+    if legend_items(panel):
         legend_y = LEGEND_Y_WITH_PANEL_TITLE if has_panel_title else LEGEND_Y_WITHOUT_PANEL_TITLE
         text_height = max(text_height, abs(legend_y) + PLOT.legend_font_size)
 

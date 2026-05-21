@@ -85,6 +85,8 @@ def main() -> int:
     assert "Layer mid-pressure (hPa)" in convergence_spec
     assert '"line"' in convergence_spec
     assert '"points"' in convergence_spec
+    assert convergence["panels"][0]["show_legend"] is False
+    assert convergence["panels"][1]["show_legend"] is False
     assert "x1e2" not in convergence_spec
     assert "9e+2" not in convergence_spec
 
@@ -93,6 +95,9 @@ def main() -> int:
     fit_spec = json.dumps(fit)
     assert fit["title"]["text"] == "Measurement fit"
     assert len(fit["panels"]) == 2
+    assert fit["panels"][0]["series"][0]["name"] == "Fit"
+    assert fit["panels"][0]["series"][0]["show_legend"] is True
+    assert "Retrieved model" not in fit_spec
     assert '"points"' in fit_spec
     assert "Residual" in fit_spec
     assert "residual_scaled" not in fit_spec
@@ -102,6 +107,8 @@ def main() -> int:
     assert fit["panels"][1]["show_x_axis"] is True
     assert fit["panels"][0]["show_title"] is False
     assert fit["panels"][1]["show_title"] is False
+    assert fit["panels"][0]["show_legend"] is True
+    assert fit["panels"][1]["show_legend"] is False
     assert fit["height"] < 900
     assert (
         fit["height"]
@@ -120,6 +127,7 @@ def main() -> int:
     assert residual["title"]["text"] == "Final residual"
     assert "residual_scaled" not in residual_spec
     assert residual["panels"][0]["marker_x"] == []
+    assert residual["panels"][0]["show_legend"] is False
     residual_domain = residual["panels"][0]["y_domain"]
     assert residual_domain[0] <= 0.0 <= residual_domain[1]
 
@@ -135,6 +143,8 @@ def main() -> int:
     )
     assert jacobian["panels"][0]["marker_x"] == []
     assert jacobian["panels"][1]["marker_x"] == []
+    assert jacobian["panels"][0]["show_legend"] is False
+    assert jacobian["panels"][1]["show_legend"] is False
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
     assert "x1e-5" in jacobian_spec
@@ -150,15 +160,25 @@ def main() -> int:
     assert flat_tiny_domain[1] < 2.0e-5
 
     with TemporaryDirectory() as directory:
+        fit_path = Path(directory) / "measurement-fit.svg"
+        residual_path = Path(directory) / "residual.svg"
         jacobian_path = Path(directory) / "jacobian.svg"
+        result.plot.measurement_fit().save(fit_path)
+        result.plot.residual().save(residual_path)
         result.plot.jacobian().save(jacobian_path)
+        fit_svg = fit_path.read_text()
+        residual_svg = residual_path.read_text()
         jacobian_svg = jacobian_path.read_text()
 
     assert f".grid {{ stroke: {PLOT.colors['grid']};" in jacobian_svg
     assert f"stroke-opacity: {PLOT.grid_opacity}" in jacobian_svg
     assert f".axis-title {{ font-size: {PLOT.axis_title_font_size}px;" in jacobian_svg
     assert 'class="figure-bg"' in jacobian_svg
-    assert 'class="legend"' in jacobian_svg
+    assert fit_svg.count('class="legend"') == 1
+    assert "Fit</text>" in fit_svg
+    assert "Measurement</text>" in fit_svg
+    assert 'class="legend"' not in residual_svg
+    assert 'class="legend"' not in jacobian_svg
 
     missing_samples_plot = SvgFigure(
         title="Missing samples",
