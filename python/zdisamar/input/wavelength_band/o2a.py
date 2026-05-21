@@ -66,80 +66,10 @@ class O2AInput(NotebookDisplay):
         self.aerosol.optical_depth_550_nm = float(value)
 
     @property
-    def aerosol_layer_pressure_thickness_hpa(self) -> float:
-        """Return the aerosol layer pressure thickness."""
+    def aerosol_layer(self) -> "AerosolLayer":  # noqa: UP037
+        """Return the coupled aerosol-layer placement view."""
 
-        placement = self.aerosol.placement
-
-        return placement.bottom_pressure_hpa - placement.top_pressure_hpa
-
-    @aerosol_layer_pressure_thickness_hpa.setter
-    def aerosol_layer_pressure_thickness_hpa(self, value: float) -> None:
-
-        thickness_hpa = float(value)
-
-        if thickness_hpa <= 0.0:
-            raise ValueError("aerosol layer pressure thickness must be positive")
-
-        mid_pressure_hpa = self.aerosol_layer_mid_pressure_hpa
-        self.set_aerosol_layer_pressure_bounds(
-            top_pressure_hpa=mid_pressure_hpa - 0.5 * thickness_hpa,
-            bottom_pressure_hpa=mid_pressure_hpa + 0.5 * thickness_hpa,
-        )
-
-    @property
-    def aerosol_layer_mid_pressure_hpa(self) -> float:
-        """Return the aerosol layer midpoint pressure for fixed-thickness placement."""
-
-        placement = self.aerosol.placement
-
-        return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
-
-    @aerosol_layer_mid_pressure_hpa.setter
-    def aerosol_layer_mid_pressure_hpa(self, value: float) -> None:
-
-        thickness_hpa = self.aerosol_layer_pressure_thickness_hpa
-
-        if thickness_hpa <= 0.0:
-            raise ValueError("aerosol layer pressure thickness must be positive")
-
-        mid_pressure_hpa = float(value)
-        self.set_aerosol_layer_pressure_bounds(
-            top_pressure_hpa=mid_pressure_hpa - 0.5 * thickness_hpa,
-            bottom_pressure_hpa=mid_pressure_hpa + 0.5 * thickness_hpa,
-        )
-
-    def set_aerosol_layer_pressure_bounds(
-        self,
-        *,
-        top_pressure_hpa: float,
-        bottom_pressure_hpa: float,
-    ) -> None:
-        """Set aerosol layer pressure bounds and keep the fit interval aligned."""
-
-        top_pressure_hpa = float(top_pressure_hpa)
-        bottom_pressure_hpa = float(bottom_pressure_hpa)
-
-        if not math.isfinite(top_pressure_hpa) or not math.isfinite(bottom_pressure_hpa):
-            raise ValueError("aerosol layer pressure bounds must be finite")
-
-        if bottom_pressure_hpa <= top_pressure_hpa:
-            raise ValueError("aerosol layer bottom pressure must exceed top pressure")
-
-        placement = self.aerosol.placement
-
-        if placement.semantics != "explicit_interval_bounds":
-            raise ValueError("aerosol pressure setters require explicit interval bounds placement")
-
-        if placement.interval_index_1based != self.atmosphere.fit_interval_index_1based:
-            raise ValueError("aerosol placement interval does not match atmosphere fit interval")
-
-        self.atmosphere.set_fit_interval_pressure_bounds(
-            top_pressure_hpa=top_pressure_hpa,
-            bottom_pressure_hpa=bottom_pressure_hpa,
-        )
-        placement.top_pressure_hpa = top_pressure_hpa
-        placement.bottom_pressure_hpa = bottom_pressure_hpa
+        return AerosolLayer(self)
 
     def __repr__(self) -> str:
 
@@ -161,8 +91,8 @@ class O2AInput(NotebookDisplay):
             f"relative azimuth {self.geometry.relative_azimuth_deg:g} deg,\n"
             "  aerosol="
             f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
-            f"placement {self.aerosol.placement.top_pressure_hpa:g}-"
-            f"{self.aerosol.placement.bottom_pressure_hpa:g} hPa,\n"
+            f"layer mid-pressure {self.aerosol_layer.mid_pressure_hpa:g} hPa, "
+            f"thickness {self.aerosol_layer.thickness_hpa:g} hPa,\n"
             "  instrument="
             f"{self.instrument_response.instrument_name!r}, "
             f"FWHM {self.instrument_response.instrument_line_fwhm_nm:g} nm, "
@@ -307,3 +237,83 @@ class O2AInput(NotebookDisplay):
             )
 
         return resolved
+
+
+def apply_aerosol_layer_midpoint_and_thickness(
+    case: O2AInput,
+    *,
+    mid_pressure_hpa: float,
+    thickness_hpa: float,
+) -> None:
+    """Apply aerosol-layer placement and keep the fit interval aligned."""
+
+    mid_pressure_hpa = float(mid_pressure_hpa)
+    thickness_hpa = float(thickness_hpa)
+
+    if not math.isfinite(mid_pressure_hpa) or not math.isfinite(thickness_hpa):
+        raise ValueError("aerosol layer pressure values must be finite")
+
+    if thickness_hpa <= 0.0:
+        raise ValueError("aerosol layer pressure thickness must be positive")
+
+    top_pressure_hpa = mid_pressure_hpa - 0.5 * thickness_hpa
+    bottom_pressure_hpa = mid_pressure_hpa + 0.5 * thickness_hpa
+
+    placement = case.aerosol.placement
+
+    if placement.semantics != "explicit_interval_bounds":
+        raise ValueError("aerosol pressure setters require explicit interval bounds placement")
+
+    if placement.interval_index_1based != case.atmosphere.fit_interval_index_1based:
+        raise ValueError("aerosol placement interval does not match atmosphere fit interval")
+
+    case.atmosphere.set_fit_interval_pressure_bounds(
+        top_pressure_hpa=top_pressure_hpa,
+        bottom_pressure_hpa=bottom_pressure_hpa,
+    )
+    placement.top_pressure_hpa = top_pressure_hpa
+    placement.bottom_pressure_hpa = bottom_pressure_hpa
+
+
+class AerosolLayer:
+    """Pressure-layer placement coupled to the atmosphere fit interval."""
+
+    __slots__ = ("case",)
+
+    def __init__(self, case: O2AInput) -> None:
+
+        self.case = case
+
+    @property
+    def mid_pressure_hpa(self) -> float:
+        """Return the aerosol-layer midpoint pressure."""
+
+        placement = self.case.aerosol.placement
+
+        return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
+
+    @mid_pressure_hpa.setter
+    def mid_pressure_hpa(self, value: float) -> None:
+
+        apply_aerosol_layer_midpoint_and_thickness(
+            self.case,
+            mid_pressure_hpa=value,
+            thickness_hpa=self.thickness_hpa,
+        )
+
+    @property
+    def thickness_hpa(self) -> float:
+        """Return the aerosol-layer pressure thickness."""
+
+        placement = self.case.aerosol.placement
+
+        return placement.bottom_pressure_hpa - placement.top_pressure_hpa
+
+    @thickness_hpa.setter
+    def thickness_hpa(self, value: float) -> None:
+
+        apply_aerosol_layer_midpoint_and_thickness(
+            self.case,
+            mid_pressure_hpa=self.mid_pressure_hpa,
+            thickness_hpa=value,
+        )

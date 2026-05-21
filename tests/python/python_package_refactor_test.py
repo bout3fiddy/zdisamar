@@ -242,12 +242,12 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     assert "layer_width_km" not in serialized_aerosol
 
     case.aerosol_optical_depth_550_nm = 0.31
-    case.aerosol_layer_pressure_thickness_hpa = 50.0
-    case.aerosol_layer_mid_pressure_hpa = 900.0
+    case.aerosol_layer.thickness_hpa = 50.0
+    case.aerosol_layer.mid_pressure_hpa = 900.0
 
     assert case.aerosol.optical_depth_550_nm == 0.31
-    assert case.aerosol_layer_pressure_thickness_hpa == 50.0
-    assert case.aerosol_layer_mid_pressure_hpa == 900.0
+    assert case.aerosol_layer.thickness_hpa == 50.0
+    assert case.aerosol_layer.mid_pressure_hpa == 900.0
     assert case.aerosol.placement.top_pressure_hpa == 875.0
     assert case.aerosol.placement.bottom_pressure_hpa == 925.0
     assert case.atmosphere.intervals[0].bottom_pressure_hpa == 875.0
@@ -269,10 +269,7 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     invalid_case.aerosol.placement.semantics = "altitude_center_width_approximation"
 
     try:
-        invalid_case.set_aerosol_layer_pressure_bounds(
-            top_pressure_hpa=875.0,
-            bottom_pressure_hpa=925.0,
-        )
+        invalid_case.aerosol_layer.mid_pressure_hpa = 900.0
     except ValueError as error:
         assert "explicit interval bounds" in str(error)
     else:
@@ -281,10 +278,7 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     invalid_case = copy.deepcopy(case)
 
     try:
-        invalid_case.set_aerosol_layer_pressure_bounds(
-            top_pressure_hpa=math.nan,
-            bottom_pressure_hpa=925.0,
-        )
+        invalid_case.aerosol_layer.mid_pressure_hpa = math.nan
     except ValueError as error:
         assert "finite" in str(error)
     else:
@@ -295,10 +289,7 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     original_bottom_pressure_hpa = invalid_case.aerosol.placement.bottom_pressure_hpa
 
     try:
-        invalid_case.set_aerosol_layer_pressure_bounds(
-            top_pressure_hpa=875.0,
-            bottom_pressure_hpa=1200.0,
-        )
+        invalid_case.aerosol_layer.thickness_hpa = 650.0
     except ValueError as error:
         assert "atmosphere ordering" in str(error)
     else:
