@@ -2,7 +2,10 @@ import argparse
 import math
 import os
 import tempfile
+import time
 from pathlib import Path
+
+REFERENCE_SPECTRUM_BUDGET_S = 3.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +57,21 @@ def main() -> int:
             # starts native worker threads. Without libc/pthread linkage in the
             # shared library, Linux can fail here even when the same code works
             # as a standalone Zig executable or on macOS.
+            reference_spectrum_start_s = time.perf_counter()
             reference_spectrum = rtm.spectrum(reference_case)
+            reference_spectrum_s = time.perf_counter() - reference_spectrum_start_s
+            print(
+                f"reference_spectrum_s={reference_spectrum_s:.6f} "
+                f"budget_s={REFERENCE_SPECTRUM_BUDGET_S:.1f}",
+                flush=True,
+            )
+
+            if reference_spectrum_s > REFERENCE_SPECTRUM_BUDGET_S:
+                raise AssertionError(
+                    "rtm.spectrum(reference_case) exceeded wheel smoke latency budget: "
+                    f"{reference_spectrum_s:.3f}s > {REFERENCE_SPECTRUM_BUDGET_S:.1f}s"
+                )
+
             assert len(reference_spectrum.wavelength_nm) == 701
             assert all(math.isfinite(value) for value in reference_spectrum.reflectance)
             assert sum(1 for value in reference_spectrum.reflectance if value != 0.0) == 701
