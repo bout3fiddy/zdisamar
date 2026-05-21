@@ -1,7 +1,6 @@
 const std = @import("std");
 const jacobian = @import("../../jacobian/root.zig");
 const InstrumentProviders = @import("../../implementations/instrument.zig");
-const NoiseProviders = @import("../../implementations/noise.zig");
 const SurfaceProviders = @import("../../implementations/surface.zig");
 const TransportProviders = @import("../../implementations/transport.zig");
 
@@ -12,17 +11,16 @@ pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 // Bound implementation implementations used by instrument grid evaluation.
 // layout(64-bit):
-//   size: 168 B, align: 8 B
-//   field storage: transport=64 B, surface=24 B, instrument=48 B, noise=32 B; padding: 0 B (0 bits)
+//   size: 136 B, align: 8 B
+//   field storage: transport=64 B, surface=24 B, instrument=48 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
+//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
 pub const Implementations = struct {
     transport: TransportProviders.Implementation,
     surface: SurfaceProviders.Implementation,
     instrument: InstrumentProviders.Implementation,
-    noise: NoiseProviders.Implementation,
 };
 
 // Measurement-space summary statistics for one spectral sweep.
@@ -40,7 +38,6 @@ pub const InstrumentGridSummary = struct {
     mean_radiance: f64,
     mean_irradiance: f64,
     mean_reflectance: f64,
-    mean_noise_sigma: f64,
     mean_jacobian: ?jacobian.Vector = null,
 };
 
@@ -59,23 +56,19 @@ pub const ForwardIntegratedSample = struct {
 
 // Measurement-space product arrays and associated bulk optical properties.
 // layout(64-bit):
-//   size: 320 B, align: 8 B
-//   field storage: 320 B across 21 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
+//   size: 272 B, align: 8 B
+//   field storage: 272 B across 18 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, noise_sigma, +3 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 320 B (0.312 KiB); total also includes referenced storage above
+//   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
 pub const InstrumentGridProduct = struct {
     summary: InstrumentGridSummary,
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
     reflectance: []f64,
-    noise_sigma: []f64,
-    radiance_noise_sigma: []f64 = &.{},
-    irradiance_noise_sigma: []f64 = &.{},
-    reflectance_noise_sigma: []f64 = &.{},
     jacobian: ?[]f64 = null,
     effective_air_mass_factor: f64,
     effective_single_scatter_albedo: f64,
@@ -84,7 +77,6 @@ pub const InstrumentGridProduct = struct {
     gas_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
-    cloud_optical_depth: f64,
     total_optical_depth: f64,
     depolarization_factor: f64,
     d_optical_depth_d_temperature: f64,
@@ -94,10 +86,6 @@ pub const InstrumentGridProduct = struct {
         allocator.free(self.radiance);
         allocator.free(self.irradiance);
         allocator.free(self.reflectance);
-        allocator.free(self.noise_sigma);
-        if (self.radiance_noise_sigma.len != 0 and self.radiance_noise_sigma.ptr != self.noise_sigma.ptr) allocator.free(self.radiance_noise_sigma);
-        if (self.irradiance_noise_sigma.len != 0) allocator.free(self.irradiance_noise_sigma);
-        if (self.reflectance_noise_sigma.len != 0) allocator.free(self.reflectance_noise_sigma);
         if (self.jacobian) |values| allocator.free(values);
         self.* = undefined;
     }
@@ -105,23 +93,19 @@ pub const InstrumentGridProduct = struct {
 
 // Borrowed instrument grid outputs backed by a reusable product storage.
 // layout(64-bit):
-//   size: 328 B, align: 8 B
-//   field storage: 321 B across 22 fields; largest: summary=88 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
+//   size: 280 B, align: 8 B
+//   field storage: 273 B across 19 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, noise_sigma, +3 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 6 cache line(s) at 64 B per line
+//   out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced storage is not included in size
+//   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 328 B (0.320 KiB); total also includes referenced storage above
+//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
 pub const InstrumentGridProductView = struct {
     summary: InstrumentGridSummary,
     wavelengths: []const f64,
     radiance: []const f64,
     irradiance: []const f64,
     reflectance: []const f64,
-    noise_sigma: []const f64,
-    radiance_noise_sigma: []const f64 = &.{},
-    irradiance_noise_sigma: []const f64 = &.{},
-    reflectance_noise_sigma: []const f64 = &.{},
     // Borrowed workspace Jacobians are state-major and contain only the active
     // derivative states. The default owned product keeps the public full-state
     // row-major shape; requested-state API paths clone compact row-major output
@@ -135,7 +119,6 @@ pub const InstrumentGridProductView = struct {
     gas_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
-    cloud_optical_depth: f64,
     total_optical_depth: f64,
     depolarization_factor: f64,
     d_optical_depth_d_temperature: f64,
@@ -157,17 +140,6 @@ pub const InstrumentGridProductView = struct {
         errdefer allocator.free(irradiance);
         const reflectance = try cloneF64Slice(allocator, self.reflectance);
         errdefer allocator.free(reflectance);
-        const noise_sigma = try cloneF64Slice(allocator, self.noise_sigma);
-        errdefer allocator.free(noise_sigma);
-        const radiance_noise_sigma = if (self.radiance_noise_sigma.ptr == self.noise_sigma.ptr)
-            noise_sigma
-        else
-            try cloneF64Slice(allocator, self.radiance_noise_sigma);
-        errdefer if (radiance_noise_sigma.ptr != noise_sigma.ptr) allocator.free(radiance_noise_sigma);
-        const irradiance_noise_sigma = try cloneF64Slice(allocator, self.irradiance_noise_sigma);
-        errdefer allocator.free(irradiance_noise_sigma);
-        const reflectance_noise_sigma = try cloneF64Slice(allocator, self.reflectance_noise_sigma);
-        errdefer allocator.free(reflectance_noise_sigma);
         const jacobian_values = if (self.jacobian) |values| blk: {
             if (output_states.len == 0) {
                 break :blk try cloneExpandedJacobian(allocator, values, self.jacobian_state_mask, self.wavelengths.len);
@@ -188,10 +160,6 @@ pub const InstrumentGridProductView = struct {
             .radiance = radiance,
             .irradiance = irradiance,
             .reflectance = reflectance,
-            .noise_sigma = noise_sigma,
-            .radiance_noise_sigma = radiance_noise_sigma,
-            .irradiance_noise_sigma = irradiance_noise_sigma,
-            .reflectance_noise_sigma = reflectance_noise_sigma,
             .jacobian = jacobian_values,
             .effective_air_mass_factor = self.effective_air_mass_factor,
             .effective_single_scatter_albedo = self.effective_single_scatter_albedo,
@@ -200,7 +168,6 @@ pub const InstrumentGridProductView = struct {
             .gas_optical_depth = self.gas_optical_depth,
             .cia_optical_depth = self.cia_optical_depth,
             .aerosol_optical_depth = self.aerosol_optical_depth,
-            .cloud_optical_depth = self.cloud_optical_depth,
             .total_optical_depth = self.total_optical_depth,
             .depolarization_factor = self.depolarization_factor,
             .d_optical_depth_d_temperature = self.d_optical_depth_d_temperature,

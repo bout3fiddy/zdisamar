@@ -20,23 +20,12 @@ test "layer depolarization uses already-fraction-scaled particle taus" {
                 .values = &.{0.25},
             },
         },
-        .cloud = .{
-            .enabled = true,
-            .asymmetry_factor = 0.85,
-            .fraction = .{
-                .enabled = true,
-                .target = .cloud,
-                .kind = .wavel_independent,
-                .values = &.{0.50},
-            },
-        },
     };
 
-    const depolarization = computeLayerDepolarization(&scene, 0.60, 0.20, 0.20);
+    const depolarization = computeLayerDepolarization(&scene, 0.60, 0.20);
     const expected =
-        0.60 * 0.0279 +
-        0.20 * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor)) +
-        0.20 * (0.01 + 0.01 * (1.0 - scene.cloud.asymmetry_factor));
+        0.75 * 0.0279 +
+        0.25 * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor));
 
     try std.testing.expectApproxEqRel(expected, depolarization, 1.0e-12);
 }

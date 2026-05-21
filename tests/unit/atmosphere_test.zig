@@ -4,7 +4,6 @@ const AtmosphereModel = internal.atmosphere;
 
 const Atmosphere = AtmosphereModel.Atmosphere;
 const VerticalInterval = AtmosphereModel.VerticalInterval;
-const Subcolumn = AtmosphereModel.Subcolumn;
 const FractionControl = AtmosphereModel.FractionControl;
 
 test "atmosphere validates profile source and positive surface pressure" {
@@ -59,7 +58,7 @@ test "atmosphere accepts explicit pressure-bounded intervals and fit interval st
     }).validate();
 }
 
-test "atmosphere rejects malformed interval and subcolumn metadata" {
+test "atmosphere rejects malformed interval metadata" {
     try std.testing.expectError(
         error.InvalidRequest,
         (Atmosphere{
@@ -149,23 +148,6 @@ test "atmosphere rejects malformed interval and subcolumn metadata" {
             },
         }).validate(),
     );
-    try std.testing.expectError(
-        error.InvalidRequest,
-        (Atmosphere{
-            .layer_count = 1,
-            .subcolumns = .{
-                .enabled = true,
-                .subcolumns = &.{
-                    Subcolumn{
-                        .index_1based = 1,
-                        .label = .boundary_layer,
-                        .bottom_altitude_km = 2.0,
-                        .top_altitude_km = 1.0,
-                    },
-                },
-            },
-        }).validate(),
-    );
 }
 
 fn cloneFractionControlWithAllocator(allocator: std.mem.Allocator) !void {
@@ -173,7 +155,6 @@ fn cloneFractionControlWithAllocator(allocator: std.mem.Allocator) !void {
         .enabled = true,
         .target = .aerosol,
         .kind = .wavel_dependent,
-        .threshold_cloud_fraction = 0.25,
         .threshold_variance = 0.1,
         .wavelengths_nm = &.{ 760.0, 761.0 },
         .values = &.{ 0.20, 0.60 },

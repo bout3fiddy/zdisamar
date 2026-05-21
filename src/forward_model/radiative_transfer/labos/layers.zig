@@ -602,10 +602,8 @@ pub fn calcRTlayersIntoWithBasis(
             break :z basis.fillZplusZminFromWeightedPhaseLimited(
                 i_fourier,
                 phase.aerosol_weight,
-                phase.cloud_weight,
                 phase.rayleigh2_weight,
                 phase.aerosol_phase_coefficients,
-                phase.cloud_phase_coefficients,
                 max_phase_index,
                 geo,
                 plm_basis,

@@ -12,19 +12,10 @@ pub fn assemble(
 ) State.PreparedOpticalState {
     const scene = context.scene;
     const means = accumulation.means;
-    const aerosol_phase_support = if (context.aerosol_mie != null)
-        PhaseSupportKind.mie_table
-    else if (scene.aerosol.enabled)
+    const aerosol_phase_support = if (scene.aerosol.enabled)
         PhaseSupportKind.analytic_hg
     else
         PhaseSupportKind.none;
-    const cloud_phase_support = if (context.cloud_mie != null)
-        PhaseSupportKind.mie_table
-    else if (scene.cloud.enabled)
-        PhaseSupportKind.analytic_hg
-    else
-        PhaseSupportKind.none;
-
     var prepared: State.PreparedOpticalState = .{
         .layers = context.layers,
         .sublayers = context.sublayers,
@@ -57,16 +48,8 @@ pub fn assemble(
         .cia_mean_cross_section_cm5_per_molecule2 = means.cia_mean_cross_section_cm5_per_molecule2,
         .effective_air_mass_factor = means.effective_air_mass_factor,
         .effective_single_scatter_albedo = means.effective_single_scatter_albedo,
-        .aerosol_single_scatter_albedo = if (context.aerosol_mie) |table|
-            table.interpolate(context.midpoint_nm).single_scatter_albedo
-        else
-            scene.aerosol.single_scatter_albedo,
-        .cloud_single_scatter_albedo = if (context.cloud_mie) |table|
-            table.interpolate(context.midpoint_nm).single_scatter_albedo
-        else
-            scene.cloud.single_scatter_albedo,
+        .aerosol_single_scatter_albedo = scene.aerosol.single_scatter_albedo,
         .aerosol_phase_coefficients = context.aerosol_phase_coefficients,
-        .cloud_phase_coefficients = context.cloud_phase_coefficients,
         .effective_temperature_k = means.effective_temperature_k,
         .effective_pressure_hpa = means.effective_pressure_hpa,
         .air_column_density_factor = means.air_column_density_factor,
@@ -75,24 +58,17 @@ pub fn assemble(
         .cia_pair_path_factor_cm5 = means.cia_pair_path_factor_cm5,
         .aerosol_reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
         .aerosol_angstrom_exponent = scene.aerosol.angstrom_exponent,
-        .cloud_reference_wavelength_nm = scene.cloud.reference_wavelength_nm,
-        .cloud_angstrom_exponent = scene.cloud.angstrom_exponent,
         .gas_optical_depth = means.gas_optical_depth,
         .cia_optical_depth = means.cia_optical_depth,
         .aerosol_optical_depth = means.aerosol_optical_depth,
         .aerosol_base_optical_depth = means.aerosol_base_optical_depth,
-        .cloud_optical_depth = means.cloud_optical_depth,
-        .cloud_base_optical_depth = means.cloud_base_optical_depth,
         .d_optical_depth_d_temperature = means.d_optical_depth_d_temperature,
         .depolarization_factor = means.depolarization_factor,
         .total_optical_depth = means.total_optical_depth,
         .interval_semantics = scene.atmosphere.interval_grid.semantics,
         .fit_interval_index_1based = scene.atmosphere.interval_grid.fit_interval_index_1based,
-        .subcolumn_semantics_enabled = scene.atmosphere.subcolumns.enabled,
         .aerosol_phase_support = aerosol_phase_support,
-        .cloud_phase_support = cloud_phase_support,
         .aerosol_fraction_control = context.aerosol_fraction_control,
-        .cloud_fraction_control = context.cloud_fraction_control,
     };
     prepared.spectroscopy_plan_key = if (context.borrowed_spectroscopy_plan_key != 0)
         context.borrowed_spectroscopy_plan_key
@@ -115,7 +91,6 @@ pub fn assemble(
     context.owns_collision_induced_absorption = false;
     context.spectroscopy_lines = null;
     context.aerosol_fraction_control = .{};
-    context.cloud_fraction_control = .{};
     context.operational_o2_lut = .{};
     context.operational_o2o2_lut = .{};
 

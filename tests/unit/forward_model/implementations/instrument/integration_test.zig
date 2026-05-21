@@ -24,7 +24,6 @@ test "high-resolution integration retains the full symmetric sampling span" {
         .observation_model = .{
             .instrument = .tropomi,
             .sampling = .native,
-            .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.01,
             .high_resolution_half_span_nm = 0.40,
@@ -41,81 +40,6 @@ test "high-resolution integration retains the full symmetric sampling span" {
     try std.testing.expectApproxEqAbs(kernel.weights[0], kernel.weights[kernel.sample_count - 1], 1e-12);
 }
 
-test "disamar hr grid realizes Gauss-weighted support instead of the uniform explicit lattice" {
-    const scene: Scene = .{
-        .spectral_grid = .{
-            .start_nm = 755.0,
-            .end_nm = 765.0,
-            .sample_count = 101,
-        },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .sampling = .native,
-            .noise_model = .shot_noise,
-            .instrument_line_fwhm_nm = 0.38,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 1.14,
-            .adaptive_reference_grid = .{
-                .points_per_fwhm = 40,
-                .strong_line_min_divisions = 40,
-                .strong_line_max_divisions = 40,
-            },
-            .measurement_pipeline = .{
-                .irradiance = .{
-                    .explicit = true,
-                    .response = .{
-                        .explicit = true,
-                        .integration_mode = .disamar_hr_grid,
-                        .fwhm_nm = 0.38,
-                        .high_resolution_step_nm = 0.01,
-                        .high_resolution_half_span_nm = 1.14,
-                    },
-                },
-            },
-        },
-    };
-
-    var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, null, .irradiance, 755.0, &kernel);
-
-    try std.testing.expect(kernel.enabled);
-    try std.testing.expectEqual(@as(usize, 201), kernel.sample_count);
-    try std.testing.expectApproxEqAbs(@as(f64, -0.759665164845), kernel.offsets_nm[0], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.1403348351549), kernel.offsets_nm[kernel.sample_count - 1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), kernel.weights[kernel.sample_count - 1], 1.0e-12);
-}
-
-test "disamar hr grid fails fast when the realized kernel cannot be built" {
-    const scene: Scene = .{
-        .spectral_grid = .{
-            .start_nm = 755.0,
-            .end_nm = 765.0,
-            .sample_count = 101,
-        },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .sampling = .operational,
-            .noise_model = .shot_noise,
-            .measurement_pipeline = .{
-                .radiance = .{
-                    .explicit = true,
-                    .response = .{
-                        .explicit = true,
-                        .integration_mode = .disamar_hr_grid,
-                        .fwhm_nm = 0.0,
-                    },
-                },
-            },
-        },
-    };
-
-    var kernel: IntegrationKernel = undefined;
-    try std.testing.expectError(
-        Error.DisamarKernelRealizationFailed,
-        integrationForWavelengthChecked(&scene, null, .radiance, 760.0, &kernel),
-    );
-}
-
 test "measured-channel sampling bypasses legacy post-convolution even without explicit slit metadata" {
     const scene: Scene = .{
         .spectral_grid = .{
@@ -126,9 +50,7 @@ test "measured-channel sampling bypasses legacy post-convolution even without ex
         .observation_model = .{
             .instrument = .{ .custom = "measured" },
             .sampling = .measured_channels,
-            .noise_model = .snr_from_input,
             .measured_wavelengths_nm = &.{ 760.81, 761.03, 761.19 },
-            .ingested_noise_sigma = &.{ 0.02, 0.02, 0.02 },
         },
     };
 
@@ -180,7 +102,6 @@ test "dense adaptive strong-line windows do not fall back to the five-point kern
         .observation_model = .{
             .instrument = .{ .custom = "dense-adaptive" },
             .sampling = .native,
-            .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
             .adaptive_reference_grid = .{
                 .points_per_fwhm = 20,

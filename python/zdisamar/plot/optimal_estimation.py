@@ -38,6 +38,8 @@ STATE_DERIVATIVE_TITLES = {
 }
 
 JACOBIAN_PANEL_HEIGHT = 320
+JACOBIAN_PANEL_WIDTH = 520
+JACOBIAN_PANEL_SPACING = 180
 STATE_TRACE_PANEL_HEIGHT = 300
 STATE_TRACE_COLUMNS = 2
 MEASUREMENT_FIT_HEIGHT = 315
@@ -200,6 +202,7 @@ def convergence_figure(result) -> SvgFigure:
             x_domain=iteration_domain(x_values),
             x_ticks=tuple(sorted(set(x_values))),
             marker_x=(),
+            show_legend=False,
         )
         panels.append(panel)
 
@@ -221,12 +224,12 @@ def measurement_fit_figure(result) -> SvgFigure:
     residual = [row["residual"] for row in rows]
     reflectance_values = [*measurement, *retrieved]
     fit_panel = SvgPanel(
-        title="Retrieved model with measurement samples",
+        title="Fit with measurement samples",
         x_title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
         y_title="Reflectance",
         series=(
             SvgSeries.line(
-                "Retrieved model",
+                "Fit",
                 wavelength,
                 retrieved,
                 color=PLOT.colors["orange"],
@@ -244,6 +247,8 @@ def measurement_fit_figure(result) -> SvgFigure:
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
         y_axis_multiplier=axis_multiplier(reflectance_values),
+        show_x_axis=False,
+        show_title=False,
     )
     residual_panel = line_panel(
         title="Residual",
@@ -257,6 +262,8 @@ def measurement_fit_figure(result) -> SvgFigure:
         height=MEASUREMENT_RESIDUAL_HEIGHT,
         marker_x=False,
         rule_y=(0.0,),
+        show_title=False,
+        show_legend=False,
     )
 
     return SvgFigure(
@@ -283,6 +290,7 @@ def residual_figure(result) -> SvgFigure:
         height=PLOT.height,
         marker_x=False,
         rule_y=(0.0,),
+        show_legend=False,
     )
 
     return SvgFigure(title="Final residual", panels=(panel,))
@@ -306,8 +314,10 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
             y=values,
             name=derivative_title,
             color=state_color_at(index),
-            width=panel_width(columns),
+            width=jacobian_panel_width(columns),
             height=JACOBIAN_PANEL_HEIGHT,
+            marker_x=False,
+            show_legend=False,
         )
         panels.append(panel)
 
@@ -315,7 +325,7 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
         title="Final reflectance Jacobians",
         panels=tuple(panels),
         columns=columns,
-        panel_spacing=112,
+        panel_spacing=JACOBIAN_PANEL_SPACING,
         y_independent=True,
     )
 
@@ -404,3 +414,11 @@ def iteration_domain(values: list[float]) -> tuple[float, float]:
 def panel_width(columns: int) -> int:
 
     return max(300, int(PLOT.diagnostic_width / max(1, columns)) - 35)
+
+
+def jacobian_panel_width(columns: int) -> int:
+
+    if columns <= 1:
+        return PLOT.diagnostic_width
+
+    return JACOBIAN_PANEL_WIDTH

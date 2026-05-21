@@ -17,6 +17,8 @@ test "default O2A input renders and parses as strict JSON" {
 
     const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
+    try std.testing.expectEqual(null, std.mem.indexOf(u8, json, "layer_center_km"));
+    try std.testing.expectEqual(null, std.mem.indexOf(u8, json, "layer_width_km"));
 
     var parsed = try zdisamar.parseO2AInputJson(std.testing.allocator, json);
     defer parsed.deinit();
@@ -49,6 +51,25 @@ test "O2A JSON rejects unknown fields" {
     );
 }
 
+test "O2A JSON rejects legacy aerosol placement fields" {
+    const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+
+    const marker = "\"placement\"";
+    const placement_index = std.mem.indexOf(u8, json, marker) orelse return error.TestUnexpectedResult;
+    const with_legacy = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{s}\"layer_center_km\":5.4,{s}",
+        .{ json[0..placement_index], json[placement_index..] },
+    );
+    defer std.testing.allocator.free(with_legacy);
+
+    try std.testing.expectError(
+        error.UnknownField,
+        zdisamar.parseO2AInputJson(std.testing.allocator, with_legacy),
+    );
+}
+
 test "O2A input validation rejects invalid sampling and assets" {
     var input = zdisamar.defaultO2AInput();
     input.spectral_grid.sample_count = 1;
@@ -61,7 +82,6 @@ test "O2A input validation rejects invalid sampling and assets" {
 
 test "O2A input validation consumes plan fields" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_solver_mode = "scalar";
     input.plan.execution_derivative_mode = "none";
     try zdisamar.o2a.validateInput(&input);
 
@@ -74,10 +94,6 @@ test "O2A input validation consumes plan fields" {
     try std.testing.expectError(error.UnsupportedTransportSolver, zdisamar.o2a.validateInput(&input));
 
     input = zdisamar.defaultO2AInput();
-    input.plan.execution_solver_mode = "unsupported";
-    try std.testing.expectError(error.UnsupportedExecutionMode, zdisamar.o2a.validateInput(&input));
-
-    input = zdisamar.defaultO2AInput();
     input.plan.execution_derivative_mode = "unsupported";
     try std.testing.expectError(error.UnsupportedDerivativeMode, zdisamar.o2a.validateInput(&input));
 
@@ -88,7 +104,6 @@ test "O2A input validation consumes plan fields" {
 
 test "O2A plan modes are consumed when preparing the route" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_solver_mode = "scalar";
     input.plan.execution_derivative_mode = "none";
 
     var prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
@@ -104,16 +119,8 @@ test "O2A plan modes are consumed when preparing the route" {
     try std.testing.expectEqual(.semi_analytical, jacobian_prepared.route.derivative_mode);
 }
 
-test "O2A route preparation rejects unsupported plan modes" {
+test "O2A route preparation rejects unsupported derivative mode" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_solver_mode = "unsupported";
-
-    try std.testing.expectError(
-        error.UnsupportedExecutionMode,
-        zdisamar.prepareO2A(std.testing.allocator, &input),
-    );
-
-    input = zdisamar.defaultO2AInput();
     input.plan.execution_derivative_mode = "unsupported";
 
     try std.testing.expectError(

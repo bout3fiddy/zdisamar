@@ -7,9 +7,9 @@ pub const FractionTarget = types.FractionTarget;
 pub const FractionKind = types.FractionKind;
 
 // layout(64-bit):
-//   size: 88 B, align: 8 B
-//   field storage: 84 B across 10 fields; largest: wavelengths_nm=16 B, values=16 B, apriori_values=16 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 14 bool-storage slack = 46 bits
+//   size: 80 B, align: 8 B
+//   field storage: 76 B across 9 fields; largest: wavelengths_nm=16 B, values=16 B, apriori_values=16 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
 //   out-of-line: wavelengths_nm, values, apriori_values, variance_values carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -18,7 +18,6 @@ pub const FractionControl = struct {
     enabled: bool = false,
     target: FractionTarget = .none,
     kind: FractionKind = .none,
-    threshold_cloud_fraction: f64 = 0.0,
     threshold_variance: f64 = 0.0,
     wavelengths_nm: []const f64 = &.{},
     values: []const f64 = &.{},
@@ -57,9 +56,6 @@ pub const FractionControl = struct {
                 if (wavelength_nm <= previous_wavelength_nm) return errors.Error.InvalidRequest;
                 previous_wavelength_nm = wavelength_nm;
             }
-        }
-        if (self.threshold_cloud_fraction < 0.0 or self.threshold_cloud_fraction > 1.0) {
-            return errors.Error.InvalidRequest;
         }
         if (self.threshold_variance < 0.0) return errors.Error.InvalidRequest;
     }
@@ -118,7 +114,6 @@ pub const FractionControl = struct {
             .enabled = self.enabled,
             .target = self.target,
             .kind = self.kind,
-            .threshold_cloud_fraction = self.threshold_cloud_fraction,
             .threshold_variance = self.threshold_variance,
             .wavelengths_nm = wavelengths_nm,
             .values = values,

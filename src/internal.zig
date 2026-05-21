@@ -159,7 +159,6 @@ pub const forward_model = struct {
             pub const calibration = @import("forward_model/instrument_grid/spectral_math/calibration.zig");
             pub const convolution = @import("forward_model/instrument_grid/spectral_math/convolution.zig");
             pub const grid = @import("forward_model/instrument_grid/spectral_math/grid.zig");
-            pub const noise = @import("forward_model/instrument_grid/spectral_math/noise.zig");
             pub const sampling = @import("forward_model/instrument_grid/spectral_math/sampling.zig");
         };
     };
@@ -217,7 +216,6 @@ pub const forward_model = struct {
         pub const instrument_integration = @import("forward_model/implementations/instrument/integration.zig");
         pub const Surface = @import("forward_model/implementations/surface.zig");
         pub const Transport = @import("forward_model/implementations/transport.zig");
-        pub const Noise = @import("forward_model/implementations/noise.zig");
 
         pub fn exact() Bindings {
             return root.exact();

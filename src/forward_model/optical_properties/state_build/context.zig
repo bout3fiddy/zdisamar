@@ -24,8 +24,6 @@ pub const PreparationInputs = struct {
     lut: *const ReferenceData.AirmassFactorLut,
     collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList = null,
-    aerosol_mie: ?*const ReferenceData.MiePhaseTable = null,
-    cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
     borrowed_profile_preparation: ?*const BorrowedProfilePreparation = null,
     borrow_continuum_points: bool = false,
     borrow_collision_induced_absorption: bool = false,
@@ -72,14 +70,14 @@ pub const BorrowedProfilePreparation = struct {
 };
 
 // layout(64-bit):
-//   size: 3448 B, align: 8 B
-//   field storage: 3443 B across 29 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, vertical_grid=256 B; padding: 5 B (40 bits)
+//   size: 2096 B, align: 8 B
+//   field storage: 2091 B across 25 fields; largest: aerosol_phase_coefficients=1208 B, vertical_grid=256 B; padding: 5 B (40 bits)
 //   unused bits: 40 padding + 21 bool-storage slack = 61 bits
-//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
-//   out-of-line: scene, profile, cross_sections, lut, aerosol_mie, +9 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 54 cache line(s) at 64 B per line
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B
+//   out-of-line: scene, profile, cross_sections, lut, collision_induced_absorption, +9 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 33 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3448 B (3.367 KiB); total also includes referenced storage above
+//   footprint: per instance = 2096 B (2.047 KiB); total also includes referenced storage above
 pub const PreparationContext = struct {
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
@@ -88,8 +86,6 @@ pub const PreparationContext = struct {
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     owns_collision_induced_absorption: bool = true,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
-    aerosol_mie: ?*const ReferenceData.MiePhaseTable = null,
-    cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
     vertical_grid: VerticalGrid.OwnedVerticalGrid = undefined,
     layers: []State.PreparedLayer = &.{},
     sublayers: []State.PreparedSublayer = &.{},
@@ -104,9 +100,7 @@ pub const PreparationContext = struct {
     borrowed_spectroscopy_plan_key: u64 = 0,
     borrowed_spectroscopy_profile_cache_inputs_key: u64 = 0,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
-    cloud_fraction_control: AtmosphereModel.FractionControl = .{},
     aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
-    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
     midpoint_nm: f64 = 0.0,
@@ -131,7 +125,6 @@ pub const PreparationContext = struct {
             owned.deinit(allocator);
         }
         self.aerosol_fraction_control.deinitOwned(allocator);
-        self.cloud_fraction_control.deinitOwned(allocator);
         if (self.operational_o2_lut.enabled()) {
             var owned = self.operational_o2_lut;
             owned.deinitOwned(allocator);
@@ -225,9 +218,6 @@ pub fn init(
 
     var aerosol_fraction_control = try scene.aerosol.fraction.clone(allocator);
     errdefer aerosol_fraction_control.deinitOwned(allocator);
-    var cloud_fraction_control = try scene.cloud.fraction.clone(allocator);
-    errdefer cloud_fraction_control.deinitOwned(allocator);
-
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = if (operational_band_support.o2_operational_lut.enabled())
         try operational_band_support.o2_operational_lut.clone(allocator)
@@ -254,8 +244,6 @@ pub fn init(
         .collision_induced_absorption = collision_induced_absorption,
         .owns_collision_induced_absorption = owns_collision_induced_absorption,
         .spectroscopy_lines = spectroscopy_lines,
-        .aerosol_mie = inputs.aerosol_mie,
-        .cloud_mie = inputs.cloud_mie,
         .vertical_grid = vertical_grid,
         .layers = layers,
         .sublayers = sublayers,
@@ -270,7 +258,6 @@ pub fn init(
         .borrowed_spectroscopy_plan_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_plan_key else 0,
         .borrowed_spectroscopy_profile_cache_inputs_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_profile_cache_inputs_key else 0,
         .aerosol_fraction_control = aerosol_fraction_control,
-        .cloud_fraction_control = cloud_fraction_control,
         .operational_o2_lut = operational_o2_lut,
         .operational_o2o2_lut = operational_o2o2_lut,
         .midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,

@@ -16,6 +16,7 @@ def reflectance_jacobian(spectrum, state: str):
         y=[float(row[y_field]) for row in rows],
         name=f"{y_title}: {state}",
         color=PLOT.colors["blue"],
+        show_legend=False,
     )
 
     return SvgFigure(title=f"{y_title}: {state}", panels=(panel,))

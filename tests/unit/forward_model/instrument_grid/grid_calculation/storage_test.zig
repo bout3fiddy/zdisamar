@@ -6,7 +6,6 @@ const common = internal.forward_model.radiative_transfer;
 const storage = internal.forward_model.instrument_grid.storage;
 const transportLayerCountHint = storage.transportLayerCountHint;
 const pseudoSphericalSampleCountHint = storage.pseudoSphericalSampleCountHint;
-const implementations = internal.forward_model.implementations;
 
 test "measurement storage transport hint follows explicit interval totals" {
     const scene: Scene = .{
@@ -84,7 +83,6 @@ test "measurement storage allocates one jacobian row per spectral sample" {
         std.testing.allocator,
         &scene,
         route,
-        implementations.exact(),
     );
     const jacobian_values = buffers.jacobian orelse return error.ExpectedJacobianBuffer;
     try std.testing.expectEqual(
@@ -155,7 +153,6 @@ test "measurement storage keeps route-inactive transport buffers empty" {
         std.testing.allocator,
         &scene,
         integrated_route,
-        implementations.exact(),
     );
     const layer_count = transportLayerCountHint(&scene, integrated_route);
     try std.testing.expectEqual(@as(usize, 0), integrated_buffers.source_interfaces.len);
@@ -167,7 +164,6 @@ test "measurement storage keeps route-inactive transport buffers empty" {
         std.testing.allocator,
         &scene,
         source_route,
-        implementations.exact(),
     );
     try std.testing.expectEqual(@as(usize, 0), source_buffers.source_interfaces.len);
     try std.testing.expectEqual(@as(usize, 0), source_buffers.rtm_quadrature_levels.len);

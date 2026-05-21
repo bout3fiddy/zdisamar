@@ -29,8 +29,6 @@ pub const PreparedMeans = struct {
     cia_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64 = 0.0,
     aerosol_base_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64 = 0.0,
-    cloud_base_optical_depth: f64 = 0.0,
     d_optical_depth_d_temperature: f64 = 0.0,
     total_optical_depth: f64 = 0.0,
     depolarization_factor: f64 = 0.0,
@@ -184,8 +182,6 @@ fn computePreparedMeans(
         .cia_optical_depth = layer_totals.total_cia_optical_depth,
         .aerosol_optical_depth = layer_totals.total_aerosol_optical_depth,
         .aerosol_base_optical_depth = layer_totals.total_aerosol_base_optical_depth,
-        .cloud_optical_depth = layer_totals.total_cloud_optical_depth,
-        .cloud_base_optical_depth = layer_totals.total_cloud_base_optical_depth,
         .d_optical_depth_d_temperature = layer_totals.total_d_optical_depth_d_temperature,
         .total_optical_depth = layer_totals.total_optical_depth,
         .depolarization_factor = if (layer_totals.total_optical_depth == 0.0)

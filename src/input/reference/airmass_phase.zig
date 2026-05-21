@@ -4,7 +4,6 @@ const Allocator = std.mem.Allocator;
 pub const PhaseSupportKind = enum {
     none,
     analytic_hg,
-    mie_table,
 };
 
 // layout(64-bit):
@@ -27,68 +26,6 @@ pub const AirmassFactorPoint = struct {
 //   inline arrays: phase_coefficients:[4]f64=32 B
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
-pub const MiePhasePoint = struct {
-    wavelength_nm: f64,
-    extinction_scale: f64,
-    single_scatter_albedo: f64,
-    phase_coefficients: [4]f64,
-};
-
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: points=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: points carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
-pub const MiePhaseTable = struct {
-    points: []MiePhasePoint,
-
-    pub fn deinit(self: *MiePhaseTable, allocator: Allocator) void {
-        allocator.free(self.points);
-        self.* = undefined;
-    }
-
-    // hot path:
-    //   when: optical-state preparation samples aerosol/cloud Mie phase support at band midpoint
-    //   work: brackets wavelength and interpolates extinction, SSA, and compact phase coefficients
-    //   data: Mie phase point array, wavelength, coefficient output
-    //   follow: layer_accumulation midpoint Mie support and finalize particle SSA
-    pub fn interpolate(self: MiePhaseTable, wavelength_nm: f64) MiePhasePoint {
-        if (self.points.len == 0) {
-            return .{
-                .wavelength_nm = wavelength_nm,
-                .extinction_scale = 1.0,
-                .single_scatter_albedo = 1.0,
-                .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-            };
-        }
-        if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
-
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-
-                var phase_coefficients: [4]f64 = undefined;
-                for (&phase_coefficients, 0..) |*slot, index| {
-                    slot.* = left.phase_coefficients[index] +
-                        weight * (right.phase_coefficients[index] - left.phase_coefficients[index]);
-                }
-                phase_coefficients[0] = 1.0;
-                return .{
-                    .wavelength_nm = wavelength_nm,
-                    .extinction_scale = left.extinction_scale + weight * (right.extinction_scale - left.extinction_scale),
-                    .single_scatter_albedo = left.single_scatter_albedo + weight * (right.single_scatter_albedo - left.single_scatter_albedo),
-                    .phase_coefficients = phase_coefficients,
-                };
-            }
-        }
-        return self.points[self.points.len - 1];
-    }
-};
-
 // layout(64-bit):
 //   size: 16 B, align: 8 B
 //   field storage: points=16 B; padding: 0 B (0 bits)

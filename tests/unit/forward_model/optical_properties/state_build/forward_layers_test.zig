@@ -20,7 +20,6 @@ const fillForwardLayersAtWavelength = forward_layers.fillForwardLayersAtWaveleng
 test "shared forward layers reduce prepared support rows" {
     const allocator = std.testing.allocator;
     const wavelength_nm = 760.0;
-    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
     const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
 
     var layers = [_]State.PreparedLayer{
@@ -39,7 +38,6 @@ test "shared forward layers reduce prepared support rows" {
             .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
             .gas_optical_depth = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .layer_single_scatter_albedo = 0.0,
             .depolarization_factor = 0.0,
             .optical_depth = 0.0,
@@ -64,7 +62,6 @@ test "shared forward layers reduce prepared support rows" {
             .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
             .gas_optical_depth = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .layer_single_scatter_albedo = 0.0,
             .depolarization_factor = 0.0,
             .optical_depth = 0.0,
@@ -99,9 +96,7 @@ test "shared forward layers reduce prepared support rows" {
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -126,9 +121,7 @@ test "shared forward layers reduce prepared support rows" {
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.9,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_active,
         },
         .{
@@ -153,9 +146,7 @@ test "shared forward layers reduce prepared support rows" {
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -180,9 +171,7 @@ test "shared forward layers reduce prepared support rows" {
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.4,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_active,
         },
         .{
@@ -207,9 +196,7 @@ test "shared forward layers reduce prepared support rows" {
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_boundary,
         },
     };
@@ -225,19 +212,15 @@ test "shared forward layers reduce prepared support rows" {
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
         .aerosol_phase_coefficients = aerosol_phase,
-        .cloud_phase_coefficients = zero_phase,
         .effective_temperature_k = 270.0,
         .effective_pressure_hpa = 800.0,
         .column_density_factor = 0.0,
         .cia_pair_path_factor_cm5 = 0.0,
         .aerosol_reference_wavelength_nm = wavelength_nm,
         .aerosol_angstrom_exponent = 0.0,
-        .cloud_reference_wavelength_nm = wavelength_nm,
-        .cloud_angstrom_exponent = 0.0,
         .gas_optical_depth = 0.0,
         .cia_optical_depth = 0.0,
         .aerosol_optical_depth = 0.0,
-        .cloud_optical_depth = 0.0,
         .d_optical_depth_d_temperature = 0.0,
         .depolarization_factor = 0.0,
         .total_optical_depth = 0.0,

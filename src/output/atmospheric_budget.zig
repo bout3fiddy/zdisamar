@@ -1,6 +1,5 @@
 const std = @import("std");
 const Scene = @import("../input/Scene.zig").Scene;
-const AtmosphereModel = @import("../input/Atmosphere.zig");
 const Optics = @import("../forward_model/optical_properties/root.zig");
 const Rayleigh = @import("../input/reference/rayleigh.zig");
 const Spectroscopy = @import("../forward_model/optical_properties/state_build/state_spectroscopy.zig");
@@ -18,14 +17,6 @@ pub const SupportRowKind = enum(u32) {
     parity_active = 2,
 };
 
-pub const SubcolumnLabel = enum(u32) {
-    unspecified = 0,
-    boundary_layer = 1,
-    free_troposphere = 2,
-    fit_interval = 3,
-    stratosphere = 4,
-};
-
 // layout(64-bit):
 //   size: 240 B, align: 8 B
 //   field storage: 240 B across 33 fields; largest: absorber_number_density_cm3=8 B, path_length_cm=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
@@ -40,7 +31,6 @@ pub const AtmosphericBudgetRow = struct {
     global_sublayer_index: u32,
     interval_index_1based: u32,
     support_row_kind: SupportRowKind,
-    subcolumn_label: SubcolumnLabel,
     altitude_km: f64,
     top_altitude_km: f64,
     bottom_altitude_km: f64,
@@ -53,16 +43,12 @@ pub const AtmosphericBudgetRow = struct {
     absorber_number_density_cm3: f64,
     path_length_cm: f64,
     aerosol_fraction: f64,
-    cloud_fraction: f64,
     gas_absorption_optical_depth: f64,
     gas_scattering_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
     aerosol_scattering_optical_depth: f64,
     aerosol_absorption_optical_depth: f64,
-    cloud_optical_depth: f64,
-    cloud_scattering_optical_depth: f64,
-    cloud_absorption_optical_depth: f64,
     total_absorption_optical_depth: f64,
     total_scattering_optical_depth: f64,
     total_optical_depth: f64,
@@ -146,7 +132,6 @@ fn sublayerRow(
             @intCast(sublayer_index),
         .interval_index_1based = sublayer.interval_index_1based,
         .support_row_kind = supportRowKind(sublayer.support_row_kind),
-        .subcolumn_label = subcolumnLabel(sublayer.subcolumn_label),
         .altitude_km = sublayer.altitude_km,
         .top_altitude_km = sublayer.top_altitude_km,
         .bottom_altitude_km = sublayer.bottom_altitude_km,
@@ -159,16 +144,12 @@ fn sublayerRow(
         .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
         .path_length_cm = sublayer.path_length_cm,
         .aerosol_fraction = sublayer.aerosol_fraction,
-        .cloud_fraction = sublayer.cloud_fraction,
         .gas_absorption_optical_depth = evaluated.breakdown.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = evaluated.breakdown.gas_scattering_optical_depth,
         .cia_optical_depth = evaluated.breakdown.cia_optical_depth,
         .aerosol_optical_depth = evaluated.breakdown.aerosol_optical_depth,
         .aerosol_scattering_optical_depth = evaluated.breakdown.aerosol_scattering_optical_depth,
         .aerosol_absorption_optical_depth = totals.aerosol_absorption,
-        .cloud_optical_depth = evaluated.breakdown.cloud_optical_depth,
-        .cloud_scattering_optical_depth = evaluated.breakdown.cloud_scattering_optical_depth,
-        .cloud_absorption_optical_depth = totals.cloud_absorption,
         .total_absorption_optical_depth = totals.absorption,
         .total_scattering_optical_depth = totals.scattering,
         .total_optical_depth = totals.optical_depth,
@@ -181,21 +162,13 @@ fn layerRow(
     wavelength_nm: f64,
     layer: PreparedLayer,
 ) AtmosphericBudgetRow {
-    const particle_single_scatter_albedos = prepared.resolvedParticleSingleScatterAlbedos();
+    const aerosol_single_scatter_albedo = prepared.resolvedAerosolSingleScatterAlbedo();
     const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
         layer.aerosol_optical_depth,
         layer.aerosol_base_optical_depth,
         prepared.aerosol_reference_wavelength_nm,
         prepared.aerosol_angstrom_exponent,
         prepared.aerosol_fraction_control,
-        wavelength_nm,
-    );
-    const cloud_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
-        layer.cloud_optical_depth,
-        layer.cloud_base_optical_depth,
-        prepared.cloud_reference_wavelength_nm,
-        prepared.cloud_angstrom_exponent,
-        prepared.cloud_fraction_control,
         wavelength_nm,
     );
     const gas_scattering_optical_depth = if (layer.gas_scattering_optical_depth > 0.0)
@@ -210,9 +183,7 @@ fn layerRow(
         .gas_scattering_optical_depth = gas_scattering_optical_depth,
         .cia_optical_depth = layer.cia_optical_depth,
         .aerosol_optical_depth = aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = aerosol_optical_depth * particle_single_scatter_albedos.aerosol,
-        .cloud_optical_depth = cloud_optical_depth,
-        .cloud_scattering_optical_depth = cloud_optical_depth * particle_single_scatter_albedos.cloud,
+        .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo,
     };
     const totals = derivedTotals(breakdown);
 
@@ -223,7 +194,6 @@ fn layerRow(
         .global_sublayer_index = std.math.maxInt(u32),
         .interval_index_1based = layer.interval_index_1based,
         .support_row_kind = .physical,
-        .subcolumn_label = subcolumnLabel(layer.subcolumn_label),
         .altitude_km = layer.altitude_km,
         .top_altitude_km = layer.top_altitude_km,
         .bottom_altitude_km = layer.bottom_altitude_km,
@@ -236,16 +206,12 @@ fn layerRow(
         .absorber_number_density_cm3 = 0.0,
         .path_length_cm = @max(layer.top_altitude_km - layer.bottom_altitude_km, 0.0) * 1.0e5,
         .aerosol_fraction = layer.aerosol_fraction,
-        .cloud_fraction = layer.cloud_fraction,
         .gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth,
         .cia_optical_depth = breakdown.cia_optical_depth,
         .aerosol_optical_depth = breakdown.aerosol_optical_depth,
         .aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth,
         .aerosol_absorption_optical_depth = totals.aerosol_absorption,
-        .cloud_optical_depth = breakdown.cloud_optical_depth,
-        .cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth,
-        .cloud_absorption_optical_depth = totals.cloud_absorption,
         .total_absorption_optical_depth = totals.absorption,
         .total_scattering_optical_depth = totals.scattering,
         .total_optical_depth = totals.optical_depth,
@@ -258,7 +224,6 @@ fn layerRow(
 //   footprint: per returned value = 48 B (0.047 KiB)
 fn derivedTotals(breakdown: OpticalDepthBreakdown) struct {
     aerosol_absorption: f64,
-    cloud_absorption: f64,
     absorption: f64,
     scattering: f64,
     optical_depth: f64,
@@ -268,19 +233,13 @@ fn derivedTotals(breakdown: OpticalDepthBreakdown) struct {
         breakdown.aerosol_optical_depth - breakdown.aerosol_scattering_optical_depth,
         0.0,
     );
-    const cloud_absorption = @max(
-        breakdown.cloud_optical_depth - breakdown.cloud_scattering_optical_depth,
-        0.0,
-    );
     const scattering = breakdown.totalScatteringOpticalDepth();
     const optical_depth = breakdown.totalOpticalDepth();
     return .{
         .aerosol_absorption = aerosol_absorption,
-        .cloud_absorption = cloud_absorption,
         .absorption = breakdown.gas_absorption_optical_depth +
             breakdown.cia_optical_depth +
-            aerosol_absorption +
-            cloud_absorption,
+            aerosol_absorption,
         .scattering = scattering,
         .optical_depth = optical_depth,
         .single_scatter_albedo = if (optical_depth > 0.0)
@@ -295,15 +254,5 @@ fn supportRowKind(kind: StateTypes.PreparedSupportRowKind) SupportRowKind {
         .physical => .physical,
         .parity_boundary => .parity_boundary,
         .parity_active => .parity_active,
-    };
-}
-
-fn subcolumnLabel(label: AtmosphereModel.PartitionLabel) SubcolumnLabel {
-    return switch (label) {
-        .unspecified => .unspecified,
-        .boundary_layer => .boundary_layer,
-        .free_troposphere => .free_troposphere,
-        .fit_interval => .fit_interval,
-        .stratosphere => .stratosphere,
     };
 }

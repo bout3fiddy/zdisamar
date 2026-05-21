@@ -1,6 +1,7 @@
 """Typed O2 A wavelength-band input object and JSON conversion."""
 
 import json
+import math
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,93 @@ class O2AInput(NotebookDisplay):
         "strong_line_max_divisions": 22,
     }
 
+    @property
+    def aerosol_optical_depth_550_nm(self) -> float:
+        """Return the aerosol optical depth at 550 nm."""
+
+        return self.aerosol.optical_depth_550_nm
+
+    @aerosol_optical_depth_550_nm.setter
+    def aerosol_optical_depth_550_nm(self, value: float) -> None:
+
+        self.aerosol.optical_depth_550_nm = float(value)
+
+    @property
+    def aerosol_layer_pressure_thickness_hpa(self) -> float:
+        """Return the aerosol layer pressure thickness."""
+
+        placement = self.aerosol.placement
+
+        return placement.bottom_pressure_hpa - placement.top_pressure_hpa
+
+    @aerosol_layer_pressure_thickness_hpa.setter
+    def aerosol_layer_pressure_thickness_hpa(self, value: float) -> None:
+
+        thickness_hpa = float(value)
+
+        if thickness_hpa <= 0.0:
+            raise ValueError("aerosol layer pressure thickness must be positive")
+
+        mid_pressure_hpa = self.aerosol_layer_mid_pressure_hpa
+        self.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=mid_pressure_hpa - 0.5 * thickness_hpa,
+            bottom_pressure_hpa=mid_pressure_hpa + 0.5 * thickness_hpa,
+        )
+
+    @property
+    def aerosol_layer_mid_pressure_hpa(self) -> float:
+        """Return the aerosol layer midpoint pressure for fixed-thickness placement."""
+
+        placement = self.aerosol.placement
+
+        return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
+
+    @aerosol_layer_mid_pressure_hpa.setter
+    def aerosol_layer_mid_pressure_hpa(self, value: float) -> None:
+
+        thickness_hpa = self.aerosol_layer_pressure_thickness_hpa
+
+        if thickness_hpa <= 0.0:
+            raise ValueError("aerosol layer pressure thickness must be positive")
+
+        mid_pressure_hpa = float(value)
+        self.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=mid_pressure_hpa - 0.5 * thickness_hpa,
+            bottom_pressure_hpa=mid_pressure_hpa + 0.5 * thickness_hpa,
+        )
+
+    def set_aerosol_layer_pressure_bounds(
+        self,
+        *,
+        top_pressure_hpa: float,
+        bottom_pressure_hpa: float,
+    ) -> None:
+        """Set aerosol layer pressure bounds and keep the fit interval aligned."""
+
+        top_pressure_hpa = float(top_pressure_hpa)
+        bottom_pressure_hpa = float(bottom_pressure_hpa)
+
+        if not math.isfinite(top_pressure_hpa) or not math.isfinite(bottom_pressure_hpa):
+            raise ValueError("aerosol layer pressure bounds must be finite")
+
+        if bottom_pressure_hpa <= top_pressure_hpa:
+            raise ValueError("aerosol layer bottom pressure must exceed top pressure")
+
+        placement = self.aerosol.placement
+
+        if placement.semantics != "explicit_interval_bounds":
+            raise ValueError("aerosol pressure setters require explicit interval bounds placement")
+
+        if placement.interval_index_1based != self.atmosphere.fit_interval_index_1based:
+            raise ValueError("aerosol placement interval does not match atmosphere fit interval")
+
+        self.atmosphere.set_fit_interval_pressure_bounds(
+            top_pressure_hpa=top_pressure_hpa,
+            bottom_pressure_hpa=bottom_pressure_hpa,
+        )
+        placement.top_pressure_hpa = top_pressure_hpa
+        placement.bottom_pressure_hpa = bottom_pressure_hpa
+
     def __repr__(self) -> str:
 
         return (
@@ -73,8 +161,8 @@ class O2AInput(NotebookDisplay):
             f"relative azimuth {self.geometry.relative_azimuth_deg:g} deg,\n"
             "  aerosol="
             f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
-            f"center {self.aerosol.layer_center_km:g} km, "
-            f"width {self.aerosol.layer_width_km:g} km,\n"
+            f"placement {self.aerosol.placement.top_pressure_hpa:g}-"
+            f"{self.aerosol.placement.bottom_pressure_hpa:g} hPa,\n"
             "  instrument="
             f"{self.instrument_response.instrument_name!r}, "
             f"FWHM {self.instrument_response.instrument_line_fwhm_nm:g} nm, "

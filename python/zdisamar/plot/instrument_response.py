@@ -76,6 +76,7 @@ def curve_figure(response):
         name=title,
         color=PLOT.colors["black"],
         marker_x=False,
+        show_legend=False,
     )
 
     panel = SvgPanel(
@@ -87,6 +88,7 @@ def curve_figure(response):
         height=panel.height,
         x_domain=(x_min - x_pad, x_max + x_pad),
         y_domain=(0.0, 1.05),
+        show_legend=panel.show_legend,
     )
 
     return SvgFigure(

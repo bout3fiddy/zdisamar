@@ -12,9 +12,6 @@ test {
 const Scene = zdisamar.Input;
 const empty_scene: Scene = .{};
 const ObservationModel = @TypeOf(empty_scene.observation_model);
-const Aerosol = @TypeOf(empty_scene.aerosol);
-const Cloud = @TypeOf(empty_scene.cloud);
-const Placement = @TypeOf(empty_scene.aerosol.placement);
 const Absorber = std.meta.Child(@TypeOf(empty_scene.absorbers.items));
 const empty_observation_model: ObservationModel = .{};
 const OperationalBandSupport = std.meta.Child(@TypeOf(empty_observation_model.operational_band_support));
@@ -186,36 +183,6 @@ test "observation model resolves legacy operational support through the public m
         resolved.operational_solar_spectrum.interpolateIrradiance(761.0),
         1.0e9,
     );
-}
-
-test "particle placement falls back only when explicit placement is absent" {
-    const aerosol: Aerosol = .{
-        .layer_center_km = 2.5,
-        .layer_width_km = 3.0,
-    };
-    const aerosol_placement = aerosol.resolvedPlacement();
-    try std.testing.expectEqual(Placement{
-        .semantics = .altitude_center_width_approximation,
-        .top_altitude_km = 4.0,
-        .bottom_altitude_km = 1.0,
-    }, aerosol_placement);
-
-    const cloud: Cloud = .{
-        .top_altitude_km = 6.0,
-        .thickness_km = 1.5,
-        .placement = .{
-            .semantics = .explicit_interval_bounds,
-            .interval_index_1based = 2,
-            .top_pressure_hpa = 300.0,
-            .bottom_pressure_hpa = 450.0,
-            .top_altitude_km = 6.0,
-            .bottom_altitude_km = 4.5,
-        },
-    };
-    const cloud_placement = cloud.resolvedPlacement();
-    try std.testing.expectEqual(@as(u32, 2), cloud_placement.interval_index_1based);
-    try std.testing.expectEqual(@as(f64, 300.0), cloud_placement.top_pressure_hpa);
-    try std.testing.expectEqual(@as(f64, 4.5), cloud_placement.bottom_altitude_km);
 }
 
 test "public root exposes the O2A forward lab surface" {

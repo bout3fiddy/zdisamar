@@ -171,7 +171,7 @@ fn fractionAtWavelength(control: AtmosphereModel.FractionControl, wavelength_nm:
 }
 
 // hot path:
-//   when: layer and diagnostic evaluation scale aerosol/cloud optical depth to wavelength
+//   when: layer and diagnostic evaluation scale aerosol optical depth to wavelength
 //   work: applies Angstrom scaling and optional fraction-control scaling
 //   data: reference optical depth, reference wavelength, Angstrom exponent, fraction control
 //   follow: state_optical_depth and atmospheric_budget particle terms

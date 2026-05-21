@@ -31,27 +31,6 @@ pub const SamplingMode = enum {
     }
 };
 
-pub const NoiseModelKind = enum {
-    none,
-    shot_noise,
-    s5p_operational,
-    lab_operational,
-    snr_from_input,
-
-    pub fn parse(value: []const u8) errors.Error!NoiseModelKind {
-        if (std.mem.eql(u8, value, "none")) return .none;
-        if (std.mem.eql(u8, value, "shot_noise")) return .shot_noise;
-        if (std.mem.eql(u8, value, "s5p_operational")) return .s5p_operational;
-        if (std.mem.eql(u8, value, "lab_operational")) return .lab_operational;
-        if (std.mem.eql(u8, value, "snr_from_input")) return .snr_from_input;
-        return errors.Error.InvalidRequest;
-    }
-
-    pub fn label(self: NoiseModelKind) []const u8 {
-        return @tagName(self);
-    }
-};
-
 pub const SlitIndex = enum(u8) {
     gaussian_modulated = 0,
     flat_top_n4 = 1,
@@ -80,76 +59,6 @@ pub const SlitIndex = enum(u8) {
             .flat_top_n4 => .flat_top_n4,
             .triple_flat_top_n4 => .triple_flat_top_n4,
         };
-    }
-};
-
-// layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 68 B across 8 fields; largest: wavelengths_nm=16 B, values=16 B, variances=16 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
-//   out-of-line: wavelengths_nm, values, variances, characteristic_bias carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
-pub const NodalCorrection = struct {
-    wavelengths_nm: []const f64 = &.{},
-    values: []const f64 = &.{},
-    variances: []const f64 = &.{},
-    use_linear_interpolation: bool = false,
-    use_reference_spectrum: bool = false,
-    use_characteristic_bias: bool = false,
-    characteristic_bias: []const f64 = &.{},
-    owns_memory: bool = false,
-
-    pub fn enabled(self: NodalCorrection) bool {
-        return self.wavelengths_nm.len != 0 or self.values.len != 0;
-    }
-
-    pub fn validate(self: *const NodalCorrection) errors.Error!void {
-        if (self.wavelengths_nm.len == 0 and
-            self.values.len == 0 and
-            self.variances.len == 0 and
-            self.characteristic_bias.len == 0)
-        {
-            return;
-        }
-        if (self.wavelengths_nm.len == 0 or self.values.len == 0 or self.wavelengths_nm.len != self.values.len) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.variances.len != 0 and self.variances.len != self.values.len) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.characteristic_bias.len != 0 and self.characteristic_bias.len != self.values.len) {
-            return errors.Error.InvalidRequest;
-        }
-
-        var previous_wavelength: ?f64 = null;
-        for (self.wavelengths_nm, self.values, 0..) |wavelength_nm, value, index| {
-            if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(value)) {
-                return errors.Error.InvalidRequest;
-            }
-            if (previous_wavelength) |previous| {
-                if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
-            }
-            previous_wavelength = wavelength_nm;
-            if (index < self.variances.len) {
-                const variance = self.variances[index];
-                if (!std.math.isFinite(variance) or variance < 0.0) return errors.Error.InvalidRequest;
-            }
-            if (index < self.characteristic_bias.len) {
-                if (!std.math.isFinite(self.characteristic_bias[index])) return errors.Error.InvalidRequest;
-            }
-        }
-    }
-
-    pub fn deinitOwned(self: *NodalCorrection, allocator: Allocator) void {
-        if (self.owns_memory) {
-            if (self.wavelengths_nm.len != 0) allocator.free(@constCast(self.wavelengths_nm));
-            if (self.values.len != 0) allocator.free(@constCast(self.values));
-            if (self.variances.len != 0) allocator.free(@constCast(self.variances));
-            if (self.characteristic_bias.len != 0) allocator.free(@constCast(self.characteristic_bias));
-        }
-        self.* = .{};
     }
 };
 
@@ -210,140 +119,12 @@ pub const SpectralResponse = struct {
 };
 
 // layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: multiplicative_percent=8 B, additive_percent_of_first=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 192 B, align: 8 B
+//   field storage: 185 B across 6 fields; largest: response=152 B, wavelength_shift_nm=8 B, multiplicative_offset=8 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
-pub const SimpleOffsets = struct {
-    multiplicative_percent: f64 = 0.0,
-    additive_percent_of_first: f64 = 0.0,
-
-    pub fn enabled(self: SimpleOffsets) bool {
-        return self.multiplicative_percent != 0.0 or self.additive_percent_of_first != 0.0;
-    }
-
-    pub fn validate(self: SimpleOffsets) errors.Error!void {
-        if (!std.math.isFinite(self.multiplicative_percent) or !std.math.isFinite(self.additive_percent_of_first)) {
-            return errors.Error.InvalidRequest;
-        }
-    }
-};
-
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: 48 B across 6 fields; largest: additive_amplitude_percent=8 B, additive_period_nm=8 B, additive_phase_deg=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
-pub const SinusoidalFeatures = struct {
-    additive_amplitude_percent: f64 = 0.0,
-    additive_period_nm: f64 = 0.0,
-    additive_phase_deg: f64 = 0.0,
-    multiplicative_amplitude_percent: f64 = 0.0,
-    multiplicative_period_nm: f64 = 0.0,
-    multiplicative_phase_deg: f64 = 0.0,
-
-    pub fn enabled(self: SinusoidalFeatures) bool {
-        return self.additive_amplitude_percent != 0.0 or self.multiplicative_amplitude_percent != 0.0;
-    }
-
-    pub fn validate(self: SinusoidalFeatures) errors.Error!void {
-        if (!std.math.isFinite(self.additive_amplitude_percent) or
-            !std.math.isFinite(self.additive_period_nm) or
-            !std.math.isFinite(self.additive_phase_deg) or
-            !std.math.isFinite(self.multiplicative_amplitude_percent) or
-            !std.math.isFinite(self.multiplicative_period_nm) or
-            !std.math.isFinite(self.multiplicative_phase_deg))
-        {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.additive_amplitude_percent != 0.0 and self.additive_period_nm <= 0.0) return errors.Error.InvalidRequest;
-        if (self.multiplicative_amplitude_percent != 0.0 and self.multiplicative_period_nm <= 0.0) return errors.Error.InvalidRequest;
-    }
-};
-
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 109 B across 14 fields; largest: snr_wavelengths_nm=16 B, snr_values=16 B, reference_signal=16 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 28 bool-storage slack = 52 bits
-//   out-of-line: snr_wavelengths_nm, snr_values, reference_signal, reference_sigma carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced storage above
-pub const NoiseControls = struct {
-    explicit: bool = false,
-    enabled: bool = false,
-    model: NoiseModelKind = .none,
-    electrons_per_count: f64 = 2.0,
-    reference_bin_width_nm: f64 = 0.0,
-    snr_max: f64 = std.math.inf(f64),
-    lab_a: f64 = 0.0,
-    lab_b: f64 = 0.0,
-    snr_wavelengths_nm: []const f64 = &.{},
-    snr_values: []const f64 = &.{},
-    reference_signal: []const f64 = &.{},
-    reference_sigma: []const f64 = &.{},
-    owns_snr_memory: bool = false,
-    owns_reference_memory: bool = false,
-
-    pub fn validate(self: *const NoiseControls) errors.Error!void {
-        if (!std.math.isFinite(self.electrons_per_count) or self.electrons_per_count <= 0.0) {
-            return errors.Error.InvalidRequest;
-        }
-        if (!std.math.isFinite(self.reference_bin_width_nm) or self.reference_bin_width_nm < 0.0) {
-            return errors.Error.InvalidRequest;
-        }
-        if (std.math.isNan(self.snr_max) or self.snr_max <= 0.0) return errors.Error.InvalidRequest;
-        if (!std.math.isFinite(self.lab_a) or self.lab_a < 0.0 or !std.math.isFinite(self.lab_b) or self.lab_b < 0.0) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.enabled and self.model == .lab_operational and self.lab_a <= 0.0) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.snr_wavelengths_nm.len != self.snr_values.len) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.reference_signal.len != self.reference_sigma.len) {
-            return errors.Error.InvalidRequest;
-        }
-        var previous_wavelength: ?f64 = null;
-        for (self.snr_wavelengths_nm, self.snr_values) |wavelength_nm, snr_value| {
-            if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(snr_value) or snr_value <= 0.0) {
-                return errors.Error.InvalidRequest;
-            }
-            if (previous_wavelength) |previous| {
-                if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
-            }
-            previous_wavelength = wavelength_nm;
-        }
-        for (self.reference_signal, self.reference_sigma) |signal, sigma| {
-            if (!std.math.isFinite(signal) or signal <= 0.0 or !std.math.isFinite(sigma) or sigma <= 0.0) {
-                return errors.Error.InvalidRequest;
-            }
-        }
-    }
-
-    pub fn deinitOwned(self: *NoiseControls, allocator: Allocator) void {
-        if (self.owns_snr_memory) {
-            if (self.snr_wavelengths_nm.len != 0) allocator.free(@constCast(self.snr_wavelengths_nm));
-            if (self.snr_values.len != 0) allocator.free(@constCast(self.snr_values));
-        }
-        if (self.owns_reference_memory) {
-            if (self.reference_signal.len != 0) allocator.free(@constCast(self.reference_signal));
-            if (self.reference_sigma.len != 0) allocator.free(@constCast(self.reference_sigma));
-        }
-        self.* = .{};
-    }
-};
-
-// layout(64-bit):
-//   size: 520 B, align: 8 B
-//   field storage: 514 B across 13 fields; largest: response=152 B, noise=112 B, multiplicative_nodes=72 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
-//   cache span: 9 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 520 B (0.508 KiB); total = per instance * live instance count
+//   footprint: per instance = 192 B (0.188 KiB); total = per instance * live instance count
 pub const SpectralChannelControls = struct {
     explicit: bool = false,
     response: SpectralResponse = .{},
@@ -351,128 +132,16 @@ pub const SpectralChannelControls = struct {
     multiplicative_offset: f64 = 1.0,
     additive_offset: f64 = 0.0,
     stray_light: f64 = 0.0,
-    simple_offsets: SimpleOffsets = .{},
-    spectral_features: SinusoidalFeatures = .{},
-    smear_percent: f64 = 0.0,
-    multiplicative_nodes: NodalCorrection = .{},
-    stray_light_nodes: NodalCorrection = .{},
-    noise: NoiseControls = .{},
-    use_polarization_scrambler: bool = true,
 
     pub fn validate(self: *const SpectralChannelControls) errors.Error!void {
         if (!std.math.isFinite(self.wavelength_shift_nm) or
             !std.math.isFinite(self.multiplicative_offset) or
             self.multiplicative_offset <= 0.0 or
             !std.math.isFinite(self.additive_offset) or
-            !std.math.isFinite(self.stray_light) or
-            !std.math.isFinite(self.smear_percent))
+            !std.math.isFinite(self.stray_light))
         {
             return errors.Error.InvalidRequest;
         }
         try self.response.validate();
-        try self.simple_offsets.validate();
-        try self.spectral_features.validate();
-        try self.multiplicative_nodes.validate();
-        try self.stray_light_nodes.validate();
-        try self.noise.validate();
-    }
-
-    pub fn deinitOwned(self: *SpectralChannelControls, allocator: Allocator) void {
-        self.response.deinitOwned(allocator);
-        self.multiplicative_nodes.deinitOwned(allocator);
-        self.stray_light_nodes.deinitOwned(allocator);
-        self.noise.deinitOwned(allocator);
-        self.* = .{};
-    }
-};
-
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: 43 B across 11 fields; largest: spectrum=16 B, coefficient=8 B, fraction_raman_lines=8 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 49 bool-storage slack = 89 bits
-//   out-of-line: spectrum carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
-pub const RingControls = struct {
-    explicit: bool = false,
-    enabled: bool = false,
-    differential: bool = false,
-    coefficient: f64 = 0.0,
-    approximate_rrs: bool = false,
-    fraction_raman_lines: f64 = 1.0,
-    use_cabannes: bool = false,
-    degree_poly: u32 = 0,
-    include_absorption: bool = false,
-    spectrum: []const f64 = &.{},
-    owns_memory: bool = false,
-
-    pub fn validate(self: *const RingControls) errors.Error!void {
-        if (!std.math.isFinite(self.coefficient) or
-            !std.math.isFinite(self.fraction_raman_lines) or
-            self.fraction_raman_lines < 0.0 or
-            self.degree_poly > 7)
-        {
-            return errors.Error.InvalidRequest;
-        }
-        for (self.spectrum) |value| {
-            if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
-        }
-    }
-
-    pub fn deinitOwned(self: *RingControls, allocator: Allocator) void {
-        if (self.owns_memory and self.spectrum.len != 0) allocator.free(@constCast(self.spectrum));
-        self.* = .{};
-    }
-};
-
-// layout(64-bit):
-//   size: 144 B, align: 8 B
-//   field storage: multiplicative_error=72 B, additive_error=72 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 144 B (0.141 KiB); total = per instance * live instance count
-pub const ReflectanceCalibration = struct {
-    multiplicative_error: NodalCorrection = .{},
-    additive_error: NodalCorrection = .{},
-
-    pub fn validate(self: *const ReflectanceCalibration) errors.Error!void {
-        try self.multiplicative_error.validate();
-        try self.additive_error.validate();
-    }
-
-    pub fn deinitOwned(self: *ReflectanceCalibration, allocator: Allocator) void {
-        self.multiplicative_error.deinitOwned(allocator);
-        self.additive_error.deinitOwned(allocator);
-        self.* = .{};
-    }
-};
-
-// layout(64-bit):
-//   size: 1232 B, align: 8 B
-//   field storage: radiance=520 B, irradiance=520 B, ring=48 B, reflectance_calibration=144 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 20 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1232 B (1.203 KiB); total = per instance * live instance count
-pub const MeasurementPipeline = struct {
-    radiance: SpectralChannelControls = .{},
-    irradiance: SpectralChannelControls = .{},
-    ring: RingControls = .{},
-    reflectance_calibration: ReflectanceCalibration = .{},
-
-    pub fn validate(self: *const MeasurementPipeline) errors.Error!void {
-        try self.radiance.validate();
-        try self.irradiance.validate();
-        try self.ring.validate();
-        try self.reflectance_calibration.validate();
-    }
-
-    pub fn deinitOwned(self: *MeasurementPipeline, allocator: Allocator) void {
-        self.radiance.deinitOwned(allocator);
-        self.irradiance.deinitOwned(allocator);
-        self.ring.deinitOwned(allocator);
-        self.reflectance_calibration.deinitOwned(allocator);
-        self.* = .{};
     }
 };

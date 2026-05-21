@@ -39,7 +39,6 @@ class InstrumentResponse:
     instrument_name: str
     regime: str
     sampling: str
-    noise_model: str
     instrument_line_fwhm_nm: float
     builtin_line_shape: str
     high_resolution_step_nm: float
@@ -50,11 +49,16 @@ class InstrumentResponse:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
 
+        legacy_keys = {"noise_model"}.intersection(data)
+
+        if legacy_keys:
+            joined = ", ".join(sorted(legacy_keys))
+            raise ValueError(f"unsupported observation fields: {joined}")
+
         return cls(
             instrument_name=str(data["instrument_name"]),
             regime=str(data["regime"]),
             sampling=str(data["sampling"]),
-            noise_model=str(data["noise_model"]),
             instrument_line_fwhm_nm=to_float(data["instrument_line_fwhm_nm"]),
             builtin_line_shape=str(data["builtin_line_shape"]),
             high_resolution_step_nm=to_float(data["high_resolution_step_nm"]),
@@ -69,7 +73,6 @@ class InstrumentResponse:
             "instrument_name": self.instrument_name,
             "regime": self.regime,
             "sampling": self.sampling,
-            "noise_model": self.noise_model,
             "instrument_line_fwhm_nm": self.instrument_line_fwhm_nm,
             "builtin_line_shape": self.builtin_line_shape,
             "high_resolution_step_nm": self.high_resolution_step_nm,

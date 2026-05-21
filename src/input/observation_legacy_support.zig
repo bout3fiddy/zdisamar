@@ -5,16 +5,7 @@ const OperationalBandSupport = @import("Instrument.zig").Instrument.OperationalB
 const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 
 pub fn resolvedChannelControls(model: anytype, channel: SpectralChannel) Instrument.SpectralChannelControls {
-    return switch (channel) {
-        .radiance => if (model.measurement_pipeline.radiance.explicit)
-            model.measurement_pipeline.radiance
-        else
-            legacyChannelControls(model, .radiance),
-        .irradiance => if (model.measurement_pipeline.irradiance.explicit)
-            model.measurement_pipeline.irradiance
-        else
-            legacyChannelControls(model, .irradiance),
-    };
+    return legacyChannelControls(model, channel);
 }
 
 pub fn operationalBandCount(model: anytype) usize {
@@ -64,17 +55,10 @@ fn legacyChannelControls(model: anytype, channel: SpectralChannel) Instrument.Sp
     var controls: Instrument.SpectralChannelControls = .{
         .response = legacySpectralResponse(model),
         .wavelength_shift_nm = model.wavelength_shift_nm,
-        .noise = .{
-            .enabled = legacyNoiseEnabled(model.noise_model, channel),
-            .model = legacyNoiseModel(model.noise_model, channel),
-            .reference_signal = if (channel == .radiance) model.reference_radiance else &.{},
-            .reference_sigma = if (channel == .radiance) model.ingested_noise_sigma else &.{},
-        },
     };
     if (channel == .radiance) {
         controls.multiplicative_offset = model.multiplicative_offset;
         controls.stray_light = model.stray_light;
-        controls.use_polarization_scrambler = true;
     }
     return controls;
 }
@@ -97,7 +81,9 @@ fn legacySpectralResponse(model: anytype) Instrument.SpectralResponse {
         },
         .fwhm_nm = model.instrument_line_fwhm_nm,
         .builtin_line_shape = model.builtin_line_shape,
-        .integration_mode = if (model.adaptive_reference_grid.enabled())
+        .integration_mode = if (model.integration_mode != .auto)
+            model.integration_mode
+        else if (model.adaptive_reference_grid.enabled())
             .adaptive
         else if (resolved_high_resolution_step_nm > 0.0 and resolved_high_resolution_half_span_nm > 0.0)
             .explicit_hr_grid
@@ -162,22 +148,4 @@ fn borrowedLineShapeTable(line_shape_table: InstrumentLineShapeTable) Instrument
     var borrowed = line_shape_table;
     borrowed.owns_memory = false;
     return borrowed;
-}
-
-fn legacyNoiseEnabled(model: Instrument.NoiseModelKind, channel: SpectralChannel) bool {
-    return switch (channel) {
-        .radiance => model != .none,
-        .irradiance => switch (model) {
-            .shot_noise, .lab_operational => true,
-            .none, .s5p_operational, .snr_from_input => false,
-        },
-    };
-}
-
-fn legacyNoiseModel(model: Instrument.NoiseModelKind, channel: SpectralChannel) Instrument.NoiseModelKind {
-    if (channel == .radiance) return model;
-    return switch (model) {
-        .shot_noise, .lab_operational => model,
-        .none, .s5p_operational, .snr_from_input => .none,
-    };
 }

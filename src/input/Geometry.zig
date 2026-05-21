@@ -25,7 +25,7 @@ pub const Geometry = struct {
     relative_azimuth_deg: f64 = 0.0,
     // UNITS:
     //   Optional surface altitude is stored in kilometers so interval and
-    //   subcolumn preparation can preserve the reference lower boundary used by
+    //   aerosol-placement preparation can preserve the reference lower boundary used by
     //   pseudo-spherical paths.
     surface_altitude_km: f64 = 0.0,
 

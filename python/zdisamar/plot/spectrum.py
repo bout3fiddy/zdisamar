@@ -85,6 +85,7 @@ def quantity_chart(
         y=y,
         name=title,
         color=PLOT.colors.get(quantity, PLOT.colors["blue"]),
+        series_show_legend=False,
     )
 
     if quantity == fields.REFLECTANCE:

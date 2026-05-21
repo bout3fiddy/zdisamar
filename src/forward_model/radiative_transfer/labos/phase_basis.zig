@@ -298,17 +298,15 @@ pub fn fillZplusZminFromBasisLimited(
 }
 
 // hot path:
-//   when: layer RT construction stores phase rows as gas/aerosol/cloud weights
+//   when: layer RT construction stores phase rows as gas/aerosol weights
 //   work: builds dense Z+ and Z- phase matrices directly from encoded phase weights
 //   data: phase weights, prepared particle phase rows, Fourier PLM basis
 //   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
 pub fn fillZplusZminFromWeightedPhaseLimited(
     i_fourier: usize,
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefs: *const [types.max_phase_coef]f64,
-    cloud_phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -318,10 +316,8 @@ pub fn fillZplusZminFromWeightedPhaseLimited(
         return fillZplusZminFromWeightedPhaseLimited12(
             i_fourier,
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             max_phase_index,
             geo,
             plm_basis,
@@ -336,10 +332,8 @@ pub fn fillZplusZminFromWeightedPhaseLimited(
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = weightedPhaseCoefficient(
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             l,
         );
         if (alpha1 == 0.0) continue;
@@ -544,32 +538,26 @@ fn fillZplusZminRowFromBasisLimited12(
 
 inline fn weightedPhaseCoefficient(
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefs: *const [types.max_phase_coef]f64,
-    cloud_phase_coefs: *const [types.max_phase_coef]f64,
     index: usize,
 ) f64 {
     if (index == 0) return 1.0;
-    var coefficient =
-        aerosol_weight * aerosol_phase_coefs[index] +
-        cloud_weight * cloud_phase_coefs[index];
+    var coefficient = aerosol_weight * aerosol_phase_coefs[index];
     if (index == 2) coefficient += rayleigh2_weight;
     return coefficient;
 }
 
 // hot path:
 //   when: integrated-source RTM quadrature levels store phase mixture weights instead of combined rows
-//   work: builds one Z+/Z- row directly from gas/aerosol/cloud phase weights
+//   work: builds one Z+/Z- row directly from gas/aerosol phase weights
 //   data: phase weights, prepared particle phase rows, row index, PLM basis
 //   follow: reflectance RTM quadrature path
 pub fn fillZplusZminRowFromWeightedPhaseLimited(
     i_fourier: usize,
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefs: *const [types.max_phase_coef]f64,
-    cloud_phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -580,10 +568,8 @@ pub fn fillZplusZminRowFromWeightedPhaseLimited(
         return fillZplusZminRowFromWeightedPhaseLimited12(
             i_fourier,
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             max_phase_index,
             geo,
             plm_basis,
@@ -609,10 +595,8 @@ pub fn fillZplusZminRowFromWeightedPhaseLimited(
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = weightedPhaseCoefficient(
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             l,
         );
         if (alpha1 == 0.0) continue;
@@ -664,10 +648,8 @@ pub fn fillZplusZminRowFromWeightedPhaseLimited(
 fn fillZplusZminRowFromWeightedPhaseLimited12(
     i_fourier: usize,
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefs: *const [types.max_phase_coef]f64,
-    cloud_phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -691,10 +673,8 @@ fn fillZplusZminRowFromWeightedPhaseLimited12(
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = weightedPhaseCoefficient(
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             l,
         );
         if (alpha1 == 0.0) continue;
@@ -770,10 +750,8 @@ fn fillZplusZminFromBasisLimited12(
 fn fillZplusZminFromWeightedPhaseLimited12(
     i_fourier: usize,
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefs: *const [types.max_phase_coef]f64,
-    cloud_phase_coefs: *const [types.max_phase_coef]f64,
     max_phase_index: usize,
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
@@ -787,10 +765,8 @@ fn fillZplusZminFromWeightedPhaseLimited12(
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = weightedPhaseCoefficient(
             aerosol_weight,
-            cloud_weight,
             rayleigh2_weight,
             aerosol_phase_coefs,
-            cloud_phase_coefs,
             l,
         );
         if (alpha1 == 0.0) continue;

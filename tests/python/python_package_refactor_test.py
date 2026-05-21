@@ -232,6 +232,110 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
     assert observed_solar_zenith == [original_solar_zenith]
 
 
+def assert_o2a_case_aerosol_state_properties() -> None:
+
+    from zdisamar.wavelength_bands import o2a
+
+    case = o2a.reference_case()
+    serialized_aerosol = case.aerosol.to_dict()
+    assert "layer_center_km" not in serialized_aerosol
+    assert "layer_width_km" not in serialized_aerosol
+
+    case.aerosol_optical_depth_550_nm = 0.31
+    case.aerosol_layer_pressure_thickness_hpa = 50.0
+    case.aerosol_layer_mid_pressure_hpa = 900.0
+
+    assert case.aerosol.optical_depth_550_nm == 0.31
+    assert case.aerosol_layer_pressure_thickness_hpa == 50.0
+    assert case.aerosol_layer_mid_pressure_hpa == 900.0
+    assert case.aerosol.placement.top_pressure_hpa == 875.0
+    assert case.aerosol.placement.bottom_pressure_hpa == 925.0
+    assert case.atmosphere.intervals[0].bottom_pressure_hpa == 875.0
+    assert case.atmosphere.intervals[1].top_pressure_hpa == 875.0
+    assert case.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
+    assert case.atmosphere.intervals[2].top_pressure_hpa == 925.0
+
+    legacy = cast(dict[str, object], copy.deepcopy(serialized_aerosol))
+    legacy["layer_center_km"] = 5.4
+
+    try:
+        o2a.Aerosol.from_dict(legacy)
+    except ValueError as error:
+        assert "unsupported aerosol placement fields" in str(error)
+    else:
+        raise AssertionError("legacy aerosol placement fields were accepted")
+
+    invalid_case = copy.deepcopy(case)
+    invalid_case.aerosol.placement.semantics = "altitude_center_width_approximation"
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=875.0,
+            bottom_pressure_hpa=925.0,
+        )
+    except ValueError as error:
+        assert "explicit interval bounds" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted altitude placement semantics")
+
+    invalid_case = copy.deepcopy(case)
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=math.nan,
+            bottom_pressure_hpa=925.0,
+        )
+    except ValueError as error:
+        assert "finite" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted non-finite pressure")
+
+    invalid_case = copy.deepcopy(case)
+    original_top_pressure_hpa = invalid_case.aerosol.placement.top_pressure_hpa
+    original_bottom_pressure_hpa = invalid_case.aerosol.placement.bottom_pressure_hpa
+
+    try:
+        invalid_case.set_aerosol_layer_pressure_bounds(
+            top_pressure_hpa=875.0,
+            bottom_pressure_hpa=1200.0,
+        )
+    except ValueError as error:
+        assert "atmosphere ordering" in str(error)
+    else:
+        raise AssertionError("pressure setter accepted inverted neighboring intervals")
+
+    assert invalid_case.aerosol.placement.top_pressure_hpa == original_top_pressure_hpa
+    assert invalid_case.aerosol.placement.bottom_pressure_hpa == original_bottom_pressure_hpa
+
+
+def assert_deprecated_python_input_fields_rejected() -> None:
+
+    from zdisamar.wavelength_bands import o2a
+
+    case = o2a.reference_case()
+
+    observation = cast(dict[str, object], copy.deepcopy(case.instrument_response.to_dict()))
+    observation["noise_model"] = {"enabled": True}
+
+    try:
+        o2a.InstrumentResponse.from_dict(observation)
+    except ValueError as error:
+        assert "unsupported observation fields" in str(error)
+    else:
+        raise AssertionError("deprecated observation noise_model field was accepted")
+
+    radiative_transfer = copy.deepcopy(case.radiative_transfer.to_dict())
+    radiative_transfer["use_adding"] = True
+    radiative_transfer["stokes_dimension"] = 1
+
+    try:
+        o2a.RadiativeTransferControls.from_dict(radiative_transfer)
+    except ValueError as error:
+        assert "unsupported radiative-transfer fields" in str(error)
+    else:
+        raise AssertionError("deprecated radiative-transfer fields were accepted")
+
+
 def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     from zdisamar.input.wavelength_band.o2a import O2AInput
@@ -608,6 +712,8 @@ def main() -> int:
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
+    assert_o2a_case_aerosol_state_properties()
+    assert_deprecated_python_input_fields_rejected()
     assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
     assert_native_oe_marshaling_bounds()

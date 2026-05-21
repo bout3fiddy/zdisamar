@@ -10,8 +10,6 @@ const CollisionInducedAbsorptionPoint = ReferenceData.CollisionInducedAbsorption
 const CollisionInducedAbsorptionTable = ReferenceData.CollisionInducedAbsorptionTable;
 const AirmassFactorPoint = ReferenceData.AirmassFactorPoint;
 const AirmassFactorLut = ReferenceData.AirmassFactorLut;
-const MiePhasePoint = ReferenceData.MiePhasePoint;
-const MiePhaseTable = ReferenceData.MiePhaseTable;
 const SpectroscopyLine = ReferenceData.SpectroscopyLine;
 const SpectroscopyLineList = ReferenceData.SpectroscopyLineList;
 const SpectroscopyStrongLine = ReferenceData.SpectroscopyStrongLine;
@@ -1017,22 +1015,6 @@ test "demo reference assets are allocatable and physically ordered" {
     try std.testing.expect(cross_sections.points[0].wavelength_nm < cross_sections.points[cross_sections.points.len - 1].wavelength_nm);
     try std.testing.expect(spectroscopy.lines.len >= 4);
     try std.testing.expect(lut.points.len >= 3);
-}
-
-test "mie phase tables interpolate extinction, SSA, and coefficients deterministically" {
-    var table = MiePhaseTable{
-        .points = try std.testing.allocator.dupe(MiePhasePoint, &.{
-            .{ .wavelength_nm = 400.0, .extinction_scale = 0.96, .single_scatter_albedo = 0.85, .phase_coefficients = .{ 1.0, 2.38, 3.47, 4.32 } },
-            .{ .wavelength_nm = 500.0, .extinction_scale = 0.99, .single_scatter_albedo = 0.92, .phase_coefficients = .{ 1.0, 2.26, 3.25, 3.96 } },
-        }),
-    };
-    defer table.deinit(std.testing.allocator);
-
-    const interpolated = table.interpolate(450.0);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.975), interpolated.extinction_scale, 1e-9);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.32), interpolated.phase_coefficients[1], 1e-9);
-    try std.testing.expectEqual(@as(f64, 1.0), interpolated.phase_coefficients[0]);
-    try std.testing.expect(interpolated.single_scatter_albedo > 0.85);
 }
 
 test "strong-line sidecars and relaxation matrices stay typed and square" {

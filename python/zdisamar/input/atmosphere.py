@@ -57,6 +57,57 @@ class Atmosphere:
     fit_interval_index_1based: int
     intervals: list[VerticalInterval]
 
+    def set_fit_interval_pressure_bounds(
+        self,
+        *,
+        top_pressure_hpa: float,
+        bottom_pressure_hpa: float,
+    ) -> None:
+        """Move the fit interval and keep adjacent pressure boundaries continuous."""
+
+        fit_index = self.fit_interval_index_1based
+
+        if fit_index <= 0 or fit_index > len(self.intervals):
+            raise ValueError("fit interval is not present in the atmosphere")
+
+        fit_interval = self.intervals[fit_index - 1]
+
+        if fit_interval.index_1based != fit_index:
+            raise ValueError("atmosphere intervals are not ordered by index")
+
+        if not math.isfinite(top_pressure_hpa) or not math.isfinite(bottom_pressure_hpa):
+            raise ValueError("fit interval pressure bounds must be finite")
+
+        if bottom_pressure_hpa <= top_pressure_hpa:
+            raise ValueError("fit interval bottom pressure must exceed top pressure")
+
+        if fit_index > 1:
+            previous_interval = self.intervals[fit_index - 2]
+
+            if previous_interval.index_1based != fit_index - 1:
+                raise ValueError("atmosphere intervals are not ordered by index")
+
+            if top_pressure_hpa <= previous_interval.top_pressure_hpa:
+                raise ValueError("fit interval top pressure violates atmosphere ordering")
+
+        if fit_index < len(self.intervals):
+            next_interval = self.intervals[fit_index]
+
+            if next_interval.index_1based != fit_index + 1:
+                raise ValueError("atmosphere intervals are not ordered by index")
+
+            if next_interval.bottom_pressure_hpa <= bottom_pressure_hpa:
+                raise ValueError("fit interval bottom pressure violates atmosphere ordering")
+
+        fit_interval.top_pressure_hpa = top_pressure_hpa
+        fit_interval.bottom_pressure_hpa = bottom_pressure_hpa
+
+        if fit_index > 1:
+            self.intervals[fit_index - 2].bottom_pressure_hpa = top_pressure_hpa
+
+        if fit_index < len(self.intervals):
+            self.intervals[fit_index].top_pressure_hpa = bottom_pressure_hpa
+
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
 

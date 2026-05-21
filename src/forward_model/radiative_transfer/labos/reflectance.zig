@@ -93,18 +93,13 @@ fn maxPhaseCoefficientIndex(phase_coefficients: *const [basis.max_phase_coef]f64
 
 fn maxWeightedPhaseCoefficientIndex(
     aerosol_weight: f64,
-    cloud_weight: f64,
     rayleigh2_weight: f64,
     aerosol_phase_coefficients: *const [basis.max_phase_coef]f64,
-    cloud_phase_coefficients: *const [basis.max_phase_coef]f64,
 ) usize {
     var max_index: usize = 0;
     if (@abs(rayleigh2_weight) > 1.0e-12) max_index = 2;
     if (@abs(aerosol_weight) > 1.0e-12) {
         max_index = @max(max_index, maxPhaseCoefficientIndex(aerosol_phase_coefficients));
-    }
-    if (@abs(cloud_weight) > 1.0e-12) {
-        max_index = @max(max_index, maxPhaseCoefficientIndex(cloud_phase_coefficients));
     }
     return max_index;
 }
@@ -115,10 +110,8 @@ fn maxRtmQuadraturePhaseCoefficientIndex(
 ) usize {
     return maxWeightedPhaseCoefficientIndex(
         level.phase_aerosol_weight,
-        level.phase_cloud_weight,
         level.phase_rayleigh2_weight,
         rtm_quadrature.aerosol_phase_coefficients,
-        rtm_quadrature.cloud_phase_coefficients,
     );
 }
 
@@ -134,10 +127,8 @@ fn fillRtmQuadraturePhaseRow(
     return basis.fillZplusZminRowFromWeightedPhaseLimited(
         i_fourier,
         level.phase_aerosol_weight,
-        level.phase_cloud_weight,
         level.phase_rayleigh2_weight,
         rtm_quadrature.aerosol_phase_coefficients,
-        rtm_quadrature.cloud_phase_coefficients,
         max_phase_index,
         geo,
         plm_basis,
@@ -348,10 +339,8 @@ pub fn calcIntegratedReflectanceWithBasis(
                 basis.fillZplusZminRowFromWeightedPhaseLimited(
                     i_fourier,
                     source_interface.?.phase_above.aerosol_weight,
-                    source_interface.?.phase_above.cloud_weight,
                     source_interface.?.phase_above.rayleigh2_weight,
                     source_interface.?.phase_above.aerosol_phase_coefficients,
-                    source_interface.?.phase_above.cloud_phase_coefficients,
                     source_max_phase_index,
                     geo,
                     plm_basis,
@@ -403,7 +392,7 @@ pub fn calcIntegratedReflectanceWithBasis(
 }
 
 // hot path:
-//   when: aerosol/cloud optical-depth Jacobians include absorption-interface weighting
+//   when: aerosol optical-depth Jacobians include absorption-interface weighting
 //   work: reduces Gauss source terms and pseudo-spherical direct attenuation into one weighting value
 //   data: order fields, layer inputs, attenuation arrays, geometry, layer index
 //   follow: calcAerosolOpticalDepthWeightingWithBasis and active derivative rows
@@ -498,7 +487,7 @@ inline fn scatteringSourceRowSums(
 }
 
 // hot path:
-//   when: active aerosol/cloud scattering-source weighting columns are assembled
+//   when: active aerosol scattering-source weighting columns are assembled
 //   work: reduces scaled phase rows into Jacobian source weighting terms
 //   data: phase row cache, source row sums, Gauss weights, derivative output row
 //   follow: scatteringSourceWeightingFromPhaseRows and buildPhaseRowCache

@@ -6,7 +6,6 @@ pub const AssetKind = enum {
     spectroscopy_strong_line_set,
     spectroscopy_relaxation_matrix,
     lookup_table,
-    mie_phase_table,
 };
 
 // layout(64-bit):
