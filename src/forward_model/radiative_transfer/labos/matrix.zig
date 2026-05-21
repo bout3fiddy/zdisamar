@@ -175,16 +175,20 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         const b9 = b.data[108..120];
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
+            // TARGET:
+            //   Keep this as separate vector multiply/add. In the generic
+            //   x86_64 Linux wheel, `@mulAdd` lowers to compiler-rt `fma`
+            //   calls unless hardware FMA is part of the target contract.
             var s = a0 * loadPair(b0, j);
-            s = @mulAdd(@Vector(2, f64), a1, loadPair(b1, j), s);
-            s = @mulAdd(@Vector(2, f64), a2, loadPair(b2, j), s);
-            s = @mulAdd(@Vector(2, f64), a3, loadPair(b3, j), s);
-            s = @mulAdd(@Vector(2, f64), a4, loadPair(b4, j), s);
-            s = @mulAdd(@Vector(2, f64), a5, loadPair(b5, j), s);
-            s = @mulAdd(@Vector(2, f64), a6, loadPair(b6, j), s);
-            s = @mulAdd(@Vector(2, f64), a7, loadPair(b7, j), s);
-            s = @mulAdd(@Vector(2, f64), a8, loadPair(b8, j), s);
-            s = @mulAdd(@Vector(2, f64), a9, loadPair(b9, j), s);
+            s += a1 * loadPair(b1, j);
+            s += a2 * loadPair(b2, j);
+            s += a3 * loadPair(b3, j);
+            s += a4 * loadPair(b4, j);
+            s += a5 * loadPair(b5, j);
+            s += a6 * loadPair(b6, j);
+            s += a7 * loadPair(b7, j);
+            s += a8 * loadPair(b8, j);
+            s += a9 * loadPair(b9, j);
             result.data[row + j] = s[0];
             result.data[row + j + 1] = s[1];
         }
@@ -580,12 +584,7 @@ fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: 
             const result_row = result.data[row .. row + 12];
             inline for (0..6) |pair_index| {
                 const j = pair_index * 2;
-                const value = @mulAdd(
-                    @Vector(2, f64),
-                    loadPair(a_row, j),
-                    loadPair(e.data[0..], j),
-                    loadPair(c_row, j),
-                );
+                const value = loadPair(c_row, j) + loadPair(a_row, j) * loadPair(e.data[0..], j);
                 storePair(result_row, j, value);
             }
         }
@@ -630,21 +629,16 @@ fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: 
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var product = a0v * loadPair(c0, j);
-            product = @mulAdd(@Vector(2, f64), a1v, loadPair(c1, j), product);
-            product = @mulAdd(@Vector(2, f64), a2v, loadPair(c2, j), product);
-            product = @mulAdd(@Vector(2, f64), a3v, loadPair(c3, j), product);
-            product = @mulAdd(@Vector(2, f64), a4v, loadPair(c4, j), product);
-            product = @mulAdd(@Vector(2, f64), a5v, loadPair(c5, j), product);
-            product = @mulAdd(@Vector(2, f64), a6v, loadPair(c6, j), product);
-            product = @mulAdd(@Vector(2, f64), a7v, loadPair(c7, j), product);
-            product = @mulAdd(@Vector(2, f64), a8v, loadPair(c8, j), product);
-            product = @mulAdd(@Vector(2, f64), a9v, loadPair(c9, j), product);
-            const base = @mulAdd(
-                @Vector(2, f64),
-                loadPair(a_row, j),
-                loadPair(e.data[0..], j),
-                loadPair(c_row, j),
-            );
+            product += a1v * loadPair(c1, j);
+            product += a2v * loadPair(c2, j);
+            product += a3v * loadPair(c3, j);
+            product += a4v * loadPair(c4, j);
+            product += a5v * loadPair(c5, j);
+            product += a6v * loadPair(c6, j);
+            product += a7v * loadPair(c7, j);
+            product += a8v * loadPair(c8, j);
+            product += a9v * loadPair(c9, j);
+            const base = loadPair(c_row, j) + loadPair(a_row, j) * loadPair(e.data[0..], j);
             storePair(result_row, j, base + product);
         }
     }
@@ -728,15 +722,15 @@ fn matAddEsmul3ProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *co
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var product = c0v * loadPair(b0, j);
-            product = @mulAdd(@Vector(2, f64), c1v, loadPair(b1, j), product);
-            product = @mulAdd(@Vector(2, f64), c2v, loadPair(b2, j), product);
-            product = @mulAdd(@Vector(2, f64), c3v, loadPair(b3, j), product);
-            product = @mulAdd(@Vector(2, f64), c4v, loadPair(b4, j), product);
-            product = @mulAdd(@Vector(2, f64), c5v, loadPair(b5, j), product);
-            product = @mulAdd(@Vector(2, f64), c6v, loadPair(b6, j), product);
-            product = @mulAdd(@Vector(2, f64), c7v, loadPair(b7, j), product);
-            product = @mulAdd(@Vector(2, f64), c8v, loadPair(b8, j), product);
-            product = @mulAdd(@Vector(2, f64), c9v, loadPair(b9, j), product);
+            product += c1v * loadPair(b1, j);
+            product += c2v * loadPair(b2, j);
+            product += c3v * loadPair(b3, j);
+            product += c4v * loadPair(b4, j);
+            product += c5v * loadPair(b5, j);
+            product += c6v * loadPair(b6, j);
+            product += c7v * loadPair(b7, j);
+            product += c8v * loadPair(b8, j);
+            product += c9v * loadPair(b9, j);
             const value = (loadPair(a_row, j) + ei * loadPair(b_row, j)) + product;
             storePair(result_row, j, value);
         }
@@ -801,15 +795,15 @@ fn semulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const 
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var product = a0v * loadPair(b0, j);
-            product = @mulAdd(@Vector(2, f64), a1v, loadPair(b1, j), product);
-            product = @mulAdd(@Vector(2, f64), a2v, loadPair(b2, j), product);
-            product = @mulAdd(@Vector(2, f64), a3v, loadPair(b3, j), product);
-            product = @mulAdd(@Vector(2, f64), a4v, loadPair(b4, j), product);
-            product = @mulAdd(@Vector(2, f64), a5v, loadPair(b5, j), product);
-            product = @mulAdd(@Vector(2, f64), a6v, loadPair(b6, j), product);
-            product = @mulAdd(@Vector(2, f64), a7v, loadPair(b7, j), product);
-            product = @mulAdd(@Vector(2, f64), a8v, loadPair(b8, j), product);
-            product = @mulAdd(@Vector(2, f64), a9v, loadPair(b9, j), product);
+            product += a1v * loadPair(b1, j);
+            product += a2v * loadPair(b2, j);
+            product += a3v * loadPair(b3, j);
+            product += a4v * loadPair(b4, j);
+            product += a5v * loadPair(b5, j);
+            product += a6v * loadPair(b6, j);
+            product += a7v * loadPair(b7, j);
+            product += a8v * loadPair(b8, j);
+            product += a9v * loadPair(b9, j);
             const value = loadPair(a_row, j) * loadPair(e.data[0..], j) + product;
             storePair(result_row, j, value);
         }
@@ -908,15 +902,15 @@ fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *c
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var product = b0v * loadPair(a0, j);
-            product = @mulAdd(@Vector(2, f64), b1v, loadPair(a1, j), product);
-            product = @mulAdd(@Vector(2, f64), b2v, loadPair(a2, j), product);
-            product = @mulAdd(@Vector(2, f64), b3v, loadPair(a3, j), product);
-            product = @mulAdd(@Vector(2, f64), b4v, loadPair(a4, j), product);
-            product = @mulAdd(@Vector(2, f64), b5v, loadPair(a5, j), product);
-            product = @mulAdd(@Vector(2, f64), b6v, loadPair(a6, j), product);
-            product = @mulAdd(@Vector(2, f64), b7v, loadPair(a7, j), product);
-            product = @mulAdd(@Vector(2, f64), b8v, loadPair(a8, j), product);
-            product = @mulAdd(@Vector(2, f64), b9v, loadPair(a9, j), product);
+            product += b1v * loadPair(a1, j);
+            product += b2v * loadPair(a2, j);
+            product += b3v * loadPair(a3, j);
+            product += b4v * loadPair(a4, j);
+            product += b5v * loadPair(a5, j);
+            product += b6v * loadPair(a6, j);
+            product += b7v * loadPair(a7, j);
+            product += b8v * loadPair(a8, j);
+            product += b9v * loadPair(a9, j);
             const value = (ei * loadPair(a_row, j) + loadPair(b_row, j) * loadPair(e.data[0..], j)) + product;
             storePair(result_row, j, value);
         }
@@ -964,15 +958,15 @@ fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
             var product = a0v * loadPair(c0, j);
-            product = @mulAdd(@Vector(2, f64), a1v, loadPair(c1, j), product);
-            product = @mulAdd(@Vector(2, f64), a2v, loadPair(c2, j), product);
-            product = @mulAdd(@Vector(2, f64), a3v, loadPair(c3, j), product);
-            product = @mulAdd(@Vector(2, f64), a4v, loadPair(c4, j), product);
-            product = @mulAdd(@Vector(2, f64), a5v, loadPair(c5, j), product);
-            product = @mulAdd(@Vector(2, f64), a6v, loadPair(c6, j), product);
-            product = @mulAdd(@Vector(2, f64), a7v, loadPair(c7, j), product);
-            product = @mulAdd(@Vector(2, f64), a8v, loadPair(c8, j), product);
-            product = @mulAdd(@Vector(2, f64), a9v, loadPair(c9, j), product);
+            product += a1v * loadPair(c1, j);
+            product += a2v * loadPair(c2, j);
+            product += a3v * loadPair(c3, j);
+            product += a4v * loadPair(c4, j);
+            product += a5v * loadPair(c5, j);
+            product += a6v * loadPair(c6, j);
+            product += a7v * loadPair(c7, j);
+            product += a8v * loadPair(c8, j);
+            product += a9v * loadPair(c9, j);
             const value = loadPair(a_row, j) * (ei + loadPair(e.data[0..], j)) + product;
             storePair(result_row, j, value);
         }
