@@ -25,20 +25,9 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
     });
     try std.testing.expectEqual(@as(u16, 20), twenty_stream_route.rtm_controls.n_streams);
 
-    try std.testing.expectError(common.Error.UnsupportedTransportSolver, prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
-        .rtm_controls = .{ .use_adding = true },
-    }));
     try std.testing.expectError(common.Error.UnsupportedObservationRegime, prepareRoute(.{
         .regime = .limb,
         .execution_mode = .scalar,
-        .derivative_mode = .none,
-    }));
-    try std.testing.expectError(common.Error.UnsupportedExecutionMode, prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .polarized,
         .derivative_mode = .none,
     }));
     const jacobian_route = try prepareRoute(.{

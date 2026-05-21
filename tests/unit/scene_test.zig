@@ -28,7 +28,6 @@ test "scene derives LUT compatibility keys from geometry and instrument settings
             .sample_count = 121,
         },
         .surface = .{
-            .kind = .lambertian,
             .albedo = 0.2,
         },
         .observation_model = .{
@@ -95,7 +94,6 @@ test "scene LUT compatibility key follows effective nominal wavelengths and oper
             .sample_count = 3,
         },
         .surface = .{
-            .kind = .lambertian,
             .albedo = 0.2,
         },
         .observation_model = .{
@@ -146,7 +144,6 @@ test "scene LUT compatibility key tracks low-resolution measured wavelengths and
             .sample_count = measured_wavelengths.len,
         },
         .surface = .{
-            .kind = .lambertian,
             .albedo = 0.2,
         },
         .observation_model = .{
@@ -244,7 +241,6 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
             },
         },
         .surface = .{
-            .kind = .lambertian,
             .albedo = 0.028,
         },
         .observation_model = .{

@@ -25,7 +25,6 @@ pub const asset_ids = struct {
     pub const o2a_relaxation_matrix = "o2a_lisa_rmf";
     pub const o2a_cia = "o2o2_bira_o2a";
     pub const airmass_factor_lut = "airmass_factor_nadir_demo";
-    pub const mie_phase_table = "mie_dust_phase_subset";
 };
 
 const Allocator = std.mem.Allocator;
@@ -145,19 +144,6 @@ pub fn loadAirmassFactorLut(
     );
     defer asset.deinit(allocator);
     return try asset.toAirmassFactorLut(allocator);
-}
-
-pub fn loadMiePhaseTable(
-    allocator: Allocator,
-) !ReferenceData.MiePhaseTable {
-    var asset = try reference_assets.loadCsvBundleAsset(
-        allocator,
-        .mie_phase_table,
-        bundle_manifest_paths.luts,
-        asset_ids.mie_phase_table,
-    );
-    defer asset.deinit(allocator);
-    return try asset.toMiePhaseTable(allocator);
 }
 
 pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {

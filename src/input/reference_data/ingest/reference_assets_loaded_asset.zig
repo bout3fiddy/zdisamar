@@ -311,38 +311,6 @@ pub const LoadedAsset = struct {
 
         return .{ .points = points };
     }
-
-    pub fn toMiePhaseTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.MiePhaseTable {
-        if (self.kind != .mie_phase_table or self.columnCount() != 7) return error.InvalidAssetKind;
-        try expectColumns(self.column_names, &.{
-            "wavelength_nm",
-            "extinction_scale",
-            "single_scatter_albedo",
-            "phase_coeff_0",
-            "phase_coeff_1",
-            "phase_coeff_2",
-            "phase_coeff_3",
-        });
-
-        const points = try allocator.alloc(ReferenceData.MiePhasePoint, self.row_count);
-        errdefer allocator.free(points);
-        for (points, 0..) |*point, row_index| {
-            const index = row_index * self.columnCount();
-            point.* = .{
-                .wavelength_nm = self.values[index + 0],
-                .extinction_scale = self.values[index + 1],
-                .single_scatter_albedo = self.values[index + 2],
-                .phase_coefficients = .{
-                    self.values[index + 3],
-                    self.values[index + 4],
-                    self.values[index + 5],
-                    self.values[index + 6],
-                },
-            };
-        }
-
-        return .{ .points = points };
-    }
 };
 
 fn expectColumns(actual: []const []const u8, expected: []const []const u8) !void {

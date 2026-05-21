@@ -36,7 +36,7 @@ pub fn warmProductWorkspace(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
 ) Storage.Error!void {
-    _ = try storage.buffers(allocator, scene, route, implementations);
+    _ = try storage.buffers(allocator, scene, route);
     return simulate_core.warmWavelengthPlan(
         allocator,
         storage,
@@ -54,7 +54,7 @@ pub fn simulateProductWithWorkspace(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     implementations: Types.Implementations,
 ) Storage.Error!Types.InstrumentGridProductView {
-    const buffers = try storage.buffers(allocator, scene, route, implementations);
+    const buffers = try storage.buffers(allocator, scene, route);
     const summary = try simulate_core.simulateInternal(
         allocator,
         scene,
@@ -71,10 +71,6 @@ pub fn simulateProductWithWorkspace(
         .radiance = buffers.radiance,
         .irradiance = buffers.irradiance,
         .reflectance = buffers.reflectance,
-        .noise_sigma = if (buffers.noise_sigma) |sigma| sigma else &.{},
-        .radiance_noise_sigma = if (buffers.radiance_noise_sigma) |sigma| sigma else &.{},
-        .irradiance_noise_sigma = if (buffers.irradiance_noise_sigma) |sigma| sigma else &.{},
-        .reflectance_noise_sigma = if (buffers.reflectance_noise_sigma) |sigma| sigma else &.{},
         .jacobian = if (buffers.jacobian) |values| values else null,
         .jacobian_state_mask = buffers.jacobian_state_mask,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
@@ -84,7 +80,6 @@ pub fn simulateProductWithWorkspace(
         .gas_optical_depth = prepared.gas_optical_depth,
         .cia_optical_depth = prepared.cia_optical_depth,
         .aerosol_optical_depth = prepared.aerosol_optical_depth,
-        .cloud_optical_depth = prepared.cloud_optical_depth,
         .total_optical_depth = prepared.total_optical_depth,
         .depolarization_factor = prepared.depolarization_factor,
         .d_optical_depth_d_temperature = prepared.d_optical_depth_d_temperature,

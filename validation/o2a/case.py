@@ -30,7 +30,6 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
         plan={
             "model_family": "disamar_standard",
             "transport_solver": "dispatcher",
-            "execution_solver_mode": "scalar",
             "execution_derivative_mode": "none",
         },
         reference_assets=band.ReferenceAssets(
@@ -112,7 +111,6 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
             instrument_name="disamar-o2a-compare",
             regime="nadir",
             sampling="native",
-            noise_model="none",
             instrument_line_fwhm_nm=0.38,
             builtin_line_shape="flat_top_n4",
             high_resolution_step_nm=0.01,
@@ -160,12 +158,10 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
         radiative_transfer=band.RadiativeTransferControls(
             scattering="multiple",
             n_streams=20,
-            use_adding=False,
             performance_thresholds=performance_thresholds,
             use_spherical_correction=True,
             integrate_source_function=True,
             renorm_phase_function=True,
-            stokes_dimension=1,
         ),
         outputs=[],
         validation={

@@ -40,75 +40,20 @@ pub fn scaleOpticalDepth(
 //   when: optical-state preparation distributes aerosol optical depth over sublayers
 //   work: chooses placement semantics and builds per-sublayer aerosol weights
 //   data: scene aerosol placement, prepared vertical grid, output weight array
-//   follow: finite-layer, interval-matched, and Gaussian distribution builders
+//   follow: explicit interval-matched distribution builder
 pub fn buildAerosolSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
     grid: PreparedVerticalGrid,
 ) ![]f64 {
     const total_optical_depth = scene.aerosol.optical_depth;
-    if (scene.aerosol.placement.semantics == .explicit_interval_bounds) {
-        return buildPlacementBoundDistribution(
-            allocator,
-            grid,
-            scene.atmosphere.interval_grid.enabled(),
-            scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
-            total_optical_depth,
-            scene.aerosol.placement,
-        );
-    }
-    if (scene.aerosol.aerosol_type == .hg_scattering) {
-        const placement = scene.aerosol.resolvedPlacement();
-        return buildFiniteLayerSublayerDistribution(
-            allocator,
-            grid,
-            scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
-            total_optical_depth,
-            placement.bottom_altitude_km,
-            placement.top_altitude_km,
-            !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
-        );
-    }
-    return buildGaussianSublayerDistribution(
+    return buildPlacementBoundDistribution(
         allocator,
         grid,
+        scene.atmosphere.interval_grid.enabled(),
         scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
         total_optical_depth,
-        scene.aerosol.layer_center_km,
-        scene.aerosol.layer_width_km,
-    );
-}
-
-// hot path:
-//   when: optical-state preparation distributes cloud optical depth over sublayers
-//   work: chooses placement semantics and builds per-sublayer cloud weights
-//   data: scene cloud placement, prepared vertical grid, output weight array
-//   follow: finite-layer and interval-matched distribution builders
-pub fn buildCloudSublayerDistribution(
-    allocator: Allocator,
-    scene: *const Scene,
-    grid: PreparedVerticalGrid,
-) ![]f64 {
-    const total_optical_depth = scene.cloud.optical_thickness;
-    const placement = scene.cloud.resolvedPlacement();
-    if (scene.cloud.placement.semantics == .explicit_interval_bounds) {
-        return buildPlacementBoundDistribution(
-            allocator,
-            grid,
-            scene.atmosphere.interval_grid.enabled(),
-            scene.atmosphere.has_clouds and scene.cloud.enabled and total_optical_depth > 0.0,
-            total_optical_depth,
-            scene.cloud.placement,
-        );
-    }
-    return buildFiniteLayerSublayerDistribution(
-        allocator,
-        grid,
-        scene.atmosphere.has_clouds and scene.cloud.enabled and total_optical_depth > 0.0,
-        total_optical_depth,
-        placement.bottom_altitude_km,
-        placement.top_altitude_km,
-        !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
+        scene.aerosol.placement,
     );
 }
 
@@ -180,7 +125,7 @@ pub fn buildIntervalMatchedDistribution(
 }
 
 // hot path:
-//   when: finite altitude placement distributes aerosol or cloud optical depth
+//   when: finite altitude placement distributes aerosol optical depth
 //   work: computes vertical overlap weights for every sublayer and normalizes optical depth
 //   data: sublayer top/bottom altitudes, support weights, placement bounds, output weights
 //   follow: layer_accumulation particle distribution use

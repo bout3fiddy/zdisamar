@@ -98,17 +98,9 @@ class AtmosphericBudget(RtmTable):
         1: "parity_boundary",
         2: "parity_active",
     }
-    subcolumn_label_labels = {
-        0: "unspecified",
-        1: "boundary_layer",
-        2: "free_troposphere",
-        3: "fit_interval",
-        4: "stratosphere",
-    }
     columns = field_names(CAtmosphericBudgetRow)
     label_columns = {
         "support_row_kind_label": ("support_row_kind", support_row_kind_labels),
-        "subcolumn_label_label": ("subcolumn_label", subcolumn_label_labels),
     }
 
     @property

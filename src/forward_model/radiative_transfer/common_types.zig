@@ -88,30 +88,22 @@ pub const RadiativeTransferPerformanceThresholds = struct {
 pub const RadiativeTransferControls = struct {
     scattering: ScatteringMode = .multiple,
     n_streams: u16 = 16,
-    use_adding: bool = false,
     performance_thresholds: RadiativeTransferPerformanceThresholds = .{},
     use_spherical_correction: bool = false,
     integrate_source_function: bool = true,
     renorm_phase_function: bool = true,
-    stokes_dimension: u8 = 1,
 
     pub fn nGauss(self: RadiativeTransferControls) u16 {
         return self.n_streams / 2;
     }
 
-    pub fn validate(self: RadiativeTransferControls, execution_mode: ExecutionMode) PrepareError!void {
+    pub fn validate(self: RadiativeTransferControls) PrepareError!void {
         if (self.n_streams < 4 or (self.n_streams % 2) != 0) {
             return error.UnsupportedRadiativeTransferControls;
         }
         switch (self.nGauss()) {
             2, 3, 4, 8, 10 => {},
             else => return error.UnsupportedRadiativeTransferControls,
-        }
-        if (self.use_adding and self.scattering == .single) {
-            return error.UnsupportedRadiativeTransferControls;
-        }
-        if (self.stokes_dimension != 1 and execution_mode == .scalar) {
-            return error.UnsupportedRadiativeTransferControls;
         }
         try self.performance_thresholds.validate();
     }
@@ -125,18 +117,16 @@ pub const RadiativeTransferControls = struct {
     }
 
     pub fn supermatrixSize(self: RadiativeTransferControls) u32 {
-        return @as(u32, self.nDirections()) * @as(u32, self.stokes_dimension);
+        return @as(u32, self.nDirections());
     }
 
     pub const default_vendor = RadiativeTransferControls{
         .scattering = .multiple,
         .n_streams = 16,
-        .use_adding = false,
         .performance_thresholds = .{},
         .use_spherical_correction = false,
         .integrate_source_function = true,
         .renorm_phase_function = true,
-        .stokes_dimension = 1,
     };
 };
 
@@ -171,7 +161,6 @@ pub const Regime = SceneModel.ObservationRegime;
 
 pub const ExecutionMode = enum {
     scalar,
-    polarized,
 };
 
 pub const DerivativeMode = SceneModel.DerivativeMode;
@@ -219,7 +208,7 @@ pub const Route = struct {
 //   field storage: 208 B across 16 fields; largest: phase=40 B, optical_depth_jacobian=24 B, scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   inline arrays: 3 Jacobian vectors reserve 72 B inside each instance
-//   encoded fields: phase stores gas/aerosol/cloud phase weights plus shared phase-row references instead of a full 1208 B coefficient row
+//   encoded fields: phase stores gas/aerosol phase weights plus shared phase-row references instead of a full 1208 B coefficient row
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 208 B (0.203 KiB); total also includes referenced phase storage above
@@ -229,8 +218,6 @@ pub const LayerInput = struct {
     cia_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64 = 0.0,
     aerosol_scattering_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64 = 0.0,
-    cloud_scattering_optical_depth: f64 = 0.0,
     optical_depth: f64 = 0.0,
     scattering_optical_depth: f64 = 0.0,
     single_scatter_albedo: f64 = 0.0,
@@ -246,7 +233,7 @@ pub const LayerInput = struct {
 //   size: 80 B, align: 8 B
 //   field storage: 80 B across 6 fields; largest: phase_above=40 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase_above stores gas/aerosol/cloud phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
+//   encoded fields: phase_above stores gas/aerosol phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 80 B (0.078 KiB); total also includes referenced phase storage above
@@ -270,7 +257,7 @@ pub const SourceInterfaceInput = struct {
 //   size: 72 B, align: 8 B
 //   field storage: 72 B across 9 fields; largest: altitude_km=8 B, weight=8 B, ksca=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase_aerosol_weight, phase_cloud_weight, and phase_rayleigh2_weight encode the full 1208 B combined phase row
+//   encoded fields: phase_aerosol_weight and phase_rayleigh2_weight encode the full 1208 B combined phase row
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
@@ -282,7 +269,6 @@ pub const RtmQuadratureLevel = struct {
     aerosol_ksca_below_per_km: f64 = 0.0,
     aerosol_ksca_jacobian: f64 = 0.0,
     phase_aerosol_weight: f64 = 0.0,
-    phase_cloud_weight: f64 = 0.0,
     phase_rayleigh2_weight: f64 = 0.0,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
@@ -294,36 +280,31 @@ pub const RtmQuadratureLevel = struct {
         rayleigh_phase_coefficient2: f64,
         gas_ksca: f64,
         aerosol_ksca: f64,
-        cloud_ksca: f64,
     ) void {
-        const total = gas_ksca + aerosol_ksca + cloud_ksca;
+        const total = gas_ksca + aerosol_ksca;
         if (total <= 0.0) {
             self.phase_aerosol_weight = 0.0;
-            self.phase_cloud_weight = 0.0;
             self.phase_rayleigh2_weight = rayleigh_phase_coefficient2;
             return;
         }
         const inv_total = 1.0 / total;
         self.phase_aerosol_weight = aerosol_ksca * inv_total;
-        self.phase_cloud_weight = cloud_ksca * inv_total;
         self.phase_rayleigh2_weight = gas_ksca * inv_total * rayleigh_phase_coefficient2;
     }
 };
 
 const default_aerosol_phase_coefficients = phase_functions.zeroPhaseCoefficients();
-const default_cloud_phase_coefficients = phase_functions.zeroPhaseCoefficients();
 
 // layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: levels=16 B, aerosol_phase_coefficients=8 B, cloud_phase_coefficients=8 B; padding: 0 B (0 bits)
+//   size: 24 B, align: 8 B
+//   field storage: levels=16 B, aerosol_phase_coefficients=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients and cloud_phase_coefficients point at prepared phase storage; referenced storage is not included in size
+//   out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients points at prepared phase storage; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 pub const RtmQuadratureGrid = struct {
     levels: []const RtmQuadratureLevel = &.{},
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64 = &default_aerosol_phase_coefficients,
-    cloud_phase_coefficients: *const [phase_coefficient_count]f64 = &default_cloud_phase_coefficients,
 
     pub fn isValidFor(self: RtmQuadratureGrid, layer_count: usize) bool {
         return self.levels.len == layer_count + 1;
@@ -391,8 +372,6 @@ pub const ForwardInput = struct {
     cia_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64 = 0.0,
     aerosol_scattering_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64 = 0.0,
-    cloud_scattering_optical_depth: f64 = 0.0,
     optical_depth: f64 = 0.5,
     single_scatter_albedo: f64 = 0.95,
     relative_azimuth_rad: f64 = 0.0,

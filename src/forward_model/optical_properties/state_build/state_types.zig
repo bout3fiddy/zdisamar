@@ -166,12 +166,12 @@ pub const PreparedCrossSectionAbsorber = struct {
 
 // Prepared layer state on the radiative transfer grid.
 // layout(64-bit):
-//   size: 216 B, align: 8 B
-//   field storage: 209 B across 29 fields; largest: aerosol_optical_depth=8 B, depolarization_factor=8 B, cloud_fraction=8 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   cache span: 4 cache line(s) at 64 B per line
+//   size: 184 B, align: 8 B
+//   field storage: 184 B across 25 fields; largest: aerosol_optical_depth=8 B, depolarization_factor=8 B, optical_depth=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 216 B (0.211 KiB); total = per instance * live instance count
+//   footprint: per instance = 184 B (0.180 KiB); total = per instance * live instance count
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -189,8 +189,6 @@ pub const PreparedLayer = struct {
     gas_scattering_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64,
     aerosol_base_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64,
-    cloud_base_optical_depth: f64 = 0.0,
     layer_single_scatter_albedo: f64,
     depolarization_factor: f64,
     optical_depth: f64,
@@ -199,9 +197,7 @@ pub const PreparedLayer = struct {
     top_pressure_hpa: f64 = 0.0,
     bottom_pressure_hpa: f64 = 0.0,
     interval_index_1based: u32 = 0,
-    subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
     aerosol_fraction: f64 = 0.0,
-    cloud_fraction: f64 = 0.0,
 };
 
 pub const PreparedSupportRowKind = enum {
@@ -243,18 +239,13 @@ pub const PreparedSublayer = struct {
     d_cia_optical_depth_d_temperature: f64,
     aerosol_optical_depth: f64,
     aerosol_base_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64,
-    cloud_base_optical_depth: f64 = 0.0,
     aerosol_single_scatter_albedo: f64,
-    cloud_single_scatter_albedo: f64,
     top_altitude_km: f64 = 0.0,
     bottom_altitude_km: f64 = 0.0,
     top_pressure_hpa: f64 = 0.0,
     bottom_pressure_hpa: f64 = 0.0,
     interval_index_1based: u32 = 0,
-    subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
     aerosol_fraction: f64 = 0.0,
-    cloud_fraction: f64 = 0.0,
     support_row_kind: PreparedSupportRowKind = .physical,
 
     pub fn ciaPairDensityCm6(self: PreparedSublayer) f64 {
@@ -266,32 +257,28 @@ pub const PreparedSublayer = struct {
 };
 
 // layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 7 fields; largest: gas_absorption_optical_depth=8 B, gas_scattering_optical_depth=8 B, cia_optical_depth=8 B; padding: 0 B (0 bits)
+//   size: 40 B, align: 8 B
+//   field storage: 40 B across 5 fields; largest: gas_absorption_optical_depth=8 B, gas_scattering_optical_depth=8 B, cia_optical_depth=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
 pub const OpticalDepthBreakdown = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
     cia_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64 = 0.0,
     aerosol_scattering_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64 = 0.0,
-    cloud_scattering_optical_depth: f64 = 0.0,
 
     pub fn totalScatteringOpticalDepth(self: OpticalDepthBreakdown) f64 {
         return self.gas_scattering_optical_depth +
-            self.aerosol_scattering_optical_depth +
-            self.cloud_scattering_optical_depth;
+            self.aerosol_scattering_optical_depth;
     }
 
     pub fn totalOpticalDepth(self: OpticalDepthBreakdown) f64 {
         return self.gas_absorption_optical_depth +
             self.gas_scattering_optical_depth +
             self.cia_optical_depth +
-            self.aerosol_optical_depth +
-            self.cloud_optical_depth;
+            self.aerosol_optical_depth;
     }
 
     pub fn singleScatterAlbedo(self: OpticalDepthBreakdown) f64 {
@@ -306,13 +293,13 @@ pub const OpticalDepthBreakdown = struct {
 };
 
 // layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: breakdown=56 B, phase=40 B, solar_mu=8 B, view_mu=8 B; padding: 0 B (0 bits)
+//   size: 80 B, align: 8 B
+//   field storage: breakdown=40 B, phase=24 B, solar_mu=8 B, view_mu=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase stores gas/aerosol/cloud phase weights plus shared phase-row references instead of a full 1208 B coefficient row
+//   encoded fields: phase stores gas/aerosol phase weights plus shared phase-row references instead of a full 1208 B coefficient row
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced phase storage above
+//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced phase storage above
 pub const EvaluatedLayer = struct {
     breakdown: OpticalDepthBreakdown = .{},
     phase: PhaseFunctions.PhaseMixture = .{},
@@ -410,15 +397,13 @@ pub const GeneratedLutAsset = struct {
 };
 
 // layout(64-bit):
-//   size: 184 B, align: 8 B
-//   field storage: aerosol_fraction_control=88 B, cloud_fraction_control=88 B, aerosol_phase_support=1 B, cloud_phase_support=1 B; padding: 6 B (48 bits)
+//   size: 88 B, align: 8 B
+//   field storage: aerosol_fraction_control=80 B, aerosol_phase_support=1 B; padding: 7 B (56 bits)
 //   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   cache span: 3 cache line(s) at 64 B per line
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 184 B (0.180 KiB); total = per instance * live instance count
+//   footprint: per instance = 88 B (0.086 KiB); total = per instance * live instance count
 pub const PreparedStateFractions = struct {
     aerosol_phase_support: PhaseSupportKind = .none,
-    cloud_phase_support: PhaseSupportKind = .none,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
-    cloud_fraction_control: AtmosphereModel.FractionControl = .{},
 };

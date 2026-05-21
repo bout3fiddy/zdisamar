@@ -20,7 +20,6 @@ test "observation model carries calibration and supporting-data bindings" {
             .output_name = "grid",
         } },
         .sampling = .operational,
-        .noise_model = .shot_noise,
         .multiplicative_offset = 1.002,
         .stray_light = 0.0007,
         .adaptive_reference_grid = .{
@@ -31,7 +30,6 @@ test "observation model carries calibration and supporting-data bindings" {
     };
 
     try std.testing.expectEqual(@TypeOf(model.sampling).operational, model.sampling);
-    try std.testing.expectEqual(@TypeOf(model.noise_model).shot_noise, model.noise_model);
     try model.validate();
 }
 
@@ -40,49 +38,29 @@ test "observation model carries explicit measured-channel wavelengths" {
     const model: ObservationModel = .{
         .instrument = .tropomi,
         .sampling = .measured_channels,
-        .noise_model = .snr_from_input,
         .measured_wavelengths_nm = &measured_wavelengths,
-        .reference_radiance = &.{ 1.2, 1.1, 1.0 },
-        .ingested_noise_sigma = &.{ 0.02, 0.03, 0.025 },
     };
 
     try model.validate();
     try std.testing.expectEqual(@as(f64, 761.02), model.measured_wavelengths_nm[1]);
 }
 
-test "observation model rejects lab operational noise without explicit LAB coefficients" {
-    const invalid_model: ObservationModel = .{
-        .noise_model = .lab_operational,
-    };
-
-    try std.testing.expectError(error.InvalidRequest, invalid_model.validate());
-}
-
-test "observation model keeps borrowed legacy noise references when SNR tables are owned" {
-    const measured_wavelengths = [_]f64{760.8};
-    const reference_radiance = [_]f64{1.2};
-    const ingested_noise_sigma = [_]f64{0.02};
+test "observation model explicit integration mode overrides adaptive default" {
     const model: ObservationModel = .{
         .instrument = .tropomi,
-        .noise_model = .s5p_operational,
-        .measured_wavelengths_nm = &measured_wavelengths,
-        .reference_radiance = &reference_radiance,
-        .ingested_noise_sigma = &ingested_noise_sigma,
+        .instrument_line_fwhm_nm = 0.38,
+        .high_resolution_step_nm = 0.01,
+        .high_resolution_half_span_nm = 0.40,
+        .integration_mode = .disamar_hr_grid,
+        .adaptive_reference_grid = .{
+            .points_per_fwhm = 5,
+            .strong_line_min_divisions = 3,
+            .strong_line_max_divisions = 8,
+        },
     };
 
-    var controls = model.resolvedChannelControls(.radiance);
-    const snr_wavelengths_nm = try std.testing.allocator.dupe(f64, &.{760.8});
-    errdefer std.testing.allocator.free(snr_wavelengths_nm);
-    const snr_values = try std.testing.allocator.dupe(f64, &.{250.0});
-    errdefer std.testing.allocator.free(snr_values);
-
-    controls.noise.snr_wavelengths_nm = snr_wavelengths_nm;
-    controls.noise.snr_values = snr_values;
-    controls.noise.owns_snr_memory = true;
-    defer controls.noise.deinitOwned(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_signal.len);
-    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_sigma.len);
+    const response = model.resolvedChannelControls(.radiance).response;
+    try std.testing.expectEqual(@TypeOf(response.integration_mode).disamar_hr_grid, response.integration_mode);
 }
 
 test "observation model legacy spectral response borrows owned line-shape carriers" {
@@ -110,13 +88,10 @@ test "observation model legacy spectral response borrows owned line-shape carrie
         .instrument_line_fwhm_nm = 0.38,
         .instrument_line_shape = line_shape,
         .instrument_line_shape_table = line_shape_table,
-        .noise_model = .none,
     };
     defer model.deinitOwned(std.testing.allocator);
 
-    var radiance = model.resolvedChannelControls(.radiance);
-    radiance.explicit = true;
-    model.measurement_pipeline.radiance = radiance;
+    const radiance = model.resolvedChannelControls(.radiance);
 
     try std.testing.expect(!radiance.response.instrument_line_shape.owns_memory);
     try std.testing.expect(!radiance.response.instrument_line_shape_table.owns_memory);

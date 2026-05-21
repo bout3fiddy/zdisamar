@@ -14,7 +14,6 @@ pub const ParticlePlacementSemantics = enum {
 
 pub const FractionTarget = enum {
     none,
-    cloud,
     aerosol,
 };
 
@@ -22,12 +21,4 @@ pub const FractionKind = enum {
     none,
     wavel_independent,
     wavel_dependent,
-};
-
-pub const PartitionLabel = enum {
-    unspecified,
-    boundary_layer,
-    free_troposphere,
-    fit_interval,
-    stratosphere,
 };

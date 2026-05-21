@@ -14,7 +14,7 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 
 // hot path:
 //   when: diagnostics or layer-free routes need total optical-depth breakdown at one wavelength
-//   work: accumulates gas, CIA, aerosol, cloud, and scattering optical depths
+//   work: accumulates gas, CIA, aerosol, and scattering optical depths
 //   data: prepared layers/sublayers, spectroscopy cache, cross-section tables, particle controls
 //   follow: evaluateLayerAtWavelengthWithSpectroscopyCache and particleOpticalDepthAtWavelength
 pub fn opticalDepthBreakdownAtWavelength(
@@ -42,8 +42,6 @@ pub fn opticalDepthBreakdownAtWavelength(
             totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
             totals.aerosol_optical_depth += evaluated.breakdown.aerosol_optical_depth;
             totals.aerosol_scattering_optical_depth += evaluated.breakdown.aerosol_scattering_optical_depth;
-            totals.cloud_optical_depth += evaluated.breakdown.cloud_optical_depth;
-            totals.cloud_scattering_optical_depth += evaluated.breakdown.cloud_scattering_optical_depth;
         }
         return totals;
     }
@@ -70,23 +68,13 @@ pub fn opticalDepthBreakdownAtWavelength(
         self.aerosol_fraction_control,
         wavelength_nm,
     );
-    const cloud_optical_depth = Scalar.particleOpticalDepthAtWavelength(
-        self.cloud_optical_depth,
-        self.cloud_base_optical_depth,
-        self.cloud_reference_wavelength_nm,
-        self.cloud_angstrom_exponent,
-        self.cloud_fraction_control,
-        wavelength_nm,
-    );
-    const particle_single_scatter_albedos = self.resolvedParticleSingleScatterAlbedos();
+    const aerosol_single_scatter_albedo = self.resolvedAerosolSingleScatterAlbedo();
     return .{
         .gas_absorption_optical_depth = gas_absorption_optical_depth,
         .gas_scattering_optical_depth = gas_scattering_optical_depth,
         .cia_optical_depth = cia_optical_depth,
         .aerosol_optical_depth = aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = aerosol_optical_depth * particle_single_scatter_albedos.aerosol,
-        .cloud_optical_depth = cloud_optical_depth,
-        .cloud_scattering_optical_depth = cloud_optical_depth * particle_single_scatter_albedos.cloud,
+        .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo,
     };
 }
 
@@ -224,24 +212,13 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             self.aerosol_fraction_control,
             wavelength_nm,
         );
-        const cloud_optical_depth = Scalar.particleOpticalDepthAtWavelength(
-            sublayer.cloud_optical_depth,
-            sublayer.cloud_base_optical_depth,
-            self.cloud_reference_wavelength_nm,
-            self.cloud_angstrom_exponent,
-            self.cloud_fraction_control,
-            wavelength_nm,
-        );
         const aerosol_scattering_optical_depth = aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
-        const cloud_scattering_optical_depth = cloud_optical_depth * sublayer.cloud_single_scatter_albedo;
 
         breakdown.gas_absorption_optical_depth += gas_absorption_optical_depth;
         breakdown.gas_scattering_optical_depth += gas_scattering_optical_depth;
         breakdown.cia_optical_depth += cia_optical_depth;
         breakdown.aerosol_optical_depth += aerosol_optical_depth;
         breakdown.aerosol_scattering_optical_depth += aerosol_scattering_optical_depth;
-        breakdown.cloud_optical_depth += cloud_optical_depth;
-        breakdown.cloud_scattering_optical_depth += cloud_scattering_optical_depth;
     }
 
     return .{
@@ -250,9 +227,7 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
             breakdown.gas_scattering_optical_depth,
             breakdown.aerosol_scattering_optical_depth,
-            breakdown.cloud_scattering_optical_depth,
             &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
         ),
         .solar_mu = if (scene) |owned_scene| owned_scene.geometry.solarCosineAtAltitude(altitude_km) else 1.0,
         .view_mu = if (scene) |owned_scene| owned_scene.geometry.viewingCosineAtAltitude(altitude_km) else 1.0,

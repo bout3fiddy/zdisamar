@@ -108,7 +108,6 @@ const RunningSummary = struct {
     radiance_sum: f64,
     irradiance_sum: f64,
     reflectance_sum: f64,
-    noise_sum: f64,
     jacobian_sum: jacobian.Vector,
 
     fn init() RunningSummary {
@@ -116,7 +115,6 @@ const RunningSummary = struct {
             .radiance_sum = 0.0,
             .irradiance_sum = 0.0,
             .reflectance_sum = 0.0,
-            .noise_sum = 0.0,
             .jacobian_sum = jacobian.zero(),
         };
     }
@@ -127,15 +125,10 @@ const RunningSummary = struct {
         self.reflectance_sum += reflectance;
     }
 
-    fn addNoiseSigma(self: *RunningSummary, values: []const f64) void {
-        for (values) |value| self.noise_sum += value;
-    }
-
     fn toInstrumentGridSummary(
         self: RunningSummary,
         sample_count: usize,
         wavelengths: []const f64,
-        has_noise_sigma: bool,
         mean_jacobian: ?jacobian.Vector,
     ) Types.InstrumentGridSummary {
         const denominator = @as(f64, @floatFromInt(sample_count));
@@ -146,7 +139,6 @@ const RunningSummary = struct {
             .mean_radiance = self.radiance_sum / denominator,
             .mean_irradiance = self.irradiance_sum / denominator,
             .mean_reflectance = self.reflectance_sum / denominator,
-            .mean_noise_sigma = if (has_noise_sigma) self.noise_sum / denominator else 0.0,
             .mean_jacobian = mean_jacobian,
         };
     }
@@ -383,9 +375,7 @@ pub fn simulateInternal(
     var summary = RunningSummary.init();
     _ = try validateTransportBuffers(scene, route, prepared, buffers);
     try fillRadianceSamples(
-        scene,
         route,
-        prepared,
         setup,
         simulation_plan.wavelength_sampling,
         simulation_plan.forward_miss_plan,
@@ -400,18 +390,8 @@ pub fn simulateInternal(
         buffers,
         evaluation_cache,
     );
-    try applyRingCorrection(scene, buffers);
     assembleReflectance(scene, setup.sample_count, buffers, &summary);
-    const radiance_noise_sigma = try materializeNoiseSamples(
-        scene,
-        implementations,
-        setup.sample_count,
-        buffers,
-        &summary,
-    );
     const mean_jacobian = try processJacobianSamples(
-        scene,
-        prepared,
         route.derivative_state_mask,
         setup,
         buffers,
@@ -420,7 +400,6 @@ pub fn simulateInternal(
     return summary.toInstrumentGridSummary(
         setup.sample_count,
         buffers.wavelengths,
-        radiance_noise_sigma != null,
         mean_jacobian,
     );
 }
@@ -631,9 +610,7 @@ fn validateTransportBuffers(
 //   data: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
 //   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
 fn fillRadianceSamples(
-    scene: *const Scene,
     route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
     setup: SimulationSetup,
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     forward_miss_plan: Plan.ForwardMissPlan,
@@ -687,13 +664,8 @@ fn fillRadianceSamples(
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
         try Postprocess.applyChannelCorrections(
-            scene,
-            .radiance,
             setup.radiance_calibration,
-            prepared.depolarization_factor,
-            buffers.wavelengths,
             buffers.radiance,
-            buffers.scratch_aux,
         );
     }
 }
@@ -738,13 +710,8 @@ fn fillIrradianceSamples(
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
         try Postprocess.applyChannelCorrections(
-            scene,
-            .irradiance,
             setup.irradiance_calibration,
-            prepared.depolarization_factor,
-            buffers.wavelengths,
             buffers.irradiance,
-            buffers.scratch_aux,
         );
     }
 }
@@ -755,25 +722,6 @@ fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSam
         count += plan.irradiance_integration.activeSampleCount();
     }
     return count;
-}
-
-// hot path:
-//   when: once per simulation when ring correction controls are active
-//   work: applies the irradiance-derived ring spectrum across radiance samples
-//   data: wavelength, irradiance, radiance, and scratch arrays
-//   follow: calibration.applyRingSpectrum and the resolved ring-control payload
-fn applyRingCorrection(scene: *const Scene, buffers: Storage.Buffers) Storage.Error!void {
-    {
-        const zone = Trace.staticZone(@src(), "simulate.ring_correction");
-        defer zone.end();
-        try calibration.applyRingSpectrum(
-            scene.observation_model.resolvedRingControls(),
-            buffers.wavelengths,
-            buffers.irradiance,
-            buffers.radiance,
-            buffers.scratch_aux,
-        );
-    }
 }
 
 // hot path:
@@ -804,86 +752,11 @@ fn assembleReflectance(
 }
 
 // hot path:
-//   when: once per simulation when noise or reflectance sigma outputs are requested
-//   work: materializes channel sigma arrays and combines radiance/irradiance noise into reflectance noise
-//   data: radiance, irradiance, reflectance, sigma buffers, scratch buffers
-//   follow: Postprocess.materializeChannelSigma and reflectance calibration error sigma
-fn materializeNoiseSamples(
-    scene: *const Scene,
-    implementations: Types.Implementations,
-    sample_count: usize,
-    buffers: Storage.Buffers,
-    summary: *RunningSummary,
-) Storage.Error!?[]f64 {
-    return noise: {
-        const zone = Trace.staticZone(@src(), "simulate.noise_sigma");
-        defer zone.end();
-        const sigma = if (buffers.radiance_noise_sigma) |value|
-            value
-        else if (buffers.noise_sigma) |value|
-            value
-        else if (buffers.reflectance_noise_sigma != null)
-            buffers.scratch
-        else
-            null;
-        if (sigma) |values| {
-            try Postprocess.materializeChannelSigma(implementations, scene, .radiance, buffers.wavelengths, buffers.radiance, values);
-        }
-        if (buffers.noise_sigma) |noise_sigma| {
-            const values = sigma orelse return error.ShapeMismatch;
-            if (noise_sigma.ptr != values.ptr) {
-                @memcpy(noise_sigma, values);
-            }
-        }
-
-        const irradiance_noise_sigma = if (buffers.irradiance_noise_sigma) |value|
-            value
-        else if (buffers.reflectance_noise_sigma != null)
-            buffers.scratch_aux
-        else
-            null;
-        if (irradiance_noise_sigma) |values| {
-            try Postprocess.materializeChannelSigma(implementations, scene, .irradiance, buffers.wavelengths, buffers.irradiance, values);
-        }
-
-        if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
-            const radiance_sigma = sigma orelse return error.ShapeMismatch;
-            const irradiance_sigma = irradiance_noise_sigma orelse return error.ShapeMismatch;
-            for (0..sample_count) |index| {
-                const radiance_term = if (radiance_sigma.len == sample_count and buffers.radiance[index] > 0.0)
-                    buffers.reflectance[index] * (radiance_sigma[index] / @max(buffers.radiance[index], 1.0e-12))
-                else
-                    0.0;
-                const irradiance_term = if (irradiance_sigma.len == sample_count and buffers.irradiance[index] > 0.0)
-                    buffers.reflectance[index] * (irradiance_sigma[index] / @max(buffers.irradiance[index], 1.0e-12))
-                else
-                    0.0;
-                reflectance_noise_sigma[index] = std.math.sqrt(radiance_term * radiance_term + irradiance_term * irradiance_term);
-            }
-            try calibration.applyReflectanceCalibrationErrorSigma(
-                scene.observation_model.resolvedReflectanceCalibration(),
-                buffers.wavelengths,
-                buffers.reflectance,
-                reflectance_noise_sigma,
-                buffers.scratch_aux,
-            );
-        }
-
-        if (sigma) |values| {
-            summary.addNoiseSigma(values);
-        }
-        break :noise sigma;
-    };
-}
-
-// hot path:
 //   when: once per simulation when a Jacobian buffer is requested
 //   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
 //   data: derivative state mask, state-major active-column buffer, wavelength array
 //   follow: jacobianColumn and Postprocess.applyChannelJacobianCorrections
 fn processJacobianSamples(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
     derivative_state_mask: jacobian.StateMask,
     setup: SimulationSetup,
     buffers: Storage.Buffers,
@@ -909,18 +782,10 @@ fn processJacobianSamples(
                 if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 try Postprocess.applyChannelJacobianCorrections(
-                    scene,
-                    .radiance,
                     setup.radiance_calibration,
-                    prepared.depolarization_factor,
-                    buffers.wavelengths,
                     column,
-                    buffers.scratch_aux,
                 );
             }
-            // DECISION:
-            //   Ring synthesis uses the irradiance-only basis from the current
-            //   forward model, so it does not change the routed radiance Jacobian.
             for (0..active_jacobians.count) |active_index| {
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
@@ -1091,7 +956,7 @@ pub fn simulateSummaryWithWorkspace(
         route,
         prepared,
         implementations,
-        try storage.buffers(allocator, &summary_scene, route, implementations),
+        try storage.buffers(allocator, &summary_scene, route),
         try storage.spectralCache(allocator),
         storage,
     );

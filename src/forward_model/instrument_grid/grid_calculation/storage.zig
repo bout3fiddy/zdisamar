@@ -2,7 +2,6 @@ const std = @import("std");
 const core_errors = @import("../../../common/errors.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const InstrumentIntegration = @import("../../implementations/instrument/integration.zig");
-const NoiseProviders = @import("../../implementations/noise.zig");
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
@@ -21,7 +20,6 @@ pub const Error =
     grid.Error ||
     convolution.Error ||
     InstrumentIntegration.Error ||
-    NoiseProviders.Error ||
     error{
         ShapeMismatch,
         OutOfMemory,
@@ -50,10 +48,6 @@ pub const Buffers = struct {
     pseudo_spherical_level_altitudes: []f64,
     jacobian: ?[]f64 = null,
     jacobian_state_mask: jacobian.StateMask = 0,
-    noise_sigma: ?[]f64 = null,
-    radiance_noise_sigma: ?[]f64 = null,
-    irradiance_noise_sigma: ?[]f64 = null,
-    reflectance_noise_sigma: ?[]f64 = null,
 };
 
 pub fn routeMayUseSourceInterfaces(scene: *const Scene, route: common.Route) bool {
@@ -71,13 +65,13 @@ pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 624 B, align: 8 B
-//   field storage: 604 B across 30 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B, wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
+//   size: 560 B, align: 8 B
+//   field storage: 540 B across 26 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B, wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
 //   unused bits: 160 padding + 28 bool-storage slack = 188 bits
-//   out-of-line: product/noise/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
-//   cache span: 10 cache line(s) at 64 B per line
+//   out-of-line: product/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
+//   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 624 B (0.609 KiB); total also includes referenced storage above
+//   footprint: per instance = 560 B (0.547 KiB); total also includes referenced storage above
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -93,10 +87,6 @@ pub const SummaryStorage = struct {
     pseudo_spherical_level_starts: []usize = &.{},
     pseudo_spherical_level_altitudes: []f64 = &.{},
     jacobian: []f64 = &.{},
-    noise_sigma: []f64 = &.{},
-    radiance_noise_sigma: []f64 = &.{},
-    irradiance_noise_sigma: []f64 = &.{},
-    reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
     wavelength_sampling: Plan.OwnedWavelengthSampling = .{},
     forward_miss_plan: Plan.OwnedForwardMissPlan = .{},
@@ -128,10 +118,6 @@ pub const SummaryStorage = struct {
         freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
         freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
         freeBuffer(allocator, self.jacobian);
-        freeBuffer(allocator, self.noise_sigma);
-        freeBuffer(allocator, self.radiance_noise_sigma);
-        freeBuffer(allocator, self.irradiance_noise_sigma);
-        freeBuffer(allocator, self.reflectance_noise_sigma);
         if (self.evaluation_cache) |*cache| cache.deinit();
         self.wavelength_sampling.deinit(allocator);
         self.forward_miss_plan.deinit(allocator);
@@ -209,7 +195,6 @@ pub const SummaryStorage = struct {
         allocator: Allocator,
         scene: *const Scene,
         route: common.Route,
-        implementations: Types.Implementations,
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
         const layer_count = transportLayerCountHint(scene, route);
@@ -226,11 +211,6 @@ pub const SummaryStorage = struct {
             0;
         const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
         const wants_jacobian = active_jacobian_count != 0;
-        const wants_radiance_noise = implementations.noise.materializesSigma(scene, .radiance);
-        const wants_irradiance_noise = implementations.noise.materializesSigma(scene, .irradiance);
-        const wants_noise = wants_radiance_noise or
-            wants_irradiance_noise or
-            reflectanceCalibrationEnabled(scene);
 
         try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
         try ensureBufferCapacity(allocator, &self.radiance, sample_count);
@@ -266,12 +246,6 @@ pub const SummaryStorage = struct {
         if (wants_jacobian) {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
         }
-        if (wants_noise) {
-            try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
-            try ensureBufferCapacity(allocator, &self.radiance_noise_sigma, sample_count);
-            try ensureBufferCapacity(allocator, &self.irradiance_noise_sigma, sample_count);
-            try ensureBufferCapacity(allocator, &self.reflectance_noise_sigma, sample_count);
-        }
 
         return .{
             .wavelengths = self.wavelengths[0..sample_count],
@@ -288,10 +262,6 @@ pub const SummaryStorage = struct {
             .pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_altitudes[0 .. layer_count + 1] else &.{},
             .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * active_jacobian_count] else null,
             .jacobian_state_mask = if (wants_jacobian) active_jacobian_mask else 0,
-            .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
-            .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
-            .irradiance_noise_sigma = if (wants_noise) self.irradiance_noise_sigma[0..sample_count] else null,
-            .reflectance_noise_sigma = if (wants_noise) self.reflectance_noise_sigma[0..sample_count] else null,
         };
     }
 };
@@ -322,11 +292,6 @@ pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
     return layer_count * (pseudoSphericalSubgridDivisions(scene) + 2);
-}
-
-pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
-    const controls = scene.observation_model.resolvedReflectanceCalibration();
-    return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }
 
 pub fn resolvedTransportLayerCount(route: common.Route, prepared: *const OpticsPreparation.PreparedOpticalState) usize {
@@ -393,18 +358,6 @@ pub fn validateBuffers(scene: *const Scene, route: common.Route, sample_count: u
         if (active_jacobian_count == 0 or values.len != sample_count * active_jacobian_count) return error.ShapeMismatch;
     } else if (buffers.jacobian_state_mask != 0) {
         return error.ShapeMismatch;
-    }
-    if (buffers.noise_sigma) |noise_sigma| {
-        if (noise_sigma.len != sample_count) return error.ShapeMismatch;
-    }
-    if (buffers.radiance_noise_sigma) |sigma| {
-        if (sigma.len != sample_count) return error.ShapeMismatch;
-    }
-    if (buffers.irradiance_noise_sigma) |sigma| {
-        if (sigma.len != sample_count) return error.ShapeMismatch;
-    }
-    if (buffers.reflectance_noise_sigma) |sigma| {
-        if (sigma.len != sample_count) return error.ShapeMismatch;
     }
 }
 

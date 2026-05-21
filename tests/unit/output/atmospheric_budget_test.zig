@@ -23,7 +23,6 @@ test "atmospheric budget rows expose layer absorption and scattering components"
         .gas_optical_depth = 0.21,
         .gas_scattering_optical_depth = 0.01,
         .aerosol_optical_depth = 0.10,
-        .cloud_optical_depth = 0.0,
         .layer_single_scatter_albedo = 0.0,
         .depolarization_factor = 0.0,
         .optical_depth = 0.33,
@@ -37,9 +36,7 @@ test "atmospheric budget rows expose layer absorption and scattering components"
         .layers = layers[0..],
         .continuum_points = &.{},
         .aerosol_single_scatter_albedo = 0.8,
-        .cloud_single_scatter_albedo = 0.0,
         .aerosol_reference_wavelength_nm = 760.0,
-        .cloud_reference_wavelength_nm = 760.0,
     });
     const scene: Scene = .{};
     const wavelengths_nm = [_]f64{ 760.0, 761.0 };

@@ -3,15 +3,6 @@ const internal = @import("internal");
 
 const dispatcher = internal.forward_model.radiative_transfer.dispatcher;
 const common = internal.forward_model.radiative_transfer;
-test "dispatcher keeps stale adding routes fenced from execution" {
-    try std.testing.expectError(common.Error.UnsupportedTransportSolver, dispatcher.prepare(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
-        .rtm_controls = .{ .use_adding = true },
-    }));
-}
-
 test "dispatcher picks labos lane for the O2A scalar forward mode" {
     const route = try dispatcher.prepare(.{
         .regime = .nadir,

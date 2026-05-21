@@ -8,7 +8,6 @@ test "lambertian surface provider exposes a unit BRDF factor" {
     const factor = provider.brdfFactor(.{
         .scene = &.{
             .surface = .{
-                .kind = .lambertian,
                 .albedo = 0.07,
             },
         },

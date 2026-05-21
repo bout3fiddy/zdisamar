@@ -71,17 +71,16 @@ pub const ValidationPolicy = struct {
 };
 
 // layout(64-bit):
-//   size: 64 B, align: 8 B
-//   field storage: model_family=16 B, transport_solver=16 B, execution_solver_mode=16 B, execution_derivative_mode=16 B; padding: 0 B (0 bits)
+//   size: 48 B, align: 8 B
+//   field storage: model_family=16 B, transport_solver=16 B, execution_derivative_mode=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: model_family, transport_solver, execution_solver_mode, execution_derivative_mode carry references/descriptors; referenced storage is not included in size
+//   out-of-line: model_family, transport_solver, execution_derivative_mode carry references/descriptors; referenced storage is not included in size
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
+//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const PlanSpec = struct {
     model_family: []const u8,
     transport_solver: []const u8,
-    execution_solver_mode: []const u8,
     execution_derivative_mode: []const u8,
 
     pub fn validate(self: PlanSpec) !void {
@@ -91,13 +90,7 @@ pub const PlanSpec = struct {
         if (!std.mem.eql(u8, self.transport_solver, "dispatcher")) {
             return error.UnsupportedTransportSolver;
         }
-        _ = try self.executionMode();
         _ = try self.derivativeMode();
-    }
-
-    pub fn executionMode(self: PlanSpec) !transport_common.ExecutionMode {
-        if (std.mem.eql(u8, self.execution_solver_mode, "scalar")) return .scalar;
-        return error.UnsupportedExecutionMode;
     }
 
     pub fn derivativeMode(self: PlanSpec) !transport_common.DerivativeMode {
@@ -153,8 +146,8 @@ pub const AerosolSpec = struct {
 
 // layout(64-bit):
 //   size: 72 B, align: 8 B
-//   field storage: 66 B across 10 fields; largest: instrument_name=16 B, solar_reference_asset_id=16 B, instrument_line_fwhm_nm=8 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
+//   field storage: 65 B across 9 fields; largest: instrument_name=16 B, solar_reference_asset_id=16 B, instrument_line_fwhm_nm=8 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: instrument_name, solar_reference_asset_id carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -163,7 +156,6 @@ pub const ObservationSpec = struct {
     instrument_name: []const u8,
     regime: ObservationModel.ObservationRegime,
     sampling: Instrument.SamplingMode,
-    noise_model: Instrument.NoiseModelKind,
     instrument_line_fwhm_nm: f64,
     builtin_line_shape: BuiltinLineShapeKind,
     high_resolution_step_nm: f64,
@@ -228,13 +220,13 @@ pub const SolarSpectrumSample = struct {
 };
 
 // layout(64-bit):
-//   size: 944 B, align: 8 B
-//   field storage: 940 B across 19 fields; largest: o2=208 B, inputs=192 B, aerosol=96 B; padding: 4 B (32 bits)
+//   size: 928 B, align: 8 B
+//   field storage: 924 B across 19 fields; largest: o2=208 B, inputs=192 B, aerosol=96 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   out-of-line: scene_id, intervals, outputs carry references/descriptors; referenced storage is not included in size
 //   cache span: 15 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 944 B (0.922 KiB); total also includes referenced storage above
+//   footprint: per instance = 928 B (0.906 KiB); total also includes referenced storage above
 pub const ResolvedVendorO2ACase = struct {
     metadata: Metadata,
     plan: PlanSpec,

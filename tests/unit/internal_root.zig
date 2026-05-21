@@ -21,7 +21,6 @@ test {
     _ = @import("forward_model/instrument_grid/spectral_math/calibration_test.zig");
     _ = @import("forward_model/instrument_grid/spectral_math/convolution_test.zig");
     _ = @import("forward_model/instrument_grid/spectral_math/grid_test.zig");
-    _ = @import("forward_model/instrument_grid/spectral_math/noise_test.zig");
     _ = @import("forward_model/instrument_grid/spectral_math/sampling_test.zig");
     _ = @import("forward_model/work_partition_test.zig");
     _ = @import("forward_model/optical_properties/shared/phase_functions_test.zig");
@@ -62,7 +61,6 @@ test {
     _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
     _ = @import("forward_model/optical_properties/state_build/spectroscopy_test.zig");
     _ = @import("forward_model/implementations/instrument/integration_test.zig");
-    _ = @import("forward_model/implementations/noise_test.zig");
     _ = @import("forward_model/implementations/radiative_transfer_test.zig");
 
     _ = @import("forward_model/instrument_grid/grid_calculation/root_test.zig");

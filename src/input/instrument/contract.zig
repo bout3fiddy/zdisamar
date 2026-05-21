@@ -32,17 +32,9 @@ pub const InstrumentLineShapeTable = pipeline.InstrumentLineShapeTable;
 //   footprint: per instance = 392 B (0.383 KiB); total = per instance * live instance count
 pub const Instrument = struct {
     pub const SamplingMode = pipeline.SamplingMode;
-    pub const NoiseModelKind = pipeline.NoiseModelKind;
     pub const SlitIndex = pipeline.SlitIndex;
-    pub const NodalCorrection = pipeline.NodalCorrection;
     pub const SpectralResponse = pipeline.SpectralResponse;
-    pub const SimpleOffsets = pipeline.SimpleOffsets;
-    pub const SinusoidalFeatures = pipeline.SinusoidalFeatures;
-    pub const NoiseControls = pipeline.NoiseControls;
     pub const SpectralChannelControls = pipeline.SpectralChannelControls;
-    pub const RingControls = pipeline.RingControls;
-    pub const ReflectanceCalibration = pipeline.ReflectanceCalibration;
-    pub const MeasurementPipeline = pipeline.MeasurementPipeline;
 
     // layout(64-bit):
     //   size: 368 B, align: 8 B
@@ -158,7 +150,6 @@ pub const Instrument = struct {
 
     id: Id = .generic,
     sampling: pipeline.SamplingMode = .native,
-    noise_model: pipeline.NoiseModelKind = .none,
     wavelength_shift_nm: f64 = 0.0,
     instrument_line_fwhm_nm: f64 = 0.0,
     builtin_line_shape: pipeline.BuiltinLineShapeKind = .gaussian,

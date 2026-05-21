@@ -376,7 +376,6 @@ pub fn buildResolvedVendorO2AScene(
         resolved,
         absorber_set,
         solar_spectrum,
-        referenceSpectralResponse(resolved),
     );
     solar_spectrum_owned = false;
     absorber_set_owned = false;
@@ -459,27 +458,10 @@ fn buildO2AbsorberSet(
     };
 }
 
-fn referenceSpectralResponse(resolved: *const ResolvedVendorO2ACase) Instrument.SpectralResponse {
-    return .{
-        .explicit = true,
-        .slit_index = switch (resolved.observation.builtin_line_shape) {
-            .gaussian => .gaussian_modulated,
-            .flat_top_n4 => .flat_top_n4,
-            .triple_flat_top_n4 => .triple_flat_top_n4,
-        },
-        .fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
-        .builtin_line_shape = resolved.observation.builtin_line_shape,
-        .integration_mode = .disamar_hr_grid,
-        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
-        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
-    };
-}
-
 fn sceneFromResolvedO2A(
     resolved: *const ResolvedVendorO2ACase,
     absorber_set: AbsorberModel.AbsorberSet,
     solar_spectrum: InstrumentModel.OperationalSolarSpectrum,
-    reference_response: Instrument.SpectralResponse,
 ) Scene {
     return .{
         .id = resolved.scene_id,
@@ -494,8 +476,6 @@ fn sceneFromResolvedO2A(
             .asymmetry_factor = resolved.aerosol.asymmetry_factor,
             .angstrom_exponent = resolved.aerosol.angstrom_exponent,
             .reference_wavelength_nm = resolved.aerosol.reference_wavelength_nm,
-            .layer_center_km = resolved.aerosol.layer_center_km,
-            .layer_width_km = resolved.aerosol.layer_width_km,
             .placement = resolved.aerosol.placement,
         },
         .geometry = .{
@@ -516,23 +496,13 @@ fn sceneFromResolvedO2A(
             .instrument = .{ .custom = resolved.observation.instrument_name },
             .regime = resolved.observation.regime,
             .sampling = resolved.observation.sampling,
-            .noise_model = resolved.observation.noise_model,
             .instrument_line_fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
             .builtin_line_shape = resolved.observation.builtin_line_shape,
             .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
             .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
+            .integration_mode = .disamar_hr_grid,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
             .operational_solar_spectrum = solar_spectrum,
-            .measurement_pipeline = .{
-                .radiance = .{
-                    .explicit = true,
-                    .response = reference_response,
-                },
-                .irradiance = .{
-                    .explicit = true,
-                    .response = reference_response,
-                },
-            },
         },
         .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
     };
@@ -555,7 +525,7 @@ pub fn prepareResolvedVendorO2ARoute(
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
-        .execution_mode = try plan.executionMode(),
+        .execution_mode = .scalar,
         .derivative_mode = try plan.derivativeMode(),
         .rtm_controls = rtm_controls,
     });
@@ -564,7 +534,7 @@ pub fn prepareResolvedVendorO2ARoute(
 pub fn prepareResolvedVendorO2ARouteFromResolved(resolved: *const ResolvedVendorO2ACase) !Route {
     return transport_common.prepareRoute(.{
         .regime = resolved.observation.regime,
-        .execution_mode = try resolved.plan.executionMode(),
+        .execution_mode = .scalar,
         .derivative_mode = try resolved.plan.derivativeMode(),
         .rtm_controls = resolved.rtm_controls,
     });

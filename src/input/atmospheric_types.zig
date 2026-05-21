@@ -1,21 +1,5 @@
 const std = @import("std");
 
-pub const CloudType = enum {
-    none,
-    lamb_wavel_indep,
-    lambertian,
-    mie_scattering,
-    hg_scattering,
-};
-
-pub const AerosolType = enum {
-    none,
-    lamb_wavel_indep,
-    lambertian,
-    mie_scattering,
-    hg_scattering,
-};
-
 pub const AbsorberSpecies = enum {
     o2_o2,
     o2,

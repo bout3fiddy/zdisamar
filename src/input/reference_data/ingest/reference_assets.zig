@@ -243,17 +243,5 @@ fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpe
             .format = "csv",
             .columns = &.{ "solar_zenith_deg", "view_zenith_deg", "relative_azimuth_deg", "air_mass_factor" },
         },
-        .mie_phase_table => .{
-            .format = "csv",
-            .columns = &.{
-                "wavelength_nm",
-                "single_scatter_albedo",
-                "extinction_scale",
-                "phase0",
-                "phase1",
-                "phase2",
-                "phase3",
-            },
-        },
     };
 }

@@ -97,18 +97,17 @@ pub const CrossSectionFitControls = struct {
 };
 
 // layout(64-bit):
-//   size: 1864 B, align: 8 B
-//   field storage: 1861 B across 29 fields; largest: measurement_pipeline=1232 B, o2o2_operational_lut=72 B, o2_operational_lut=72 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 21 bool-storage slack = 45 bits
-//   out-of-line: ingested_noise_sigma, reference_radiance, measured_wavelengths_nm, operational_band_support carry references/descriptors; referenced storage is not included in size
-//   cache span: 30 cache line(s) at 64 B per line
+//   size: 600 B, align: 8 B
+//   field storage: 596 B across 25 fields; largest: o2o2_operational_lut=72 B, o2_operational_lut=72 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 14 bool-storage slack = 46 bits
+//   out-of-line: measured_wavelengths_nm and operational_band_support carry references/descriptors; referenced storage is not included in size
+//   cache span: 10 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 1864 B (1.820 KiB); total also includes referenced storage above
+//   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
     sampling: Instrument.SamplingMode = .native,
-    noise_model: Instrument.NoiseModelKind = .none,
     wavelength_shift_nm: f64 = 0.0,
     multiplicative_offset: f64 = 1.0,
     stray_light: f64 = 0.0,
@@ -116,6 +115,7 @@ pub const ObservationModel = struct {
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
+    integration_mode: Instrument.SpectralResponse.IntegrationMode = .auto,
     adaptive_reference_grid: AdaptiveReferenceGrid = .{},
     solar_spectrum_source: Binding = .none,
     weighted_reference_grid_source: Binding = .none,
@@ -127,13 +127,9 @@ pub const ObservationModel = struct {
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
     operational_band_support: []const OperationalBandSupport = &.{},
     owns_operational_band_support: bool = false,
-    measurement_pipeline: Instrument.MeasurementPipeline = .{},
     cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
     owns_measured_wavelengths: bool = false,
-    reference_radiance: []const f64 = &.{},
-    owns_reference_radiance: bool = false,
-    ingested_noise_sigma: []const f64 = &.{},
 
     pub fn validate(self: *const ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
@@ -145,37 +141,6 @@ pub const ObservationModel = struct {
         if (!std.math.isFinite(self.stray_light)) {
             return errors.Error.InvalidRequest;
         }
-        for (self.ingested_noise_sigma) |value| {
-            if (!std.math.isFinite(value) or value <= 0.0) {
-                return errors.Error.InvalidRequest;
-            }
-        }
-        for (self.reference_radiance) |value| {
-            if (!std.math.isFinite(value) or value < 0.0) {
-                return errors.Error.InvalidRequest;
-            }
-        }
-        switch (self.noise_model) {
-            .snr_from_input, .s5p_operational => {
-                // INVARIANT:
-                //   Input-driven noise models require an explicit sigma vector so radiative transfer and
-                //   retrieval code can treat the noise contract as already materialized.
-                if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
-            },
-            .lab_operational => {
-                const radiance_noise = self.resolvedChannelControls(.radiance).noise;
-                const irradiance_noise = self.resolvedChannelControls(.irradiance).noise;
-                if (radiance_noise.model != .lab_operational or irradiance_noise.model != .lab_operational) {
-                    return errors.Error.InvalidRequest;
-                }
-                try radiance_noise.validate();
-                try irradiance_noise.validate();
-            },
-            .none, .shot_noise => {},
-        }
-        if (self.noise_model == .s5p_operational and self.reference_radiance.len != self.ingested_noise_sigma.len) {
-            return errors.Error.InvalidRequest;
-        }
         if (self.measured_wavelengths_nm.len != 0) {
             var previous_wavelength: ?f64 = null;
             for (self.measured_wavelengths_nm) |wavelength_nm| {
@@ -184,9 +149,6 @@ pub const ObservationModel = struct {
                     if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
                 }
                 previous_wavelength = wavelength_nm;
-            }
-            if (self.ingested_noise_sigma.len != 0 and self.ingested_noise_sigma.len != self.measured_wavelengths_nm.len) {
-                return errors.Error.InvalidRequest;
             }
         }
         if (self.instrument_line_fwhm_nm < 0.0) {
@@ -221,16 +183,11 @@ pub const ObservationModel = struct {
                 if (std.mem.eql(u8, support.id, other.id)) return errors.Error.InvalidRequest;
             }
         }
-        try self.measurement_pipeline.validate();
         try self.cross_section_fit.validate();
     }
 
     pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
         return legacy_support.resolvedChannelControls(self, channel);
-    }
-
-    pub fn resolvedRingControls(self: *const ObservationModel) Instrument.RingControls {
-        return self.measurement_pipeline.ring;
     }
 
     pub fn operationalBandCount(self: *const ObservationModel) usize {
@@ -273,10 +230,6 @@ pub const ObservationModel = struct {
             built = band_index + 1;
         }
         return labels;
-    }
-
-    pub fn resolvedReflectanceCalibration(self: *const ObservationModel) Instrument.ReflectanceCalibration {
-        return self.measurement_pipeline.reflectance_calibration;
     }
 
     fn supportReplacementLabelOwned(
@@ -322,15 +275,9 @@ pub const ObservationModel = struct {
         }
         self.operational_band_support = &.{};
         self.owns_operational_band_support = false;
-        self.measurement_pipeline.deinitOwned(allocator);
         self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
         self.measured_wavelengths_nm = &.{};
         self.owns_measured_wavelengths = false;
-        if (self.owns_reference_radiance and self.reference_radiance.len != 0) allocator.free(self.reference_radiance);
-        self.reference_radiance = &.{};
-        self.owns_reference_radiance = false;
-        if (self.ingested_noise_sigma.len != 0) allocator.free(self.ingested_noise_sigma);
-        self.ingested_noise_sigma = &.{};
     }
 };

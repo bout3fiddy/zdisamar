@@ -26,7 +26,6 @@ pub const Data = struct {
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
     lut: ReferenceData.AirmassFactorLut,
-    aerosol_mie: ?ReferenceData.MiePhaseTable = null,
     working_case: Scene,
     owns_absorbers: bool = false,
     owns_operational_band_support: bool = false,
@@ -39,7 +38,6 @@ pub const Data = struct {
         if (self.collision_induced_absorption) |*owned_table| owned_table.deinit(allocator);
         if (self.spectroscopy_lines) |*owned_lines| owned_lines.deinit(allocator);
         self.lut.deinit(allocator);
-        if (self.aerosol_mie) |*owned_table| owned_table.deinit(allocator);
         if (self.owns_absorbers) {
             self.working_case.absorbers.deinitOwned(allocator);
         }
@@ -76,16 +74,6 @@ pub fn load(allocator: Allocator, scene: *const Scene) !Data {
 
     var lut = try assets.loadAirmassFactorLut(allocator);
     errdefer lut.deinit(allocator);
-
-    var aerosol_mie: ?ReferenceData.MiePhaseTable = null;
-    errdefer if (aerosol_mie) |owned_table| {
-        var owned = owned_table;
-        owned.deinit(allocator);
-    };
-
-    if (scene.atmosphere.has_aerosols or scene.aerosol.enabled) {
-        aerosol_mie = try assets.loadMiePhaseTable(allocator);
-    }
 
     const cia_ptr: ?*const ReferenceData.CollisionInducedAbsorptionTable = if (collision_induced_absorption) |*table| table else null;
     const line_list_ptr: ?*const ReferenceData.SpectroscopyLineList = if (line_list) |*table| table else null;
@@ -128,7 +116,6 @@ pub fn load(allocator: Allocator, scene: *const Scene) !Data {
         .collision_induced_absorption = collision_induced_absorption,
         .spectroscopy_lines = line_list,
         .lut = lut,
-        .aerosol_mie = aerosol_mie,
         .working_case = working_case,
         .owns_absorbers = owned_absorbers != null,
         .owns_operational_band_support = owned_operational_band_support != null,
@@ -145,15 +132,12 @@ pub fn buildOptics(
     _ = scene;
     const cia_ptr: ?*const ReferenceData.CollisionInducedAbsorptionTable = if (data.collision_induced_absorption) |*table| table else null;
     const line_list_ptr: ?*const ReferenceData.SpectroscopyLineList = if (data.spectroscopy_lines) |*table| table else null;
-    const aerosol_mie_ptr: ?*const ReferenceData.MiePhaseTable = if (data.aerosol_mie) |*table| table else null;
-
     var prepared = try OpticsPrepare.prepare(allocator, &data.working_case, .{
         .profile = &data.profile,
         .cross_sections = &data.cross_sections,
         .collision_induced_absorption = cia_ptr,
         .spectroscopy_lines = line_list_ptr,
         .lut = &data.lut,
-        .aerosol_mie = aerosol_mie_ptr,
     });
     errdefer prepared.deinit(allocator);
 

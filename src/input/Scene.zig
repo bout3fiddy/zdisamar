@@ -17,7 +17,6 @@ pub const AbsorberSet = @import("Absorber.zig").AbsorberSet;
 pub const Spectroscopy = @import("Absorber.zig").Spectroscopy;
 pub const SpectroscopyMode = @import("Absorber.zig").SpectroscopyMode;
 pub const Surface = @import("Surface.zig").Surface;
-pub const Cloud = @import("Cloud.zig").Cloud;
 pub const Aerosol = @import("Aerosol.zig").Aerosol;
 pub const Instrument = @import("Instrument.zig").Instrument;
 pub const ObservationModel = @import("ObservationModel.zig").ObservationModel;
@@ -34,13 +33,13 @@ pub const DerivativeMode = enum {
 };
 
 // layout(64-bit):
-//   size: 2680 B, align: 8 B
-//   field storage: 2680 B across 12 fields; largest: observation_model=1864 B, cloud=224 B, aerosol=224 B; padding: 0 B (0 bits)
+//   size: 2456 B, align: 8 B
+//   field storage: 2456 B across 11 fields; largest: observation_model=1816 B, aerosol=224 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: id carry references/descriptors; referenced storage is not included in size
-//   cache span: 42 cache line(s) at 64 B per line
+//   cache span: 39 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2680 B (2.617 KiB); total also includes referenced storage above
+//   footprint: per instance = 2456 B (2.398 KiB); total also includes referenced storage above
 pub const Scene = struct {
     id: []const u8 = "scene-0",
     atmosphere: Atmosphere = .{},
@@ -49,7 +48,6 @@ pub const Scene = struct {
     bands: SpectralBandSet = .{},
     absorbers: AbsorberSet = .{},
     surface: Surface = .{},
-    cloud: Cloud = .{},
     aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
     lut_controls: LutControls.Controls = .{},
@@ -66,7 +64,6 @@ pub const Scene = struct {
         try self.bands.validate();
         try self.absorbers.validate();
         try self.surface.validate();
-        try self.cloud.validate();
         try self.aerosol.validate();
         try self.observation_model.validate();
         try self.lut_controls.validate();
@@ -175,8 +172,6 @@ pub const Scene = struct {
 
     pub fn deinitOwned(self: *Scene, allocator: Allocator) void {
         self.atmosphere.deinitOwned(allocator);
-        self.surface.deinitOwned(allocator);
-        self.cloud.deinitOwned(allocator);
         self.aerosol.deinitOwned(allocator);
         self.bands.deinitOwned(allocator);
         self.absorbers.deinitOwned(allocator);

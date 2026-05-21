@@ -71,7 +71,6 @@ pub fn defaultInput() O2AInput {
         .plan = .{
             .model_family = "disamar_standard",
             .transport_solver = "dispatcher",
-            .execution_solver_mode = "scalar",
             .execution_derivative_mode = "none",
         },
         .inputs = .{
@@ -133,7 +132,6 @@ pub fn defaultInput() O2AInput {
             .instrument_name = "disamar-o2a-compare",
             .regime = .nadir,
             .sampling = .native,
-            .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
             .high_resolution_step_nm = 0.01,
@@ -177,12 +175,10 @@ pub fn defaultInput() O2AInput {
         .rtm_controls = .{
             .scattering = .multiple,
             .n_streams = 20,
-            .use_adding = false,
             .performance_thresholds = reference_types.RadiativeTransferPerformanceThresholds.o2a_default,
             .use_spherical_correction = true,
             .integrate_source_function = true,
             .renorm_phase_function = true,
-            .stokes_dimension = 1,
         },
         .outputs = &.{},
         .validation = .{
@@ -319,7 +315,7 @@ pub fn validateInput(input: *const O2AInput) !void {
     for (input.intervals) |interval| try interval.validate();
     try input.aerosol.placement.validate();
     try input.plan.validate();
-    try input.rtm_controls.validate(try input.plan.executionMode());
+    try input.rtm_controls.validate();
     try requireAsset(input.inputs.atmosphere_profile);
     try requireAsset(input.inputs.vendor_reference_csv);
     try requireAsset(input.inputs.raw_solar_reference);

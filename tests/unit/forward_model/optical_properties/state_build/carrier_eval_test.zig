@@ -17,7 +17,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
     const allocator = std.testing.allocator;
     const wavelength_nm = 760.0;
     const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
-    const cloud_phase = PhaseFunctions.hgPhaseCoefficients(0.25);
 
     var layers = [_]State.PreparedLayer{
         .{
@@ -35,7 +34,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
             .gas_optical_depth = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .layer_single_scatter_albedo = 0.0,
             .depolarization_factor = 0.0,
             .optical_depth = 0.0,
@@ -60,7 +58,6 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
             .gas_optical_depth = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .layer_single_scatter_albedo = 0.0,
             .depolarization_factor = 0.0,
             .optical_depth = 0.0,
@@ -94,9 +91,7 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.5,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -121,9 +116,7 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.4,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_active,
         },
         .{
@@ -148,9 +141,7 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.5,
             .support_row_kind = .parity_boundary,
         },
         .{
@@ -175,9 +166,7 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.8,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .support_row_kind = .parity_active,
         },
         .{
@@ -202,9 +191,7 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
             .d_gas_optical_depth_d_temperature = 0.0,
             .d_cia_optical_depth_d_temperature = 0.0,
             .aerosol_optical_depth = 0.0,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.5,
             .support_row_kind = .parity_boundary,
         },
     };
@@ -219,19 +206,15 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
         .aerosol_phase_coefficients = aerosol_phase,
-        .cloud_phase_coefficients = cloud_phase,
         .effective_temperature_k = 270.0,
         .effective_pressure_hpa = 800.0,
         .column_density_factor = 0.0,
         .cia_pair_path_factor_cm5 = 0.0,
         .aerosol_reference_wavelength_nm = wavelength_nm,
         .aerosol_angstrom_exponent = 0.0,
-        .cloud_reference_wavelength_nm = wavelength_nm,
-        .cloud_angstrom_exponent = 0.0,
         .gas_optical_depth = 0.0,
         .cia_optical_depth = 0.0,
         .aerosol_optical_depth = 0.0,
-        .cloud_optical_depth = 0.0,
         .d_optical_depth_d_temperature = 0.0,
         .depolarization_factor = 0.0,
         .total_optical_depth = 0.0,
@@ -267,9 +250,7 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .absorber_number_density_cm3 = 2.0e19,
             .path_length_cm = 1.0e5,
             .aerosol_optical_depth = 0.4,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .continuum_cross_section_cm2_per_molecule = 0.0,
             .line_cross_section_cm2_per_molecule = 0.0,
             .line_mixing_cross_section_cm2_per_molecule = 0.0,
@@ -293,9 +274,7 @@ test "quadrature-state interpolation clamps scalar state at the support-row ends
             .absorber_number_density_cm3 = 1.5e19,
             .path_length_cm = 1.0e5,
             .aerosol_optical_depth = 0.2,
-            .cloud_optical_depth = 0.0,
             .aerosol_single_scatter_albedo = 0.5,
-            .cloud_single_scatter_albedo = 0.0,
             .continuum_cross_section_cm2_per_molecule = 0.0,
             .line_cross_section_cm2_per_molecule = 0.0,
             .line_mixing_cross_section_cm2_per_molecule = 0.0,

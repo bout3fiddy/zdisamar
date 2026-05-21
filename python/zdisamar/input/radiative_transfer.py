@@ -187,12 +187,10 @@ class RadiativeTransferControls:
 
     scattering: str
     n_streams: int
-    use_adding: bool
     performance_thresholds: RadiativeTransferPerformanceThresholds
     use_spherical_correction: bool
     integrate_source_function: bool
     renorm_phase_function: bool
-    stokes_dimension: int
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
@@ -200,14 +198,12 @@ class RadiativeTransferControls:
         return cls(
             scattering=str(data["scattering"]),
             n_streams=to_int(data["n_streams"]),
-            use_adding=to_bool(data["use_adding"]),
             performance_thresholds=RadiativeTransferPerformanceThresholds.from_dict(
                 object_dict(data["performance_thresholds"])
             ),
             use_spherical_correction=to_bool(data["use_spherical_correction"]),
             integrate_source_function=to_bool(data["integrate_source_function"]),
             renorm_phase_function=to_bool(data["renorm_phase_function"]),
-            stokes_dimension=to_int(data["stokes_dimension"]),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -215,10 +211,8 @@ class RadiativeTransferControls:
         return {
             "scattering": self.scattering,
             "n_streams": self.n_streams,
-            "use_adding": self.use_adding,
             "performance_thresholds": self.performance_thresholds.to_dict(),
             "use_spherical_correction": self.use_spherical_correction,
             "integrate_source_function": self.integrate_source_function,
             "renorm_phase_function": self.renorm_phase_function,
-            "stokes_dimension": self.stokes_dimension,
         }

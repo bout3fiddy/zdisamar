@@ -81,16 +81,12 @@ pub fn accumulateSharedCarrier(
     const weighted_cia = carrier.cia_optical_depth_per_km * weight_km;
     const weighted_aerosol = carrier.aerosol_optical_depth_per_km * weight_km;
     const weighted_aerosol_scattering = carrier.aerosol_scattering_optical_depth_per_km * weight_km;
-    const weighted_cloud = carrier.cloud_optical_depth_per_km * weight_km;
-    const weighted_cloud_scattering = carrier.cloud_scattering_optical_depth_per_km * weight_km;
 
     breakdown.gas_absorption_optical_depth += weighted_gas_absorption;
     breakdown.gas_scattering_optical_depth += weighted_gas_scattering;
     breakdown.cia_optical_depth += weighted_cia;
     breakdown.aerosol_optical_depth += weighted_aerosol;
     breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
-    breakdown.cloud_optical_depth += weighted_cloud;
-    breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
 }
 
 fn accumulateSharedScalars(
@@ -103,16 +99,12 @@ fn accumulateSharedScalars(
     const weighted_cia = scalars.cia_optical_depth_per_km * weight_km;
     const weighted_aerosol = scalars.aerosol_optical_depth_per_km * weight_km;
     const weighted_aerosol_scattering = scalars.aerosol_scattering_optical_depth_per_km * weight_km;
-    const weighted_cloud = scalars.cloud_optical_depth_per_km * weight_km;
-    const weighted_cloud_scattering = scalars.cloud_scattering_optical_depth_per_km * weight_km;
 
     breakdown.gas_absorption_optical_depth += weighted_gas_absorption;
     breakdown.gas_scattering_optical_depth += weighted_gas_scattering;
     breakdown.cia_optical_depth += weighted_cia;
     breakdown.aerosol_optical_depth += weighted_aerosol;
     breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
-    breakdown.cloud_optical_depth += weighted_cloud;
-    breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
 }
 
 pub fn evaluatedLayerFromSharedCarrier(
@@ -121,7 +113,6 @@ pub fn evaluatedLayerFromSharedCarrier(
     altitude_km: f64,
     breakdown: OpticalDepthBreakdown,
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
 ) EvaluatedLayer {
     return .{
         .breakdown = breakdown,
@@ -129,9 +120,7 @@ pub fn evaluatedLayerFromSharedCarrier(
             PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
             breakdown.gas_scattering_optical_depth,
             breakdown.aerosol_scattering_optical_depth,
-            breakdown.cloud_scattering_optical_depth,
             aerosol_phase_coefficients,
-            cloud_phase_coefficients,
         ),
         .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
         .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
@@ -144,7 +133,6 @@ fn fillLayerInputFromSharedCarrier(
     altitude_km: f64,
     breakdown: OpticalDepthBreakdown,
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-    cloud_phase_coefficients: *const [phase_coefficient_count]f64,
     layer_input: *transport_common.LayerInput,
     compute_jacobian: bool,
 ) void {
@@ -158,8 +146,6 @@ fn fillLayerInputFromSharedCarrier(
         layer_input.cia_optical_depth = breakdown.cia_optical_depth;
         layer_input.aerosol_optical_depth = breakdown.aerosol_optical_depth;
         layer_input.aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth;
-        layer_input.cloud_optical_depth = breakdown.cloud_optical_depth;
-        layer_input.cloud_scattering_optical_depth = breakdown.cloud_scattering_optical_depth;
     }
     layer_input.optical_depth = total_optical_depth;
     layer_input.scattering_optical_depth = total_scattering;
@@ -175,9 +161,7 @@ fn fillLayerInputFromSharedCarrier(
         PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
         breakdown.gas_scattering_optical_depth,
         breakdown.aerosol_scattering_optical_depth,
-        breakdown.cloud_scattering_optical_depth,
         aerosol_phase_coefficients,
-        cloud_phase_coefficients,
     );
 }
 
@@ -217,7 +201,6 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
             layer_geometry.midpoint_altitude_km,
             breakdown,
             &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
         );
     }
 
@@ -244,7 +227,6 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-        &self.cloud_phase_coefficients,
     );
 }
 
@@ -285,7 +267,6 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-        &self.cloud_phase_coefficients,
         layer_input,
         compute_jacobian,
     );
@@ -314,7 +295,6 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
             layer_geometry.midpoint_altitude_km,
             breakdown,
             &self.aerosol_phase_coefficients,
-            &self.cloud_phase_coefficients,
         );
     }
 
@@ -346,7 +326,6 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-        &self.cloud_phase_coefficients,
     );
 }
 
@@ -392,7 +371,6 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-        &self.cloud_phase_coefficients,
         layer_input,
         compute_jacobian,
     );
@@ -547,7 +525,6 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-        &self.cloud_phase_coefficients,
     );
 }
 

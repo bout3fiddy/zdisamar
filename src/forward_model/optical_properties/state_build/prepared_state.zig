@@ -6,21 +6,20 @@ const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
-const particle_compat = @import("../particle_support.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Types = @import("state_types.zig");
 
 const Allocator = std.mem.Allocator;
 
 // layout(64-bit):
-//   size: 3480 B, align: 8 B
-//   field storage: 3475 B across 66 fields; largest: aerosol_phase_coefficients=1208 B, cloud_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 70 bool-storage slack = 110 bits
-//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B, cloud_phase_coefficients:[151]f64=1208 B
+//   size: 2136 B, align: 8 B
+//   field storage: 2129 B across 57 fields; largest: aerosol_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 63 bool-storage slack = 119 bits
+//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B
 //   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 55 cache line(s) at 64 B per line
+//   cache span: 34 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3480 B (3.398 KiB); total also includes referenced storage above
+//   footprint: per instance = 2136 B (2.086 KiB); total also includes referenced storage above
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -55,9 +54,7 @@ pub const PreparedOpticalState = struct {
     effective_air_mass_factor: f64,
     effective_single_scatter_albedo: f64,
     aerosol_single_scatter_albedo: f64 = -1.0,
-    cloud_single_scatter_albedo: f64 = -1.0,
     aerosol_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
-    cloud_phase_coefficients: [Types.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
     air_column_density_factor: f64 = 0.0,
@@ -66,24 +63,17 @@ pub const PreparedOpticalState = struct {
     cia_pair_path_factor_cm5: f64,
     aerosol_reference_wavelength_nm: f64,
     aerosol_angstrom_exponent: f64,
-    cloud_reference_wavelength_nm: f64,
-    cloud_angstrom_exponent: f64,
     gas_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
     aerosol_base_optical_depth: f64 = 0.0,
-    cloud_optical_depth: f64,
-    cloud_base_optical_depth: f64 = 0.0,
     d_optical_depth_d_temperature: f64,
     depolarization_factor: f64,
     total_optical_depth: f64,
     interval_semantics: AtmosphereModel.IntervalSemantics = .none,
     fit_interval_index_1based: u32 = 0,
-    subcolumn_semantics_enabled: bool = false,
     aerosol_phase_support: PhaseSupportKind = .none,
-    cloud_phase_support: PhaseSupportKind = .none,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
-    cloud_fraction_control: AtmosphereModel.FractionControl = .{},
     generated_lut_assets: []Types.GeneratedLutAsset = &.{},
     owns_generated_lut_assets: bool = false,
     lut_execution_entries: []const []const u8 = &.{},
@@ -138,7 +128,6 @@ pub const PreparedOpticalState = struct {
             if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
         }
         self.aerosol_fraction_control.deinitOwned(allocator);
-        self.cloud_fraction_control.deinitOwned(allocator);
         if (self.owns_operational_o2_lut) {
             var owned = self.operational_o2_lut;
             owned.deinitOwned(allocator);
@@ -206,19 +195,15 @@ pub const PreparedOpticalState = struct {
     // layout(64-bit):
     //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
     //   footprint: per returned value = 16 B (0.016 KiB)
-    pub fn resolvedParticleSingleScatterAlbedos(self: *const PreparedOpticalState) struct {
-        aerosol: f64,
-        cloud: f64,
-    } {
-        const resolved = particle_compat.resolvedParticleSingleScatterAlbedos(
-            self.aerosol_single_scatter_albedo,
-            self.cloud_single_scatter_albedo,
-            self.effective_single_scatter_albedo,
+    pub fn resolvedAerosolSingleScatterAlbedo(self: *const PreparedOpticalState) f64 {
+        return std.math.clamp(
+            if (self.aerosol_single_scatter_albedo >= 0.0)
+                self.aerosol_single_scatter_albedo
+            else
+                self.effective_single_scatter_albedo,
+            0.0,
+            1.0,
         );
-        return .{
-            .aerosol = resolved.aerosol,
-            .cloud = resolved.cloud,
-        };
     }
 
     pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
@@ -247,10 +232,6 @@ pub const PreparedOpticalState = struct {
 
     pub fn aerosolOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
         return self.opticalDepthBreakdownAtWavelength(wavelength_nm).aerosol_optical_depth;
-    }
-
-    pub fn cloudOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
-        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).cloud_optical_depth;
     }
 
     pub fn totalOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {

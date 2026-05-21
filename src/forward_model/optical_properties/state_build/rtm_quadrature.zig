@@ -159,7 +159,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             .weight = 0.0,
             .ksca = 0.0,
         };
-        rtm_level.setPhaseMixture(rayleigh_phase_coefficient2, 0.0, 0.0, 0.0);
+        rtm_level.setPhaseMixture(rayleigh_phase_coefficient2, 0.0, 0.0);
     }
 
     var has_active_quadrature = false;
@@ -207,7 +207,6 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 rayleigh_phase_coefficient2,
                 carrier.gas_scattering_optical_depth_per_km,
                 carrier.aerosol_scattering_optical_depth_per_km,
-                carrier.cloud_scattering_optical_depth_per_km,
             );
             if (compute_jacobian) {
                 fillAerosolSourceJacobian(

@@ -27,8 +27,6 @@ pub const WeakLinePreparedState = spectroscopy.WeakLinePreparedState;
 pub const SpectroscopyLineList = spectroscopy.SpectroscopyLineList;
 
 pub const AirmassFactorPoint = airmass_phase.AirmassFactorPoint;
-pub const MiePhasePoint = airmass_phase.MiePhasePoint;
-pub const MiePhaseTable = airmass_phase.MiePhaseTable;
 pub const AirmassFactorLut = airmass_phase.AirmassFactorLut;
 
 pub const buildDemoClimatology = demo_builders.buildDemoClimatology;
