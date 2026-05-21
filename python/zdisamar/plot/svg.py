@@ -10,10 +10,10 @@ from typing import Self
 from .axes import axis_exponent, finite_padded_domain, marker_values
 from .properties import PLOT
 
-X_TICK_LABEL_Y_OFFSET = 30
-X_AXIS_TITLE_Y_OFFSET = 70
-Y_TICK_LABEL_X = -14
-Y_AXIS_TITLE_X = -104
+X_TICK_LABEL_Y_OFFSET = 34
+X_AXIS_TITLE_Y_OFFSET = 82
+Y_TICK_LABEL_X = -22
+Y_AXIS_TITLE_X = -126
 PANEL_TITLE_Y = -24
 
 
@@ -117,6 +117,7 @@ class SvgPanel:
     marker_x: tuple[float, ...] = ()
     rule_y: tuple[float, ...] = ()
     y_axis_multiplier: str | None = None
+    show_x_axis: bool = True
 
     def resolved_x_domain(self) -> tuple[float, float]:
 
@@ -170,6 +171,7 @@ class SvgPanel:
             marker_x=tuple(marker_values(series_x_values(self.series))),
             rule_y=self.rule_y,
             y_axis_multiplier=self.y_axis_multiplier,
+            show_x_axis=self.show_x_axis,
         )
 
 
@@ -185,7 +187,7 @@ class SvgFigure:
     margin_left: int = 138
     margin_right: int = 28
     margin_top: int = 68
-    margin_bottom: int = 94
+    margin_bottom: int = 112
 
     @property
     def width(self) -> int:
@@ -203,13 +205,12 @@ class SvgFigure:
     @property
     def height(self) -> int:
 
-        panel_height = max((panel.height for panel in self.panels), default=PLOT.height)
-        rows = max(1, (len(self.panels) + max(self.columns, 1) - 1) // max(self.columns, 1))
+        rows = max(1, self.row_count())
 
         return (
             self.effective_margin_top()
             + self.margin_bottom
-            + rows * panel_height
+            + sum(self.row_height(index) for index in range(rows))
             + (rows - 1) * self.panel_spacing
         )
 
@@ -251,6 +252,8 @@ class SvgFigure:
             f".panel-title {{ font-size: {PLOT.panel_title_font_size}px; font-weight: 400; }}"
             f".axis-title {{ font-size: {PLOT.axis_title_font_size}px; }}"
             f".tick-label,.axis-multiplier {{ font-size: {PLOT.axis_label_font_size}px; }}"
+            f".legend-label {{ font-size: {PLOT.legend_font_size}px; }}"
+            ".figure-bg { fill: white; }"
             ".plot-bg { fill: white; stroke: black; stroke-width: 1; }"
             ".axis { stroke: black; stroke-width: 1; }"
             f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
@@ -268,6 +271,7 @@ class SvgFigure:
             ),
             f"<title>{escape(self.title)}</title>",
             self.svg_css,
+            f'<rect class="figure-bg" x="0" y="0" width="{self.width}" height="{self.height}" />',
             (
                 f'<text class="plot-title" x="{self.width / 2:.3f}" y="34" '
                 f'text-anchor="middle">{escape(self.title)}</text>'
@@ -300,6 +304,7 @@ class SvgFigure:
             "marker_x": list(panel.marker_x),
             "rule_y": list(panel.rule_y),
             "axis_multiplier": panel.y_axis_multiplier,
+            "show_x_axis": panel.show_x_axis,
             "series": [
                 {
                     "name": series.name,
@@ -330,6 +335,7 @@ class SvgFigure:
             )
 
         elements.extend(axis_svg(panel, x_domain, y_domain))
+        elements.extend(legend_svg(panel, self.draw_panel_title(panel)))
 
         for marker in panel.marker_x:
             x = scale_value(marker, x_domain, 0.0, float(panel.width))
@@ -366,14 +372,33 @@ class SvgFigure:
 
         columns = max(self.columns, 1)
         panel_width = max(panel.width for panel in self.panels)
-        panel_height = max(panel.height for panel in self.panels)
         column = index % columns
         row = index // columns
+        previous_row_height = sum(
+            self.row_height(row_index) + self.panel_spacing for row_index in range(row)
+        )
 
         return (
             self.margin_left + column * (panel_width + self.panel_spacing),
-            self.effective_margin_top() + row * (panel_height + self.panel_spacing),
+            self.effective_margin_top() + previous_row_height,
         )
+
+    def row_count(self) -> int:
+
+        if not self.panels:
+            return 0
+
+        columns = max(self.columns, 1)
+
+        return (len(self.panels) + columns - 1) // columns
+
+    def row_height(self, row: int) -> int:
+
+        columns = max(self.columns, 1)
+        start = row * columns
+        stop = min(start + columns, len(self.panels))
+
+        return max((panel.height for panel in self.panels[start:stop]), default=PLOT.height)
 
     def draw_panel_title(self, panel: SvgPanel) -> bool:
 
@@ -418,6 +443,73 @@ def line_panel(
     )
 
 
+def legend_svg(panel: SvgPanel, has_panel_title: bool) -> list[str]:
+    """Render one compact per-panel legend above the plotting box."""
+
+    if not panel.series:
+        return []
+
+    items = unique_legend_items(panel.series)
+
+    if not items:
+        return []
+
+    item_widths = [legend_item_width(label) for label, _kind, _color in items]
+    total_width = sum(item_widths)
+    x = max(0, panel.width - total_width)
+    y = -6 if has_panel_title else -12
+    elements = [f'<g class="legend" transform="translate({x:.3f},{y:.3f})">']
+
+    cursor = 0
+
+    for width, (label, kind, color) in zip(item_widths, items, strict=True):
+        elements.extend(legend_item_svg(cursor, label, kind, color))
+        cursor += width
+
+    elements.append("</g>")
+
+    return elements
+
+
+def unique_legend_items(series: Sequence[SvgSeries]) -> list[tuple[str, str, str]]:
+
+    items: list[tuple[str, str, str]] = []
+
+    for item in series:
+        key = (item.name, item.kind, item.color)
+
+        if key not in items:
+            items.append(key)
+
+    return items
+
+
+def legend_item_width(label: str) -> int:
+
+    return 34 + max(24, len(label) * 8)
+
+
+def legend_item_svg(x: int, label: str, kind: str, color: str) -> list[str]:
+
+    swatch_y = -4
+    text_x = x + 25
+
+    if kind == "points":
+        swatch = f'<circle cx="{x + 9}" cy="{swatch_y}" r="3.2" fill="{color}" />'
+    elif kind == "band":
+        swatch = f'<rect x="{x}" y="{swatch_y - 4}" width="18" height="8" fill="{color}" />'
+    else:
+        swatch = (
+            f'<line x1="{x}" x2="{x + 18}" y1="{swatch_y}" y2="{swatch_y}" '
+            f'stroke="{color}" stroke-width="{PLOT.line_width}" />'
+        )
+
+    return [
+        swatch,
+        f'<text class="legend-label" x="{text_x}" y="0">{escape(label)}</text>',
+    ]
+
+
 def axis_multiplier(values: Iterable[float]) -> str | None:
     """Return compact scientific multiplier text."""
 
@@ -447,20 +539,21 @@ def axis_svg(
             f"{escape(format_tick(value, panel.y_axis_multiplier))}</text>"
         )
 
-    x_tick_values = panel.x_ticks if panel.x_ticks else ticks(x_domain, PLOT.x_axis_tick_count)
+    if panel.show_x_axis:
+        x_tick_values = panel.x_ticks if panel.x_ticks else ticks(x_domain, PLOT.x_axis_tick_count)
 
-    for value in x_tick_values:
-        x = scale_value(value, x_domain, 0.0, float(panel.width))
+        for value in x_tick_values:
+            x = scale_value(value, x_domain, 0.0, float(panel.width))
+            elements.append(
+                f'<text class="tick-label" x="{x:.3f}" y="{panel.height + X_TICK_LABEL_Y_OFFSET}" '
+                f'text-anchor="middle">{escape(format_tick(value, None))}</text>'
+            )
+
         elements.append(
-            f'<text class="tick-label" x="{x:.3f}" y="{panel.height + X_TICK_LABEL_Y_OFFSET}" '
-            f'text-anchor="middle">{escape(format_tick(value, None))}</text>'
+            f'<text class="axis-title" x="{panel.width / 2:.3f}" '
+            f'y="{panel.height + X_AXIS_TITLE_Y_OFFSET}" '
+            f'text-anchor="middle">{escape(panel.x_title)}</text>'
         )
-
-    elements.append(
-        f'<text class="axis-title" x="{panel.width / 2:.3f}" '
-        f'y="{panel.height + X_AXIS_TITLE_Y_OFFSET}" '
-        f'text-anchor="middle">{escape(panel.x_title)}</text>'
-    )
 
     if panel.y_title is not None:
         transform = f"translate({Y_AXIS_TITLE_X},{panel.height / 2:.3f}) rotate(-90)"

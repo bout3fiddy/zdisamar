@@ -38,6 +38,7 @@ STATE_DERIVATIVE_TITLES = {
 }
 
 JACOBIAN_PANEL_HEIGHT = 320
+JACOBIAN_PANEL_WIDTH = 520
 STATE_TRACE_PANEL_HEIGHT = 300
 STATE_TRACE_COLUMNS = 2
 MEASUREMENT_FIT_HEIGHT = 315
@@ -244,6 +245,7 @@ def measurement_fit_figure(result) -> SvgFigure:
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
         y_axis_multiplier=axis_multiplier(reflectance_values),
+        show_x_axis=False,
     )
     residual_panel = line_panel(
         title="Residual",
@@ -306,7 +308,7 @@ def jacobian_figure(result, *, columns: int) -> SvgFigure:
             y=values,
             name=derivative_title,
             color=state_color_at(index),
-            width=panel_width(columns),
+            width=jacobian_panel_width(columns),
             height=JACOBIAN_PANEL_HEIGHT,
         )
         panels.append(panel)
@@ -404,3 +406,11 @@ def iteration_domain(values: list[float]) -> tuple[float, float]:
 def panel_width(columns: int) -> int:
 
     return max(300, int(PLOT.diagnostic_width / max(1, columns)) - 35)
+
+
+def jacobian_panel_width(columns: int) -> int:
+
+    if columns <= 1:
+        return PLOT.diagnostic_width
+
+    return JACOBIAN_PANEL_WIDTH

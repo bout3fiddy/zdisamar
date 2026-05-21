@@ -7,7 +7,11 @@ from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Meas
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
 from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
-from zdisamar.plot.optimal_estimation import MEASUREMENT_RESIDUAL_HEIGHT
+from zdisamar.plot.optimal_estimation import (
+    JACOBIAN_PANEL_WIDTH,
+    MEASUREMENT_FIT_HEIGHT,
+    MEASUREMENT_RESIDUAL_HEIGHT,
+)
 from zdisamar.plot.profiles import interval_profile_rows
 from zdisamar.plot.properties import PLOT
 from zdisamar.plot.svg import SvgFigure, SvgPanel, SvgSeries
@@ -87,9 +91,16 @@ def main() -> int:
     assert "residual_scaled" not in fit_spec
     assert fit["panels"][1]["width"] == PLOT.diagnostic_width
     assert fit["panels"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
+    assert fit["panels"][0]["show_x_axis"] is False
+    assert fit["panels"][1]["show_x_axis"] is True
+    assert fit["height"] < 800
+    assert fit["height"] == fit["panels"][1]["origin"][1] + MEASUREMENT_RESIDUAL_HEIGHT + 112
     assert fit["panels"][1]["marker_x"] == []
     fit_residual_domain = fit["panels"][1]["y_domain"]
     assert fit_residual_domain[0] <= 0.0 <= fit_residual_domain[1]
+    assert fit["panels"][1]["origin"][1] == (
+        fit["panels"][0]["origin"][1] + MEASUREMENT_FIT_HEIGHT + 44
+    )
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
@@ -104,6 +115,8 @@ def main() -> int:
     assert jacobian["title"]["text"] == "Final reflectance Jacobians"
     assert len(jacobian["panels"]) == 2
     assert jacobian["resolve"]["scale"]["y"] == "independent"
+    assert jacobian["panels"][0]["width"] == JACOBIAN_PANEL_WIDTH
+    assert jacobian["panels"][1]["width"] == JACOBIAN_PANEL_WIDTH
     assert "reflectance_jacobian_scaled" not in jacobian_spec
     assert "Jacobian x" not in jacobian_spec
     assert "x1e-5" in jacobian_spec
@@ -126,6 +139,8 @@ def main() -> int:
     assert f".grid {{ stroke: {PLOT.colors['grid']};" in jacobian_svg
     assert f"stroke-opacity: {PLOT.grid_opacity}" in jacobian_svg
     assert f".axis-title {{ font-size: {PLOT.axis_title_font_size}px;" in jacobian_svg
+    assert 'class="figure-bg"' in jacobian_svg
+    assert 'class="legend"' in jacobian_svg
 
     missing_samples_plot = SvgFigure(
         title="Missing samples",
