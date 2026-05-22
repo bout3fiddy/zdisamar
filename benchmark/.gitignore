@@ -2,3 +2,4 @@
 __pycache__/
 suite/__pycache__/
 rust_results.json
+fast_results.json
