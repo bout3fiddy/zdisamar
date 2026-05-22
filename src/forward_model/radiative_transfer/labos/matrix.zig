@@ -1180,18 +1180,16 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     }
 
     var pivot: [types.max_gauss]usize = undefined;
-    var pivot_offset: [types.max_gauss]usize = undefined;
     var inverse_diag: [types.max_gauss]f64 = undefined;
     inline for (0..10) |i| {
         pivot[i] = i;
-        pivot_offset[i] = i * 10;
     }
 
     for (0..10) |col| {
-        var max_val: f64 = @abs(one_minus_ab_gg[pivot_offset[col] + col]);
+        var max_val: f64 = @abs(one_minus_ab_gg[col * 10 + col]);
         var max_row: usize = col;
         for (col + 1..10) |row| {
-            const val = @abs(one_minus_ab_gg[pivot_offset[row] + col]);
+            const val = @abs(one_minus_ab_gg[row * 10 + col]);
             if (val > max_val) {
                 max_val = val;
                 max_row = row;
@@ -1201,20 +1199,25 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
             const tmp = pivot[col];
             pivot[col] = pivot[max_row];
             pivot[max_row] = tmp;
-            const tmp_offset = pivot_offset[col];
-            pivot_offset[col] = pivot_offset[max_row];
-            pivot_offset[max_row] = tmp_offset;
+            // Previous-column LU factors belong to the pivoted row too.
+            inline for (0..10) |k| {
+                const lhs = col * 10 + k;
+                const rhs = max_row * 10 + k;
+                const matrix_tmp = one_minus_ab_gg[lhs];
+                one_minus_ab_gg[lhs] = one_minus_ab_gg[rhs];
+                one_minus_ab_gg[rhs] = matrix_tmp;
+            }
         }
-        const diag = one_minus_ab_gg[pivot_offset[col] + col];
+        const diag = one_minus_ab_gg[col * 10 + col];
         if (@abs(diag) < 1.0e-30) {
             result.* = ab.*;
             return;
         }
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;
+        const col_offset = col * 10;
         for (col + 1..10) |row| {
-            const row_offset = pivot_offset[row];
-            const col_offset = pivot_offset[col];
+            const row_offset = row * 10;
             const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
             one_minus_ab_gg[row_offset + col] = factor;
             for (col + 1..10) |k| {
@@ -1229,7 +1232,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         var y: [types.max_gauss]f64 = undefined;
         for (0..10) |i| {
             var s: f64 = if (pivot[i] == rhs_col) 1.0 else 0.0;
-            const row_offset = pivot_offset[i];
+            const row_offset = i * 10;
             for (0..i) |j| s -= one_minus_ab_gg[row_offset + j] * y[j];
             y[i] = s;
         }
@@ -1239,7 +1242,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         while (ii > 0) {
             ii -= 1;
             var s: f64 = y[ii];
-            const row_offset = pivot_offset[ii];
+            const row_offset = ii * 10;
             for (ii + 1..10) |j| s -= one_minus_ab_gg[row_offset + j] * x[j];
             x[ii] = s * inverse_diag[ii];
         }
@@ -1253,21 +1256,19 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         }
     }
 
-    inline for (0..2) |ja| {
-        const j = 10 + ja;
-        inline for (0..10) |i| {
+    inline for (0..10) |i| {
+        inline for (0..2) |ja| {
+            const j = 10 + ja;
             var s: f64 = 0.0;
             inline for (0..10) |k| s += inverse[i * 10 + k] * ab.data[k * 12 + j];
             result.data[i * 12 + j] = s;
         }
     }
 
-    var tmp: [types.max_extra * types.max_gauss]f64 = undefined;
     inline for (0..2) |ia| {
         inline for (0..10) |j| {
             var s: f64 = 0.0;
             inline for (0..10) |k| s += ab.data[(10 + ia) * 12 + k] * inverse[k * 10 + j];
-            tmp[ia * 10 + j] = s;
             result.data[(10 + ia) * 12 + j] = s;
         }
     }
@@ -1277,7 +1278,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         inline for (0..2) |ja| {
             const j = 10 + ja;
             var s: f64 = 0.0;
-            inline for (0..10) |k| s += tmp[ia * 10 + k] * ab.data[k * 12 + j];
+            inline for (0..10) |k| s += result.data[i * 12 + k] * ab.data[k * 12 + j];
             result.data[i * 12 + j] = s + ab.data[i * 12 + j];
         }
     }
