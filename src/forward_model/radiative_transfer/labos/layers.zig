@@ -379,19 +379,22 @@ fn doDouble(
             td_nonzero,
         );
 
-        if (td_nonzero) {
-            Trace.plotU("matrix_smul_td_nonzero", 1);
-            Trace.plotU("matrix_esmul_semul_add", 1);
-            if (q_is_zero) {
+        if (q_is_zero) {
+            if (td_nonzero) {
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
                 basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, n, n_gauss, E, current_t);
             } else {
-                basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
+                Trace.plotU("matrix_esmul_semul", 1);
+                basis.esmulSemulSelfInto(next_t, n, E, current_t);
             }
         } else {
-            Trace.plotU("matrix_esmul_semul", 1);
-            if (q_is_zero) {
-                basis.esmulSemulSelfInto(next_t, n, E, current_t);
+            if (td_nonzero) {
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
+                basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
             } else {
+                Trace.plotU("matrix_esmul_semul", 1);
                 basis.esmulSemulInto(next_t, n, E, D, current_t);
             }
         }
@@ -557,19 +560,22 @@ inline fn doDouble12x10Step(
         td_nonzero,
     );
 
-    if (td_nonzero) {
-        Trace.plotU("matrix_smul_td_nonzero", 1);
-        Trace.plotU("matrix_esmul_semul_add", 1);
-        if (q_is_zero) {
+    if (q_is_zero) {
+        if (td_nonzero) {
+            Trace.plotU("matrix_smul_td_nonzero", 1);
+            Trace.plotU("matrix_esmul_semul_add", 1);
             basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, current_t);
         } else {
-            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
+            Trace.plotU("matrix_esmul_semul", 1);
+            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
         }
     } else {
-        Trace.plotU("matrix_esmul_semul", 1);
-        if (q_is_zero) {
-            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
+        if (td_nonzero) {
+            Trace.plotU("matrix_smul_td_nonzero", 1);
+            Trace.plotU("matrix_esmul_semul_add", 1);
+            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
         } else {
+            Trace.plotU("matrix_esmul_semul", 1);
             basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
         }
     }
@@ -722,13 +728,14 @@ pub fn calcRTlayersIntoWithBasis(
             Trace.plotU("phase_coeff_terms_nonzero", @intCast(nonzero_terms));
             break :max_beta_eff suffix;
         };
-        const a_eff = a * max_beta_eff;
+        const effective_scattering_coefficient = a * max_beta_eff;
+        const effective_scattering_depth = effective_scattering_coefficient * b;
 
         var use_doubling = false;
         var b_start = b;
         var ndouble: usize = 0;
 
-        if (controls.scattering == .multiple and a_eff * b > controls.performance_thresholds.threshold_doubl) {
+        if (controls.scattering == .multiple and effective_scattering_depth > controls.performance_thresholds.threshold_doubl) {
             // DECISION:
             //   Trigger doubling only when the scaled optical thickness crosses
             //   the configured threshold.
@@ -738,7 +745,7 @@ pub fn calcRTlayersIntoWithBasis(
                 // math: start optical depth is repeatedly halved until omega_eff * tau_start < threshold_doubl.
                 bd /= 2.0;
                 ndouble += 1;
-                if (a_eff * bd < controls.performance_thresholds.threshold_doubl) break;
+                if (effective_scattering_coefficient * bd < controls.performance_thresholds.threshold_doubl) break;
             }
             b_start = bd;
         }
@@ -749,7 +756,7 @@ pub fn calcRTlayersIntoWithBasis(
             b,
             a,
             max_beta_eff,
-            a_eff * b,
+            effective_scattering_depth,
             controls.performance_thresholds.threshold_doubl,
             b_start,
             ndouble,
