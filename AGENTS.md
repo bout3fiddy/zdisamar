@@ -13,6 +13,7 @@
 
 - Source-tree rules: [src/AGENTS.md](src/AGENTS.md).
 - Tests and validation: [tests/AGENTS.md](tests/AGENTS.md), [validation/AGENTS.md](validation/AGENTS.md).
+- Benchmarks: [benchmark/AGENTS.md](benchmark/AGENTS.md).
 - Data assets: [data/AGENTS.md](data/AGENTS.md).
 - Scripts: [scripts/AGENTS.md](scripts/AGENTS.md).
 - Deep context index: [.agents/repo-context/index.md](.agents/repo-context/index.md).
@@ -22,6 +23,8 @@
 - Fast baseline: `zig build check`.
 - Broader fast presubmit: `zig build test-fast`.
 - Full retained verification: `zig build test`.
+- Fast performance canary: `uv run benchmark/run_benchmark_fast.py`.
+- Full retained benchmark: `uv run benchmark/run_benchmark.py`.
 - Before committing: `prek run --all-files`.
 - Validation evidence scripts are invoked directly with `uv run ...`; do not
   expose one-off validation plot or sweep scripts through `zig build`.

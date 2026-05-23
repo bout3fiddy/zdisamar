@@ -40,6 +40,16 @@ def scene_cases() -> list[tuple[SceneSpec, Any]]:
 
     base = build_o2a_case(band)
     band_baseline.configure_case(base)
+    selected_labels = config.FAST_SCENE_LABELS
+    specs = scene_specs()
+
+    if selected_labels is not None:
+        selected = set(selected_labels)
+        specs = [spec for spec in specs if spec.label in selected]
+        missing = selected - {spec.label for spec in specs}
+
+        if missing:
+            raise ValueError(f"unknown benchmark scene label(s): {sorted(missing)}")
 
     return [
         (
@@ -51,7 +61,7 @@ def scene_cases() -> list[tuple[SceneSpec, Any]]:
                 scene=spec.values,
             ),
         )
-        for index, spec in enumerate(scene_specs(), start=1)
+        for index, spec in enumerate(specs, start=1)
     ]
 
 
@@ -68,10 +78,17 @@ def sweep_cases() -> list[SweepCase]:
 
     base = build_o2a_case(band, jacobian_reference_layer=True)
     band_baseline.configure_case(base)
+    selected_indices = config.SWEEP_CASE_INDICES
+    requested_count = max(selected_indices) if selected_indices is not None else config.SWEEP_COUNT
+    selected = set(selected_indices) if selected_indices is not None else None
     rows = []
 
-    for row in reference_cases.case_rows(count=config.SWEEP_COUNT):
+    for row in reference_cases.case_rows(count=requested_count):
         index = int(row["case"])
+
+        if selected is not None and index not in selected:
+            continue
+
         truth = reference_cases.scene_from_row(row)
         rows.append(
             SweepCase(
@@ -86,6 +103,12 @@ def sweep_cases() -> list[SweepCase]:
                 ),
             )
         )
+
+    if selected is not None:
+        missing = selected - {row.index for row in rows}
+
+        if missing:
+            raise ValueError(f"unknown benchmark OE sweep case(s): {sorted(missing)}")
 
     return rows
 
