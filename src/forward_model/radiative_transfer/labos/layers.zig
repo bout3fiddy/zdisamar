@@ -633,6 +633,53 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     }
 }
 
+pub const LayerDoublingDecision = struct {
+    start_optical_depth: f64,
+    doubling_count: usize,
+    uses_doubling: bool,
+};
+
+pub fn classifyLayerDoubling(
+    scattering: common.ScatteringMode,
+    threshold_doubl: f64,
+    optical_depth: f64,
+    effective_scattering_coefficient: f64,
+    effective_scattering_depth: f64,
+) LayerDoublingDecision {
+    if (scattering != .multiple or !(effective_scattering_depth > threshold_doubl)) {
+        return .{
+            .start_optical_depth = optical_depth,
+            .doubling_count = 0,
+            .uses_doubling = false,
+        };
+    }
+
+    const ratio = effective_scattering_depth / threshold_doubl;
+    const exponent = math.ilogb(ratio);
+    var count_i32: i32 = if (exponent >= 60) 60 else @max(1, exponent + 1);
+    var count: usize = @intCast(count_i32);
+    var start = math.ldexp(optical_depth, -count_i32);
+
+    while (count > 1) {
+        const previous_count_i32 = count_i32 - 1;
+        const previous_start = math.ldexp(optical_depth, -previous_count_i32);
+        if (effective_scattering_coefficient * previous_start >= threshold_doubl) break;
+        count_i32 = previous_count_i32;
+        count -= 1;
+        start = previous_start;
+    }
+    while (count < 60 and effective_scattering_coefficient * start >= threshold_doubl) {
+        start *= 0.5;
+        count += 1;
+    }
+
+    return .{
+        .start_optical_depth = start,
+        .doubling_count = count,
+        .uses_doubling = true,
+    };
+}
+
 // hot path:
 //   when: for each layer inside each LABOS Fourier term
 //   work: builds phase matrices, effective scattering suffixes, exponentials, single scatter, and doubled RT layers
@@ -730,25 +777,16 @@ pub fn calcRTlayersIntoWithBasis(
         };
         const effective_scattering_coefficient = a * max_beta_eff;
         const effective_scattering_depth = effective_scattering_coefficient * b;
-
-        var use_doubling = false;
-        var b_start = b;
-        var ndouble: usize = 0;
-
-        if (controls.scattering == .multiple and effective_scattering_depth > controls.performance_thresholds.threshold_doubl) {
-            // DECISION:
-            //   Trigger doubling only when the scaled optical thickness crosses
-            //   the configured threshold.
-            use_doubling = true;
-            var bd = b;
-            for (0..60) |_| {
-                // math: start optical depth is repeatedly halved until omega_eff * tau_start < threshold_doubl.
-                bd /= 2.0;
-                ndouble += 1;
-                if (effective_scattering_coefficient * bd < controls.performance_thresholds.threshold_doubl) break;
-            }
-            b_start = bd;
-        }
+        // DECISION:
+        //   Trigger doubling only when the scaled optical thickness crosses
+        //   the configured threshold.
+        const doubling_decision = classifyLayerDoubling(
+            controls.scattering,
+            controls.performance_thresholds.threshold_doubl,
+            b,
+            effective_scattering_coefficient,
+            effective_scattering_depth,
+        );
         Telemetry.labosLayerDecision(
             i_fourier,
             layer_idx,
@@ -758,12 +796,12 @@ pub fn calcRTlayersIntoWithBasis(
             max_beta_eff,
             effective_scattering_depth,
             controls.performance_thresholds.threshold_doubl,
-            b_start,
-            ndouble,
-            use_doubling,
+            doubling_decision.start_optical_depth,
+            doubling_decision.doubling_count,
+            doubling_decision.uses_doubling,
         );
         const needs_renormalized_phase =
-            use_doubling and i_fourier == 0 and controls.renorm_phase_function;
+            doubling_decision.uses_doubling and i_fourier == 0 and controls.renorm_phase_function;
 
         var E = basis.Vec.zero(geo.nmutot);
         {
@@ -771,7 +809,7 @@ pub fn calcRTlayersIntoWithBasis(
             defer zone.end();
             for (0..geo.nmutot) |imu| {
                 // math: E_mu = exp(-tau_start / mu).
-                E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
+                E.data[imu] = math.exp(-doubling_decision.start_optical_depth / @max(geo.u[imu], 1.0e-12));
             }
         }
         Trace.plotU("initial_exp_evals", @intCast(geo.nmutot));
@@ -790,18 +828,18 @@ pub fn calcRTlayersIntoWithBasis(
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
             defer zone.end();
             fillSingleScatterR(&layer_rt.R, a, &E, &z.Zmin, geo);
-            fillSingleScatterT(&layer_rt.T, a, b_start, &E, &z.Zplus, geo);
+            fillSingleScatterT(&layer_rt.T, a, doubling_decision.start_optical_depth, &E, &z.Zplus, geo);
         }
         Trace.plotU("single_scatter_r", 1);
         Trace.plotU("single_scatter_t", 1);
 
-        if (use_doubling) {
+        if (doubling_decision.uses_doubling) {
             Trace.plotU("doubled_layers", 1);
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
                 doDouble(
-                    ndouble,
+                    doubling_decision.doubling_count,
                     geo.nmutot,
                     geo.n_gauss,
                     controls.performance_thresholds.threshold_mul,

@@ -71,3 +71,74 @@ test "workspace layer effective scattering suffix uses active phase stride" {
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), capped_suffixes[2], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1 / 3.0), capped_suffixes[3], 1.0e-12);
 }
+
+test "layer doubling classification matches strict halving search" {
+    const Case = struct {
+        scattering: common.ScatteringMode = .multiple,
+        threshold: f64 = 1.0,
+        optical_depth: f64,
+        coefficient: f64 = 1.0,
+    };
+    const cases = [_]Case{
+        .{ .optical_depth = 1.0 },
+        .{ .optical_depth = 1.0 + 1.0e-15 },
+        .{ .optical_depth = 1.5 },
+        .{ .optical_depth = 2.0 },
+        .{ .optical_depth = 3.0 },
+        .{ .optical_depth = 4.0 },
+        .{ .optical_depth = 12.7, .coefficient = 2.5, .threshold = 0.1 },
+        .{ .optical_depth = std.math.ldexp(@as(f64, 1.0), 80) },
+        .{ .scattering = .single, .optical_depth = 12.7, .coefficient = 2.5, .threshold = 0.1 },
+    };
+
+    for (cases) |case| {
+        const effective_scattering_depth = case.coefficient * case.optical_depth;
+        const expected = referenceLayerDoublingDecision(
+            case.scattering,
+            case.threshold,
+            case.optical_depth,
+            case.coefficient,
+            effective_scattering_depth,
+        );
+        const actual = labos.internal.layers.classifyLayerDoubling(
+            case.scattering,
+            case.threshold,
+            case.optical_depth,
+            case.coefficient,
+            effective_scattering_depth,
+        );
+        try std.testing.expectEqual(expected.uses_doubling, actual.uses_doubling);
+        try std.testing.expectEqual(expected.doubling_count, actual.doubling_count);
+        try std.testing.expectApproxEqAbs(expected.start_optical_depth, actual.start_optical_depth, 0.0);
+    }
+}
+
+fn referenceLayerDoublingDecision(
+    scattering: common.ScatteringMode,
+    threshold_doubl: f64,
+    optical_depth: f64,
+    effective_scattering_coefficient: f64,
+    effective_scattering_depth: f64,
+) labos.internal.layers.LayerDoublingDecision {
+    if (scattering != .multiple or !(effective_scattering_depth > threshold_doubl)) {
+        return .{
+            .start_optical_depth = optical_depth,
+            .doubling_count = 0,
+            .uses_doubling = false,
+        };
+    }
+
+    var bd = optical_depth;
+    var ndouble: usize = 0;
+    for (0..60) |_| {
+        // math: reference path halves tau_start until omega_eff * tau_start < threshold_doubl.
+        bd /= 2.0;
+        ndouble += 1;
+        if (effective_scattering_coefficient * bd < threshold_doubl) break;
+    }
+    return .{
+        .start_optical_depth = bd,
+        .doubling_count = ndouble,
+        .uses_doubling = true,
+    };
+}
