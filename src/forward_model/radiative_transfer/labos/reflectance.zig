@@ -178,6 +178,7 @@ pub fn fillAdjacentLayerPhaseMaxIndices(
 
     source_phase_max_indices[0] = layer_phase_max_indices[0];
     for (1..nlayer) |ilevel| {
+        // math: interface phase ceiling is max(phase_max(layer_above), phase_max(layer_below)).
         source_phase_max_indices[ilevel] = @max(
             layer_phase_max_indices[ilevel - 1],
             layer_phase_max_indices[ilevel],
@@ -204,6 +205,7 @@ pub fn calcReflectance(
 ) f64 {
     const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
+    // math: non-integrated Fourier reflectance term is U_top(solar_col, view_direction).
     return ud[end_level].U.col[solar_col].get(view_idx);
 }
 
@@ -249,6 +251,7 @@ pub fn calcIntegratedReflectance(
 //   work: integrates reflectance over levels, phase rows, and Gauss stream reductions
 //   data: layer inputs, order contribution arrays, phase rows, attenuation arrays
 //   follow: buildPhaseRowCache and scattering-source weighting callers
+//   math: rho_m = sum_levels RTMweight_l * E_view,l * ksca_l * (Pminus*D_solar + Pplus*U_solar) plus direct term for m=0.
 pub fn calcIntegratedReflectanceWithBasis(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -360,17 +363,20 @@ pub fn calcIntegratedReflectanceWithBasis(
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
             const pmin = (0.25 * phase_rows.zmin[imu] / view_mu) / mu;
+            // math: Pminus*D source term += (0.25 * Zminus(view,mu) / view_mu / mu) * D_solar(mu).
             pmin_ed += pmin * level_d[imu];
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
         const pmin_direct = (0.25 * phase_rows.zmin[solar_idx] / view_mu) / solar_mu;
+        // math: direct solar contribution uses the solar pseudo-stream in the same Pminus source term.
         pmin_ed += pmin_direct * level.E.data[solar_idx];
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
             const pplusst = (0.25 * phase_rows.zplus[imu] / view_mu) / mu;
+            // math: Pplus*U source term += (0.25 * Zplus(view,mu) / view_mu / mu) * U_solar(mu).
             pplusst_u += pplusst * level_u[imu];
         }
 
@@ -379,12 +385,14 @@ pub fn calcIntegratedReflectanceWithBasis(
         const contribution = level.E.data[view_idx] *
             source_ksca *
             (pmin_ed + pplusst_u);
+        // math: reflectance contribution = source_rtm_weight * E_view * ksca * (downward + upward source sums).
         reflectance += source_rtm_weight * contribution;
     }
 
     if (i_fourier == 0) {
         // PARITY:
         //   Keep the vendor scalar direct term in the zero-Fourier closure.
+        // math: zero-Fourier direct closure adds E_surface(view) * U_surface(solar,view).
         reflectance += ud[0].E.get(view_idx) * ud[0].U.col[solar_col].get(view_idx);
     }
 
@@ -396,6 +404,7 @@ pub fn calcIntegratedReflectanceWithBasis(
 //   work: reduces Gauss source terms and pseudo-spherical direct attenuation into one weighting value
 //   data: order fields, layer inputs, attenuation arrays, geometry, layer index
 //   follow: calcAerosolOpticalDepthWeightingWithBasis and active derivative rows
+//   math: absorption weighting is negative slant-path sensitivity from U/D pair products and direct attenuation terms.
 fn absorptionInterfaceWeighting(
     ud: []const basis.UDField,
     ud_sum_local: []const basis.UDLocal,
@@ -412,9 +421,11 @@ fn absorptionInterfaceWeighting(
     var sum: f64 = 0.0;
     for (0..geo.n_gauss) |i_gauss| {
         const mu = @max(geo.u[i_gauss], 1.0e-12);
+        // math: subtract diffuse absorption term (U_view*D_solar + D_view*U_solar)/mu.
         sum -= (level.U.col[view_col].get(i_gauss) * level.D.col[solar_col].get(i_gauss) +
             level.D.col[view_col].get(i_gauss) * level.U.col[solar_col].get(i_gauss)) / mu;
     }
+    // math: subtract direct view path term U_solar(view) * E_view / mu_view.
     sum -= level.U.col[solar_col].get(view_idx) * level.E.get(view_idx) /
         @max(geo.u[view_idx], 1.0e-12);
     if (use_pseudo_spherical and
@@ -431,6 +442,7 @@ fn absorptionInterfaceWeighting(
             const y_l = earth_radius_km + rtm_quadrature.levels[level_index].altitude_km;
             const denominator = @sqrt(@abs(y_k * y_k - y_l * y_l * (1.0 - solar_mu * solar_mu)));
             const solar_slant_inverse = if (denominator > 0.0) y_k / denominator else 0.0;
+            // math: pseudo-spherical direct derivative uses y_k/sqrt(y_k^2 - y_l^2*(1-mu0^2)).
             pseudo_direct_sum += ud_sum_local[level_index].U.col[view_col].get(solar_idx) *
                 ud[level_index].E.get(solar_idx) *
                 solar_slant_inverse;
@@ -473,6 +485,7 @@ inline fn scatteringSourceRowSums(
         const mu_col = @max(geo.u[imu], 1.0e-12);
         const pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
         const pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
+        // math: row sums pair Pplus/Pminus phase factors with D_solar and U_solar stream fields.
         sums.pplusplus_ed += pplus * level.D.col[solar_col].get(imu);
         sums.pminplus_ed += pmin * level.D.col[solar_col].get(imu);
         sums.pminmin_u += pplus * level.U.col[solar_col].get(imu);
@@ -491,6 +504,7 @@ inline fn scatteringSourceRowSums(
 //   work: reduces scaled phase rows into Jacobian source weighting terms
 //   data: phase row cache, source row sums, Gauss weights, derivative output row
 //   follow: scatteringSourceWeightingFromPhaseRows and buildPhaseRowCache
+//   math: scattering-source weighting contracts view U/D/E with solar row sums for the scaled phase coefficients.
 fn scatteringSourceWeightingFromScaledPhase(
     scaled_phase_coefficients: *const [basis.max_phase_coef]f64,
     max_phase_index: usize,
@@ -515,6 +529,7 @@ fn scatteringSourceWeightingFromScaledPhase(
             plm_basis,
             row_index,
         );
+        // math: source += D_view*(Pminplus*D_solar + Pminmin*U_solar) + U_view*(Pplusplus*D_solar + Pplusmin*U_solar).
         sum += level.D.col[view_col].get(row_index) * (row.pminplus_ed + row.pminmin_u) +
             level.U.col[view_col].get(row_index) * (row.pplusplus_ed + row.pplusmin_u);
     }
@@ -543,6 +558,7 @@ fn aerosolInterfaceWeightingFromScaledPhase(
     if (d_sca_d_altitude == 0.0) return 0.0;
     const max_phase_index = maxPhaseCoefficientIndex(scaled_phase_coefficients);
     if (i_fourier > max_phase_index) return 0.0;
+    // math: altitude interface weighting = scattering source term + d_sca/dz * absorption weighting.
     return scatteringSourceWeightingFromScaledPhase(
         scaled_phase_coefficients,
         max_phase_index,
@@ -590,6 +606,7 @@ fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
         aerosol_scattering_optical_depth += @max(layer.aerosol_scattering_optical_depth, 0.0);
     }
     if (aerosol_optical_depth <= 0.0) return 1.0;
+    // math: aerosol SSA = total aerosol scattering optical depth / total aerosol optical depth.
     return math.clamp(aerosol_scattering_optical_depth / aerosol_optical_depth, 0.0, 1.0);
 }
 
@@ -617,6 +634,7 @@ fn commonActiveAerosolUnitPhase(
 //   work: materializes Z+/Z- phase rows and row sums into a compact cache
 //   data: phase coefficients, phase basis, geometry, phase row cache output
 //   follow: scatteringSourceWeightingFromPhaseRows and calcIntegratedReflectanceWithBasis
+//   math: cache rows hold Zplus(row,:) and Zmin(row,:) for all stream rows used by source contractions.
 fn buildPhaseRowCache(
     phase_coefficients: *const [basis.max_phase_coef]f64,
     max_phase_index: usize,
@@ -660,6 +678,7 @@ inline fn scatteringSourceRowSumsFromRows(
         const mu_col = @max(geo.u[imu], 1.0e-12);
         const pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
         const pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
+        // math: cached row sums pair Pplus/Pminus phase factors with D_solar and U_solar stream fields.
         sums.pplusplus_ed += pplus * level.D.col[solar_col].get(imu);
         sums.pminplus_ed += pmin * level.D.col[solar_col].get(imu);
         sums.pminmin_u += pplus * level.U.col[solar_col].get(imu);
@@ -743,6 +762,7 @@ const InterfaceWeighting = struct {
 //   work: evaluates absorption once and preserves the existing scattering_coefficient = source + absorption expression
 //   data: cached phase rows, order fields, quadrature levels, geometry
 //   follow: calcAerosol*WeightingFromPhaseRows paired derivative path
+//   math: scattering_coefficient weighting = scattering_source_weighting + absorption_weighting.
 fn interfaceWeightingFromPhaseRows(
     phase_rows: *const PhaseRowCache,
     ud: []const basis.UDField,
@@ -799,6 +819,7 @@ fn aerosolTotalExtinctionInterfaceWeighting(
     absorption_weighting: f64,
     aerosol_ssa: f64,
 ) f64 {
+    // math: aerosol extinction weighting = SSA * scattering_weighting + (1 - SSA) * absorption_weighting.
     return aerosol_ssa * scattering_weighting + (1.0 - aerosol_ssa) * absorption_weighting;
 }
 
@@ -807,6 +828,7 @@ fn aerosolTotalExtinctionInterfaceWeighting(
 //   work: combines phase rows, order fields, and direct source terms into scattering-source weighting
 //   data: phase row cache, order fields, layer/source geometry, derivative target level
 //   follow: calcAerosolOpticalDepthWeightingWithBasis and pressure-shift weighting
+//   math: cached scattering-source weighting contracts D_view/U_view/E_view against cached phase row sums.
 fn scatteringSourceWeightingFromPhaseRows(
     phase_rows: *const PhaseRowCache,
     ud: []const basis.UDField,
@@ -829,6 +851,7 @@ fn scatteringSourceWeightingFromPhaseRows(
             geo,
             row_index,
         );
+        // math: source += D_view*(Pminplus*D_solar + Pminmin*U_solar) + U_view*(Pplusplus*D_solar + Pplusmin*U_solar).
         sum += level.D.col[view_col].get(row_index) * (row.pminplus_ed + row.pminmin_u) +
             level.U.col[view_col].get(row_index) * (row.pplusplus_ed + row.pplusmin_u);
     }
@@ -842,6 +865,7 @@ fn scatteringSourceWeightingFromPhaseRows(
         geo,
         view_idx,
     );
+    // math: direct view source contribution = E_view * (Pminplus*D_solar + Pminmin*U_solar).
     sum += level.E.get(view_idx) * (view_row.pminplus_ed + view_row.pminmin_u);
     return sum;
 }
@@ -916,6 +940,7 @@ fn calcAerosolOpticalDepthWeightingFromPhaseRows(
         );
         const dz = rtm_quadrature.levels[ilevel].altitude_km -
             rtm_quadrature.levels[ilevel - 1].altitude_km;
+        // math: AOD weighting integrates interface weighting by trapezoid rule over altitude, then divides by aerosol layer thickness.
         if (dz > 0.0) integral += 0.5 * (previous + current) * dz;
         previous = current;
     }
@@ -961,6 +986,7 @@ fn calcAerosolLayerPressureShiftWeightingFromPhaseRows(
     const bottom_sca_weighting = if (bottom_interface) |weighting| weighting.scattering_coefficient else 0.0;
     const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km;
     const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
+    // math: pressure-shift weighting is top-minus-bottom interface sensitivity times ksca/kabs.
     if (kabs == 0.0) return (top_sca_weighting - bottom_sca_weighting) * ksca;
     const top_abs_weighting = if (top_interface) |weighting|
         weighting.absorption
@@ -1098,6 +1124,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
             );
             const dz = rtm_quadrature.levels[ilevel].altitude_km -
                 rtm_quadrature.levels[ilevel - 1].altitude_km;
+            // math: AOD weighting integrates interface weighting by trapezoid rule over altitude, then divides by aerosol layer thickness.
             if (dz > 0.0) integral += 0.5 * (previous + current) * dz;
             previous = current;
         }
@@ -1130,6 +1157,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
             use_pseudo_spherical,
             geo,
         );
+        // math: fallback AOD weighting sums level.weight * dksca/dtau * (source + absorption).
         weighting += level.weight * (source_weighting + extinction_weighting);
     }
     return weighting;
@@ -1140,6 +1168,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
 //   work: computes the paired aerosol derivative weighting with one common aerosol phase-row cache
 //   data: active aerosol bounds, RTM quadrature rows, order fields, cached phase rows
 //   follow: execute.layerResolvedLabosWithWorkspace two-state Jacobian route
+//   math: paired derivative returns {AOD trapezoid weighting, pressure-shift top-minus-bottom weighting} using shared phase rows.
 pub fn calcAerosolDerivativeWeightingWithBasis(
     layers: []const common.LayerInput,
     rtm_quadrature: common.RtmQuadratureGrid,
@@ -1230,6 +1259,7 @@ pub fn calcAerosolDerivativeWeightingWithBasis(
 //   work: assembles pressure-shift reflectance weighting from order and phase data
 //   data: active layer levels, pressure-shift factors, phase rows, Jacobian output
 //   follow: active derivative mask routing and shared phase row construction
+//   math: pressure-shift weighting = (top_sca-bottom_sca)*ksca + (top_abs-bottom_abs)*kabs.
 pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
     layers: []const common.LayerInput,
     rtm_quadrature: common.RtmQuadratureGrid,
@@ -1268,6 +1298,7 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
     );
     const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_below_per_km;
     const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
+    // math: kabs = ksca * (1 - SSA) / SSA when SSA > 0.
     if (kabs == 0.0) return (top_sca_weighting - bottom_sca_weighting) * ksca;
     const top_abs_weighting = absorptionInterfaceWeighting(
         ud,
@@ -1291,6 +1322,7 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
+    // math: total scattering optical depth = sum_l max(tau_sca_l, 0).
     for (layers) |*layer| total += @max(layer.scattering_optical_depth, 0.0);
     return total;
 }
@@ -1336,6 +1368,7 @@ pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
 //   work: resolves the maximum Fourier term from phase coefficient support and route controls
 //   data: forward input phase coefficients, control limits, resolved phase maximum
 //   follow: layerResolvedLabosWithWorkspace Fourier loop
+//   math: Fourier maximum is the highest active phase coefficient index, capped by control fourier_order_cap.
 pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RadiativeTransferControls) usize {
     if (input.layers.len == 0) return 0;
     // PARITY:

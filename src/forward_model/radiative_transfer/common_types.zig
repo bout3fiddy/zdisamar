@@ -53,6 +53,7 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         scattering_optical_depth: f64,
     ) u16 {
         if (self.num_orders_max != 0) return self.num_orders_max;
+        // math: default multiple-scattering order cap = clamp(max(tau_sca, 0) + 15, 1, max_u16).
         const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
         return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
     }
@@ -247,6 +248,7 @@ pub const SourceInterfaceInput = struct {
 
     pub fn effectiveWeight(self: SourceInterfaceInput) f64 {
         if (self.rtm_weight > 0.0 and self.ksca_above > 0.0) {
+            // math: RTM quadrature source weight = quadrature_weight * scattering_coefficient_above.
             return self.rtm_weight * self.ksca_above;
         }
         return self.source_weight;
@@ -272,6 +274,7 @@ pub const RtmQuadratureLevel = struct {
     phase_rayleigh2_weight: f64 = 0.0,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
+        // math: weighted scattering source = quadrature_weight * k_sca.
         return self.weight * self.ksca;
     }
 
@@ -288,6 +291,7 @@ pub const RtmQuadratureLevel = struct {
             return;
         }
         const inv_total = 1.0 / total;
+        // math: phase mixture = (aerosol_ksca / total_ksca) * aerosol_phase + (gas_ksca / total_ksca) * Rayleigh2.
         self.phase_aerosol_weight = aerosol_ksca * inv_total;
         self.phase_rayleigh2_weight = gas_ksca * inv_total * rayleigh_phase_coefficient2;
     }

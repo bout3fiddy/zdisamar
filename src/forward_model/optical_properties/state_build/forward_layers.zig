@@ -18,6 +18,7 @@ const centimeters_per_kilometer = 1.0e5;
 
 fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
     const transport_dphi_deg = @mod(180.0 - relative_azimuth_deg, 360.0);
+    // math: LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
     return std.math.degreesToRadians(transport_dphi_deg);
 }
 
@@ -105,6 +106,7 @@ pub fn forwardInputFromOpticalDepths(
         @max(span_nm, 1.0e-6)
     else
         span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
+    // math: scalar forward input carries tau_ext, omega0, mu0/muv, and spectral quadrature weight dlambda.
     return .{
         .wavelength_nm = wavelength_nm,
         .spectral_weight = @max(spectral_weight, 1.0e-6),
@@ -148,6 +150,7 @@ pub fn fillForwardLayersAtWavelength(
 //   when: forward input construction fills transport layers without a wavelength carrier cache
 //   work: reduces prepared layers or support rows into layer input optical-depth fields
 //   data: prepared layers/sublayers, profile spectroscopy cache, layer input array
+//   math: layer rows carry tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda), omega0 = tau_sca / tau_ext
 //   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
@@ -284,11 +287,13 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         );
         const aerosol_scattering_optical_depth =
             aerosol_optical_depth * aerosol_single_scatter_albedo;
+        // math: tau_ext = tau_gas_abs + tau_gas_sca + tau_cia + tau_aerosol.
         const optical_depth =
             gas_absorption_optical_depth +
             gas_scattering_optical_depth +
             layer.cia_optical_depth +
             aerosol_optical_depth;
+        // math: tau_sca = tau_gas_sca + tau_aerosol * omega0_aerosol.
         const scattering_optical_depth =
             gas_scattering_optical_depth +
             aerosol_scattering_optical_depth;
@@ -322,6 +327,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
 //   when: forward input construction fills transport layers for a cached wavelength solve
 //   work: reduces shared support rows through WavelengthCarrierCache and writes layer inputs
 //   data: shared RTM geometry, support sublayers, carrier cache, layer input array
+//   math: cached path preserves the same layer optical-depth sums while avoiding repeated sigma*n*path recomputation
 //   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache
 pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,

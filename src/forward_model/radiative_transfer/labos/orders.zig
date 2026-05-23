@@ -106,6 +106,7 @@ pub const OrdersWorkspace = struct {
 //   work: transports up/down source terms between optical levels
 //   data: attenuation cache, level-indexed U/D source arrays, Gauss stream weights
 //   follow: dynamic, runtime12, and fixed12 transport variants selected by route shape
+//   math: U_l = U_local_l + T(l-1->l) U_{l-1}; D_l = D_local_l + T(l+1->l) D_{l+1}.
 fn transportToOtherLevels(
     start_level: usize,
     end_level: usize,
@@ -137,6 +138,7 @@ fn transportToOtherLevels(
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
+            // math: upward transported current order adds attenuated previous-level upward source.
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
             out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
         }
@@ -154,6 +156,7 @@ fn transportToOtherLevels(
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
+            // math: downward transported current order adds attenuated next-level downward source.
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
         }
@@ -327,6 +330,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel - 1, ilevel);
+            // math: dU_l = dU_local_l + dT*U_{l-1} + T*dU_{l-1}.
             out_u0[imu] = local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
             out_u1[imu] = local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
         }
@@ -347,6 +351,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel + 1, ilevel);
+            // math: dD_l = dD_local_l + dT*D_{l+1} + T*dD_{l+1}.
             out_d0[imu] = local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
             out_d1[imu] = local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
         }
@@ -372,6 +377,7 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     }
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
+        // math: dotGauss(row,v) = sum_k mat[row,k] * v_k over Gaussian streams.
         s += mat.data[row_offset + k] * vec_col.data[k];
     }
     return s;
@@ -393,6 +399,7 @@ const DotPair = struct {
 //   work: reduces paired Gauss stream vectors with quadrature weights
 //   data: stream vectors, Gaussian weights, n_gauss loop count
 //   follow: dotGaussPair10 and accumulation callers in ordersScatInternal
+//   math: returns two sums s_c = sum_k mat[row,k] * vec_c[k] for c in {0,1}.
 inline fn dotGaussPair(
     mat: *const basis.Mat,
     row: usize,
@@ -531,6 +538,7 @@ fn initializeOrdersBuffers(
 //   work: adds local U/D fields into per-level sums and current-order buffers
 //   data: ud, ud_sum_local, ud_local arrays, level range, stream count
 //   follow: fixed 12-stream accumulate variant and reflectance integration inputs
+//   math: accumulated field = sum over retained scattering orders; local sum tracks only untransported source terms.
 fn accumulateOrderContribution(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -622,6 +630,7 @@ fn accumulateOrderContribution12(
 //   work: initializes sources, propagates scattering orders, transports levels, and accumulates reflectance terms
 //   data: order U/D buffers, RT matrices, attenuation arrays, Gauss weights, contribution arrays
 //   follow: labos.orders trace zones and transportToOtherLevels variants
+//   math: scattering orders iterate local sources from R/T applied to previous transported U/D, then transport and accumulate until convergence.
 fn ordersScatInternal(
     comptime track_sum_local: bool,
     comptime rt_active_ready: bool,
@@ -666,6 +675,7 @@ fn ordersScatInternal(
             const e_data = &ud_view[ilevel].E.data;
             for (0..nmutot) |imu| {
                 const att = atten.get(imu, end_level, ilevel);
+                // math: E_l(mu) = T_mu(top_level -> l), the direct attenuation to each level.
                 e_data[imu] = att;
             }
         }
@@ -681,6 +691,7 @@ fn ordersScatInternal(
                 const rt_t = &rt[ilevel + 1].T;
                 var rt_idx = col_idx;
                 for (0..nmutot) |imu| {
+                    // math: initial local downward source D_l = T_layer(:,sun/view) * attenuation_to_layer.
                     local_d[imu] = rt_t.data[rt_idx] * att;
                     rt_idx += rt_t.n;
                 }
@@ -698,6 +709,7 @@ fn ordersScatInternal(
                 const rt_r = &rt[ilevel].R;
                 var rt_idx = col_idx;
                 for (0..nmutot) |imu| {
+                    // math: initial local upward source U_l = R_layer(:,sun/view) * attenuation_to_level.
                     local_u[imu] = rt_r.data[rt_idx] * att;
                     rt_idx += rt_r.n;
                 }
@@ -755,6 +767,7 @@ fn ordersScatInternal(
                 for (0..nmutot) |imu| {
                     const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                     const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+                    // math: local downward order = R * previous_up + T * previous_down.
                     local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
                     local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
                 }
@@ -774,6 +787,7 @@ fn ordersScatInternal(
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * n_gauss));
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+                    // math: lower-bound local upward source = R * previous_down.
                     local_u_start0[imu] = r_dot_d.col0;
                     local_u_start1[imu] = r_dot_d.col1;
                 }
@@ -795,6 +809,7 @@ fn ordersScatInternal(
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                     const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+                    // math: local upward order = R * previous_down + T * previous_up.
                     local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
                     local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
                 }
@@ -1068,6 +1083,7 @@ pub fn ordersScat(
 //   work: propagates base and derivative order payloads through the scattering-order loop
 //   data: tangent U/D buffers, base order buffers, derivative RT layers, attenuation tangent arrays
 //   follow: tangent transport helpers and derivative accumulation writes
+//   math: tangent local sources apply product rule, e.g. d(T*att)=dT*att + T*datt and d(R*U)=dR*U + R*dU.
 pub fn ordersScatTangent(
     allocator: Allocator,
     start_level: usize,
@@ -1149,6 +1165,7 @@ pub fn ordersScatTangent(
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
+                // math: dD_local = dT_layer * attenuation + T_layer * d attenuation.
                 tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
                 rt_idx += rt_t.n;
             }
@@ -1176,6 +1193,7 @@ pub fn ordersScatTangent(
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
+                // math: dU_local = dR_layer * attenuation + R_layer * d attenuation.
                 tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
                 rt_idx += rt_r.n;
             }
@@ -1227,6 +1245,7 @@ pub fn ordersScatTangent(
                 const rst_dot_du = dotGaussPair(&rt[ilevel + 1].R, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
                 const dt_dot_d = dotGaussPair(&rt_tangent[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
                 const t_dot_dd = dotGaussPair(&rt[ilevel + 1].T, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
+                // math: dD_local = dR*U + R*dU + dT*D + T*dD.
                 tangent_d0[imu] = drst_dot_u.col0 + rst_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
                 tangent_d1[imu] = drst_dot_u.col1 + rst_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
             }
@@ -1249,6 +1268,7 @@ pub fn ordersScatTangent(
                 local_u_start1[imu] = r_dot_d.col1;
                 const dr_dot_d = dotGaussPair(&rt_tangent[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
                 const r_dot_dd = dotGaussPair(&rt[start_level].R, imu, tangent_prev_d_start0, tangent_prev_d_start1, n_gauss);
+                // math: lower-bound dU_local = dR*D + R*dD.
                 tangent_u_start0[imu] = dr_dot_d.col0 + r_dot_dd.col0;
                 tangent_u_start1[imu] = dr_dot_d.col1 + r_dot_dd.col1;
             }
@@ -1293,6 +1313,7 @@ pub fn ordersScatTangent(
                 const r_dot_dd = dotGaussPair(&rt[ilevel].R, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
                 const dtst_dot_u = dotGaussPair(&rt_tangent[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
                 const tst_dot_du = dotGaussPair(&rt[ilevel].T, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
+                // math: dU_local = dR*D + R*dD + dT*U + T*dU.
                 tangent_u0[imu] = dr_dot_d.col0 + r_dot_dd.col0 + dtst_dot_u.col0 + tst_dot_du.col0;
                 tangent_u1[imu] = dr_dot_d.col1 + r_dot_dd.col1 + dtst_dot_u.col1 + tst_dot_du.col1;
             }

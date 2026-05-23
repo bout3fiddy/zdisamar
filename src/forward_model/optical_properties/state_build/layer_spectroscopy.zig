@@ -39,6 +39,7 @@ const ProfileCacheValueWorker = struct {
 //   when: once per high-resolution forward miss when profile spectroscopy is active
 //   work: caches spline-derived profile values and per-node spectroscopy evaluations
 //   data: pressure, temperature, density, VMR, prepared profile line-state arrays
+//   math: cache stores sigma_line(z_k), sigma_mixing(z_k), sigma_total(z_k) plus endpoint-secant second derivatives for cubic interpolation
 //   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
 // layout(64-bit):
 //   size: 3096 B, align: 8 B
@@ -321,6 +322,7 @@ fn sampleCachedEndpointSecant(
     if (h == 0.0) return y[klo];
     const a = (x[khi] - target_x) / h;
     const b = (target_x - x[klo]) / h;
+    // math: cubic spline segment y(z) = a*y_klo + b*y_khi + ((a^3-a)M_klo + (b^3-b)M_khi)h^2/6.
     return a * y[klo] + b * y[khi] +
         ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
 }
@@ -405,6 +407,7 @@ pub fn resolveCachedSingleLineEvaluation(
 //   when: inside support-row carrier evaluation for active line absorbers
 //   work: resolves spectroscopy through profile cache, prepared states, or direct evaluation
 //   data: line absorber metadata, altitude, wavelength, profile spectroscopy cache
+//   math: active line absorbers are density-weighted, sigma_bar = sum(sigma_species * n_species) / sum(n_species)
 //   follow: resolvePreparedLineEvaluation and evaluatePreparedLineAbsorber
 pub fn resolveSpectroscopyEvaluation(
     allocator: Allocator,
@@ -545,6 +548,7 @@ fn resolvePreparedLineEvaluation(
 //   when: direct prepared-line evaluation is used for an active absorber/support row
 //   work: evaluates base sigma and finite-temperature derivative terms
 //   data: prepared weak/strong line state, absorber VMR, pressure, temperature, wavelength
+//   math: d_sigma/dT uses central finite difference (sigma(T+0.5 K) - sigma(max(T-0.5 K,150 K))) / 1 K
 //   follow: line_list_eval.evaluateAtPrepared and temperature-derivative sampling
 fn evaluatePreparedLineAbsorber(
     allocator: Allocator,

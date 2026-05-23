@@ -134,6 +134,7 @@ const KernelStorageBuilder = struct {
 //   work: expands output wavelengths into radiance and irradiance integration plans
 //   data: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
 //   follow: fillWavelengthSamplingPlans and buildForwardMissPlan
+//   math: each output lambda_i maps to per-channel sample sets {lambda_i + delta_ij, w_ij}
 pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
@@ -367,6 +368,7 @@ fn fillWavelengthSamplingPlanRange(
 //   work: resolves nominal wavelength, builds channel integration kernels, and applies calibration shifts
 //   data: resolved axis, radiance/irradiance adaptive caches, integration kernel outputs
 //   follow: integrationForWavelengthWithAdaptiveCacheChecked and calibration.shiftedWavelength
+//   math: lambda_radiance = lambda_i + shift_L(lambda_i); lambda_irradiance = lambda_i + shift_E0(lambda_i)
 fn buildWavelengthSamplingPlan(
     allocator: Allocator,
     scene: *const Scene,
@@ -461,6 +463,7 @@ fn compactIntegrationKernel(
 fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: usize) f64 {
     if (resolved_axis.explicit_wavelengths_nm.len != 0) return resolved_axis.explicit_wavelengths_nm[index];
     const sample_count = resolved_axis.base.sample_count;
+    // math: lambda_i = lambda_start + i * (lambda_end - lambda_start) / (N - 1).
     const step = (resolved_axis.base.end_nm - resolved_axis.base.start_nm) /
         @as(f64, @floatFromInt(sample_count - 1));
     return resolved_axis.base.start_nm + step * @as(f64, @floatFromInt(index));
@@ -475,6 +478,7 @@ fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
 //   work: deduplicates radiance integration wavelengths and records dense miss indexes per nominal row
 //   data: radiance integration offsets, quantized cache keys, forward miss array, per-sample result indexes
 //   follow: SpectralEval.prefetchForwardSamples and direct radiance integration
+//   math: unique misses are lambda_m = lambda_radiance_i + delta_ij, with rows storing indexes into F(lambda_m)
 pub fn buildForwardMissPlan(
     allocator: Allocator,
     table: WavelengthSamplingTable,

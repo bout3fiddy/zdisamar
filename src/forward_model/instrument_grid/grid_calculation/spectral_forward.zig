@@ -178,6 +178,7 @@ fn radianceScaleFromForward(
         .phase = phase,
         .forward = forward,
     });
+    // math: scale(lambda) = mu0 * BRDF_factor(lambda) * E0(lambda) / pi.
     return solar_cosine * surface_gain * solar_irradiance / std.math.pi;
 }
 
@@ -193,7 +194,9 @@ fn integratedSampleFromForward(
 ) ForwardIntegratedSample {
     const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
     return .{
+        // math: L(lambda) = reflectance_factor(lambda) * scale(lambda).
         .radiance = forward.toa_reflectance_factor * scale,
+        // math: dL/dx = scale(lambda) * d(reflectance_factor)/dx for each active retrieval state x.
         .jacobian = if (forward.jacobian) |reflectance_jacobian|
             jacobian.scaleMasked(reflectance_jacobian, scale, route.derivative_state_mask)
         else
@@ -206,6 +209,7 @@ fn integratedSampleFromForward(
 //   work: builds wavelength-specific forward input and executes LABOS transport
 //   data: layer inputs, carrier cache arrays, pseudo-spherical buffers, labos workspace
 //   follow: ForwardInput.configuredForwardInput and executePreparedWithLabosWorkspace
+//   math: lambda -> optical layers(lambda) -> LABOS reflectance_factor(lambda) -> L(lambda) via solar/BRDF scaling
 fn computeForwardSampleAtWavelengthWithScratch(
     allocator: Allocator,
     scene: *const Scene,
@@ -264,6 +268,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
 //   work: computes one dense result per miss using the worker scratch
 //   data: miss array, result array, profile spectroscopy cache slice, worker scratch
 //   follow: nextForwardPrefetchChunk and computeForwardSampleAtWavelengthWithScratch
+//   math: results[k] = F(misses[k].wavelength_nm) for the chunk's high-resolution wavelength misses
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     var thread_name_buffer: [64]u8 = undefined;
     const thread_name = std.fmt.bufPrintZ(

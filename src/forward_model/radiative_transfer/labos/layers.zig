@@ -34,6 +34,7 @@ pub fn zeroFourierIntegral(
     var integral: f64 = 0.0;
     for (0..geo.n_gauss) |imu| {
         const row_weight = @max(geo.w[imu], 1.0e-30);
+        // math: integral += wg_mu * (Zplus(mu,col)+Zmin(mu,col)) / (w_mu * w_col).
         integral += geo.wg[imu] *
             ((zplus.get(imu, column_index) + zmin.get(imu, column_index)) /
                 (row_weight * column_weight));
@@ -47,6 +48,7 @@ pub fn zeroFourierIntegral(
 //   work: normalizes phase coefficients across layers and scattering streams
 //   data: layer phase coefficients, Gaussian stream geometry, normalization factors
 //   follow: phase coefficient order consumed by fillZplusZmin and layer-doubling
+//   math: zero-Fourier phase rows are adjusted so integral_mu (Zplus + Zmin) = 2.
 pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
@@ -126,6 +128,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
 //   work: fills R matrix entries from attenuation, Z- phase matrix, and scattering albedo
 //   data: output matrix, E attenuation vector, Zmin phase matrix, stream geometry
 //   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+//   math: R_ij = omega * Zminus_ij * (1 - E_i E_j) * 0.25/(mu_i + mu_j).
 fn fillSingleScatterR(
     out: *basis.Mat,
     a: f64,
@@ -175,6 +178,7 @@ fn fillSingleScatterR12(
 //   work: fills T matrix entries from attenuation, Z+ phase matrix, optical depth, and scattering albedo
 //   data: output matrix, E attenuation vector, Zplus phase matrix, stream geometry
 //   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+//   math: T_ij = omega * Zplus_ij * eet_ij * dmu_min_ij; eet=b*E_i when mu_i ~= mu_j else E_i-E_j.
 fn fillSingleScatterT(
     out: *basis.Mat,
     a: f64,
@@ -254,6 +258,7 @@ inline fn squareAttenuation(n: usize, E: *basis.Vec) void {
 
     for (0..n) |imu| {
         const e = E.data[imu];
+        // math: doubling step squares the half-layer attenuation, E <- E^2.
         E.data[imu] = e * e;
     }
 }
@@ -271,6 +276,7 @@ inline fn squareAttenuation12(E: *basis.Vec) void {
 //   work: updates reflection/transmission matrices through q-series products
 //   data: R/T matrices, q-series temporaries, stream counts, thresholded matrix products
 //   follow: qseriesKnownNonzeroProductInto and smul matrix helpers
+//   math: each doubling step combines two identical sublayers using Q=(I-RR)^-1-I, U=R*E+R*D, then updates R/T.
 fn doDouble(
     ndouble: usize,
     n: usize,
@@ -384,6 +390,7 @@ fn doDouble(
 //   work: updates reflection/transmission matrices through fixed-shape q-series products
 //   data: fixed matrix cells, q-series temporaries, precomputed stream geometry
 //   follow: doDouble12x10Step and qseriesFromProduct12x10Into
+//   math: fixed 12x10 doubling applies the same two-sublayer R/T update as doDouble.
 fn doDouble12x10(
     ndouble: usize,
     threshold_mul: f64,
@@ -524,6 +531,7 @@ pub fn fillLayerPhaseMaxIndices(
 //   work: scans phase coefficients in reverse order and writes suffix maxima
 //   data: layer phase coefficient arrays, phase max indexes, suffix output array
 //   follow: calcRTlayersIntoWithBasis effective-scattering lookup
+//   math: suffix_m = max_{l>=m} |beta_l|/(2l+1), used as effective scattering strength.
 pub fn fillLayerEffectiveScatteringSuffixes(
     suffixes: []f64,
     layers: []const common.LayerInput,
@@ -552,6 +560,7 @@ pub fn fillLayerEffectiveScatteringSuffixes(
 //   work: builds phase matrices, effective scattering suffixes, exponentials, single scatter, and doubled RT layers
 //   data: layer optical properties, phase basis, RT layer outputs, doubling workspace
 //   follow: labos.rt_layer trace zones and fixed 12x10 versus dynamic doubling branches
+//   math: layer RT maps tau, omega, phase_l into reflection R and transmission T for each Fourier term.
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -654,6 +663,7 @@ pub fn calcRTlayersIntoWithBasis(
             use_doubling = true;
             var bd = b;
             for (0..60) |_| {
+                // math: start optical depth is repeatedly halved until omega_eff * tau_start < threshold_doubl.
                 bd /= 2.0;
                 ndouble += 1;
                 if (a_eff * bd < controls.performance_thresholds.threshold_doubl) break;
@@ -668,6 +678,7 @@ pub fn calcRTlayersIntoWithBasis(
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.initial_exponential");
             defer zone.end();
             for (0..geo.nmutot) |imu| {
+                // math: E_mu = exp(-tau_start / mu).
                 E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
             }
         }
@@ -751,6 +762,7 @@ fn cachePhaseKernelViewRow(
 //   work: builds derivative RT layers alongside the base layer matrix path
 //   data: base layer inputs, derivative layer inputs, tangent RT outputs, phase basis
 //   follow: calcRTlayersIntoWithBasis and derivative workspace consumers
+//   math: tangent RT is central difference (RT(x+eps*dx) - RT(x-eps*dx)) / (2eps).
 pub fn calcRTlayersTangentIntoWithBasis(
     rt_tangent: []LayerRT,
     layers: []const common.LayerInput,
@@ -891,6 +903,7 @@ pub fn fillSurface(
     if (i_fourier == 0) {
         for (0..n) |j| {
             for (0..n) |i| {
+                // math: Lambertian boundary R_ij = w_i * albedo * w_j for the zero Fourier term.
                 result.R.set(i, j, geo.w[i] * albedo * geo.w[j]);
             }
         }

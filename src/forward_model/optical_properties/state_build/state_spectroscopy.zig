@@ -14,6 +14,7 @@ const max_spectroscopy_profile_nodes: usize = 64;
 //   when: a high-resolution wavelength needs profile-node O2 spectroscopy reuse
 //   work: evaluates sigma at profile nodes and builds spline second derivatives for altitude sampling
 //   data: spectroscopy profile arrays, prepared weak/strong states, total sigma cache
+//   math: cache stores sigma_total(z_k, lambda) and endpoint-secant second derivatives for cubic spline sigma(z)
 //   follow: spectroscopyEvaluationAtAltitudeWithCache and support-row carrier evaluation
 // layout(64-bit):
 //   size: 1032 B, align: 8 B
@@ -90,6 +91,7 @@ pub const ProfileNodeSpectroscopyCache = struct {
     //   when: support-row carrier evaluation samples cached profile spectroscopy at altitude
     //   work: brackets altitude and samples cached endpoint-secant spline sigma
     //   data: altitude grid, cached total sigma values, cached second derivatives
+    //   math: sigma(z) = a*sigma_klo + b*sigma_khi + ((a^3-a)*M_klo + (b^3-b)*M_khi) * h^2 / 6
     //   follow: spectroscopyEvaluationAtAltitudeWithCache and carrier_eval support-row fills
     pub fn totalSigmaAtAltitude(
         self: *const ProfileNodeSpectroscopyCache,
@@ -145,6 +147,7 @@ fn sampleCachedEndpointSecant(
     if (h == 0.0) return y[klo];
     const a = (x[khi] - target_x) / h;
     const b = (target_x - x[klo]) / h;
+    // math: cubic spline segment with precomputed second derivatives M: y(x) = a*y0 + b*y1 + ((a^3-a)M0 + (b^3-b)M1)h^2/6.
     return a * y[klo] + b * y[khi] +
         ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
 }
@@ -221,6 +224,7 @@ fn weightedCrossSectionSigmaAtWavelength(
 
     var total_weight: f64 = 0.0;
     var weighted_sigma: f64 = 0.0;
+    // math: sigma_bar(lambda,T,p) = sum_k sigma_k(lambda,T,p) * column_weight_k / sum_k column_weight_k
     for (self.cross_section_absorbers) |cross_section_absorber| {
         const weight = if (cross_section_absorber.column_density_factor > 0.0)
             cross_section_absorber.column_density_factor
@@ -308,6 +312,7 @@ pub fn spectroscopyEvaluationAtAltitude(
 //   when: support-row carrier evaluation needs spectroscopy at altitude
 //   work: resolves cached profile sigma or falls back to profile/direct spectroscopy evaluation
 //   data: wavelength, temperature, pressure, altitude, prepared strong-line state, profile cache
+//   math: sigma(lambda,z) comes from cached sigma(z) when available; otherwise sigma(lambda,T,p) is evaluated directly
 //   follow: ProfileNodeSpectroscopyCache.evaluationAtAltitude and spectroscopyEvaluationAtWavelength
 pub fn spectroscopyEvaluationAtAltitudeWithCache(
     self: *const PreparedOpticalState,
@@ -348,6 +353,7 @@ pub fn spectroscopySigmaAtAltitude(
 //   when: pseudo-spherical or diagnostic paths need only sigma at altitude
 //   work: samples cached profile sigma or delegates to full altitude spectroscopy evaluation
 //   data: wavelength, thermodynamic state, altitude, prepared strong-line state, profile cache
+//   math: returns sigma_total(lambda,z) through the same cached spline/direct fallback chain
 //   follow: ProfileNodeSpectroscopyCache.totalSigmaAtAltitude and spectroscopyEvaluationAtAltitudeWithCache
 pub fn spectroscopySigmaAtAltitudeWithCache(
     self: *const PreparedOpticalState,
@@ -388,6 +394,7 @@ pub fn preparedStrongLineStateAtAltitude(
         if (altitude_km > right.altitude_km) continue;
         const left_distance = @abs(altitude_km - left.altitude_km);
         const right_distance = @abs(right.altitude_km - altitude_km);
+        // math: choose nearest prepared strong-line state by minimum absolute altitude distance.
         return if (left_distance <= right_distance) &states[index] else &states[index + 1];
     }
 

@@ -161,6 +161,7 @@ pub const Geometry = struct {
             const ug = nodes_01[i];
             const wg = weights_01[i];
             geo.u[i] = ug;
+            // math: LABOS stream weight factor w_i = sqrt(2 * mu_i * quadrature_weight_i).
             geo.w[i] = @sqrt(2.0 * ug * wg);
             geo.ug[i] = ug;
             geo.wg[i] = wg;
@@ -183,13 +184,16 @@ pub const Geometry = struct {
             for (0..geo.nmutot) |i| {
                 const ui = geo.u[i];
                 const idx = i * geo.nmutot + j;
+                // math: dmu_plus_ij = 0.25 / (mu_i + mu_j).
                 geo.dmu_plus[idx] = 0.25 / @max(ui + uj, 1.0e-12);
                 const du = ui - uj;
                 if (@abs(du) < 1.0e-6) {
                     geo.dmu_same[idx] = true;
+                    // math: equal-stream limit for transmission term uses 0.25 / (mu_i * mu_j).
                     geo.dmu_min[idx] = 0.25 / @max(ui * uj, 1.0e-12);
                 } else {
                     geo.dmu_same[idx] = false;
+                    // math: dmu_min_ij = 0.25 / (mu_i - mu_j).
                     geo.dmu_min[idx] = 0.25 / du;
                 }
             }

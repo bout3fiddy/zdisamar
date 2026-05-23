@@ -196,6 +196,7 @@ pub const PreparedOpticalState = struct {
     //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
     //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn resolvedAerosolSingleScatterAlbedo(self: *const PreparedOpticalState) f64 {
+        // math: effective aerosol SSA is clamped into [0, 1], preferring explicit aerosol SSA when provided.
         return std.math.clamp(
             if (self.aerosol_single_scatter_albedo >= 0.0)
                 self.aerosol_single_scatter_albedo

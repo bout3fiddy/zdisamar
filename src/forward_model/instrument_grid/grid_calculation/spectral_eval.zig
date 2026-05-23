@@ -36,6 +36,7 @@ fn irradianceAtWavelength(
 //   work: accumulates weighted dense forward results into radiance and Jacobian totals
 //   data: row-local result indexes, weights, dense forward result buffer, Jacobian accumulator
 //   follow: buildForwardMissPlan and spectral_forward.prefetchForwardSamples
+//   math: L_i = sum_j w_ij L(lambda_i + delta_ij); dL_i/dx = sum_j w_ij dL(lambda_i + delta_ij)/dx
 pub fn integratePrefetchedForwardAtNominal(
     route: common.Route,
     results: []const ForwardIntegratedSample,
@@ -88,6 +89,7 @@ pub fn integratePrefetchedForwardAtNominal(
 //   work: accumulates weighted cached solar irradiance samples
 //   data: integration offsets, weights, irradiance cache, solar support tables
 //   follow: cachedIrradianceAtWavelength and operational solar interpolation
+//   math: E0_i = sum_j w_ij E0(lambda_i + delta_ij), or E0(lambda_i) when no integration kernel is active
 pub fn integrateIrradianceAtNominal(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -123,6 +125,7 @@ pub fn integrateIrradianceAtNominal(
 //   work: computes all forward misses into dense result slots
 //   data: forward miss array, profile spectroscopy caches, temporary result array
 //   follow: spectral_forward.prefetchForwardSamples and direct-index radiance integration
+//   math: result_m = F(lambda_m), where each unique lambda_m is later reused by one or more weighted nominal rows
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,

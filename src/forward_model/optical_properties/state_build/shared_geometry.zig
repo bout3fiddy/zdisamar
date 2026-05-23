@@ -106,6 +106,7 @@ pub fn intervalAltitudeAtNode(
     normalized_node: f64,
 ) f64 {
     const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+    // math: maps Gauss-Legendre node x in [-1, 1] to altitude z = z_low + 0.5 * (x + 1) * (z_high - z_low)
     return lower_altitude_km + 0.5 * (normalized_node + 1.0) * altitude_span_km;
 }
 
@@ -115,6 +116,7 @@ pub fn intervalWeightKm(
     normalized_weight: f64,
 ) f64 {
     const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+    // math: dz weight = 0.5 * w_gauss * (z_high - z_low)
     return 0.5 * normalized_weight * altitude_span_km;
 }
 
@@ -157,6 +159,7 @@ pub fn sharedSupportSlices(
 //   when: once per prepared scene/session for RTM shared-grid routes
 //   work: builds Gauss divisions, support slices, and reusable RTM geometry arrays
 //   data: layer/sublayer geometry, Gauss rules, shared RTM support storage
+//   math: layer midpoint = 0.5 * (z_bottom + z_top); thickness = max(z_top - z_bottom, 0); interior level weights reuse intervalWeightKm
 //   follow: resolveGaussRule and subgrid slices consumed by shared_carrier
 pub fn buildSharedRtmGeometry(
     allocator: std.mem.Allocator,

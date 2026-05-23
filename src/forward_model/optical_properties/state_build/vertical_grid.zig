@@ -83,6 +83,7 @@ pub fn build(
 //   when: explicit interval grids define layer and sublayer geometry
 //   work: allocates grid arrays and fills layer/sublayer altitude, pressure, interval, and label fields
 //   data: interval definitions, climatology profile interpolation, grid output arrays
+//   math: pressure is log-linear in sublayer fraction, p(f) = exp(log(p_bottom) + (log(p_top) - log(p_bottom)) * f); altitude is linear in f when explicit altitude bounds exist
 //   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildExplicit(
     allocator: Allocator,
@@ -154,6 +155,7 @@ fn buildExplicit(
             for (0..interval.altitude_divisions) |sublayer_index| {
                 const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / @as(f64, @floatFromInt(interval.altitude_divisions));
                 const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / @as(f64, @floatFromInt(interval.altitude_divisions));
+                // math: sublayer pressures are log-linear between interval bottom/top pressures.
                 const bottom_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * bottom_fraction);
                 const top_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * top_fraction);
                 const bottom_altitude_km = if (has_altitude_bounds)
@@ -183,6 +185,7 @@ fn buildExplicit(
 //   when: explicit interval grids use DISAMAR parity support geometry
 //   work: builds RTM support nodes and sublayer support weights from quadrature division points
 //   data: interval bounds, Gauss nodes/weights, climatology interpolation, grid output arrays
+//   math: z_node = z_lower + 0.5 * (x_gauss + 1) * (z_upper - z_lower); weight_km = 0.5 * w_gauss * (z_upper - z_lower)
 //   follow: shared_geometry.buildSharedRtmGeometry and parity support-row accumulation
 fn buildExplicitDisamarParity(
     allocator: Allocator,
@@ -333,6 +336,7 @@ fn buildExplicitDisamarParity(
 //   when: legacy atmosphere controls define evenly divided vertical layers
 //   work: fills layer and sublayer altitude/pressure/weight arrays
 //   data: layer count, sublayer divisions, climatology profile, grid output arrays
+//   math: z_layer(i) = z_bottom + i * (z_top - z_bottom) / layer_count; z_sublayer(f) = z_layer_bottom + f * layer_span
 //   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildLegacy(
     allocator: Allocator,

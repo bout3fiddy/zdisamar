@@ -26,6 +26,7 @@ pub const SpectralGrid = struct {
     pub fn sampleAt(self: SpectralGrid, index: u32) Error!f64 {
         try self.validate();
         if (index >= self.sample_count) return Error.IndexOutOfRange;
+        // math: lambda_i = start_nm + i * (end_nm - start_nm) / (sample_count - 1)
         const step = (self.end_nm - self.start_nm) / @as(f64, @floatFromInt(self.sample_count - 1));
         return self.start_nm + step * @as(f64, @floatFromInt(index));
     }

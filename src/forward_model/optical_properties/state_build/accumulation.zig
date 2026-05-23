@@ -49,6 +49,7 @@ pub const AccumulationResult = struct {
 //   when: optical-state preparation accumulates layers and prepared mean values
 //   work: builds layer totals, particle/phase/spectroscopy support, and band/effective means
 //   data: preparation context, absorber build state, layer accumulation result
+//   math: final means reduce layer/sublayer sums into effective T, p, column factors, band means, and tau totals
 //   follow: LayerAccumulation.populate and computePreparedMeans
 pub fn accumulate(
     allocator: Allocator,
@@ -69,6 +70,7 @@ pub fn accumulate(
 //   when: optical-state preparation derives scalar means after layer accumulation
 //   work: computes cross-section, line, CIA, airmass, SSA, pressure, and optical-depth means
 //   data: accumulated layer totals, absorber state, reference band support, scene context
+//   math: T_eff = sum(T_i*n_i*w_i)/sum(n_i*w_i); p_eff analogous; sigma_bar = sum(sigma_k*column_k)/sum(column_k); omega0_eff = tau_sca/tau_ext
 //   follow: BandMeans.computeBandLineMeans and final prepared-state fields
 fn computePreparedMeans(
     allocator: Allocator,

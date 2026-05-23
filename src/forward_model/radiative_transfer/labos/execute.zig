@@ -59,7 +59,9 @@ fn directSurfaceOnly(
 ) DirectSurfaceOnlyComputation {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
+    // math: direct path = exp(-tau/mu0) * exp(-tau/muv).
     const direct = math.exp(-input.optical_depth / mu0) * math.exp(-input.optical_depth / muv);
+    // math: direct surface reflectance = surface_albedo * direct path, clamped to [0, 2].
     const reflectance = input.surface_albedo * direct;
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
@@ -112,7 +114,9 @@ fn directSurfaceOnlyResolvedWithWorkspace(
     var upward_path: f64 = 1.0;
     for (1..input.layers.len + 1) |ilevel| upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
 
+    // math: layer-resolved direct surface path = T_sun(top->surface) * product_l T_view(l-1->l).
     const path = atten.get(solar_idx, input.layers.len, 0) * upward_path;
+    // math: R_direct = surface.R(view, sun) * path.
     const reflectance = surface.R.get(view_idx, solar_idx) * path;
     const surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0) blk: {
         const surface_derivative = fillSurface(0, 1.0, geo);
@@ -188,6 +192,7 @@ pub fn executeWithWorkspace(
 //   work: loops Fourier terms through phase basis, RT layer build, scattering orders, reflectance, and Jacobians
 //   data: layer inputs, attenuation arrays, RT matrices, order workspace, reflectance/Jacobian buffers
 //   follow: labos.fourier_loop trace zones and calcRTlayers/ordersScat/calcIntegratedReflectance calls
+//   math: rho = sum_m c_m rho_m, c_0=1 and c_m=2*cos(m*relative_azimuth) for m>0
 fn layerResolvedLabosWithWorkspace(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -429,6 +434,7 @@ fn layerResolvedLabosWithWorkspace(
                 1.0
             else
                 2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+            // math: accumulate Fourier contribution rho += c_m * rho_m.
             reflectance += fourier_weight * refl_fc;
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
@@ -551,6 +557,7 @@ fn layerResolvedLabosWithWorkspace(
 //   work: builds derivative attenuation, RT layers, scattering orders, and reflectance outputs
 //   data: tangent work arrays, base layers, derivative layers, attenuation tangent storage
 //   follow: calcRTlayersTangentIntoWithBasis and ordersScatTangent
+//   math: d rho/dx follows linearized attenuation, layer RT, order propagation, and final reflectance extraction.
 fn nonIntegratedReflectanceTangent(
     allocator: std.mem.Allocator,
     layers: []const common.LayerInput,
@@ -604,6 +611,7 @@ fn nonIntegratedReflectanceTangent(
 //   work: runs Fourier phase setup, single-layer scattering orders, and reflectance integration
 //   data: one-layer input, phase basis workspace, order buffers, reflectance result
 //   follow: phase_basis row/matrix builders and ordersScat single-layer path
+//   math: one-layer rho uses the same Fourier sum c_m rho_m with a single optical layer and surface boundary.
 fn singleLayerLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -699,5 +707,6 @@ fn surfaceAlbedoWeightingFunction(
     }
     const view_direct = ud[surface_level].E.get(geo.viewIdx());
     const solar_direct = ud[surface_level].E.get(geo.n_gauss + 1);
+    // math: d rho/d albedo = (E_view + integral D_view dmu) * (E_sun + integral D_sun dmu).
     return (view_direct + diffuse_view) * (solar_direct + diffuse_solar);
 }

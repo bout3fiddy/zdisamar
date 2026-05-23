@@ -46,6 +46,7 @@ pub fn pressureFromParitySupportBounds(
     const weight = std.math.clamp(unclamped_weight, 0.0, 1.0);
     const bottom_log_pressure = @log(safe_bottom_pressure_hpa);
     const top_log_pressure = @log(safe_top_pressure_hpa);
+    // math: pressure(z) = exp(log(p_bottom) + w * (log(p_top) - log(p_bottom))).
     return @exp(bottom_log_pressure + weight * (top_log_pressure - bottom_log_pressure));
 }
 
@@ -58,6 +59,7 @@ pub fn paritySupportThermodynamicsFromProfile(
     return .{
         .pressure_hpa = pressure_hpa,
         .temperature_k = temperature_k,
+        // math: number density [cm^-3] = pressure_hpa / temperature_k / k_B(hPa*cm^3/K).
         .density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k,
     };
 }

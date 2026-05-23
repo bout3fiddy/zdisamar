@@ -25,6 +25,7 @@ fn interpolatePreparedScalarBetweenSublayers(
     const span = right.altitude_km - left.altitude_km;
     if (span <= 0.0) return right_value;
     const fraction = std.math.clamp((altitude_km - left.altitude_km) / span, 0.0, 1.0);
+    // math: value(z) = value_left + (value_right - value_left) * clamp((z - z_left) / (z_right - z_left), 0, 1)
     return left_value + (right_value - left_value) * fraction;
 }
 
@@ -32,6 +33,7 @@ fn interpolatePreparedScalarBetweenSublayers(
 //   when: altitude-based carrier evaluation samples prepared scalar profiles
 //   work: brackets neighboring sublayers and linearly interpolates one scalar field
 //   data: prepared sublayer array, scalar value slice, target altitude
+//   math: bracketed samples use piecewise-linear interpolation over altitude
 //   follow: continuumCarrierDensityAtAltitude and line absorber density interpolation
 pub fn interpolatePreparedScalarAtAltitude(
     sublayers: []const PreparedSublayer,
@@ -120,6 +122,7 @@ pub fn lineSpectroscopyCarrierDensity(
 ) f64 {
     if (self.operational_o2_lut.enabled()) return oxygen_density_cm3;
     if (cross_section_density_cm3 <= 0.0) return absorber_density_cm3;
+    // math: line carrier excludes gas already consumed by cross-section absorbers: n_line = max(n_absorber - n_cross_section, 0)
     return @max(@as(f64, 0.0), absorber_density_cm3 - cross_section_density_cm3);
 }
 
@@ -174,6 +177,7 @@ fn fractionAtWavelength(control: AtmosphereModel.FractionControl, wavelength_nm:
 //   when: layer and diagnostic evaluation scale aerosol optical depth to wavelength
 //   work: applies Angstrom scaling and optional fraction-control scaling
 //   data: reference optical depth, reference wavelength, Angstrom exponent, fraction control
+//   math: tau(lambda) = tau_ref * (lambda_ref / lambda)^angstrom * fraction(lambda), normalized by fraction(lambda_ref) when only effective tau is known
 //   follow: state_optical_depth and atmospheric_budget particle terms
 pub fn particleOpticalDepthAtWavelength(
     effective_reference_optical_depth: f64,

@@ -114,6 +114,7 @@ pub fn fillPseudoSphericalGridAtWavelength(
 //   when: pseudo-spherical attenuation grids are built without a wavelength carrier cache
 //   work: expands solver layers into altitude/attenuation samples over support rows or subgrid divisions
 //   data: prepared sublayers, profile spectroscopy cache, attenuation sample arrays
+//   math: sample optical_depth = k_ext(lambda,z_i) * dz_i; non-shared subgrid uses Gauss z_i = z_low + 0.5*(x_i+1)*span and dz_i = 0.5*w_i*span
 //   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithSpectroscopyCache
 pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
@@ -289,6 +290,7 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
 //   when: pseudo-spherical attenuation grids are built for a cached wavelength solve
 //   work: expands shared RTM support rows into altitude/attenuation samples through WavelengthCarrierCache
 //   data: shared geometry, support sublayers, carrier cache, attenuation sample arrays
+//   math: cached samples use optical_depth_i = cached_total_k_ext_i * support_weight_km_i
 //   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache
 pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,

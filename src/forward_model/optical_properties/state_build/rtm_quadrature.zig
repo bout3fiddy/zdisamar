@@ -15,6 +15,7 @@ fn fillAerosolSourceJacobian(
     aerosol_scattering_optical_depth_per_km: f64,
 ) void {
     if (self.aerosol_optical_depth <= 0.0 or aerosol_scattering_optical_depth_per_km <= 0.0) return;
+    // math: d(k_sca_aerosol)/d(tau_aerosol_column) = k_sca_aerosol_per_km / tau_aerosol_column
     const derivative_scale = aerosol_scattering_optical_depth_per_km / self.aerosol_optical_depth;
     rtm_level.aerosol_ksca_jacobian = derivative_scale;
 }
@@ -53,6 +54,7 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     }
     if (total_weight <= 0.0) return;
 
+    // math: distribute total aerosol scattering derivative uniformly over active RTM quadrature weight.
     const derivative_per_km = total_scattering_derivative / total_weight;
     for (rtm_levels, 0..) |*level, level_index| {
         if (level.weight <= 0.0) continue;
@@ -92,6 +94,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
 //   when: integrated source-function routes fill RTM quadrature without a wavelength carrier cache
 //   work: evaluates boundary carriers, phase data, and aerosol source Jacobian rows at RTM levels
 //   data: layer input array, shared RTM levels, profile spectroscopy cache, quadrature output
+//   math: non-shared fallback samples k_sca(lambda,z_i) at Gauss nodes, weights by dz_i, then rescales k_sca so sum(weight_i*k_sca_i) matches layer scattering tau
 //   follow: carrier_eval.fillRtmQuadratureLevelAtLevelWithSpectroscopyCache and fillAerosolSourceJacobian
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
@@ -249,6 +252,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 //   when: integrated source-function routes fill RTM quadrature for a cached wavelength solve
 //   work: evaluates boundary carriers through WavelengthCarrierCache and writes RTM level rows
 //   data: layer input array, shared RTM levels, carrier cache, quadrature output
+//   math: cached path uses the same weighted scattering source terms, reading k(lambda,z) from WavelengthCarrierCache
 //   follow: carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache and aerosol source Jacobian fields
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     self: *const PreparedOpticalState,

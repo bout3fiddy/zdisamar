@@ -84,6 +84,7 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
 //   when: active derivative routes integrate high-resolution forward samples
 //   work: adds only requested derivative lanes into a fixed-size accumulator
 //   data: route state mask, jacobian vector cells, accumulator cells, scalar factor
+//   math: accumulator_i <- accumulator_i + factor * vector_i for active state lanes i
 //   follow: spectral_eval.integratePrefetchedForwardAtNominal and active-state product buffers
 pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: StateMask) void {
     const active_mask = sanitizedMask(mask);
@@ -97,6 +98,7 @@ pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: 
 //   when: simulation summaries compute mean Jacobian vectors
 //   work: multiplies the fixed-size derivative vector by one scalar
 //   data: jacobian vector cells and scalar factor
+//   math: result_i = factor * vector_i
 //   follow: simulate.processJacobianSamples summary return path
 pub fn scale(vector: Vector, factor: f64) Vector {
     var result = vector;
@@ -108,6 +110,7 @@ pub fn scale(vector: Vector, factor: f64) Vector {
 //   when: spectral forward samples convert active reflectance derivatives to radiance derivatives
 //   work: scales requested lanes and leaves inactive lanes zero for downstream active-column writers
 //   data: route state mask, jacobian vector cells, scalar factor
+//   math: result_i = factor * vector_i for active lanes, otherwise 0
 //   follow: spectral_forward.integratedSampleFromForward
 pub fn scaleMasked(vector: Vector, factor: f64, mask: StateMask) Vector {
     const active_mask = sanitizedMask(mask);

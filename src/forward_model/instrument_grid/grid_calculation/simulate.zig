@@ -120,6 +120,7 @@ const RunningSummary = struct {
     }
 
     fn addReflectanceSample(self: *RunningSummary, radiance: f64, irradiance: f64, reflectance: f64) void {
+        // math: running sums store sum L_i, sum E0_i, and sum rho_i for later arithmetic means.
         self.radiance_sum += radiance;
         self.irradiance_sum += irradiance;
         self.reflectance_sum += reflectance;
@@ -136,6 +137,7 @@ const RunningSummary = struct {
             .sample_count = @intCast(sample_count),
             .wavelength_start_nm = wavelengths[0],
             .wavelength_end_nm = wavelengths[sample_count - 1],
+            // math: mean(y) = (sum_i y_i) / N for radiance, irradiance, reflectance, and any active Jacobian vector.
             .mean_radiance = self.radiance_sum / denominator,
             .mean_irradiance = self.irradiance_sum / denominator,
             .mean_reflectance = self.reflectance_sum / denominator,
@@ -433,6 +435,7 @@ fn buildSimulationSetup(
     const uses_integrated_radiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .radiance);
     const uses_integrated_irradiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
+    // math: safe_span = max(lambda_end - lambda_start, 1 nm) for normalized carrier and support interpolation.
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
     Trace.plotU("output_wavelengths", @intCast(sample_count));
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
@@ -609,6 +612,7 @@ fn validateTransportBuffers(
 //   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
 //   data: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
 //   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
+//   math: L_out = C_slit(sum_j w_ij F(lambda_i + delta_ij)) followed by channel calibration
 fn fillRadianceSamples(
     route: common.Route,
     setup: SimulationSetup,
@@ -675,6 +679,7 @@ fn fillRadianceSamples(
 //   work: integrates irradiance samples and applies convolution plus channel postprocess
 //   data: irradiance integration plans, irradiance cache, scratch buffer, output irradiance buffer
 //   follow: SpectralEval.integrateIrradianceAtNominal and calibration-only channel corrections
+//   math: E0_out = C_slit(sum_j w_ij E0(lambda_i + delta_ij)) followed by channel calibration
 fn fillIrradianceSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -729,6 +734,7 @@ fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSam
 //   work: computes reflectance and accumulates summary statistics
 //   data: radiance, irradiance, reflectance, and running summary fields
 //   follow: contiguous output buffers and the summary accumulator write pattern
+//   math: rho_i = pi * L_i / max(E0_i * mu0, 1e-9)
 fn assembleReflectance(
     scene: *const Scene,
     sample_count: usize,

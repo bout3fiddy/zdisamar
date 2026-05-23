@@ -46,6 +46,7 @@ pub const PhaseMixture = struct {
         if (total_scattering <= 0.0) {
             return .{ .rayleigh2_weight = rayleigh_coef2 };
         }
+        // math: aerosol_weight = tau_sca_aer / tau_sca_total; rayleigh2_weight = tau_sca_gas / tau_sca_total * P2_rayleigh
         const inv_total = 1.0 / total_scattering;
         const aerosol_weight = aerosol_scattering * inv_total;
         const rayleigh2_weight = gas_scattering * inv_total * rayleigh_coef2;
@@ -113,6 +114,7 @@ pub fn weightedPhaseCoefficient(
     index: usize,
 ) f64 {
     if (index == 0) return 1.0;
+    // math: P_l = aerosol_weight * P_l,aerosol + 1[l=2] * rayleigh2_weight
     var coefficient = aerosol_weight * aerosol_phase_coefficients[index];
     if (index == 2) coefficient += rayleigh2_weight;
     return coefficient;
@@ -148,6 +150,7 @@ pub fn gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2: f64) [phase_coefficient
 pub fn rayleighPhaseCoefficient2AtWavelength(wavelength_nm: f64) f64 {
     const depolarization = Rayleigh.depolarizationFactorAir(wavelength_nm);
     const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
+    // math: P2_rayleigh = (45 + eps) / (90 + 20 eps), eps = 45 delta / (6 - 7 delta)
     return (45.0 + eps) / (90.0 + 20.0 * eps);
 }
 
@@ -160,6 +163,7 @@ pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
         1.0;
     const aerosol_weight: f64 = if (scene.atmosphere.has_aerosols) 0.20 * aerosol_fraction else 0.0;
     const gas_weight: f64 = 1.0 - aerosol_weight;
+    // math: effective omega0 = clamp(gas_weight*gas_ssa + aerosol_weight*aerosol_ssa, 0.3, 0.999).
     return std.math.clamp(gas_weight * gas_ssa + aerosol_weight * aerosol_ssa, 0.3, 0.999);
 }
 
@@ -171,6 +175,7 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
 //   when: optical-state preparation builds particle phase coefficients
 //   work: fills Henyey-Greenstein coefficient tail until the truncation threshold
 //   data: asymmetry factor, truncation threshold, coefficient array
+//   math: P_l = (2l + 1) * g^l; truncation tail *= |g| * (2l - 1) / (2l + 1)
 //   follow: combinePhaseCoefficientsWithRayleigh2 and LABOS phase-basis builders
 pub fn hgPhaseCoefficientsWithThreshold(
     asymmetry_factor: f64,
@@ -211,6 +216,7 @@ pub fn combinePhaseCoefficients(
 //   when: layer/sublayer carrier evaluation combines gas and aerosol scattering
 //   work: blends Rayleigh and aerosol phase coefficients by scattering optical depth
 //   data: scattering optical depths, Rayleigh coefficient, aerosol coefficient array
+//   math: P_l = (tau_sca_aer / tau_sca_total) * P_l,aerosol + 1[l=2] * (tau_sca_gas / tau_sca_total) * P2_rayleigh; P_0 = 1
 //   follow: layer_accumulation phase writes and LABOS phase matrix construction
 pub fn combinePhaseCoefficientsWithRayleigh2(
     rayleigh_coef2: f64,
@@ -230,6 +236,7 @@ pub fn combinePhaseCoefficientsWithRayleigh2(
     const aerosol_weight = aerosol_scattering_optical_depth * inv_total;
 
     for (0..phase_coefficient_count) |index| {
+        // math: beta_l = aerosol_fraction * aerosol_beta_l, with Rayleigh l=2 added below.
         combined[index] = aerosol_weight * aerosol_phase_coefficients[index];
     }
     combined[0] = 1.0;
@@ -243,6 +250,7 @@ pub fn backscatterFraction(phase_coefficients: *const [phase_coefficient_count]f
 
 pub fn backscatterFractionFromAsymmetry(asymmetry_factor: f64) f64 {
     const clamped_asymmetry = std.math.clamp(asymmetry_factor, -0.95, 0.95);
+    // math: backscatter fraction = clamp(0.5 * (1 - g), 0.02, 0.95).
     return std.math.clamp(0.5 * (1.0 - clamped_asymmetry), 0.02, 0.95);
 }
 
@@ -255,6 +263,7 @@ pub fn computeLayerDepolarization(
     if (total == 0.0) return 0.0;
     const gas_fraction = gas_scattering_tau / total;
     const aerosol_fraction = aerosol_scattering_tau / total;
+    // math: layer depolarization = gas_fraction*0.0279 + aerosol_fraction*(0.04 + 0.02*(1-g)).
     return gas_fraction * 0.0279 +
         aerosol_fraction * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor));
 }

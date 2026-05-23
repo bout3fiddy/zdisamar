@@ -33,6 +33,7 @@ pub fn scaleOpticalDepth(
     if (reference_wavelength_nm == wavelength_nm) return optical_depth;
     const safe_wavelength = @max(wavelength_nm, 1.0);
     const safe_reference = @max(reference_wavelength_nm, 1.0);
+    // math: tau(lambda) = tau_ref * (lambda_ref / lambda)^angstrom_exponent
     return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
@@ -90,6 +91,7 @@ pub fn buildPlacementBoundDistribution(
 //   when: explicit interval placement distributes particle optical depth
 //   work: accumulates support-weighted sublayers for one interval and normalizes optical depth
 //   data: sublayer interval indexes, support weights, output distribution
+//   math: tau_i = total_tau * max(support_weight_i, 0) / sum_selected max(support_weight, 0)
 //   follow: layer_accumulation particle optical-depth reads
 pub fn buildIntervalMatchedDistribution(
     allocator: Allocator,
@@ -128,6 +130,7 @@ pub fn buildIntervalMatchedDistribution(
 //   when: finite altitude placement distributes aerosol optical depth
 //   work: computes vertical overlap weights for every sublayer and normalizes optical depth
 //   data: sublayer top/bottom altitudes, support weights, placement bounds, output weights
+//   math: weight_i = max(support_i, 0) * overlap(slot_i, layer) / slot_height_i; tau_i = total_tau * weight_i / sum(weight)
 //   follow: layer_accumulation particle distribution use
 pub fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
@@ -192,6 +195,7 @@ pub fn buildFiniteLayerSublayerDistribution(
 //   when: Gaussian aerosol placement distributes optical depth over sublayers
 //   work: computes Gaussian altitude weights and normalizes optical depth
 //   data: sublayer mid-altitudes, support weights, center/width parameters, output weights
+//   math: delta_i = (z_i - center) / max(width, 0.25); weight_i = exp(-0.5 * delta_i^2) * max(support_i, 0); tau_i = total_tau * weight_i / sum(weight)
 //   follow: layer_accumulation particle distribution use
 pub fn buildGaussianSublayerDistribution(
     allocator: Allocator,
@@ -227,6 +231,7 @@ fn nearestSublayerIndex(altitudes_km: []const f64, target_altitude_km: f64) ?usi
     var best_distance = std.math.inf(f64);
     for (altitudes_km, 0..) |altitude_km, index| {
         const distance = @abs(altitude_km - target_altitude_km);
+        // math: nearest support row minimizes absolute altitude distance |z_i - z_target|.
         if (distance < best_distance) {
             best_distance = distance;
             best_index = index;
