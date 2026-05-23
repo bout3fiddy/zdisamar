@@ -50,7 +50,9 @@ Fill only coordinates that are meaningful:
 - `state_index` for Jacobian state rows;
 - `branch` for expression-local labels.
 
-Absent coordinates stay null in Parquet.
+Absent coordinates are written as numeric sentinels (`-1` for integer
+coordinates and `NaN` for floating coordinates). Convert them to nulls in
+analysis when the distinction matters.
 
 ## Product Boundary
 
@@ -77,6 +79,19 @@ computing expensive extra terms for telemetry unless the computation is inside a
 
 The sink must remain outside `src/forward_model/`. File I/O, row buffering, and
 run manifests belong to validation or research code.
+
+## Writer Boundary
+
+The retained writer is `src/validation/performance/parquet_lite.zig`. Keep it
+minimal:
+
+- flat fixed schemas only;
+- PLAIN encoding only;
+- row-group compression and footer work outside the row hook path;
+- no reader, nested schema support, dictionary encoding, or product API.
+
+If a new capture shape needs another column, add it deliberately to the fixed
+schema and document the meaning here and in `schema.md`.
 
 ## Analysis Questions
 

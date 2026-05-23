@@ -66,6 +66,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/validation/performance/calculation_telemetry_sink.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const trace_ztracy_dependency = if (enable_ztracy)
         b.dependency("ztracy", .{
@@ -451,6 +452,7 @@ pub fn build(b: *std.Build) void {
         .name = "calculation-telemetry",
         .root_module = calculation_telemetry_module,
     });
+    calculation_telemetry_exe.root_module.linkSystemLibrary("z", .{});
     const run_calculation_telemetry = b.addRunArtifact(calculation_telemetry_exe);
     if (b.args) |args| run_calculation_telemetry.addArgs(args);
     const calculation_telemetry_step = b.step(
@@ -520,6 +522,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
+    check_step.dependOn(&calculation_telemetry_exe.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_internal_tests.step);
 

@@ -27,18 +27,18 @@ These columns appear in all row tables.
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `run_id` | string | Dataset run identifier. |
-| `event_index` | unsigned integer | Monotonic row index assigned by the sink. |
+| `event_index` | integer | Monotonic row index assigned by the sink. |
 | `expr_id` | integer | Foreign key to `expression_catalog.parquet`. |
-| `wavelength_nm` | float or null | Wavelength coordinate when the hook has one. |
-| `layer_index` | integer or null | Atmospheric layer coordinate. |
-| `fourier_index` | integer or null | Fourier term coordinate. |
-| `order_index` | integer or null | Multiple-scattering order coordinate. |
-| `state_index` | integer or null | Jacobian state coordinate. |
-| `branch` | integer or null | Expression-specific branch label, such as phase max index or convergence phase. |
+| `wavelength_nm` | float | Wavelength coordinate when the hook has one, `NaN` otherwise. |
+| `layer_index` | integer | Atmospheric layer coordinate, `-1` otherwise. |
+| `fourier_index` | integer | Fourier term coordinate, `-1` otherwise. |
+| `order_index` | integer | Multiple-scattering order coordinate, `-1` otherwise. |
+| `state_index` | integer | Jacobian state coordinate, `-1` otherwise. |
+| `branch` | integer | Expression-specific branch label, such as phase max index or convergence phase; `-1` otherwise. |
 
-The Zig staging writer uses `-1` and `nan` sentinels. The Python pipeline
-normalizes those to Parquet nulls.
+The direct Zig writer keeps the event tables allocation-light by writing numeric
+sentinels directly. Use `-1 -> null` and `NaN -> null` in analysis if a query
+needs explicit nulls.
 
 ## `scalar_expression_rows.parquet`
 
@@ -52,9 +52,9 @@ One row per scalar expression result.
 | `result` | float or null | Captured expression output. |
 | `abs_result` | float or null | `abs(result)` for finite results. |
 | `relative_scale` | float or null | `abs(result) / sum(abs(finite inputs and params))`. |
-| `clamped` | boolean | The expression result was clamped before leaving the local calculation. |
-| `skipped` | boolean | The row belongs to a path that was skipped or terminated. |
-| `finite` | boolean | `result` was finite in the Zig sink. |
+| `clamped` | integer | `1` when the expression result was clamped before leaving the local calculation. |
+| `skipped` | integer | `1` when the row belongs to a path that was skipped or terminated. |
+| `finite` | integer | `1` when `result` was finite in the Zig sink. |
 
 Primary uses:
 
@@ -73,7 +73,7 @@ One row per threshold or branch decision.
 | `rhs` | float or null | Secondary value, often the retained result or iteration cap. |
 | `threshold` | float or null | Threshold used by the decision. |
 | `margin` | float or null | `lhs - threshold`. |
-| `taken` | boolean | Whether the branch was taken. |
+| `taken` | integer | `1` when the branch was taken. |
 | `work_if_taken` | integer | Small work proxy for the taken path. |
 | `work_if_not_taken` | integer | Small work proxy for the opposite path. |
 
@@ -115,5 +115,12 @@ Primary uses:
 - generation timestamp;
 - git commit and dirty-worktree flag;
 - capture command;
-- Zig staging summary, including forward wall time and row counts;
+- Zig capture summary, including scene settings, forward wall time, and row counts;
 - Parquet file paths and final row counts.
+
+## Sweep Manifest
+
+`run_full_spectrum_sweep.py` writes `scene_catalog.parquet` and
+`sweep_manifest.json` at the sweep root. `scene_catalog.parquet` contains one row
+per scene with the surface, aerosol, geometry, spectral-grid controls, row
+counts, elapsed forward time, and byte size for the scene directory.

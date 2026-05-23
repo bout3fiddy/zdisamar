@@ -1,4 +1,5 @@
 const std = @import("std");
+const Parquet = @import("parquet_lite.zig");
 
 pub const available = true;
 
@@ -71,15 +72,267 @@ pub const RowCounts = struct {
     decision: usize = 0,
 };
 
+const scalar_columns = [_]Parquet.ColumnDef{
+    .{ .name = "event_index", .kind = .int64 },
+    .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "wavelength_nm", .kind = .double },
+    .{ .name = "layer_index", .kind = .int64 },
+    .{ .name = "fourier_index", .kind = .int64 },
+    .{ .name = "order_index", .kind = .int64 },
+    .{ .name = "state_index", .kind = .int64 },
+    .{ .name = "branch", .kind = .int64 },
+    .{ .name = "input_0", .kind = .double },
+    .{ .name = "input_1", .kind = .double },
+    .{ .name = "input_2", .kind = .double },
+    .{ .name = "input_3", .kind = .double },
+    .{ .name = "param_0", .kind = .double },
+    .{ .name = "param_1", .kind = .double },
+    .{ .name = "result", .kind = .double },
+    .{ .name = "abs_result", .kind = .double },
+    .{ .name = "relative_scale", .kind = .double },
+    .{ .name = "clamped", .kind = .int32 },
+    .{ .name = "skipped", .kind = .int32 },
+    .{ .name = "finite", .kind = .int32 },
+};
+
+const reduction_columns = [_]Parquet.ColumnDef{
+    .{ .name = "event_index", .kind = .int64 },
+    .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "wavelength_nm", .kind = .double },
+    .{ .name = "layer_index", .kind = .int64 },
+    .{ .name = "fourier_index", .kind = .int64 },
+    .{ .name = "order_index", .kind = .int64 },
+    .{ .name = "state_index", .kind = .int64 },
+    .{ .name = "branch", .kind = .int64 },
+    .{ .name = "term_count", .kind = .int64 },
+    .{ .name = "nonzero_count", .kind = .int64 },
+    .{ .name = "zero_count", .kind = .int64 },
+    .{ .name = "min_term", .kind = .double },
+    .{ .name = "max_term", .kind = .double },
+    .{ .name = "sum", .kind = .double },
+    .{ .name = "mean", .kind = .double },
+    .{ .name = "l1_norm", .kind = .double },
+    .{ .name = "l2_norm", .kind = .double },
+    .{ .name = "result", .kind = .double },
+};
+
+const decision_columns = [_]Parquet.ColumnDef{
+    .{ .name = "event_index", .kind = .int64 },
+    .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "wavelength_nm", .kind = .double },
+    .{ .name = "layer_index", .kind = .int64 },
+    .{ .name = "fourier_index", .kind = .int64 },
+    .{ .name = "order_index", .kind = .int64 },
+    .{ .name = "state_index", .kind = .int64 },
+    .{ .name = "branch", .kind = .int64 },
+    .{ .name = "lhs", .kind = .double },
+    .{ .name = "rhs", .kind = .double },
+    .{ .name = "threshold", .kind = .double },
+    .{ .name = "margin", .kind = .double },
+    .{ .name = "taken", .kind = .int32 },
+    .{ .name = "work_if_taken", .kind = .int64 },
+    .{ .name = "work_if_not_taken", .kind = .int64 },
+};
+
+const catalog_columns = [_]Parquet.ColumnDef{
+    .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "expr_name", .kind = .byte_array, .utf8 = true },
+    .{ .name = "row_table", .kind = .byte_array, .utf8 = true },
+    .{ .name = "subsystem", .kind = .byte_array, .utf8 = true },
+    .{ .name = "equation", .kind = .byte_array, .utf8 = true },
+    .{ .name = "result_name", .kind = .byte_array, .utf8 = true },
+    .{ .name = "inputs", .kind = .byte_array, .utf8 = true },
+    .{ .name = "units", .kind = .byte_array, .utf8 = true },
+    .{ .name = "source_file", .kind = .byte_array, .utf8 = true },
+    .{ .name = "function", .kind = .byte_array, .utf8 = true },
+    .{ .name = "capture_reason", .kind = .byte_array, .utf8 = true },
+};
+
+const ExpressionMeta = struct {
+    expr: Expr,
+    expr_name: []const u8,
+    row_table: []const u8,
+    subsystem: []const u8,
+    equation: []const u8,
+    result_name: []const u8,
+    inputs: []const u8,
+    units: []const u8,
+    source_file: []const u8,
+    function: []const u8,
+    capture_reason: []const u8,
+};
+
+const expressions = [_]ExpressionMeta{
+    .{
+        .expr = .sampling_kernel_shape,
+        .expr_name = "sampling_kernel_shape",
+        .row_table = "reduction_expression_rows",
+        .subsystem = "instrument_grid",
+        .equation = "integrated_rows = count(enabled radiance/irradiance kernels); side_samples = count(non-inline integration samples)",
+        .result_name = "side_sample_count",
+        .inputs = "row_count,radiance_integrated_rows,irradiance_integrated_rows,radiance_sample_count,irradiance_sample_count",
+        .units = "count",
+        .source_file = "src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig",
+        .function = "recordWavelengthSamplingPlan",
+        .capture_reason = "Find integration kernels that create side storage and extra forward work.",
+    },
+    .{
+        .expr = .forward_miss_reuse,
+        .expr_name = "forward_miss_reuse",
+        .row_table = "reduction_expression_rows",
+        .subsystem = "instrument_grid",
+        .equation = "unique_fraction = miss_count / sample_index_count",
+        .result_name = "unique_fraction",
+        .inputs = "sample_index_count,miss_count",
+        .units = "fraction",
+        .source_file = "src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig",
+        .function = "buildForwardMissPlan",
+        .capture_reason = "Quantify wavelength-cache reuse created by spectral integration.",
+    },
+    .{
+        .expr = .reflectance_assembly,
+        .expr_name = "reflectance_assembly",
+        .row_table = "reduction_expression_rows",
+        .subsystem = "instrument_grid",
+        .equation = "rho_i = pi * radiance_i / max(irradiance_i * mu0, 1e-9)",
+        .result_name = "max_reflectance",
+        .inputs = "sample_count,denominator_clamp_count,min_denominator",
+        .units = "reflectance",
+        .source_file = "src/forward_model/instrument_grid/grid_calculation/simulate.zig",
+        .function = "assembleReflectance",
+        .capture_reason = "Detect denominator clamps and reflectance outliers.",
+    },
+    .{
+        .expr = .jacobian_column,
+        .expr_name = "jacobian_column",
+        .row_table = "reduction_expression_rows",
+        .subsystem = "instrument_grid",
+        .equation = "mean_j = sum_i J_i / N",
+        .result_name = "mean_jacobian",
+        .inputs = "state_index,column_sum,sample_count",
+        .units = "state derivative",
+        .source_file = "src/forward_model/instrument_grid/grid_calculation/simulate.zig",
+        .function = "processJacobianSamples",
+        .capture_reason = "Find derivative columns with negligible or extreme contribution.",
+    },
+    .{
+        .expr = .labos_effective_scattering_depth,
+        .expr_name = "labos_effective_scattering_depth",
+        .row_table = "scalar_expression_rows",
+        .subsystem = "labos",
+        .equation = "tau_eff = tau * omega0 * max_l(|beta_l| / (2l + 1))",
+        .result_name = "effective_scattering_depth",
+        .inputs = "optical_depth,single_scatter_albedo,max_beta_eff",
+        .units = "optical depth",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "calcRTlayersIntoWithBasis",
+        .capture_reason = "Study when LABOS layer-doubling work is physically relevant.",
+    },
+    .{
+        .expr = .labos_doubling_trigger,
+        .expr_name = "labos_doubling_trigger",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "uses_doubling = tau_eff > threshold_doubl",
+        .result_name = "uses_doubling",
+        .inputs = "effective_scattering_depth,threshold_doubl",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "calcRTlayersIntoWithBasis",
+        .capture_reason = "Measure threshold margins around expensive layer doubling.",
+    },
+    .{
+        .expr = .labos_qseries_skip,
+        .expr_name = "labos_qseries_skip",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "qseries_is_zero = abs(trace(R)^2) <= threshold_mul",
+        .result_name = "qseries_is_zero",
+        .inputs = "trace_r,threshold_mul",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "doDouble/doDouble12x10Step",
+        .capture_reason = "Identify q-series products whose contribution is below the fast-mode cutoff.",
+    },
+    .{
+        .expr = .orders_convergence,
+        .expr_name = "orders_convergence",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "stop_orders = max_outgoing_upward < threshold_conv",
+        .result_name = "stop_orders",
+        .inputs = "max_outgoing_upward,threshold_conv",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/orders.zig",
+        .function = "ordersScatIntoWithWorkspace",
+        .capture_reason = "Study scattering-order convergence margins and iteration caps.",
+    },
+    .{
+        .expr = .fourier_weighted_reflectance,
+        .expr_name = "fourier_weighted_reflectance",
+        .row_table = "scalar_expression_rows",
+        .subsystem = "labos",
+        .equation = "rho_m_weighted = c_m * rho_m, c_0=1, c_m=2*cos(m*relative_azimuth)",
+        .result_name = "weighted_reflectance",
+        .inputs = "term_reflectance,fourier_weight",
+        .units = "reflectance",
+        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .function = "layerResolvedLabosWithWorkspace",
+        .capture_reason = "Find Fourier terms that add no meaningful reflectance.",
+    },
+    .{
+        .expr = .fourier_tail_break,
+        .expr_name = "fourier_tail_break",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "tail_break = m >= fourier_floor_scalar and abs(rho_m) <= fourier_tail_reflectance_epsilon",
+        .result_name = "tail_break",
+        .inputs = "term_reflectance,tail_threshold",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .function = "layerResolvedLabosWithWorkspace",
+        .capture_reason = "Quantify how early Fourier expansion can terminate.",
+    },
+    .{
+        .expr = .labos_reflectance_clamp,
+        .expr_name = "labos_reflectance_clamp",
+        .row_table = "scalar_expression_rows",
+        .subsystem = "labos",
+        .equation = "rho_out = clamp(rho_raw, 0, 2)",
+        .result_name = "clamped_reflectance",
+        .inputs = "raw_reflectance",
+        .units = "reflectance",
+        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .function = "layerResolvedLabosWithWorkspace",
+        .capture_reason = "Detect physically suspicious raw reflectance values.",
+    },
+    .{
+        .expr = .labos_jacobian_norm1,
+        .expr_name = "labos_jacobian_norm1",
+        .row_table = "scalar_expression_rows",
+        .subsystem = "labos",
+        .equation = "jacobian_norm1 = sum_s abs(d rho / d state_s)",
+        .result_name = "jacobian_norm1",
+        .inputs = "jacobian_vector",
+        .units = "reflectance derivative",
+        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .function = "layerResolvedLabosWithWorkspace",
+        .capture_reason = "Find forward samples with negligible derivative signal.",
+    },
+};
+
 // Validation-owned sink. Product builds receive calculation_telemetry_stub
 // instead, so these files and mutexes are never linked into the public model.
 const Collector = struct {
     allocator: std.mem.Allocator,
-    scalar_file: std.fs.File,
-    reduction_file: std.fs.File,
-    decision_file: std.fs.File,
-    mutex: std.Thread.Mutex = .{},
-    next_event_index: u64 = 0,
+    scalar_table: Parquet.TableWriter,
+    reduction_table: Parquet.TableWriter,
+    decision_table: Parquet.TableWriter,
+    scalar_mutex: std.Thread.Mutex = .{},
+    reduction_mutex: std.Thread.Mutex = .{},
+    decision_mutex: std.Thread.Mutex = .{},
+    error_mutex: std.Thread.Mutex = .{},
+    next_event_index: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     scalar_rows: usize = 0,
     reduction_rows: usize = 0,
     decision_rows: usize = 0,
@@ -87,32 +340,51 @@ const Collector = struct {
 
     pub fn init(allocator: std.mem.Allocator, output_dir: []const u8) !Collector {
         try std.fs.cwd().makePath(output_dir);
-        var scalar_file = try createOutputFile(allocator, output_dir, "scalar_expression_rows.csv");
-        errdefer scalar_file.close();
-        var reduction_file = try createOutputFile(allocator, output_dir, "reduction_expression_rows.csv");
-        errdefer reduction_file.close();
-        var decision_file = try createOutputFile(allocator, output_dir, "decision_rows.csv");
-        errdefer decision_file.close();
+        try writeExpressionCatalog(allocator, output_dir);
 
-        var collector = Collector{
+        var scalar_table = try createTable(
+            allocator,
+            output_dir,
+            "scalar_expression_rows.parquet",
+            scalar_columns[0..],
+        );
+        errdefer scalar_table.deinit();
+        var reduction_table = try createTable(
+            allocator,
+            output_dir,
+            "reduction_expression_rows.parquet",
+            reduction_columns[0..],
+        );
+        errdefer reduction_table.deinit();
+        var decision_table = try createTable(
+            allocator,
+            output_dir,
+            "decision_rows.parquet",
+            decision_columns[0..],
+        );
+        errdefer decision_table.deinit();
+
+        return Collector{
             .allocator = allocator,
-            .scalar_file = scalar_file,
-            .reduction_file = reduction_file,
-            .decision_file = decision_file,
+            .scalar_table = scalar_table,
+            .reduction_table = reduction_table,
+            .decision_table = decision_table,
         };
-        try collector.writeHeaders();
-        return collector;
     }
 
     pub fn deinit(self: *Collector) void {
-        self.scalar_file.close();
-        self.reduction_file.close();
-        self.decision_file.close();
+        self.scalar_table.deinit();
+        self.reduction_table.deinit();
+        self.decision_table.deinit();
         self.* = undefined;
     }
 
     pub fn finish(self: *Collector) !void {
-        if (self.first_error) |err| return err;
+        try self.raiseFirstError();
+        try self.scalar_table.close();
+        try self.reduction_table.close();
+        try self.decision_table.close();
+        try self.raiseFirstError();
     }
 
     pub fn counts(self: *const Collector) RowCounts {
@@ -123,133 +395,96 @@ const Collector = struct {
         };
     }
 
-    fn writeHeaders(self: *Collector) !void {
-        try writeHeader(
-            self.scalar_file,
-            "event_index,expr_id,wavelength_nm,layer_index,fourier_index,order_index,state_index,branch,input_0,input_1,input_2,input_3,param_0,param_1,result,abs_result,relative_scale,clamped,skipped,finite\n",
-        );
-        try writeHeader(
-            self.reduction_file,
-            "event_index,expr_id,wavelength_nm,layer_index,fourier_index,order_index,state_index,branch,term_count,nonzero_count,zero_count,min_term,max_term,sum,mean,l1_norm,l2_norm,result\n",
-        );
-        try writeHeader(
-            self.decision_file,
-            "event_index,expr_id,wavelength_nm,layer_index,fourier_index,order_index,state_index,branch,lhs,rhs,threshold,margin,taken,work_if_taken,work_if_not_taken\n",
-        );
-    }
-
     fn writeScalar(self: *Collector, expr: Expr, coord: Coordinates, values: ScalarValues) !void {
-        var buffer: [768]u8 = undefined;
         const result_abs = absOrNan(values.result);
-        const line = try std.fmt.bufPrint(
-            &buffer,
-            "{},{},{e:.17},{},{},{},{},{},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{},{},{}\n",
-            .{
-                self.nextEventIndex(),
-                exprId(expr),
-                coord.wavelength_nm,
-                coord.layer_index,
-                coord.fourier_index,
-                coord.order_index,
-                coord.state_index,
-                coord.branch,
-                values.input_0,
-                values.input_1,
-                values.input_2,
-                values.input_3,
-                values.param_0,
-                values.param_1,
-                values.result,
-                result_abs,
-                relativeScale(values),
-                boolInt(values.clamped),
-                boolInt(values.skipped),
-                boolInt(std.math.isFinite(values.result)),
-            },
-        );
-        try self.scalar_file.writeAll(line);
+        try self.writeCommon(&self.scalar_table, expr, coord);
+        try self.scalar_table.appendDouble(8, values.input_0);
+        try self.scalar_table.appendDouble(9, values.input_1);
+        try self.scalar_table.appendDouble(10, values.input_2);
+        try self.scalar_table.appendDouble(11, values.input_3);
+        try self.scalar_table.appendDouble(12, values.param_0);
+        try self.scalar_table.appendDouble(13, values.param_1);
+        try self.scalar_table.appendDouble(14, values.result);
+        try self.scalar_table.appendDouble(15, result_abs);
+        try self.scalar_table.appendDouble(16, relativeScale(values));
+        try self.scalar_table.appendInt32(17, boolInt(values.clamped));
+        try self.scalar_table.appendInt32(18, boolInt(values.skipped));
+        try self.scalar_table.appendInt32(19, boolInt(std.math.isFinite(values.result)));
+        try self.scalar_table.finishRow();
         self.scalar_rows += 1;
     }
 
     fn writeReduction(self: *Collector, expr: Expr, coord: Coordinates, values: ReductionValues) !void {
-        var buffer: [768]u8 = undefined;
-        const line = try std.fmt.bufPrint(
-            &buffer,
-            "{},{},{e:.17},{},{},{},{},{},{},{},{},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17},{e:.17}\n",
-            .{
-                self.nextEventIndex(),
-                exprId(expr),
-                coord.wavelength_nm,
-                coord.layer_index,
-                coord.fourier_index,
-                coord.order_index,
-                coord.state_index,
-                coord.branch,
-                values.term_count,
-                values.nonzero_count,
-                values.zero_count,
-                values.min_term,
-                values.max_term,
-                values.sum,
-                values.mean,
-                values.l1_norm,
-                values.l2_norm,
-                values.result,
-            },
-        );
-        try self.reduction_file.writeAll(line);
+        try self.writeCommon(&self.reduction_table, expr, coord);
+        try self.reduction_table.appendInt64(8, index(values.term_count));
+        try self.reduction_table.appendInt64(9, index(values.nonzero_count));
+        try self.reduction_table.appendInt64(10, index(values.zero_count));
+        try self.reduction_table.appendDouble(11, values.min_term);
+        try self.reduction_table.appendDouble(12, values.max_term);
+        try self.reduction_table.appendDouble(13, values.sum);
+        try self.reduction_table.appendDouble(14, values.mean);
+        try self.reduction_table.appendDouble(15, values.l1_norm);
+        try self.reduction_table.appendDouble(16, values.l2_norm);
+        try self.reduction_table.appendDouble(17, values.result);
+        try self.reduction_table.finishRow();
         self.reduction_rows += 1;
     }
 
     fn writeDecision(self: *Collector, expr: Expr, coord: Coordinates, values: DecisionValues) !void {
-        var buffer: [768]u8 = undefined;
-        const line = try std.fmt.bufPrint(
-            &buffer,
-            "{},{},{e:.17},{},{},{},{},{},{e:.17},{e:.17},{e:.17},{e:.17},{},{},{}\n",
-            .{
-                self.nextEventIndex(),
-                exprId(expr),
-                coord.wavelength_nm,
-                coord.layer_index,
-                coord.fourier_index,
-                coord.order_index,
-                coord.state_index,
-                coord.branch,
-                values.lhs,
-                values.rhs,
-                values.threshold,
-                values.lhs - values.threshold,
-                boolInt(values.taken),
-                values.work_if_taken,
-                values.work_if_not_taken,
-            },
-        );
-        try self.decision_file.writeAll(line);
+        try self.writeCommon(&self.decision_table, expr, coord);
+        try self.decision_table.appendDouble(8, values.lhs);
+        try self.decision_table.appendDouble(9, values.rhs);
+        try self.decision_table.appendDouble(10, values.threshold);
+        try self.decision_table.appendDouble(11, values.lhs - values.threshold);
+        try self.decision_table.appendInt32(12, boolInt(values.taken));
+        try self.decision_table.appendInt64(13, index(values.work_if_taken));
+        try self.decision_table.appendInt64(14, index(values.work_if_not_taken));
+        try self.decision_table.finishRow();
         self.decision_rows += 1;
     }
 
-    fn nextEventIndex(self: *Collector) u64 {
-        const event_index = self.next_event_index;
-        self.next_event_index += 1;
-        return event_index;
+    fn writeCommon(self: *Collector, table: *Parquet.TableWriter, expr: Expr, coord: Coordinates) !void {
+        try table.appendInt64(0, try self.nextEventIndex());
+        try table.appendInt32(1, exprId(expr));
+        try table.appendDouble(2, coord.wavelength_nm);
+        try table.appendInt64(3, coord.layer_index);
+        try table.appendInt64(4, coord.fourier_index);
+        try table.appendInt64(5, coord.order_index);
+        try table.appendInt64(6, coord.state_index);
+        try table.appendInt64(7, coord.branch);
+    }
+
+    fn nextEventIndex(self: *Collector) !i64 {
+        const event_index = self.next_event_index.fetchAdd(1, .monotonic);
+        return std.math.cast(i64, event_index) orelse error.IntegerOverflow;
+    }
+
+    fn setFirstError(self: *Collector, err: anyerror) void {
+        self.error_mutex.lock();
+        defer self.error_mutex.unlock();
+        if (self.first_error == null) self.first_error = err;
+    }
+
+    fn raiseFirstError(self: *Collector) !void {
+        self.error_mutex.lock();
+        defer self.error_mutex.unlock();
+        if (self.first_error) |err| return err;
     }
 };
 
 pub const CollectorHandle = Collector;
 
-var active_mutex: std.Thread.Mutex = .{};
-var active_collector: ?*Collector = null;
+// The capture executable runs one forward simulation per process. The active
+// pointer is atomic so hooks can cheaply observe setup/teardown. Event writes
+// take table-local locks because the forward simulation can emit from workers.
+var active_collector_ptr = std.atomic.Value(usize).init(0);
 
 pub fn setCollector(collector: *Collector) void {
-    active_mutex.lock();
-    defer active_mutex.unlock();
-    active_collector = collector;
+    active_collector_ptr.store(@intFromPtr(collector), .release);
 }
 
 pub fn clearCollector() void {
-    active_mutex.lock();
-    defer active_mutex.unlock();
-    active_collector = null;
+    active_collector_ptr.store(0, .release);
 }
 
 pub fn wavelengthSamplingPlan(
@@ -475,38 +710,72 @@ pub fn labosResult(raw_reflectance: f64, clamped_reflectance: f64, jacobian_norm
 
 fn recordScalar(expr: Expr, coord: Coordinates, values: ScalarValues) void {
     const collector = activeCollector() orelse return;
-    collector.mutex.lock();
-    defer collector.mutex.unlock();
-    if (collector.first_error != null) return;
+    collector.scalar_mutex.lock();
+    defer collector.scalar_mutex.unlock();
     collector.writeScalar(expr, coord, values) catch |err| {
-        collector.first_error = err;
+        collector.setFirstError(err);
     };
 }
 
 fn recordReduction(expr: Expr, coord: Coordinates, values: ReductionValues) void {
     const collector = activeCollector() orelse return;
-    collector.mutex.lock();
-    defer collector.mutex.unlock();
-    if (collector.first_error != null) return;
+    collector.reduction_mutex.lock();
+    defer collector.reduction_mutex.unlock();
     collector.writeReduction(expr, coord, values) catch |err| {
-        collector.first_error = err;
+        collector.setFirstError(err);
     };
 }
 
 fn recordDecision(expr: Expr, coord: Coordinates, values: DecisionValues) void {
     const collector = activeCollector() orelse return;
-    collector.mutex.lock();
-    defer collector.mutex.unlock();
-    if (collector.first_error != null) return;
+    collector.decision_mutex.lock();
+    defer collector.decision_mutex.unlock();
     collector.writeDecision(expr, coord, values) catch |err| {
-        collector.first_error = err;
+        collector.setFirstError(err);
     };
 }
 
 fn activeCollector() ?*Collector {
-    active_mutex.lock();
-    defer active_mutex.unlock();
-    return active_collector;
+    const ptr = active_collector_ptr.load(.acquire);
+    if (ptr == 0) return null;
+    return @ptrFromInt(ptr);
+}
+
+fn createTable(
+    allocator: std.mem.Allocator,
+    output_dir: []const u8,
+    name: []const u8,
+    columns: []const Parquet.ColumnDef,
+) !Parquet.TableWriter {
+    const file = try createOutputFile(allocator, output_dir, name);
+    errdefer file.close();
+    return Parquet.TableWriter.init(allocator, file, columns, .{});
+}
+
+fn writeExpressionCatalog(allocator: std.mem.Allocator, output_dir: []const u8) !void {
+    var table = try createTable(
+        allocator,
+        output_dir,
+        "expression_catalog.parquet",
+        catalog_columns[0..],
+    );
+    defer table.deinit();
+
+    for (expressions) |expression| {
+        try table.appendInt32(0, exprId(expression.expr));
+        try table.appendBytes(1, expression.expr_name);
+        try table.appendBytes(2, expression.row_table);
+        try table.appendBytes(3, expression.subsystem);
+        try table.appendBytes(4, expression.equation);
+        try table.appendBytes(5, expression.result_name);
+        try table.appendBytes(6, expression.inputs);
+        try table.appendBytes(7, expression.units);
+        try table.appendBytes(8, expression.source_file);
+        try table.appendBytes(9, expression.function);
+        try table.appendBytes(10, expression.capture_reason);
+        try table.finishRow();
+    }
+    try table.close();
 }
 
 fn createOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
@@ -515,11 +784,7 @@ fn createOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: 
     return std.fs.cwd().createFile(path, .{ .truncate = true });
 }
 
-fn writeHeader(file: std.fs.File, header: []const u8) !void {
-    try file.writeAll(header);
-}
-
-fn exprId(expr: Expr) u16 {
+fn exprId(expr: Expr) i32 {
     return @intFromEnum(expr);
 }
 
@@ -536,7 +801,7 @@ fn ratio(numerator: usize, denominator: usize) f64 {
     return float(numerator) / float(denominator);
 }
 
-fn boolInt(value: bool) u8 {
+fn boolInt(value: bool) i32 {
     return @intFromBool(value);
 }
 

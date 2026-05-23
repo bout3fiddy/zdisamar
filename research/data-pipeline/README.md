@@ -30,7 +30,7 @@ uv run python research/data-pipeline/generate_calculation_parquet.py
 The script runs:
 
 ```sh
-zig build calculation-telemetry -Doptimize=ReleaseFast -- --output-dir out/calculation-telemetry-staging/o2a-default
+zig build calculation-telemetry -Doptimize=ReleaseFast -- --output-dir research/data-pipeline/data/o2a-default
 ```
 
 The default capture is a compact O2 A window: 760-761 nm, 21 output samples,
@@ -59,6 +59,10 @@ Then it writes Parquet files under:
 research/data-pipeline/data/o2a-default/
 ```
 
+Generated data under `research/data-pipeline/data/` is intentionally ignored by
+git. Keep the scripts, schemas, and documentation committed; regenerate or move
+large Parquet captures through an external data store when needed.
+
 ## Output Tables
 
 The canonical data files are Parquet:
@@ -72,9 +76,60 @@ research/data-pipeline/data/o2a-default/
   run.json
 ```
 
-The CSV files emitted by the Zig harness are staging files. They exist only to
-keep file I/O outside the forward model while still allowing Polars to write the
-final Parquet dataset. The committed and analysis-facing format is Parquet.
+The Zig harness writes these files directly with
+`src/validation/performance/parquet_lite.zig`. That writer is intentionally not
+a general Parquet library: it supports fixed schemas, PLAIN-encoded flat
+numeric/string columns, row-group flushing, and gzip page compression. It has no
+reader, nested types, dictionaries, or product-facing API.
+
+The hot row path appends typed values into column buffers. Compression, page
+headers, and footer metadata are handled only when a row group flushes, so the
+telemetry sink avoids per-row text formatting, per-row allocation after warmup,
+and transient CSV staging.
+
+## Full-Spectrum Sweep
+
+The retained 12-scene sweep covers 758-770 nm with 401 output samples,
+0.1 nm high-resolution spacing, multiple-scattering LABOS, and varied aerosol,
+surface, and geometry settings:
+
+```sh
+uv run python research/data-pipeline/run_full_spectrum_sweep.py
+```
+
+It writes:
+
+```text
+research/data-pipeline/data/full-spectrum-758-770-ms/
+  scene_catalog.parquet
+  sweep_manifest.json
+  <scene-id>/
+    expression_catalog.parquet
+    scalar_expression_rows.parquet
+    reduction_expression_rows.parquet
+    decision_rows.parquet
+    run.json
+```
+
+See `full-spectrum-sweep.md` for the captured scene table, aggregate row counts,
+and starter queries.
+
+## Analysis Reports
+
+Run the local analysis bundle with:
+
+```sh
+uv run python research/data-pipeline/analyze_calculation_telemetry.py
+```
+
+It writes aggregate CSV tables, HTML plots, and a Markdown report under:
+
+```text
+research/data-pipeline/reports/calculation-telemetry-latest/
+```
+
+Reports are also ignored by git. Commit analysis code and report templates, not
+the generated report output.
 
 ## Analysis Start
 
@@ -138,7 +193,6 @@ The schema is intentionally columnar and split by row shape:
   event row.
 
 That shape keeps the event tables numeric and suitable for Parquet compression,
-predicate pushdown, and lazy Polars scans. The current Zig sink writes bounded
-CSV staging for the default O2 A case; scaling the capture to hundreds of
-millions of rows should replace the staging writer with row-group Parquet or
-Arrow IPC shards while keeping the same final table schemas.
+predicate pushdown, and lazy Polars scans. Missing coordinates are currently
+encoded as `-1`, and missing floating values are encoded as `NaN`; normalize
+those sentinels to nulls in analysis when null semantics are needed.

@@ -25,6 +25,8 @@ research/performance/tracing/output/lauka-forward/*
 !research/performance/tracing/output/lauka-forward/forward-run/
 research/performance/tracing/output/lauka-forward/forward-run/*
 !research/performance/tracing/output/lauka-forward/forward-run/summary.json
+research/data-pipeline/data/
+research/data-pipeline/reports/
 
 # Local DISAMAR reference clone and generated vendor outputs
 vendor

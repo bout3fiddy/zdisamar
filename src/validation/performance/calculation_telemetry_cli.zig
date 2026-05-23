@@ -13,19 +13,24 @@ const default_end_nm: f64 = 761.0;
 const default_sample_count: u32 = 21;
 const default_high_resolution_step_nm: f64 = 0.1;
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: output_dir=16 B, three f64 controls=24 B, sample_count=4 B, output_dir_set=1 B, jacobian=1 B, multiple_scattering=1 B; padding: 9 B
-//   unused bits: 72 padding + 21 bool-storage slack = 93 bits
-//   out-of-line: output_dir carries a command-line slice; referenced storage is not included
-//   count: one stack value in the data-pipeline executable
-//   footprint: per instance = 56 B (0.055 KiB)
+// Configuration remains CLI-owned. The forward model only sees the resolved
+// typed O2 A input and the compile-time telemetry facade.
 const Config = struct {
     output_dir: []const u8 = default_output_dir,
+    scene_id: ?[]const u8 = null,
     start_nm: f64 = default_start_nm,
     end_nm: f64 = default_end_nm,
     sample_count: u32 = default_sample_count,
     high_resolution_step_nm: f64 = default_high_resolution_step_nm,
+    surface_albedo: ?f64 = null,
+    aerosol_optical_depth: ?f64 = null,
+    aerosol_single_scatter_albedo: ?f64 = null,
+    aerosol_asymmetry_factor: ?f64 = null,
+    aerosol_layer_top_pressure_hpa: ?f64 = null,
+    aerosol_layer_bottom_pressure_hpa: ?f64 = null,
+    solar_zenith_deg: ?f64 = null,
+    viewing_zenith_deg: ?f64 = null,
+    relative_azimuth_deg: ?f64 = null,
     output_dir_set: bool = false,
     jacobian: bool = false,
     multiple_scattering: bool = false,
@@ -55,10 +60,20 @@ fn mainInner() !void {
 
     var prepare_timer = try std.time.Timer.start();
     var input = o2a_reference.defaultInput();
+    if (config.scene_id) |scene_id| input.scene_id = scene_id;
     input.spectral_grid.start_nm = config.start_nm;
     input.spectral_grid.end_nm = config.end_nm;
     input.spectral_grid.sample_count = config.sample_count;
     input.observation.high_resolution_step_nm = config.high_resolution_step_nm;
+    if (config.surface_albedo) |value| input.surface_albedo = value;
+    if (config.aerosol_optical_depth) |value| input.aerosol.optical_depth = value;
+    if (config.aerosol_single_scatter_albedo) |value| input.aerosol.single_scatter_albedo = value;
+    if (config.aerosol_asymmetry_factor) |value| input.aerosol.asymmetry_factor = value;
+    if (config.aerosol_layer_top_pressure_hpa) |value| input.aerosol.placement.top_pressure_hpa = value;
+    if (config.aerosol_layer_bottom_pressure_hpa) |value| input.aerosol.placement.bottom_pressure_hpa = value;
+    if (config.solar_zenith_deg) |value| input.geometry.solar_zenith_deg = value;
+    if (config.viewing_zenith_deg) |value| input.geometry.viewing_zenith_deg = value;
+    if (config.relative_azimuth_deg) |value| input.geometry.relative_azimuth_deg = value;
     if (!config.multiple_scattering) input.rtm_controls.scattering = .single;
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(
         allocator,
@@ -84,10 +99,10 @@ fn mainInner() !void {
     const forward_ns = forward_timer.read();
 
     try collector.finish();
-    try writeSummary(config, prepare_ns, forward_ns, product.summary, collector.counts());
+    try writeSummary(config, input, prepare_ns, forward_ns, product.summary, collector.counts());
 
     std.debug.print(
-        "wrote calculation telemetry CSV staging rows to {s} (scalar={}, reduction={}, decision={})\n",
+        "wrote calculation telemetry parquet rows to {s} (scalar={}, reduction={}, decision={})\n",
         .{
             config.output_dir,
             collector.counts().scalar,
@@ -122,6 +137,10 @@ fn parseArgs(args: []const []const u8) !Config {
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
             config.output_dir_set = true;
+        } else if (std.mem.eql(u8, arg, "--scene-id")) {
+            index += 1;
+            if (index >= args.len) return error.MissingSceneId;
+            config.scene_id = args[index];
         } else if (std.mem.eql(u8, arg, "--jacobian")) {
             config.jacobian = true;
         } else if (std.mem.eql(u8, arg, "--multiple-scattering")) {
@@ -142,6 +161,42 @@ fn parseArgs(args: []const []const u8) !Config {
             index += 1;
             if (index >= args.len) return error.MissingHighResolutionStep;
             config.high_resolution_step_nm = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--surface-albedo")) {
+            index += 1;
+            if (index >= args.len) return error.MissingSurfaceAlbedo;
+            config.surface_albedo = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--aerosol-optical-depth")) {
+            index += 1;
+            if (index >= args.len) return error.MissingAerosolOpticalDepth;
+            config.aerosol_optical_depth = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--aerosol-single-scatter-albedo")) {
+            index += 1;
+            if (index >= args.len) return error.MissingAerosolSingleScatterAlbedo;
+            config.aerosol_single_scatter_albedo = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--aerosol-asymmetry-factor")) {
+            index += 1;
+            if (index >= args.len) return error.MissingAerosolAsymmetryFactor;
+            config.aerosol_asymmetry_factor = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--aerosol-layer-top-pressure-hpa")) {
+            index += 1;
+            if (index >= args.len) return error.MissingAerosolLayerTopPressure;
+            config.aerosol_layer_top_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--aerosol-layer-bottom-pressure-hpa")) {
+            index += 1;
+            if (index >= args.len) return error.MissingAerosolLayerBottomPressure;
+            config.aerosol_layer_bottom_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--solar-zenith-deg")) {
+            index += 1;
+            if (index >= args.len) return error.MissingSolarZenith;
+            config.solar_zenith_deg = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--viewing-zenith-deg")) {
+            index += 1;
+            if (index >= args.len) return error.MissingViewingZenith;
+            config.viewing_zenith_deg = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--relative-azimuth-deg")) {
+            index += 1;
+            if (index >= args.len) return error.MissingRelativeAzimuth;
+            config.relative_azimuth_deg = try std.fmt.parseFloat(f64, args[index]);
         } else {
             return error.UnsupportedArgument;
         }
@@ -151,6 +206,7 @@ fn parseArgs(args: []const []const u8) !Config {
 
 fn writeSummary(
     config: Config,
+    input: anytype,
     prepare_ns: u64,
     forward_ns: u64,
     summary: InstrumentGrid.InstrumentGridSummary,
@@ -164,12 +220,22 @@ fn writeSummary(
         \\{{
         \\  "calculation_telemetry_requested": {},
         \\  "calculation_telemetry_enabled": {},
+        \\  "scene_id": "{s}",
         \\  "jacobian": {},
         \\  "multiple_scattering": {},
         \\  "start_nm": {d:.8},
         \\  "end_nm": {d:.8},
         \\  "requested_sample_count": {},
         \\  "high_resolution_step_nm": {d:.8},
+        \\  "surface_albedo": {e:.17},
+        \\  "aerosol_optical_depth": {e:.17},
+        \\  "aerosol_single_scatter_albedo": {e:.17},
+        \\  "aerosol_asymmetry_factor": {e:.17},
+        \\  "aerosol_layer_top_pressure_hpa": {e:.17},
+        \\  "aerosol_layer_bottom_pressure_hpa": {e:.17},
+        \\  "solar_zenith_deg": {d:.8},
+        \\  "viewing_zenith_deg": {d:.8},
+        \\  "relative_azimuth_deg": {d:.8},
         \\  "prepare_ns": {},
         \\  "forward_wall_ns": {},
         \\  "prepare_s": {d:.9},
@@ -189,12 +255,22 @@ fn writeSummary(
         .{
             CalculationTelemetry.requested,
             CalculationTelemetry.enabled,
+            input.scene_id,
             config.jacobian,
             config.multiple_scattering,
             config.start_nm,
             config.end_nm,
             config.sample_count,
             config.high_resolution_step_nm,
+            input.surface_albedo,
+            input.aerosol.optical_depth,
+            input.aerosol.single_scatter_albedo,
+            input.aerosol.asymmetry_factor,
+            input.aerosol.placement.top_pressure_hpa,
+            input.aerosol.placement.bottom_pressure_hpa,
+            input.geometry.solar_zenith_deg,
+            input.geometry.viewing_zenith_deg,
+            input.geometry.relative_azimuth_deg,
             prepare_ns,
             forward_ns,
             @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,
