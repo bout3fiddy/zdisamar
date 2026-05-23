@@ -3,6 +3,7 @@ const math = std.math;
 const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const phase_odd_reciprocal = blk: {
@@ -304,6 +305,7 @@ fn doDouble(
         const trace_r = gaussTrace(n, n_gauss, current_r);
         const trace_t = gaussTrace(n, n_gauss, current_t);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+        Telemetry.labosDoublingStep(trace_r, trace_t, threshold_mul, q_is_zero);
 
         var d_storage: basis.Mat = undefined;
         const D = if (q_is_zero) blk: {
@@ -439,6 +441,7 @@ inline fn doDouble12x10Step(
     const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
     const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
     const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+    Telemetry.labosDoublingStep(trace_r, trace_t, threshold_mul, q_is_zero);
 
     var d_storage: basis.Mat = undefined;
     const D = if (q_is_zero) blk: {
@@ -670,6 +673,19 @@ pub fn calcRTlayersIntoWithBasis(
             }
             b_start = bd;
         }
+        Telemetry.labosLayerDecision(
+            i_fourier,
+            layer_idx,
+            max_phase_index,
+            b,
+            a,
+            max_beta_eff,
+            a_eff * b,
+            controls.performance_thresholds.threshold_doubl,
+            b_start,
+            ndouble,
+            use_doubling,
+        );
         const needs_renormalized_phase =
             use_doubling and i_fourier == 0 and controls.renorm_phase_function;
 

@@ -77,6 +77,7 @@ pub const common = struct {
 //   field storage: 0 B; padding: 0 B (0 bits)
 //   footprint: no runtime field storage; namespace/type declarations only
 pub const forward_model = struct {
+    pub const calculation_telemetry = @import("forward_model/calculation_telemetry.zig");
     pub const performance_trace = @import("forward_model/performance_trace.zig");
     pub const work_partition = @import("forward_model/work_partition.zig");
 

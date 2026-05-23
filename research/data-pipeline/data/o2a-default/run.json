@@ -1,0 +1,50 @@
+{
+  "run_id": "o2a-default",
+  "generated_at_utc": "2026-05-23T10:20:06.732247+00:00",
+  "git_commit": "470891e085deba50303026d30471f46fcc918ebf",
+  "git_dirty": true,
+  "capture_command": [
+    "zig",
+    "build",
+    "calculation-telemetry",
+    "-Doptimize=ReleaseFast",
+    "--",
+    "--output-dir",
+    "out/calculation-telemetry-staging/o2a-default"
+  ],
+  "staging_summary": {
+    "calculation_telemetry_requested": true,
+    "calculation_telemetry_enabled": true,
+    "jacobian": false,
+    "multiple_scattering": false,
+    "start_nm": 760.0,
+    "end_nm": 761.0,
+    "requested_sample_count": 21,
+    "high_resolution_step_nm": 0.1,
+    "prepare_ns": 37212292,
+    "forward_wall_ns": 3524995708,
+    "prepare_s": 0.037212292,
+    "forward_wall_s": 3.524995708,
+    "sample_count": 21,
+    "wavelength_start_nm": 760.0,
+    "wavelength_end_nm": 761.0,
+    "mean_radiance": 614652621708.7285,
+    "mean_irradiance": 479881435189394.9,
+    "mean_reflectance": 0.008042758526580535,
+    "scalar_rows": 605748,
+    "reduction_rows": 3,
+    "decision_rows": 651024
+  },
+  "parquet_files": {
+    "expression_catalog": "research/data-pipeline/data/o2a-default/expression_catalog.parquet",
+    "scalar_expression_rows": "research/data-pipeline/data/o2a-default/scalar_expression_rows.parquet",
+    "reduction_expression_rows": "research/data-pipeline/data/o2a-default/reduction_expression_rows.parquet",
+    "decision_rows": "research/data-pipeline/data/o2a-default/decision_rows.parquet"
+  },
+  "row_counts": {
+    "expression_catalog": 12,
+    "scalar_expression_rows": 605748,
+    "reduction_expression_rows": 3,
+    "decision_rows": 651024
+  }
+}

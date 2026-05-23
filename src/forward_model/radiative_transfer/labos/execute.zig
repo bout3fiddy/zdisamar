@@ -7,6 +7,7 @@ const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const math = std.math;
@@ -435,7 +436,8 @@ fn layerResolvedLabosWithWorkspace(
             else
                 2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
             // math: accumulate Fourier contribution rho += c_m * rho_m.
-            reflectance += fourier_weight * refl_fc;
+            const weighted_reflectance = fourier_weight * refl_fc;
+            reflectance += weighted_reflectance;
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
@@ -527,9 +529,18 @@ fn layerResolvedLabosWithWorkspace(
                 };
                 aerosol_layer_mid_pressure_tangent += fourier_weight * pressure_tangent_refl_fc;
             }
-            if (i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
-                @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon)
-            {
+            const tail_break =
+                i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
+                @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon;
+            Telemetry.fourierContribution(
+                i_fourier,
+                fourier_weight,
+                refl_fc,
+                weighted_reflectance,
+                controls.performance_thresholds.fourier_tail_reflectance_epsilon,
+                tail_break,
+            );
+            if (tail_break) {
                 Trace.plotU("fourier_tail_breaks", 1);
                 stop_fourier_loop = true;
             }
@@ -546,8 +557,14 @@ fn layerResolvedLabosWithWorkspace(
         jacobian.set(&assembled, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
         break :result_jacobian assembled;
     };
+    const clamped_reflectance = math.clamp(reflectance, 0.0, 2.0);
+    if (Telemetry.enabled) {
+        var jacobian_norm1: f64 = 0.0;
+        for (result_jacobian) |value| jacobian_norm1 += @abs(value);
+        Telemetry.labosResult(reflectance, clamped_reflectance, jacobian_norm1);
+    }
     return .{
-        .reflectance = math.clamp(reflectance, 0.0, 2.0),
+        .reflectance = clamped_reflectance,
         .jacobian = result_jacobian,
     };
 }

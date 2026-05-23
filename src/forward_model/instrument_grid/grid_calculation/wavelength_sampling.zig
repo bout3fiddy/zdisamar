@@ -9,6 +9,7 @@ const Plan = @import("wavelength_plan.zig");
 const Storage = @import("storage.zig");
 const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
@@ -191,6 +192,7 @@ pub fn buildWavelengthSampling(
     const kernel_offsets_nm = try kernel_storage_builder.offsets_nm.toOwnedSlice(allocator);
     errdefer allocator.free(kernel_offsets_nm);
     const kernel_weights = try kernel_storage_builder.weights.toOwnedSlice(allocator);
+    recordWavelengthSamplingPlan(plans, kernel_offsets_nm.len);
     return .{
         .rows = plans,
         .kernel_offsets_nm = kernel_offsets_nm,
@@ -460,6 +462,34 @@ fn compactIntegrationKernel(
     return compact;
 }
 
+fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_count: usize) void {
+    if (!Telemetry.enabled) return;
+    var radiance_integrated_rows: usize = 0;
+    var irradiance_integrated_rows: usize = 0;
+    var radiance_sample_count: usize = 0;
+    var irradiance_sample_count: usize = 0;
+    var max_kernel_sample_count: usize = 0;
+    for (plans) |plan| {
+        const radiance_count = plan.radiance_integration.activeSampleCount();
+        const irradiance_count = plan.irradiance_integration.activeSampleCount();
+        if (plan.radiance_integration.enabled()) radiance_integrated_rows += 1;
+        if (plan.irradiance_integration.enabled()) irradiance_integrated_rows += 1;
+        radiance_sample_count += radiance_count;
+        irradiance_sample_count += irradiance_count;
+        max_kernel_sample_count = @max(max_kernel_sample_count, radiance_count);
+        max_kernel_sample_count = @max(max_kernel_sample_count, irradiance_count);
+    }
+    Telemetry.wavelengthSamplingPlan(
+        plans.len,
+        radiance_integrated_rows,
+        irradiance_integrated_rows,
+        radiance_sample_count,
+        irradiance_sample_count,
+        side_sample_count,
+        max_kernel_sample_count,
+    );
+}
+
 fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: usize) f64 {
     if (resolved_axis.explicit_wavelengths_nm.len != 0) return resolved_axis.explicit_wavelengths_nm[index];
     const sample_count = resolved_axis.base.sample_count;
@@ -518,6 +548,7 @@ pub fn buildForwardMissPlan(
         };
     }
 
+    Telemetry.forwardMissPlan(table.rows.len, sample_indices.items.len, misses.items.len);
     return .{
         .rows = rows,
         .sample_indices = try sample_indices.toOwnedSlice(allocator),

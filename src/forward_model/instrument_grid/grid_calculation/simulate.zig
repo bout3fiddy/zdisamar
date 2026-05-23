@@ -14,6 +14,7 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Plan = @import("wavelength_plan.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
@@ -745,13 +746,30 @@ fn assembleReflectance(
         const zone = Trace.staticZone(@src(), "simulate.reflectance_assembly");
         defer zone.end();
         const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+        var denominator_clamp_count: usize = 0;
+        var min_denominator = std.math.inf(f64);
+        var max_reflectance = -std.math.inf(f64);
         for (0..sample_count) |index| {
-            buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
-                @max(buffers.irradiance[index] * solar_cosine, 1e-9);
+            const denominator_raw = buffers.irradiance[index] * solar_cosine;
+            const denominator = @max(denominator_raw, 1e-9);
+            buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) / denominator;
+            if (Telemetry.enabled) {
+                if (denominator_raw <= 1e-9) denominator_clamp_count += 1;
+                min_denominator = @min(min_denominator, denominator_raw);
+                max_reflectance = @max(max_reflectance, buffers.reflectance[index]);
+            }
             summary.addReflectanceSample(
                 buffers.radiance[index],
                 buffers.irradiance[index],
                 buffers.reflectance[index],
+            );
+        }
+        if (Telemetry.enabled) {
+            Telemetry.reflectanceAssembly(
+                sample_count,
+                denominator_clamp_count,
+                if (sample_count == 0) 0.0 else min_denominator,
+                if (sample_count == 0) 0.0 else max_reflectance,
             );
         }
     }
@@ -796,7 +814,21 @@ fn processJacobianSamples(
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 const state_index = jacobian.stateIndex(state);
-                for (column) |value| summary.jacobian_sum[state_index] += value;
+                var column_sum: f64 = 0.0;
+                var column_max_abs: f64 = 0.0;
+                for (column) |value| {
+                    column_sum += value;
+                    if (Telemetry.enabled) column_max_abs = @max(column_max_abs, @abs(value));
+                }
+                summary.jacobian_sum[state_index] += column_sum;
+                if (Telemetry.enabled) {
+                    Telemetry.jacobianColumn(
+                        state_index,
+                        column_sum,
+                        if (setup.sample_count == 0) 0.0 else column_sum / @as(f64, @floatFromInt(setup.sample_count)),
+                        column_max_abs,
+                    );
+                }
             }
             return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
         }

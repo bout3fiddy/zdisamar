@@ -52,9 +52,18 @@ pub fn build(b: *std.Build) void {
         "enable-ztracy",
         "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
-
     const ztracy_stub_module = b.createModule(.{
         .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const calculation_telemetry_stub_module = b.createModule(.{
+        .root_source_file = b.path("src/forward_model/calculation_telemetry_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const calculation_telemetry_sink_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/calculation_telemetry_sink.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -77,15 +86,24 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
     build_options.addOption(bool, "enable_ztracy", false);
+    build_options.addOption(bool, "enable_calculation_telemetry", false);
     const build_options_module = build_options.createModule();
 
     // Boundary: shipped library/CLI modules always receive the stub trace module
-    // and enable_ztracy=false. Only explicit validation trace executables below
-    // use trace_build_options, so profiling never changes the product build.
+    // and disabled tracing/telemetry options. Only explicit validation trace
+    // executables below use trace_build_options, so profiling and calculation
+    // telemetry never change the product build.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
+    trace_build_options.addOption(bool, "enable_calculation_telemetry", false);
     const trace_build_options_module = trace_build_options.createModule();
+
+    const calculation_telemetry_build_options = b.addOptions();
+    calculation_telemetry_build_options.addOption(bool, "enable_test_support", false);
+    calculation_telemetry_build_options.addOption(bool, "enable_ztracy", false);
+    calculation_telemetry_build_options.addOption(bool, "enable_calculation_telemetry", true);
+    const calculation_telemetry_build_options_module = calculation_telemetry_build_options.createModule();
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -100,6 +118,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "ztracy",
                 .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
             },
         },
     });
@@ -127,6 +149,10 @@ pub fn build(b: *std.Build) void {
                 .name = "ztracy",
                 .module = ztracy_stub_module,
             },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
         },
     });
     const c_api_lib = b.addLibrary(.{
@@ -153,6 +179,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "ztracy",
                 .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
             },
         },
     });
@@ -196,6 +226,10 @@ pub fn build(b: *std.Build) void {
                         .{
                             .name = "ztracy",
                             .module = ztracy_stub_module,
+                        },
+                        .{
+                            .name = "calculation_telemetry_sink",
+                            .module = calculation_telemetry_stub_module,
                         },
                     },
                 }),
@@ -271,6 +305,10 @@ pub fn build(b: *std.Build) void {
                             .name = "ztracy",
                             .module = ztracy_stub_module,
                         },
+                        .{
+                            .name = "calculation_telemetry_sink",
+                            .module = calculation_telemetry_stub_module,
+                        },
                     },
                 }),
             },
@@ -296,6 +334,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "ztracy",
                 .module = trace_ztracy_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
             },
         },
     });
@@ -370,6 +412,52 @@ pub fn build(b: *std.Build) void {
         "Build the O2A optimal-estimation trace executable for profiling and disassembly",
     );
     optimal_estimation_trace_bin_step.dependOn(&optimal_estimation_trace_install.step);
+
+    const calculation_telemetry_internal_module = b.createModule(.{
+        .root_source_file = b.path("src/internal.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = calculation_telemetry_build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_sink_module,
+            },
+        },
+    });
+    const calculation_telemetry_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/calculation_telemetry_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = calculation_telemetry_internal_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_sink_module,
+            },
+        },
+    });
+    const calculation_telemetry_exe = b.addExecutable(.{
+        .name = "calculation-telemetry",
+        .root_module = calculation_telemetry_module,
+    });
+    const run_calculation_telemetry = b.addRunArtifact(calculation_telemetry_exe);
+    if (b.args) |args| run_calculation_telemetry.addArgs(args);
+    const calculation_telemetry_step = b.step(
+        "calculation-telemetry",
+        "Run the O2A calculation telemetry staging harness",
+    );
+    calculation_telemetry_step.dependOn(&run_calculation_telemetry.step);
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,

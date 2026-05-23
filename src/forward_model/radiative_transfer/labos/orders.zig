@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 
 // layout(64-bit):
@@ -735,6 +736,14 @@ fn ordersScatInternal(
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
     if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) {
         Trace.plotU("orders_initial_returns", 1);
+        Telemetry.ordersConvergence(
+            1,
+            num_orders_max,
+            max_value,
+            controls.performance_thresholds.threshold_conv_first,
+            true,
+            false,
+        );
         return .{
             .ud = ud_view,
             .ud_sum_local = ud_sum_local_view,
@@ -825,6 +834,14 @@ fn ordersScatInternal(
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
         if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) {
+            Telemetry.ordersConvergence(
+                num_orders,
+                num_orders_max,
+                max_value,
+                controls.performance_thresholds.threshold_conv_mult,
+                false,
+                num_orders >= num_orders_max,
+            );
             // PARITY:
             //   `LabosModule::ordersScat` exits the scattering-order loop as
             //   soon as the current order falls below `thresholdConv_mult`.
