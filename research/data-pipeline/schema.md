@@ -21,6 +21,18 @@ One row per captured expression.
 | `function` | string | Function or function group containing the expression. |
 | `capture_reason` | string | Why this expression is useful for pruning or cheaper-math analysis. |
 
+The retained LABOS decision IDs currently include:
+
+| `expr_id` | `expr_name` | Decision rule |
+| ---: | --- | --- |
+| `11` | `labos_doubling_trigger` | `tau_eff > threshold_doubl` |
+| `12` | `labos_qseries_skip` | `abs(trace(R)^2) <= threshold_mul` |
+| `13` | `labos_qseries_rd_product` | `abs(trace(R) * trace(D)) > threshold_mul` |
+| `14` | `labos_qseries_tu_product` | `abs(trace(T) * trace(U)) > threshold_mul` |
+| `15` | `labos_qseries_td_product` | `abs(trace(T) * trace(D)) > threshold_mul` |
+| `20` | `orders_convergence` | `max_outgoing_upward < threshold_conv` |
+| `31` | `fourier_tail_break` | `m >= floor && abs(rho_m) <= epsilon` |
+
 ## Shared Event Columns
 
 These columns appear in all row tables.
@@ -32,13 +44,23 @@ These columns appear in all row tables.
 | `wavelength_nm` | float | Wavelength coordinate when the hook has one, `NaN` otherwise. |
 | `layer_index` | integer | Atmospheric layer coordinate, `-1` otherwise. |
 | `fourier_index` | integer | Fourier term coordinate, `-1` otherwise. |
-| `order_index` | integer | Multiple-scattering order coordinate, `-1` otherwise. |
-| `state_index` | integer | Jacobian state coordinate, `-1` otherwise. |
-| `branch` | integer | Expression-specific branch label, such as phase max index or convergence phase; `-1` otherwise. |
+| `order_index` | integer | Multiple-scattering order coordinate, doubling step, or expression-local order coordinate, `-1` otherwise. |
+| `state_index` | integer | Jacobian state coordinate, phase-count coordinate, or expression-local state coordinate, `-1` otherwise. |
+| `branch` | integer | Expression-specific branch label; `-1` otherwise. |
 
 The direct Zig writer keeps the event tables allocation-light by writing numeric
 sentinels directly. Use `-1 -> null` and `NaN -> null` in analysis if a query
 needs explicit nulls.
+
+Coordinate meanings are expression-specific but stable inside each expression:
+
+- `labos_doubling_trigger` stores `branch = phase_max_index`.
+- `labos_qseries_skip` stores `order_index = doubling_step_index` and
+  `state_index = phase_max_index`.
+- `labos_qseries_rd_product`, `labos_qseries_tu_product`, and
+  `labos_qseries_td_product` store `order_index = doubling_step_index`,
+  `state_index = phase_max_index`, and `branch = qseries_is_zero`.
+- `jacobian_column` uses `state_index` as the derivative state index.
 
 ## `scalar_expression_rows.parquet`
 

@@ -128,6 +128,12 @@ It writes aggregate CSV tables, HTML plots, and a Markdown report under:
 research/data-pipeline/reports/calculation-telemetry-latest/
 ```
 
+For a Markdown/table-only refresh, skip plot generation:
+
+```sh
+uv run python research/data-pipeline/analyze_calculation_telemetry.py --skip-plots
+```
+
 Reports are also ignored by git. Commit analysis code and report templates, not
 the generated report output.
 
@@ -174,7 +180,8 @@ or cheaper-math candidates:
 - reflectance denominator clamping and maximum reflectance;
 - Jacobian column mean and maximum absolute derivative;
 - LABOS effective scattering depth and layer-doubling trigger;
-- LABOS q-series skip threshold;
+- LABOS q-series skip threshold and downstream `R-D`, `T-U`, and `T-D` product
+  gates;
 - scattering-order convergence;
 - Fourier contribution size and tail break;
 - final LABOS reflectance clamp and Jacobian norm.

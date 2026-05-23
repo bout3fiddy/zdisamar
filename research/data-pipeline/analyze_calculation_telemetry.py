@@ -23,12 +23,14 @@ def main() -> None:
     sweep_root = args.sweep_root.resolve()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir = output_dir / "plots"
     tables_dir = output_dir / "tables"
-    plots_dir.mkdir(exist_ok=True)
     tables_dir.mkdir(exist_ok=True)
+    plot_files: dict[str, Path] = {}
 
-    alt.data_transformers.disable_max_rows()
+    if not args.skip_plots:
+        plots_dir = output_dir / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        alt.data_transformers.disable_max_rows()
 
     scene_catalog = pl.read_parquet(sweep_root / "scene_catalog.parquet")
     scenes = scene_ids(scene_catalog)
@@ -41,8 +43,11 @@ def main() -> None:
     decision_summary = collect_decision_summary(decision_scan, expression_catalog)
     decision_by_scene = collect_decision_by_scene(decision_scan, expression_catalog)
     qseries_by_scene = collect_qseries_by_scene(decision_scan, scene_catalog)
+    qseries_by_coordinate = collect_qseries_by_coordinate(decision_scan, expression_catalog)
+    qseries_downstream = collect_qseries_downstream(decision_scan, expression_catalog)
     orders_by_order = collect_orders_by_order(decision_scan)
     layer_doubling = collect_layer_doubling(decision_scan)
+    layer_doubling_classes = collect_layer_doubling_classes(decision_scan)
     scalar_summary = collect_scalar_summary(scalar_scan, expression_catalog)
     fourier_by_index = collect_fourier_by_index(scalar_scan, decision_scan)
     reduction_rows = collect_reduction_rows(reduction_scan, expression_catalog)
@@ -55,24 +60,28 @@ def main() -> None:
             "decision_summary.csv": decision_summary,
             "decision_by_scene.csv": decision_by_scene,
             "qseries_by_scene.csv": qseries_by_scene,
+            "qseries_by_coordinate.csv": qseries_by_coordinate,
+            "qseries_downstream.csv": qseries_downstream,
             "orders_by_order.csv": orders_by_order,
             "layer_doubling_by_layer.csv": layer_doubling,
+            "layer_doubling_coordinate_classes.csv": layer_doubling_classes,
             "scalar_summary.csv": scalar_summary,
             "fourier_by_index.csv": fourier_by_index,
             "reduction_rows.csv": reduction_rows,
         },
     )
 
-    plot_files = write_plots(
-        plots_dir,
-        scene_catalog,
-        event_volume,
-        decision_summary,
-        qseries_by_scene,
-        layer_doubling,
-        fourier_by_index,
-        reduction_rows,
-    )
+    if not args.skip_plots:
+        plot_files = write_plots(
+            plots_dir,
+            scene_catalog,
+            event_volume,
+            decision_summary,
+            qseries_by_scene,
+            layer_doubling,
+            fourier_by_index,
+            reduction_rows,
+        )
 
     report = build_report(
         sweep_root,
@@ -80,8 +89,11 @@ def main() -> None:
         event_volume,
         decision_summary,
         qseries_by_scene,
+        qseries_by_coordinate,
+        qseries_downstream,
         orders_by_order,
         layer_doubling,
+        layer_doubling_classes,
         scalar_summary,
         fourier_by_index,
         reduction_rows,
@@ -109,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sweep-root", type=Path, default=DEFAULT_SWEEP_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--skip-plots", action="store_true")
 
     return parser.parse_args()
 
@@ -213,6 +226,67 @@ def collect_qseries_by_scene(
     )
 
 
+def collect_qseries_by_coordinate(
+    decision_scan: pl.LazyFrame,
+    expression_catalog: pl.DataFrame,
+) -> pl.DataFrame:
+
+    log_ratio = threshold_log_ratio()
+
+    return collect_frame(
+        decision_scan.filter(pl.col("expr_id") == 12)
+        .group_by("layer_index", "fourier_index", "order_index", "state_index")
+        .agg(
+            pl.len().alias("rows"),
+            pl.col("taken").mean().alias("skip_fraction"),
+            pl.col("taken").min().alias("min_skip"),
+            pl.col("taken").max().alias("max_skip"),
+            log_ratio.median().alias("log_ratio_p50"),
+        )
+        .with_columns(
+            threshold_class("min_skip", "max_skip", "always_skip", "never_skip").alias(
+                "skip_class"
+            ),
+            pl.lit(12).alias("expr_id"),
+        )
+        .join(catalog_lazy(expression_catalog), on="expr_id")
+        .sort("layer_index", "fourier_index", "order_index", "state_index")
+    )
+
+
+def collect_qseries_downstream(
+    decision_scan: pl.LazyFrame,
+    expression_catalog: pl.DataFrame,
+) -> pl.DataFrame:
+
+    log_ratio = threshold_log_ratio()
+
+    return collect_frame(
+        decision_scan.filter(pl.col("expr_id").is_in([13, 14, 15]))
+        .with_columns((pl.col("branch") == 1).alias("qseries_is_zero"))
+        .group_by("expr_id", "qseries_is_zero")
+        .agg(
+            pl.len().alias("rows"),
+            pl.col("taken").mean().alias("nonzero_fraction"),
+            pl.col("taken").min().alias("min_nonzero"),
+            pl.col("taken").max().alias("max_nonzero"),
+            log_ratio.quantile(0.01).alias("log_ratio_p01"),
+            log_ratio.median().alias("log_ratio_p50"),
+            log_ratio.quantile(0.99).alias("log_ratio_p99"),
+        )
+        .with_columns(
+            threshold_class(
+                "min_nonzero",
+                "max_nonzero",
+                "always_nonzero",
+                "always_zero",
+            ).alias("nonzero_class")
+        )
+        .join(catalog_lazy(expression_catalog), on="expr_id")
+        .sort("expr_id", "qseries_is_zero")
+    )
+
+
 def collect_orders_by_order(decision_scan: pl.LazyFrame) -> pl.DataFrame:
 
     log_ratio = threshold_log_ratio()
@@ -244,6 +318,33 @@ def collect_layer_doubling(decision_scan: pl.LazyFrame) -> pl.DataFrame:
             log_ratio.quantile(0.99).alias("log_ratio_p99"),
         )
         .sort("layer_index")
+    )
+
+
+def collect_layer_doubling_classes(decision_scan: pl.LazyFrame) -> pl.DataFrame:
+
+    log_ratio = threshold_log_ratio()
+
+    return collect_frame(
+        decision_scan.filter(pl.col("expr_id") == 11)
+        .group_by("layer_index", "fourier_index", "branch")
+        .agg(
+            pl.len().alias("rows"),
+            pl.col("taken").mean().alias("doubling_fraction"),
+            pl.col("taken").min().alias("min_doubling"),
+            pl.col("taken").max().alias("max_doubling"),
+            pl.col("work_if_taken").mean().alias("mean_doubling_count"),
+            log_ratio.median().alias("log_ratio_p50"),
+        )
+        .with_columns(
+            threshold_class(
+                "min_doubling",
+                "max_doubling",
+                "always_doubling",
+                "never_doubling",
+            ).alias("doubling_class")
+        )
+        .sort("layer_index", "fourier_index", "branch")
     )
 
 
@@ -337,6 +438,22 @@ def collect_event_volume(scene_catalog: pl.DataFrame) -> pl.DataFrame:
 def threshold_log_ratio() -> pl.Expr:
 
     return ((pl.col("lhs").abs() + LOG_EPSILON) / (pl.col("threshold").abs() + LOG_EPSILON)).log10()
+
+
+def threshold_class(
+    min_column: str,
+    max_column: str,
+    always_true_label: str,
+    always_false_label: str,
+) -> pl.Expr:
+
+    return (
+        pl.when((pl.col(min_column) == 1) & (pl.col(max_column) == 1))
+        .then(pl.lit(always_true_label))
+        .when((pl.col(min_column) == 0) & (pl.col(max_column) == 0))
+        .then(pl.lit(always_false_label))
+        .otherwise(pl.lit("mixed"))
+    )
 
 
 def collect_frame(query: pl.LazyFrame) -> pl.DataFrame:
@@ -588,8 +705,11 @@ def build_report(
     event_volume: pl.DataFrame,
     decision_summary: pl.DataFrame,
     qseries_by_scene: pl.DataFrame,
+    qseries_by_coordinate: pl.DataFrame,
+    qseries_downstream: pl.DataFrame,
     orders_by_order: pl.DataFrame,
     layer_doubling: pl.DataFrame,
+    layer_doubling_classes: pl.DataFrame,
     scalar_summary: pl.DataFrame,
     fourier_by_index: pl.DataFrame,
     reduction_rows: pl.DataFrame,
@@ -616,6 +736,8 @@ def build_report(
     partial_doubling = layer_doubling.filter(
         (pl.col("doubling_fraction") > 0) & (pl.col("doubling_fraction") < 1)
     )
+    qseries_coordinate_classes = class_counts(qseries_by_coordinate, "skip_class")
+    layer_coordinate_classes = class_counts(layer_doubling_classes, "doubling_class")
     forward_reuse = reduction_rows.filter(pl.col("expr_name") == "forward_miss_reuse").row(
         0, named=True
     )
@@ -624,6 +746,8 @@ def build_report(
     )
     qseries_rows = row_int(qseries, "rows")
     qseries_event_fraction = 100.0 * row_float(qseries, "rows") / total_rows
+    qseries_family_rows = qseries_rows + int(qseries_downstream.get_column("rows").sum())
+    qseries_family_fraction = 100.0 * qseries_family_rows / total_rows
     doubling_taken_pct = 100.0 * row_float(doubling, "taken_fraction")
     doubling_rows = row_int(doubling, "rows")
     orders_taken_pct = 100.0 * row_float(orders, "taken_fraction")
@@ -655,12 +779,12 @@ def build_report(
         "",
         "## 1. Event Volume And Row Drivers",
         "",
-        f"Plot: [`{display_path(plot_files['event_volume'])}`]"
-        f"({display_path(plot_files['event_volume'])})",
-        "",
-        "Decision rows dominate the captured stream. The largest single driver is",
-        f"`labos_qseries_skip` with {qseries_rows:,} rows, which is "
-        f"{qseries_event_fraction:.1f}% of all captured events.",
+        *plot_line("event_volume", plot_files),
+        "Decision rows dominate the captured stream. The q-series threshold family",
+        f"contains {qseries_family_rows:,} rows, which is "
+        f"{qseries_family_fraction:.1f}% of all captured events. The base",
+        f"`labos_qseries_skip` expression contributes {qseries_rows:,} rows "
+        f"({qseries_event_fraction:.1f}%).",
         "This says the first mathematical target is not spectral-grid setup but the",
         "matrix-product/q-series decision surface inside LABOS doubling.",
         "",
@@ -670,9 +794,7 @@ def build_report(
         "",
         "## 2. Decision Threshold Behavior",
         "",
-        f"Plot: [`{display_path(plot_files['decision_thresholds'])}`]"
-        f"({display_path(plot_files['decision_thresholds'])})",
-        "",
+        *plot_line("decision_thresholds", plot_files),
         f"`labos_doubling_trigger` is taken {doubling_taken_pct:.1f}% "
         f"of the time over {doubling_rows:,} rows. `orders_convergence` reports "
         f"convergence for {orders_taken_pct:.1f}% of rows, but the",
@@ -686,39 +808,56 @@ def build_report(
         "",
         "## 3. q-Series Skip Surface",
         "",
-        f"Plot: [`{display_path(plot_files['qseries_scene'])}`]"
-        f"({display_path(plot_files['qseries_scene'])})",
-        "",
+        *plot_line("qseries_scene", plot_files),
         f"The q-series skip fraction ranges from {qseries_min_pct:.1f}% to "
         f"{qseries_max_pct:.1f}% by scene. The scene ordering follows aerosol",
         "and geometry enough that a single global branch-rate assumption would be weak.",
         "The median `log10(abs(lhs)/threshold)` moves from below zero in clean scenes to",
         "above zero in dense scenes.",
         "",
-        "Optimization opportunity: capture the missing coordinates next: layer, Fourier",
-        "index, and doubling step for q-series. The current data already proves the",
-        "surface is large and structured; the next pruning rule should be coordinate-",
-        "aware rather than one more global threshold.",
+        "The q-series rows now carry layer, Fourier index, doubling-step index, and",
+        "phase-max coordinates. Coordinate classes across the sweep:",
+        f"- always skipped: {qseries_coordinate_classes.get('always_skip', 0):,}",
+        f"- never skipped: {qseries_coordinate_classes.get('never_skip', 0):,}",
+        f"- mixed: {qseries_coordinate_classes.get('mixed', 0):,}",
         "",
-        "## 4. Layer-Doubling Trigger By Layer",
+        "Optimization opportunity: use the mixed coordinate set as the risk boundary.",
+        "Always-skip coordinates are candidates for prepared zero-work handling; mixed",
+        "coordinates need the current exact threshold until precision tests prove more.",
         "",
-        f"Plot: [`{display_path(plot_files['layer_doubling'])}`]"
-        f"({display_path(plot_files['layer_doubling'])})",
+        "## 4. q-Series Downstream Gates",
+        "",
+        *qseries_downstream_lines(qseries_downstream),
+        "",
+        "These rows answer whether `qseries_is_zero` merely skips the q-series product",
+        "or whether it also predicts the later `R-D`, `T-U`, and `T-D` products. The",
+        "`qseries_is_zero=false` rows are almost always nonzero downstream, so the",
+        "current heavy path is justified there. The `qseries_is_zero=true` rows are",
+        "mostly zero downstream but not universally zero, so the opportunity is a",
+        "specialized q-zero path with its own smaller gates, not a blanket removal of",
+        "all downstream work.",
+        "",
+        "## 5. Layer-Doubling Trigger By Layer",
+        "",
+        *plot_line("layer_doubling", plot_files),
         "",
         f"{always_no_doubling.height} layers never trigger doubling in this sweep, and "
         f"{partial_doubling.height} layers are mixed. The middle aerosol interval is",
         "mostly above threshold; the upper tail layers are consistently below it.",
+        "",
+        "Layer/Fourier/phase coordinate classes across the sweep:",
+        f"- always doubling: {layer_coordinate_classes.get('always_doubling', 0):,}",
+        f"- never doubling: {layer_coordinate_classes.get('never_doubling', 0):,}",
+        f"- mixed: {layer_coordinate_classes.get('mixed', 0):,}",
         "",
         "Optimization opportunity: pre-partition layers into always-doubling, mixed, and",
         "always-thin groups after scene preparation. That would avoid re-evaluating the",
         "same depth test in the inner Fourier/layer loops and keep the mixed set explicit",
         "for precision-sensitive cases.",
         "",
-        "## 5. Fourier Tail And Contribution Magnitudes",
+        "## 6. Fourier Tail And Contribution Magnitudes",
         "",
-        f"Plot: [`{display_path(plot_files['fourier_tail'])}`]"
-        f"({display_path(plot_files['fourier_tail'])})",
-        "",
+        *plot_line("fourier_tail", plot_files),
         "`fourier_weighted_reflectance` has median absolute result "
         f"{fourier_abs_p50:.3e}; {fourier_le_1e_10_pct:.1f}% of rows are below "
         "1e-10. For",
@@ -731,11 +870,9 @@ def build_report(
         "earlier Fourier stop based on cumulative reflectance contribution, not only the",
         "per-term threshold currently captured.",
         "",
-        "## 6. Scalar Redundancy And Reduction Shape",
+        "## 7. Scalar Redundancy And Reduction Shape",
         "",
-        f"Plot: [`{display_path(plot_files['reduction_plan'])}`]"
-        f"({display_path(plot_files['reduction_plan'])})",
-        "",
+        *plot_line("reduction_plan", plot_files),
         f"`labos_reflectance_clamp` clamped {clamp_pct:.1f}% "
         "of rows in this sweep, so the clamp is a cold safety boundary here. "
         f"`labos_jacobian_norm1` is exactly zero for {jacobian_zero_pct:.1f}% "
@@ -757,8 +894,11 @@ def build_report(
         "- `tables/decision_summary.csv`",
         "- `tables/decision_by_scene.csv`",
         "- `tables/qseries_by_scene.csv`",
+        "- `tables/qseries_by_coordinate.csv`",
+        "- `tables/qseries_downstream.csv`",
         "- `tables/orders_by_order.csv`",
         "- `tables/layer_doubling_by_layer.csv`",
+        "- `tables/layer_doubling_coordinate_classes.csv`",
         "- `tables/scalar_summary.csv`",
         "- `tables/fourier_by_index.csv`",
         "- `tables/reduction_rows.csv`",
@@ -776,6 +916,48 @@ def row_by_expr(frame: pl.DataFrame, expr_name: str) -> dict[str, object]:
         raise ValueError(f"expected one row for expression {expr_name}, got {matches.height}")
 
     return matches.row(0, named=True)
+
+
+def plot_line(name: str, plot_files: dict[str, Path]) -> list[str]:
+
+    if name not in plot_files:
+        return []
+
+    path = display_path(plot_files[name])
+
+    return [f"Plot: [`{path}`]({path})", ""]
+
+
+def qseries_downstream_lines(frame: pl.DataFrame) -> list[str]:
+
+    lines = [
+        "| Gate | q-series zero | Rows | Nonzero fraction | Class | Median log ratio |",
+        "| --- | ---: | ---: | ---: | --- | ---: |",
+    ]
+
+    for row in frame.iter_rows(named=True):
+        lines.append(
+            "| {gate} | {qzero} | {rows:,} | {fraction:.3f} | {class_name} | {ratio:.2f} |".format(
+                gate=str(row["expr_name"]).removeprefix("labos_qseries_"),
+                qzero=int(bool(row["qseries_is_zero"])),
+                rows=scalar_int(row["rows"]),
+                fraction=scalar_float(row["nonzero_fraction"]),
+                class_name=str(row["nonzero_class"]),
+                ratio=scalar_float(row["log_ratio_p50"]),
+            )
+        )
+
+    return lines
+
+
+def class_counts(frame: pl.DataFrame, class_column: str) -> dict[str, int]:
+
+    counts: dict[str, int] = {}
+
+    for row in frame.group_by(class_column).len().iter_rows(named=True):
+        counts[str(row[class_column])] = scalar_int(row["len"])
+
+    return counts
 
 
 def row_float(row: dict[str, object], key: str) -> float:

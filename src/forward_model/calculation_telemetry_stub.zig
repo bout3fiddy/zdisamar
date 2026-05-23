@@ -70,15 +70,53 @@ pub inline fn labosLayerDecision(
 }
 
 pub inline fn labosDoublingStep(
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
     trace_r: f64,
     trace_t: f64,
     threshold_mul: f64,
     qseries_is_zero: bool,
 ) void {
+    _ = i_fourier;
+    _ = layer_index;
+    _ = phase_max_index;
+    _ = doubling_step_index;
     _ = trace_r;
     _ = trace_t;
     _ = threshold_mul;
     _ = qseries_is_zero;
+}
+
+pub inline fn labosDoublingDownstreamGates(
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
+    qseries_is_zero: bool,
+    trace_r: f64,
+    trace_t: f64,
+    trace_d: f64,
+    trace_u: f64,
+    threshold_mul: f64,
+    rd_nonzero: bool,
+    tu_nonzero: bool,
+    td_nonzero: bool,
+) void {
+    _ = i_fourier;
+    _ = layer_index;
+    _ = phase_max_index;
+    _ = doubling_step_index;
+    _ = qseries_is_zero;
+    _ = trace_r;
+    _ = trace_t;
+    _ = trace_d;
+    _ = trace_u;
+    _ = threshold_mul;
+    _ = rd_nonzero;
+    _ = tu_nonzero;
+    _ = td_nonzero;
 }
 
 pub inline fn ordersConvergence(

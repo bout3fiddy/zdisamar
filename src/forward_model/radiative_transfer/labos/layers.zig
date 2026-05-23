@@ -286,9 +286,12 @@ fn doDouble(
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
 ) void {
     if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
-        doDouble12x10(ndouble, threshold_mul, R, T, E);
+        doDouble12x10(ndouble, threshold_mul, R, T, E, i_fourier, layer_index, phase_max_index);
         return;
     }
 
@@ -300,12 +303,21 @@ fn doDouble(
     var next_t = &t_storage;
     var final_in_scratch = false;
 
-    for (0..ndouble) |_| {
+    for (0..ndouble) |doubling_step_index| {
         Trace.plotU("doubling_steps", 1);
         const trace_r = gaussTrace(n, n_gauss, current_r);
         const trace_t = gaussTrace(n, n_gauss, current_t);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
-        Telemetry.labosDoublingStep(trace_r, trace_t, threshold_mul, q_is_zero);
+        Telemetry.labosDoublingStep(
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+            trace_r,
+            trace_t,
+            threshold_mul,
+            q_is_zero,
+        );
 
         var d_storage: basis.Mat = undefined;
         const D = if (q_is_zero) blk: {
@@ -351,6 +363,21 @@ fn doDouble(
 
         Trace.plotU("matrix_smul_td", 1);
         const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+        Telemetry.labosDoublingDownstreamGates(
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+            q_is_zero,
+            trace_r,
+            trace_t,
+            trace_d,
+            trace_u,
+            threshold_mul,
+            rd_nonzero,
+            tu_nonzero,
+            td_nonzero,
+        );
 
         if (td_nonzero) {
             Trace.plotU("matrix_smul_td_nonzero", 1);
@@ -399,6 +426,9 @@ fn doDouble12x10(
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
 ) void {
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
@@ -408,9 +438,20 @@ fn doDouble12x10(
     var next_t = &t_storage;
     var final_in_scratch = false;
 
-    for (0..ndouble) |_| {
+    for (0..ndouble) |doubling_step_index| {
         Trace.plotU("doubling_steps", 1);
-        doDouble12x10Step(threshold_mul, current_r, current_t, E, next_r, next_t);
+        doDouble12x10Step(
+            threshold_mul,
+            current_r,
+            current_t,
+            E,
+            next_r,
+            next_t,
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+        );
 
         const previous_r = current_r;
         const previous_t = current_t;
@@ -437,11 +478,24 @@ inline fn doDouble12x10Step(
     E: *const basis.Vec,
     next_r: *basis.Mat,
     next_t: *basis.Mat,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
 ) void {
     const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
     const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
     const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
-    Telemetry.labosDoublingStep(trace_r, trace_t, threshold_mul, q_is_zero);
+    Telemetry.labosDoublingStep(
+        i_fourier,
+        layer_index,
+        phase_max_index,
+        doubling_step_index,
+        trace_r,
+        trace_t,
+        threshold_mul,
+        q_is_zero,
+    );
 
     var d_storage: basis.Mat = undefined;
     const D = if (q_is_zero) blk: {
@@ -487,6 +541,21 @@ inline fn doDouble12x10Step(
 
     Trace.plotU("matrix_smul_td", 1);
     const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+    Telemetry.labosDoublingDownstreamGates(
+        i_fourier,
+        layer_index,
+        phase_max_index,
+        doubling_step_index,
+        q_is_zero,
+        trace_r,
+        trace_t,
+        trace_d,
+        trace_u,
+        threshold_mul,
+        rd_nonzero,
+        tu_nonzero,
+        td_nonzero,
+    );
 
     if (td_nonzero) {
         Trace.plotU("matrix_smul_td_nonzero", 1);
@@ -724,7 +793,18 @@ pub fn calcRTlayersIntoWithBasis(
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
-                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, &layer_rt.R, &layer_rt.T, &E);
+                doDouble(
+                    ndouble,
+                    geo.nmutot,
+                    geo.n_gauss,
+                    controls.performance_thresholds.threshold_mul,
+                    &layer_rt.R,
+                    &layer_rt.T,
+                    &E,
+                    i_fourier,
+                    layer_idx,
+                    max_phase_index,
+                );
             }
         }
 

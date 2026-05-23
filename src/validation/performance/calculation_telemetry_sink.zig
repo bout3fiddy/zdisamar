@@ -14,6 +14,9 @@ const Expr = enum(u16) {
     labos_effective_scattering_depth = 10,
     labos_doubling_trigger = 11,
     labos_qseries_skip = 12,
+    labos_qseries_rd_product = 13,
+    labos_qseries_tu_product = 14,
+    labos_qseries_td_product = 15,
     orders_convergence = 20,
     fourier_weighted_reflectance = 30,
     fourier_tail_break = 31,
@@ -253,6 +256,45 @@ const expressions = [_]ExpressionMeta{
         .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
         .function = "doDouble/doDouble12x10Step",
         .capture_reason = "Identify q-series products whose contribution is below the fast-mode cutoff.",
+    },
+    .{
+        .expr = .labos_qseries_rd_product,
+        .expr_name = "labos_qseries_rd_product",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "rd_nonzero = abs(trace(R) * trace(D)) > threshold_mul",
+        .result_name = "rd_nonzero",
+        .inputs = "trace_r,trace_d,threshold_mul,qseries_is_zero",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "doDouble/doDouble12x10Step",
+        .capture_reason = "Test whether q-series zero decisions imply downstream R-D products can also be skipped.",
+    },
+    .{
+        .expr = .labos_qseries_tu_product,
+        .expr_name = "labos_qseries_tu_product",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "tu_nonzero = abs(trace(T) * trace(U)) > threshold_mul",
+        .result_name = "tu_nonzero",
+        .inputs = "trace_t,trace_u,threshold_mul,qseries_is_zero",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "doDouble/doDouble12x10Step",
+        .capture_reason = "Test whether q-series zero decisions imply downstream T-U products can also be skipped.",
+    },
+    .{
+        .expr = .labos_qseries_td_product,
+        .expr_name = "labos_qseries_td_product",
+        .row_table = "decision_rows",
+        .subsystem = "labos",
+        .equation = "td_nonzero = abs(trace(T) * trace(D)) > threshold_mul",
+        .result_name = "td_nonzero",
+        .inputs = "trace_t,trace_d,threshold_mul,qseries_is_zero",
+        .units = "boolean",
+        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .function = "doDouble/doDouble12x10Step",
+        .capture_reason = "Test whether q-series zero decisions imply downstream T-D products can also be skipped.",
     },
     .{
         .expr = .orders_convergence,
@@ -610,6 +652,10 @@ pub fn labosLayerDecision(
 }
 
 pub fn labosDoublingStep(
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
     trace_r: f64,
     trace_t: f64,
     threshold_mul: f64,
@@ -617,7 +663,12 @@ pub fn labosDoublingStep(
 ) void {
     recordDecision(
         .labos_qseries_skip,
-        .{},
+        .{
+            .layer_index = index(layer_index),
+            .fourier_index = index(i_fourier),
+            .order_index = index(doubling_step_index),
+            .state_index = index(phase_max_index),
+        },
         .{
             .lhs = @abs(trace_r * trace_r),
             .rhs = trace_t,
@@ -625,6 +676,66 @@ pub fn labosDoublingStep(
             .taken = qseries_is_zero,
             .work_if_taken = 0,
             .work_if_not_taken = 1,
+        },
+    );
+}
+
+pub fn labosDoublingDownstreamGates(
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
+    qseries_is_zero: bool,
+    trace_r: f64,
+    trace_t: f64,
+    trace_d: f64,
+    trace_u: f64,
+    threshold_mul: f64,
+    rd_nonzero: bool,
+    tu_nonzero: bool,
+    td_nonzero: bool,
+) void {
+    const coord: Coordinates = .{
+        .layer_index = index(layer_index),
+        .fourier_index = index(i_fourier),
+        .order_index = index(doubling_step_index),
+        .state_index = index(phase_max_index),
+        .branch = if (qseries_is_zero) 1 else 0,
+    };
+    recordDecision(
+        .labos_qseries_rd_product,
+        coord,
+        .{
+            .lhs = @abs(trace_r * trace_d),
+            .rhs = trace_d,
+            .threshold = threshold_mul,
+            .taken = rd_nonzero,
+            .work_if_taken = 1,
+            .work_if_not_taken = 0,
+        },
+    );
+    recordDecision(
+        .labos_qseries_tu_product,
+        coord,
+        .{
+            .lhs = @abs(trace_t * trace_u),
+            .rhs = trace_u,
+            .threshold = threshold_mul,
+            .taken = tu_nonzero,
+            .work_if_taken = 1,
+            .work_if_not_taken = 0,
+        },
+    );
+    recordDecision(
+        .labos_qseries_td_product,
+        coord,
+        .{
+            .lhs = @abs(trace_t * trace_d),
+            .rhs = trace_d,
+            .threshold = threshold_mul,
+            .taken = td_nonzero,
+            .work_if_taken = 1,
+            .work_if_not_taken = 0,
         },
     );
 }

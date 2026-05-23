@@ -46,13 +46,20 @@ Fill only coordinates that are meaningful:
 - `wavelength_nm` for spectral rows;
 - `layer_index` for atmospheric layer rows;
 - `fourier_index` for Fourier expansion rows;
-- `order_index` for multiple-scattering order rows;
-- `state_index` for Jacobian state rows;
+- `order_index` for multiple-scattering order rows, doubling steps, or other
+  expression-local order coordinates;
+- `state_index` for Jacobian state rows, phase-count coordinates, or other
+  expression-local state coordinates;
 - `branch` for expression-local labels.
 
 Absent coordinates are written as numeric sentinels (`-1` for integer
 coordinates and `NaN` for floating coordinates). Convert them to nulls in
 analysis when the distinction matters.
+
+Document every expression-specific coordinate overload in `schema.md`. For
+example, the q-series downstream product gates use `branch = qseries_is_zero`,
+`order_index = doubling_step_index`, and `state_index = phase_max_index`, while
+the layer-doubling trigger uses `branch = phase_max_index`.
 
 ## Product Boundary
 
@@ -76,6 +83,12 @@ pub inline fn someExpression(...) void {
 The hook may pass values that were already computed by the model. Avoid
 computing expensive extra terms for telemetry unless the computation is inside a
 `Telemetry.enabled` guard.
+
+If a hook captures several related threshold decisions, prefer one facade call
+that passes the already-available operands once and lets the sink write multiple
+decision rows. This keeps the product path compact while still giving the
+analysis enough data to distinguish a base skip decision from its downstream
+work gates.
 
 The sink must remain outside `src/forward_model/`. File I/O, row buffering, and
 run manifests belong to validation or research code.
