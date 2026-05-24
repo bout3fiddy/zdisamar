@@ -4,6 +4,7 @@ const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
 const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const phase_odd_reciprocal = blk: {
@@ -307,7 +308,16 @@ fn doDouble(
         Trace.plotU("doubling_steps", 1);
         const trace_r = gaussTrace(n, n_gauss, current_r);
         const trace_t = gaussTrace(n, n_gauss, current_t);
-        const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+        const coord = Perturbation.Coord{
+            .layer_index = @intCast(layer_index),
+            .fourier_index = @intCast(i_fourier),
+            .order_index = @intCast(doubling_step_index),
+        };
+        const q_is_zero = Perturbation.decision(
+            .qseries_skip,
+            coord,
+            @abs(trace_r * trace_r) <= threshold_mul,
+        );
         Telemetry.labosDoublingStep(
             i_fourier,
             layer_index,
@@ -336,7 +346,17 @@ fn doDouble(
         const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, D);
 
         Trace.plotU("matrix_smul_rd", 1);
-        const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+        const downstream_coord = Perturbation.Coord{
+            .layer_index = @intCast(layer_index),
+            .fourier_index = @intCast(i_fourier),
+            .order_index = @intCast(doubling_step_index),
+            .branch = if (q_is_zero) 1 else 0,
+        };
+        const rd_nonzero = Perturbation.decision(
+            .qseries_rd_product,
+            downstream_coord,
+            @abs(trace_r * trace_d) > threshold_mul,
+        );
 
         var U: basis.Mat = undefined;
         if (rd_nonzero) {
@@ -350,7 +370,11 @@ fn doDouble(
         const trace_u = gaussTrace(n, n_gauss, &U);
 
         Trace.plotU("matrix_smul_tu", 1);
-        const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+        const tu_nonzero = Perturbation.decision(
+            .qseries_tu_product,
+            downstream_coord,
+            @abs(trace_t * trace_u) > threshold_mul,
+        );
 
         if (tu_nonzero) {
             Trace.plotU("matrix_smul_tu_nonzero", 1);
@@ -362,7 +386,11 @@ fn doDouble(
         }
 
         Trace.plotU("matrix_smul_td", 1);
-        const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+        const td_nonzero = Perturbation.decision(
+            .qseries_td_product,
+            downstream_coord,
+            @abs(trace_t * trace_d) > threshold_mul,
+        );
         Telemetry.labosDoublingDownstreamGates(
             i_fourier,
             layer_index,
@@ -488,7 +516,16 @@ inline fn doDouble12x10Step(
 ) void {
     const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
     const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
-    const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+    const coord = Perturbation.Coord{
+        .layer_index = @intCast(layer_index),
+        .fourier_index = @intCast(i_fourier),
+        .order_index = @intCast(doubling_step_index),
+    };
+    const q_is_zero = Perturbation.decision(
+        .qseries_skip,
+        coord,
+        @abs(trace_r * trace_r) <= threshold_mul,
+    );
     Telemetry.labosDoublingStep(
         i_fourier,
         layer_index,
@@ -517,7 +554,17 @@ inline fn doDouble12x10Step(
     const trace_d = if (q_is_zero) trace_t else gaussTrace(basis.max_nmutot, basis.max_gauss, D);
 
     Trace.plotU("matrix_smul_rd", 1);
-    const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+    const downstream_coord = Perturbation.Coord{
+        .layer_index = @intCast(layer_index),
+        .fourier_index = @intCast(i_fourier),
+        .order_index = @intCast(doubling_step_index),
+        .branch = if (q_is_zero) 1 else 0,
+    };
+    const rd_nonzero = Perturbation.decision(
+        .qseries_rd_product,
+        downstream_coord,
+        @abs(trace_r * trace_d) > threshold_mul,
+    );
 
     var U: basis.Mat = undefined;
     if (rd_nonzero) {
@@ -531,7 +578,11 @@ inline fn doDouble12x10Step(
     const trace_u = gaussTrace(basis.max_nmutot, basis.max_gauss, &U);
 
     Trace.plotU("matrix_smul_tu", 1);
-    const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+    const tu_nonzero = Perturbation.decision(
+        .qseries_tu_product,
+        downstream_coord,
+        @abs(trace_t * trace_u) > threshold_mul,
+    );
 
     if (tu_nonzero) {
         Trace.plotU("matrix_smul_tu_nonzero", 1);
@@ -543,7 +594,11 @@ inline fn doDouble12x10Step(
     }
 
     Trace.plotU("matrix_smul_td", 1);
-    const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+    const td_nonzero = Perturbation.decision(
+        .qseries_td_product,
+        downstream_coord,
+        @abs(trace_t * trace_d) > threshold_mul,
+    );
     Telemetry.labosDoublingDownstreamGates(
         i_fourier,
         layer_index,

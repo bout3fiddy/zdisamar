@@ -8,6 +8,7 @@ const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
 const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const math = std.math;
@@ -436,7 +437,12 @@ fn layerResolvedLabosWithWorkspace(
             else
                 2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
             // math: accumulate Fourier contribution rho += c_m * rho_m.
-            const weighted_reflectance = fourier_weight * refl_fc;
+            const fourier_coord = Perturbation.Coord{ .fourier_index = @intCast(i_fourier) };
+            const weighted_reflectance = Perturbation.scalar(
+                .fourier_weighted_reflectance,
+                fourier_coord,
+                fourier_weight * refl_fc,
+            );
             reflectance += weighted_reflectance;
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
@@ -459,8 +465,22 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     );
                 };
-                aerosol_optical_depth_tangent += fourier_weight * tangent_refl_fc.aerosol_optical_depth;
-                aerosol_layer_mid_pressure_tangent += fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa;
+                aerosol_optical_depth_tangent += Perturbation.scalar(
+                    .aerosol_aod_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_optical_depth)),
+                    },
+                    fourier_weight * tangent_refl_fc.aerosol_optical_depth,
+                );
+                aerosol_layer_mid_pressure_tangent += Perturbation.scalar(
+                    .aerosol_pressure_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_layer_mid_pressure_hpa)),
+                    },
+                    fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa,
+                );
             } else if (wants_aerosol_optical_depth) {
                 const tangent_refl_fc = tangent_refl_fc: {
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
@@ -494,7 +514,14 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
-                aerosol_optical_depth_tangent += fourier_weight * tangent_refl_fc;
+                aerosol_optical_depth_tangent += Perturbation.scalar(
+                    .aerosol_aod_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_optical_depth)),
+                    },
+                    fourier_weight * tangent_refl_fc,
+                );
             }
             if (!use_paired_aerosol_weighting and wants_aerosol_layer_mid_pressure) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
@@ -527,11 +554,19 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
-                aerosol_layer_mid_pressure_tangent += fourier_weight * pressure_tangent_refl_fc;
+                aerosol_layer_mid_pressure_tangent += Perturbation.scalar(
+                    .aerosol_pressure_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_layer_mid_pressure_hpa)),
+                    },
+                    fourier_weight * pressure_tangent_refl_fc,
+                );
             }
-            const tail_break =
+            const tail_break_base =
                 i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
                 @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon;
+            const tail_break = Perturbation.decision(.fourier_tail_break, fourier_coord, tail_break_base);
             Telemetry.fourierContribution(
                 i_fourier,
                 fourier_weight,

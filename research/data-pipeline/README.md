@@ -114,6 +114,33 @@ research/data-pipeline/data/full-spectrum-758-770-ms/
 See `full-spectrum-sweep.md` for the captured scene table, aggregate row counts,
 and starter queries.
 
+## Perturbation Sensitivity
+
+The perturbation lane is the retained research surface for ablation experiments:
+compile-time-gated hooks can zero, force, or scale selected intermediate
+calculation channels, then the runner records only final spectrum and retrieval
+movement.
+
+```sh
+uv run python research/data-pipeline/perturbation-sensitivity-analysis/run_perturbation_sweep.py
+```
+
+It writes one compact ignored artifact:
+
+```text
+research/data-pipeline/data/perturbation-sensitivity/o2a-default/summary.json
+```
+
+and refreshes the human report:
+
+```text
+research/data-pipeline/perturbation-sensitivity-analysis/report.md
+```
+
+This path intentionally does not write per-expression tables or a database. It
+keeps spectra in memory just long enough to compute aggregate residuals and
+stores hook hit/changed counters as the work proxy.
+
 ## Analysis Reports
 
 Run the local analysis bundle with:
@@ -136,6 +163,19 @@ uv run python research/data-pipeline/analyze_calculation_telemetry.py --skip-plo
 
 Reports are also ignored by git. Commit analysis code and report templates, not
 the generated report output.
+
+## Perturbation Sensitivity Analysis
+
+The next research lane is documented under
+`perturbation-sensitivity-analysis/`. It is an architecture for research-only
+perturbation channels that can zero, force, scale, or stop selected intermediate
+calculations, then compare final spectra and retrieval states against an
+unperturbed baseline.
+
+The implementation should follow the same compile-time boundary as calculation
+telemetry: product modules import a stub and receive comptime-disabled inline
+facade calls, while the explicit research executable imports the real sink and
+writes result tables.
 
 ## Analysis Start
 

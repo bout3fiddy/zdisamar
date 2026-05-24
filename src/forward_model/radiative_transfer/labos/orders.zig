@@ -4,6 +4,7 @@ const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
 const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
 // layout(64-bit):
@@ -734,7 +735,15 @@ fn ordersScatInternal(
     copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
 
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
-    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) {
+    const initial_stop = if (controls.scattering != .multiple)
+        true
+    else
+        Perturbation.decision(
+            .orders_initial_convergence,
+            .{ .order_index = 1 },
+            max_value < controls.performance_thresholds.threshold_conv_first,
+        );
+    if (initial_stop) {
         Trace.plotU("orders_initial_returns", 1);
         Telemetry.ordersConvergence(
             1,
@@ -833,14 +842,23 @@ fn ordersScatInternal(
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
-        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) {
+        const hit_iteration_cap = num_orders >= num_orders_max;
+        const multiple_stop = if (hit_iteration_cap)
+            true
+        else
+            Perturbation.decision(
+                .orders_multiple_convergence,
+                .{ .order_index = @intCast(num_orders) },
+                max_value < controls.performance_thresholds.threshold_conv_mult,
+            );
+        if (multiple_stop) {
             Telemetry.ordersConvergence(
                 num_orders,
                 num_orders_max,
                 max_value,
                 controls.performance_thresholds.threshold_conv_mult,
                 false,
-                num_orders >= num_orders_max,
+                hit_iteration_cap,
             );
             // PARITY:
             //   `LabosModule::ordersScat` exits the scattering-order loop as
