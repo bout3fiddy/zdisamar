@@ -3,11 +3,14 @@
 import ctypes
 
 from .structures import (
+    CAerosolProfileSpectrumRequest,
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
     COptimalEstimationRequest,
     COptimalEstimationResult,
+    CProfileRetrievalRequest,
+    CProfileRetrievalResult,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
@@ -48,6 +51,16 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
     )
     bind(lib, "zds_run_spectrum", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], ctypes.c_int)
+    bind(
+        lib,
+        "zds_run_aerosol_profile_spectrum",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(CAerosolProfileSpectrumRequest),
+            ctypes.POINTER(CSpectrum),
+        ],
+        ctypes.c_int,
+    )
     bind(
         lib,
         "zds_run_spectrum_jacobian",
@@ -139,11 +152,27 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ],
         ctypes.c_int,
     )
+    bind(
+        lib,
+        "zds_run_o2a_profile_retrieval_aod",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(CProfileRetrievalRequest),
+            ctypes.POINTER(CProfileRetrievalResult),
+        ],
+        ctypes.c_int,
+    )
     bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
     bind(
         lib,
         "zds_optimal_estimation_result_free",
         [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationResult)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_profile_retrieval_result_free",
+        [ctypes.c_void_p, ctypes.POINTER(CProfileRetrievalResult)],
         None,
     )
     bind(

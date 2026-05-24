@@ -29,6 +29,8 @@ from ..output.tables import (
 from .loader import load_library
 from .signatures import configure
 from .structures import (
+    CAerosolProfileLayer,
+    CAerosolProfileSpectrumRequest,
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
@@ -36,6 +38,10 @@ from .structures import (
     COptimalEstimationRequest,
     COptimalEstimationResult,
     COptimalEstimationStateSpec,
+    CProfileAodSpec,
+    CProfilePressureBin,
+    CProfileRetrievalRequest,
+    CProfileRetrievalResult,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
@@ -208,6 +214,89 @@ class RtmHandle:
 
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
+
+        return self._copied_spectrum(raw, include_case=include_case)
+
+    def aerosol_profile_spectrum(self, *, layers, include_case: bool = False) -> Spectrum:
+        """Run a forward spectrum with a caller-supplied pressure aerosol profile."""
+
+        copied_layers = [
+            (
+                float(layer.top_pressure_hpa),
+                float(layer.bottom_pressure_hpa),
+                float(layer.optical_depth),
+                float(layer.single_scatter_albedo),
+                float(layer.asymmetry_factor),
+                float(layer.angstrom_exponent),
+                float(layer.reference_wavelength_nm),
+            )
+            for layer in layers
+        ]
+
+        if not copied_layers:
+            raise ValueError("aerosol profile must contain at least one layer")
+
+        for (
+            top_pressure_hpa,
+            bottom_pressure_hpa,
+            optical_depth,
+            single_scatter_albedo,
+            asymmetry_factor,
+            angstrom_exponent,
+            reference_wavelength_nm,
+        ) in copied_layers:
+            if (
+                not math.isfinite(top_pressure_hpa)
+                or not math.isfinite(bottom_pressure_hpa)
+                or bottom_pressure_hpa <= top_pressure_hpa
+                or not math.isfinite(optical_depth)
+                or optical_depth < 0.0
+                or not math.isfinite(single_scatter_albedo)
+                or single_scatter_albedo < 0.0
+                or single_scatter_albedo > 1.0
+                or not math.isfinite(asymmetry_factor)
+                or asymmetry_factor < -1.0
+                or asymmetry_factor > 1.0
+                or not math.isfinite(angstrom_exponent)
+                or not math.isfinite(reference_wavelength_nm)
+                or reference_wavelength_nm <= 0.0
+            ):
+                raise ValueError("invalid aerosol profile layer")
+
+        layer_array = (CAerosolProfileLayer * len(copied_layers))(
+            *(
+                CAerosolProfileLayer(
+                    top_pressure_hpa=top_pressure_hpa,
+                    bottom_pressure_hpa=bottom_pressure_hpa,
+                    optical_depth=optical_depth,
+                    single_scatter_albedo=single_scatter_albedo,
+                    asymmetry_factor=asymmetry_factor,
+                    angstrom_exponent=angstrom_exponent,
+                    reference_wavelength_nm=reference_wavelength_nm,
+                )
+                for (
+                    top_pressure_hpa,
+                    bottom_pressure_hpa,
+                    optical_depth,
+                    single_scatter_albedo,
+                    asymmetry_factor,
+                    angstrom_exponent,
+                    reference_wavelength_nm,
+                ) in copied_layers
+            )
+        )
+        request = CAerosolProfileSpectrumRequest(
+            layer_count=len(layer_array),
+            layers=layer_array,
+        )
+        raw = CSpectrum()
+        self._check(
+            self._lib.zds_run_aerosol_profile_spectrum(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
 
         return self._copied_spectrum(raw, include_case=include_case)
 
@@ -444,6 +533,88 @@ class RtmHandle:
         finally:
             self._lib.zds_optimal_estimation_result_free(self._ctx, ctypes.byref(raw))
 
+    def profile_retrieval_aod(
+        self,
+        *,
+        measurement,
+        bins,
+        aod,
+        controls,
+        layer_thickness_hpa: float,
+    ):
+        """Run one native AOD-only retrieval for each fixed pressure bin."""
+
+        wavelength = double_array(measurement.wavelength_nm, "measurement wavelengths")
+        reflectance = double_array(measurement.reflectance, "measurement reflectance")
+        variance = double_array(measurement.variance, "measurement variance")
+
+        if len(wavelength) != len(reflectance) or len(wavelength) != len(variance):
+            raise ValueError("measurement arrays must have the same length")
+
+        copied_bins = [
+            (float(bin.top_pressure_hpa), float(bin.bottom_pressure_hpa)) for bin in bins
+        ]
+
+        if not copied_bins:
+            raise ValueError("profile bin grid must not be empty")
+
+        if any(
+            not math.isfinite(top) or not math.isfinite(bottom) or bottom <= top
+            for top, bottom in copied_bins
+        ):
+            raise ValueError("profile pressure bins must be finite with bottom > top")
+
+        bin_array = (CProfilePressureBin * len(copied_bins))(
+            *(
+                CProfilePressureBin(
+                    top_pressure_hpa=top,
+                    bottom_pressure_hpa=bottom,
+                )
+                for top, bottom in copied_bins
+            )
+        )
+        lower = getattr(aod, "lower", None)
+        upper = getattr(aod, "upper", None)
+
+        request = CProfileRetrievalRequest(
+            sample_count=len(wavelength),
+            wavelength_nm=wavelength,
+            reflectance=reflectance,
+            variance=variance,
+            bin_count=len(bin_array),
+            bins=bin_array,
+            aod=CProfileAodSpec(
+                has_lower=0 if lower is None else 1,
+                has_upper=0 if upper is None else 1,
+                initial=float(aod.initial),
+                prior=float(aod.prior),
+                variance=float(aod.variance),
+                lower=0.0 if lower is None else float(lower),
+                upper=0.0 if upper is None else float(upper),
+            ),
+            controls=COptimalEstimationControls(
+                max_iterations=int(controls.max_iterations),
+                state_vector_convergence_threshold=float(
+                    controls.state_vector_convergence_threshold
+                ),
+                max_change_transformed_state=float(controls.max_change_transformed_state),
+            ),
+            layer_thickness_hpa=float(layer_thickness_hpa),
+        )
+        raw = CProfileRetrievalResult()
+        self._check(
+            self._lib.zds_run_o2a_profile_retrieval_aod(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_profile_retrieval_result(raw)
+        finally:
+            self._lib.zds_profile_retrieval_result_free(self._ctx, ctypes.byref(raw))
+
     def close(self) -> None:
         """Release the opaque Zig RTM handle."""
 
@@ -591,6 +762,24 @@ class RtmHandle:
             ),
             "history_snr_normal": uint8s(raw.history_snr_normal, iteration_count),
         }
+
+    def _copied_profile_retrieval_result(self, raw: CProfileRetrievalResult) -> tuple[dict, ...]:
+
+        return tuple(
+            {
+                "converged": bool(candidate.converged),
+                "iteration_count": int(candidate.iteration_count),
+                "retrieved_aod_550_nm": float(candidate.retrieved_aod_550_nm),
+                "posterior_variance": float(candidate.posterior_variance),
+                "averaging_kernel": float(candidate.averaging_kernel),
+                "spectral_chi2_ref": float(candidate.spectral_chi2_ref),
+                "prior_chi2": float(candidate.prior_chi2),
+                "total_cost_ref": float(candidate.total_cost_ref),
+                "residual_rms": float(candidate.residual_rms),
+                "residual_max_abs": float(candidate.residual_max_abs),
+            }
+            for candidate in (raw.candidates[index] for index in range(int(raw.len)))
+        )
 
     def _check(self, status: int) -> None:
 

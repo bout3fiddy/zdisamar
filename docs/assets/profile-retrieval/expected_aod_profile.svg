@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="734" height="790" viewBox="0 0 734 790">
+<title>Expected aerosol optical depth profile</title>
+<style>text { font-family: Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace; fill: black; }.plot-title { font-size: 22px; font-weight: 400; }.panel-title { font-size: 18px; font-weight: 400; }.axis-title { font-size: 15px; }.tick-label,.axis-multiplier { font-size: 12px; }.legend-label { font-size: 12px; }.figure-bg { fill: white; }.plot-bg { fill: white; stroke: black; stroke-width: 1; }.axis { stroke: black; stroke-width: 1; }.grid { stroke: #b0b0b0; stroke-opacity: 0.1; }.series.line { stroke-linejoin: round; stroke-linecap: round; }</style>
+<rect class="figure-bg" x="0" y="0" width="734" height="790" />
+<text class="plot-title" x="367.000" y="34" text-anchor="middle">Expected aerosol optical depth profile</text>
+<g class="panel" transform="translate(178,148)">
+<rect class="plot-bg" x="0" y="0" width="520" height="520" />
+<text class="panel-title" x="260.000" y="-54" text-anchor="middle">Probability-weighted AOD</text>
+<line class="axis" x1="0" x2="520" y1="520" y2="520" />
+<line class="axis" x1="0" x2="0" y1="0" y2="520" />
+<line class="grid" x1="0" x2="520" y1="520.000" y2="520.000" />
+<text class="tick-label" x="-28" y="524.000" text-anchor="end">950</text>
+<line class="grid" x1="0" x2="520" y1="390.000" y2="390.000" />
+<text class="tick-label" x="-28" y="394.000" text-anchor="end">800</text>
+<line class="grid" x1="0" x2="520" y1="260.000" y2="260.000" />
+<text class="tick-label" x="-28" y="264.000" text-anchor="end">650</text>
+<line class="grid" x1="0" x2="520" y1="130.000" y2="130.000" />
+<text class="tick-label" x="-28" y="134.000" text-anchor="end">500</text>
+<line class="grid" x1="0" x2="520" y1="0.000" y2="0.000" />
+<text class="tick-label" x="-28" y="4.000" text-anchor="end">350</text>
+<text class="tick-label" x="0.000" y="556" text-anchor="middle">0</text>
+<text class="tick-label" x="104.000" y="556" text-anchor="middle">0.0297</text>
+<text class="tick-label" x="208.000" y="556" text-anchor="middle">0.05939</text>
+<text class="tick-label" x="312.000" y="556" text-anchor="middle">0.08909</text>
+<text class="tick-label" x="416.000" y="556" text-anchor="middle">0.1188</text>
+<text class="tick-label" x="520.000" y="556" text-anchor="middle">0.1485</text>
+<text class="axis-title" x="260.000" y="606" text-anchor="middle">Expected AOD at 550 nm</text>
+<text class="axis-title" transform="translate(-126,260.000) rotate(-90)" text-anchor="middle">Pressure (hPa)</text>
+<path class="series line" d="M481.481,65.000 L148.352,195.000 L49.879,325.000 L20.397,455.000" fill="none" stroke="#ff7f0e" stroke-width="1.4" opacity="1.000" stroke-dasharray="none"><title>Expected AOD</title></path>
+<circle class="series point" cx="481.481" cy="65.000" r="2.550" fill="#ff7f0e" opacity="0.900"><title>Expected AOD</title></circle>
+<circle class="series point" cx="148.352" cy="195.000" r="2.550" fill="#ff7f0e" opacity="0.900"><title>Expected AOD</title></circle>
+<circle class="series point" cx="49.879" cy="325.000" r="2.550" fill="#ff7f0e" opacity="0.900"><title>Expected AOD</title></circle>
+<circle class="series point" cx="20.397" cy="455.000" r="2.550" fill="#ff7f0e" opacity="0.900"><title>Expected AOD</title></circle>
+</g>
+</svg>

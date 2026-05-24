@@ -248,3 +248,78 @@ class COptimalEstimationResult(ctypes.Structure):
         ("history_snr_normal", ctypes.POINTER(ctypes.c_uint8)),
         ("result_handle", ctypes.c_void_p),
     ]
+
+
+class CProfileAodSpec(ctypes.Structure):
+    _fields_ = [
+        ("has_lower", ctypes.c_uint8),
+        ("has_upper", ctypes.c_uint8),
+        ("initial", ctypes.c_double),
+        ("prior", ctypes.c_double),
+        ("variance", ctypes.c_double),
+        ("lower", ctypes.c_double),
+        ("upper", ctypes.c_double),
+    ]
+
+
+class CProfilePressureBin(ctypes.Structure):
+    _fields_ = [
+        ("top_pressure_hpa", ctypes.c_double),
+        ("bottom_pressure_hpa", ctypes.c_double),
+    ]
+
+
+class CProfileRetrievalRequest(ctypes.Structure):
+    _fields_ = [
+        ("sample_count", ctypes.c_size_t),
+        ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
+        ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("variance", ctypes.POINTER(ctypes.c_double)),
+        ("bin_count", ctypes.c_size_t),
+        ("bins", ctypes.POINTER(CProfilePressureBin)),
+        ("aod", CProfileAodSpec),
+        ("controls", COptimalEstimationControls),
+        ("layer_thickness_hpa", ctypes.c_double),
+    ]
+
+
+class CProfileCandidateResult(ctypes.Structure):
+    _fields_ = [
+        ("converged", ctypes.c_uint8),
+        ("iteration_count", ctypes.c_size_t),
+        ("retrieved_aod_550_nm", ctypes.c_double),
+        ("posterior_variance", ctypes.c_double),
+        ("averaging_kernel", ctypes.c_double),
+        ("spectral_chi2_ref", ctypes.c_double),
+        ("prior_chi2", ctypes.c_double),
+        ("total_cost_ref", ctypes.c_double),
+        ("residual_rms", ctypes.c_double),
+        ("residual_max_abs", ctypes.c_double),
+    ]
+
+
+class CProfileRetrievalResult(ctypes.Structure):
+    _fields_ = [
+        ("len", ctypes.c_size_t),
+        ("candidates", ctypes.POINTER(CProfileCandidateResult)),
+        ("result_handle", ctypes.c_void_p),
+    ]
+
+
+class CAerosolProfileLayer(ctypes.Structure):
+    _fields_ = [
+        ("top_pressure_hpa", ctypes.c_double),
+        ("bottom_pressure_hpa", ctypes.c_double),
+        ("optical_depth", ctypes.c_double),
+        ("single_scatter_albedo", ctypes.c_double),
+        ("asymmetry_factor", ctypes.c_double),
+        ("angstrom_exponent", ctypes.c_double),
+        ("reference_wavelength_nm", ctypes.c_double),
+    ]
+
+
+class CAerosolProfileSpectrumRequest(ctypes.Structure):
+    _fields_ = [
+        ("layer_count", ctypes.c_size_t),
+        ("layers", ctypes.POINTER(CAerosolProfileLayer)),
+    ]

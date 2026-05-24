@@ -1,4 +1,5 @@
 const std = @import("std");
+const AerosolModel = @import("../../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 const Scene = @import("../../../input/Scene.zig").Scene;
@@ -25,6 +26,7 @@ pub const PreparationInputs = struct {
     collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList = null,
     borrowed_profile_preparation: ?*const BorrowedProfilePreparation = null,
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer = &.{},
     borrow_continuum_points: bool = false,
     borrow_collision_induced_absorption: bool = false,
 };
@@ -100,6 +102,7 @@ pub const PreparationContext = struct {
     borrowed_spectroscopy_plan_key: u64 = 0,
     borrowed_spectroscopy_profile_cache_inputs_key: u64 = 0,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer = &.{},
     aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
@@ -218,6 +221,8 @@ pub fn init(
 
     var aerosol_fraction_control = try scene.aerosol.fraction.clone(allocator);
     errdefer aerosol_fraction_control.deinitOwned(allocator);
+    const aerosol_profile: AerosolModel.Profile = .{ .layers = inputs.aerosol_profile_layers };
+    try aerosol_profile.validate();
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = if (operational_band_support.o2_operational_lut.enabled())
         try operational_band_support.o2_operational_lut.clone(allocator)
@@ -258,6 +263,7 @@ pub fn init(
         .borrowed_spectroscopy_plan_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_plan_key else 0,
         .borrowed_spectroscopy_profile_cache_inputs_key = if (borrowed_profile_preparation) |borrowed| borrowed.spectroscopy_profile_cache_inputs_key else 0,
         .aerosol_fraction_control = aerosol_fraction_control,
+        .aerosol_profile_layers = inputs.aerosol_profile_layers,
         .operational_o2_lut = operational_o2_lut,
         .operational_o2o2_lut = operational_o2o2_lut,
         .midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const AbsorberModel = @import("../../input/Absorber.zig");
+const AerosolModel = @import("../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
@@ -750,7 +751,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
     weak_cutoff_grid: *WeakCutoffGridCache,
     solar_rewindowed: *bool,
 ) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
         allocator,
         scene,
         inputs,
@@ -769,7 +770,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
     solar_rewindowed: *bool,
     borrowed_profile_preparation: *const OpticsPrepare.BorrowedProfilePreparation,
 ) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
         allocator,
         scene,
         inputs,
@@ -801,6 +802,27 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     );
 }
 
+pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCachesAndAerosolProfile(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: *WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
+) !OpticsPrepare.PreparedOpticalState {
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
+        .borrow_input_tables,
+        aerosol_profile_layers,
+    );
+}
+
 const StaticInputTableMode = enum {
     clone_input_tables,
     borrow_input_tables,
@@ -814,6 +836,28 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     solar_rewindowed: *bool,
     borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
     static_input_table_mode: StaticInputTableMode,
+) !OpticsPrepare.PreparedOpticalState {
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
+        allocator,
+        scene,
+        inputs,
+        weak_cutoff_grid,
+        solar_rewindowed,
+        borrowed_profile_preparation,
+        static_input_table_mode,
+        &.{},
+    );
+}
+
+fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
+    allocator: Allocator,
+    scene: *Scene,
+    inputs: *const LoadedVendorO2AInputs,
+    weak_cutoff_grid: ?*WeakCutoffGridCache,
+    solar_rewindowed: *bool,
+    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
+    static_input_table_mode: StaticInputTableMode,
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
 ) !OpticsPrepare.PreparedOpticalState {
     var prepared = prepared: {
         // instrumentation: trace zone
@@ -829,6 +873,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
             .borrowed_profile_preparation = borrowed_profile_preparation,
+            .aerosol_profile_layers = aerosol_profile_layers,
             .borrow_continuum_points = static_input_table_mode == .borrow_input_tables,
             .borrow_collision_induced_absorption = static_input_table_mode == .borrow_input_tables,
         });

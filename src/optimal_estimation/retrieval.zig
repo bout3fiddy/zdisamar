@@ -23,6 +23,7 @@ pub const no_upper_bound = std.math.inf(f64);
 pub const Error = error{
     EmptyMeasurement,
     InvalidMeasurement,
+    InvalidProfileBin,
     InvalidStateCount,
     InvalidStateSpec,
     InvalidPressureProfile,
@@ -254,6 +255,43 @@ pub const Controls = struct {
     max_change_transformed_state: f64 = 1.0,
 };
 
+pub const ProfileBinSpec = struct {
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
+
+    pub fn centerPressureHpa(self: ProfileBinSpec) f64 {
+        return 0.5 * (self.top_pressure_hpa + self.bottom_pressure_hpa);
+    }
+};
+
+pub const ProfileCandidate = extern struct {
+    converged: u8,
+    iteration_count: usize,
+    retrieved_aod_550_nm: f64,
+    posterior_variance: f64,
+    averaging_kernel: f64,
+    spectral_chi2_ref: f64,
+    prior_chi2: f64,
+    total_cost_ref: f64,
+    residual_rms: f64,
+    residual_max_abs: f64,
+};
+
+pub const ProfileResult = struct {
+    candidates: []ProfileCandidate = &.{},
+
+    pub fn init(allocator: Allocator, count: usize) !ProfileResult {
+        return .{
+            .candidates = try allocator.alloc(ProfileCandidate, count),
+        };
+    }
+
+    pub fn deinit(self: *ProfileResult, allocator: Allocator) void {
+        allocator.free(self.candidates);
+        self.* = .{};
+    }
+};
+
 // Retrieval-session cache for profile spectroscopy support.
 // layout(64-bit):
 //   size: 104 B, align: 8 B
@@ -430,6 +468,89 @@ pub fn runO2A(
     );
     defer prepared_case.deinit(allocator);
 
+    return runPreparedO2A(allocator, &prepared_case, controls);
+}
+
+pub fn runO2AProfileAod(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    aod_spec: StateSpec,
+    bins: []const ProfileBinSpec,
+    layer_thickness_hpa: f64,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    controls: Controls,
+) !ProfileResult {
+    const profile_zone = Trace.staticZone(@src(), "optimal_estimation.profile.run");
+    defer profile_zone.end();
+    Trace.plotU("optimal_estimation_profile_bin_count", @intCast(bins.len));
+
+    if (bins.len == 0) return error.InvalidProfileBin;
+    if (aod_spec.state != .aerosol_optical_depth) return error.InvalidStateSpec;
+    if (layer_thickness_hpa <= 0.0 or !std.math.isFinite(layer_thickness_hpa)) {
+        return error.InvalidProfileBin;
+    }
+
+    const state_specs = [_]StateSpec{aod_spec};
+    var prepared_case = try RetrievalPreparedCase.init(
+        allocator,
+        base_input,
+        measurement_wavelength_nm,
+        measurement_reflectance,
+        measurement_variance,
+        &state_specs,
+        forward_storage,
+    );
+    defer prepared_case.deinit(allocator);
+
+    var profile = try ProfileResult.init(allocator, bins.len);
+    errdefer profile.deinit(allocator);
+
+    for (bins, profile.candidates, 0..) |bin, *candidate, index| {
+        const candidate_zone = Trace.staticZone(@src(), "optimal_estimation.profile.candidate");
+        defer candidate_zone.end();
+        candidate_zone.value(@intCast(index));
+
+        try applyProfileBin(
+            &prepared_case,
+            base_input.intervals,
+            bin,
+            layer_thickness_hpa,
+        );
+
+        var result = try runPreparedO2A(allocator, &prepared_case, controls);
+        defer result.deinit(allocator);
+
+        const final_score = try scoreFinalState(allocator, &prepared_case, result);
+
+        candidate.* = .{
+            .converged = if (result.converged) 1 else 0,
+            .iteration_count = result.iteration_count,
+            .retrieved_aod_550_nm = result.state[0],
+            .posterior_variance = result.posterior_covariance[0],
+            .averaging_kernel = result.averaging_kernel[0],
+            .spectral_chi2_ref = final_score.spectral_chi2,
+            .prior_chi2 = final_score.prior_chi2,
+            .total_cost_ref = final_score.total_cost,
+            .residual_rms = final_score.residual_rms,
+            .residual_max_abs = final_score.residual_max_abs,
+        };
+    }
+
+    return profile;
+}
+
+fn runPreparedO2A(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    controls: Controls,
+) !Result {
+    const state_specs = prepared_case.state_specs;
+    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+
     var result = try Result.init(allocator, state_specs.len, controls.max_iterations);
     errdefer result.deinit(allocator);
 
@@ -483,7 +604,7 @@ pub fn runO2A(
             defer zone.end();
             break :traced_evaluation try evaluateO2AState(
                 allocator,
-                &prepared_case,
+                prepared_case,
                 previous,
             );
         };
@@ -714,6 +835,129 @@ fn writeStateToInput(
             },
         }
     }
+}
+
+fn applyProfileBin(
+    prepared_case: *RetrievalPreparedCase,
+    base_intervals: []const VerticalInterval,
+    bin: ProfileBinSpec,
+    layer_thickness_hpa: f64,
+) !void {
+    validateProfileBin(bin) catch return error.InvalidProfileBin;
+    if (base_intervals.len != prepared_case.mutable_intervals.len) return error.InvalidProfileBin;
+    @memcpy(prepared_case.mutable_intervals, base_intervals);
+
+    const fit_interval_index = prepared_case.mutable_input.fit_interval_index_1based;
+    if (fit_interval_index == 0 or fit_interval_index > prepared_case.mutable_intervals.len) {
+        return error.InvalidProfileBin;
+    }
+    if (prepared_case.mutable_input.aerosol.placement.interval_index_1based != fit_interval_index) {
+        return error.InvalidProfileBin;
+    }
+
+    const center_pressure_hpa = bin.centerPressureHpa();
+    const half_thickness_hpa = 0.5 * layer_thickness_hpa;
+    const layer_top_pressure_hpa = center_pressure_hpa - half_thickness_hpa;
+    const layer_bottom_pressure_hpa = center_pressure_hpa + half_thickness_hpa;
+    if (!std.math.isFinite(layer_top_pressure_hpa) or
+        !std.math.isFinite(layer_bottom_pressure_hpa) or
+        layer_bottom_pressure_hpa <= layer_top_pressure_hpa)
+    {
+        return error.InvalidProfileBin;
+    }
+
+    const fit_index = fit_interval_index - 1;
+    const fit_interval = prepared_case.mutable_intervals[fit_index];
+    if (fit_interval.index_1based != fit_interval_index) return error.InvalidProfileBin;
+    if (fit_index > 0) {
+        const previous = prepared_case.mutable_intervals[fit_index - 1];
+        if (previous.index_1based + 1 != fit_interval_index or
+            layer_top_pressure_hpa <= previous.top_pressure_hpa)
+        {
+            return error.InvalidProfileBin;
+        }
+    }
+    if (fit_index + 1 < prepared_case.mutable_intervals.len) {
+        const next = prepared_case.mutable_intervals[fit_index + 1];
+        if (next.index_1based != fit_interval_index + 1 or
+            next.bottom_pressure_hpa <= layer_bottom_pressure_hpa)
+        {
+            return error.InvalidProfileBin;
+        }
+    }
+
+    prepared_case.mutable_intervals[fit_index].top_pressure_hpa = layer_top_pressure_hpa;
+    prepared_case.mutable_intervals[fit_index].bottom_pressure_hpa = layer_bottom_pressure_hpa;
+    if (fit_index > 0) {
+        prepared_case.mutable_intervals[fit_index - 1].bottom_pressure_hpa = layer_top_pressure_hpa;
+    }
+    if (fit_index + 1 < prepared_case.mutable_intervals.len) {
+        prepared_case.mutable_intervals[fit_index + 1].top_pressure_hpa = layer_bottom_pressure_hpa;
+    }
+    prepared_case.mutable_input.aerosol.placement.top_pressure_hpa = layer_top_pressure_hpa;
+    prepared_case.mutable_input.aerosol.placement.bottom_pressure_hpa = layer_bottom_pressure_hpa;
+}
+
+fn validateProfileBin(bin: ProfileBinSpec) !void {
+    if (!std.math.isFinite(bin.top_pressure_hpa) or
+        !std.math.isFinite(bin.bottom_pressure_hpa) or
+        bin.top_pressure_hpa <= 0.0 or
+        bin.bottom_pressure_hpa <= bin.top_pressure_hpa)
+    {
+        return error.InvalidProfileBin;
+    }
+}
+
+const FinalScore = struct {
+    spectral_chi2: f64,
+    prior_chi2: f64,
+    total_cost: f64,
+    residual_rms: f64,
+    residual_max_abs: f64,
+};
+
+fn scoreFinalState(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    result: Result,
+) !FinalScore {
+    var state = algebra.zeroVector();
+    for (0..prepared_case.state_specs.len) |index| state[index] = result.state[index];
+
+    const evaluation = try evaluateO2AState(allocator, prepared_case, state);
+    if (evaluation.view.wavelengths.len != prepared_case.measurement.wavelength_nm.len) {
+        return error.WavelengthGridMismatch;
+    }
+
+    var spectral_chi2: f64 = 0.0;
+    var residual_sum_sq: f64 = 0.0;
+    var residual_max_abs: f64 = 0.0;
+
+    for (prepared_case.measurement.wavelength_nm, 0..) |wavelength_nm, sample_index| {
+        if (evaluation.view.wavelengths[sample_index] != wavelength_nm) {
+            return error.WavelengthGridMismatch;
+        }
+        const residual = prepared_case.measurement.reflectance[sample_index] -
+            evaluation.view.reflectance[sample_index];
+        residual_sum_sq += residual * residual;
+        residual_max_abs = @max(residual_max_abs, @abs(residual));
+        spectral_chi2 += residual * residual * prepared_case.measurement.inv_variance[sample_index];
+    }
+
+    var prior_chi2: f64 = 0.0;
+    for (prepared_case.state_specs, 0..) |spec, index| {
+        const delta = result.state[index] - spec.prior;
+        prior_chi2 += delta * delta / spec.variance;
+    }
+
+    const sample_count: f64 = @floatFromInt(prepared_case.measurement.wavelength_nm.len);
+    return .{
+        .spectral_chi2 = spectral_chi2,
+        .prior_chi2 = prior_chi2,
+        .total_cost = spectral_chi2 + prior_chi2,
+        .residual_rms = @sqrt(residual_sum_sq / sample_count),
+        .residual_max_abs = residual_max_abs,
+    };
 }
 
 const Accumulation = struct {

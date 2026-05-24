@@ -57,6 +57,25 @@ class SessionCache:
             include_case=include_case,
         )
 
+    def aerosol_profile_spectrum(
+        self,
+        layers,
+        case: O2AInput | None = None,
+        *,
+        include_case: bool = False,
+    ):
+        """Run forward spectra with multiple pressure-bounded aerosol layers."""
+
+        if case is not None:
+            self.load(case, copy_case=include_case)
+        elif not self._loaded:
+            raise RuntimeError("SessionCache has no loaded wavelength-band case")
+
+        return self._handle.aerosol_profile_spectrum(
+            layers=layers,
+            include_case=include_case,
+        )
+
     def atmospheric_budget(self, wavelengths_nm):
         """Return atmospheric optical-depth budget rows for the loaded case."""
 

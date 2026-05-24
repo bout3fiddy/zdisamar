@@ -11,6 +11,14 @@ from .o2a import (
     measurement_from_sun_normalized_radiance_noise,
     pressure_altitude_profile_from_case,
 )
+from .profile import (
+    ExpectedAodProfileBin,
+    ProfileCandidate,
+    ProfilePressureBin,
+    ProfileResult,
+    pressure_bins,
+    profile,
+)
 from .retrieval import (
     Iteration,
     Measurement,
@@ -36,10 +44,14 @@ __all__ = [
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
+    "ExpectedAodProfileBin",
     "RtmEvaluation",
     "Iteration",
     "Measurement",
     "PressureAltitudeProfile",
+    "ProfileCandidate",
+    "ProfilePressureBin",
+    "ProfileResult",
     "RetrievalControls",
     "Result",
     "StateVector",
@@ -54,4 +66,6 @@ __all__ = [
     "measurement_from_case",
     "measurement_from_sun_normalized_radiance_noise",
     "pressure_altitude_profile_from_case",
+    "pressure_bins",
+    "profile",
 ]

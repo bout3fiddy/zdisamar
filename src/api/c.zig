@@ -124,6 +124,67 @@ pub const ZdsOptimalEstimationResult = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
+pub const ZdsProfileAodSpec = extern struct {
+    has_lower: u8 = 0,
+    has_upper: u8 = 0,
+    initial: f64 = 0.0,
+    prior: f64 = 0.0,
+    variance: f64 = 0.0,
+    lower: f64 = 0.0,
+    upper: f64 = 0.0,
+};
+
+pub const ZdsProfilePressureBin = extern struct {
+    top_pressure_hpa: f64 = 0.0,
+    bottom_pressure_hpa: f64 = 0.0,
+};
+
+pub const ZdsProfileRetrievalRequest = extern struct {
+    sample_count: usize = 0,
+    wavelength_nm: ?[*]const f64 = null,
+    reflectance: ?[*]const f64 = null,
+    variance: ?[*]const f64 = null,
+    bin_count: usize = 0,
+    bins: ?[*]const ZdsProfilePressureBin = null,
+    aod: ZdsProfileAodSpec = .{},
+    controls: ZdsOptimalEstimationControls = .{},
+    layer_thickness_hpa: f64 = 0.0,
+};
+
+pub const ZdsProfileCandidateResult = extern struct {
+    converged: u8 = 0,
+    iteration_count: usize = 0,
+    retrieved_aod_550_nm: f64 = 0.0,
+    posterior_variance: f64 = 0.0,
+    averaging_kernel: f64 = 0.0,
+    spectral_chi2_ref: f64 = 0.0,
+    prior_chi2: f64 = 0.0,
+    total_cost_ref: f64 = 0.0,
+    residual_rms: f64 = 0.0,
+    residual_max_abs: f64 = 0.0,
+};
+
+pub const ZdsProfileRetrievalResult = extern struct {
+    len: usize = 0,
+    candidates: [*]const ZdsProfileCandidateResult = undefined,
+    result_handle: ?*anyopaque = null,
+};
+
+pub const ZdsAerosolProfileLayer = extern struct {
+    top_pressure_hpa: f64 = 0.0,
+    bottom_pressure_hpa: f64 = 0.0,
+    optical_depth: f64 = 0.0,
+    single_scatter_albedo: f64 = 0.93,
+    asymmetry_factor: f64 = 0.65,
+    angstrom_exponent: f64 = 1.3,
+    reference_wavelength_nm: f64 = 550.0,
+};
+
+pub const ZdsAerosolProfileSpectrumRequest = extern struct {
+    layer_count: usize = 0,
+    layers: ?[*]const ZdsAerosolProfileLayer = null,
+};
+
 // layout(64-bit):
 //   size: 240 B, align: 8 B
 //   field storage: 240 B across 33 fields; largest: wavelength_nm=8 B, altitude_km=8 B, top_altitude_km=8 B; padding: 0 B (0 bits)
@@ -356,9 +417,11 @@ pub const ZdsRadiativeTransferDiagnostics = extern struct {
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
+    aerosol_profile_session: ?zdisamar.o2a.AerosolProfileSpectrumSession = null,
     o2a_session_storage: zdisamar.O2ASessionStorage = .{},
     results: std.ArrayList(*zdisamar.Output) = .empty,
     oe_results: std.ArrayList(*zdisamar.optimal_estimation.Result) = .empty,
+    profile_results: std.ArrayList(*zdisamar.optimal_estimation.ProfileResult) = .empty,
     atmospheric_budgets: std.ArrayList([]ZdsAtmosphericBudgetRow) = .empty,
     o2_line_contribution_tables: std.ArrayList([]ZdsO2LineContributionRow) = .empty,
     instrument_response_tables: std.ArrayList([]ZdsInstrumentResponseRow) = .empty,
@@ -380,6 +443,14 @@ const Context = struct {
             allocator.destroy(result);
         }
         self.oe_results.clearAndFree(allocator);
+    }
+
+    fn clearProfileResults(self: *Context) void {
+        for (self.profile_results.items) |result| {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+        self.profile_results.clearAndFree(allocator);
     }
 
     fn clearAtmosphericBudgets(self: *Context) void {
@@ -422,6 +493,16 @@ const Context = struct {
         return false;
     }
 
+    fn removeProfileResult(self: *Context, result: *zdisamar.optimal_estimation.ProfileResult) bool {
+        for (self.profile_results.items, 0..) |stored, index| {
+            if (stored == result) {
+                _ = self.profile_results.swapRemove(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
     fn removeAtmosphericBudget(self: *Context, rows_ptr: [*]const ZdsAtmosphericBudgetRow) ?[]ZdsAtmosphericBudgetRow {
         return removeStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets, rows_ptr);
     }
@@ -456,6 +537,8 @@ const Context = struct {
     }
 
     fn clearPrepared(self: *Context) void {
+        if (self.aerosol_profile_session) |*session| session.deinit(allocator);
+        self.aerosol_profile_session = null;
         if (self.prepared) |*prepared| prepared.deinit(allocator);
         self.prepared = null;
         if (self.parsed_input) |*parsed| parsed.deinit();
@@ -551,6 +634,7 @@ export fn zds_context_destroy(ctx: ?*Context) void {
     const resolved = ctx orelse return;
     resolved.clearResults();
     resolved.clearOptimalEstimationResults();
+    resolved.clearProfileResults();
     resolved.clearAtmosphericBudgets();
     resolved.clearO2LineContributionTables();
     resolved.clearInstrumentResponseTables();
@@ -655,6 +739,97 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
         return @intFromEnum(ZdsStatus.failure);
     };
     result.* = zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, prepared) catch |err| {
+        allocator.destroy(result);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.results.append(allocator, result) catch |err| {
+        result.deinit(allocator);
+        allocator.destroy(result);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{
+        .len = result.wavelengths.len,
+        .wavelength_nm = result.wavelengths.ptr,
+        .radiance = result.radiance.ptr,
+        .irradiance = result.irradiance.ptr,
+        .reflectance = result.reflectance.ptr,
+        .jacobian = null,
+        .jacobian_state_count = 0,
+        .result_handle = @ptrCast(result),
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_run_aerosol_profile_spectrum(
+    ctx: ?*Context,
+    request: ?*const ZdsAerosolProfileSpectrumRequest,
+    out: ?*ZdsSpectrum,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_request = request orelse {
+        resolved.setError("null aerosol-profile spectrum request");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const output = out orelse {
+        resolved.setError("null spectrum output");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved_request.layer_count == 0) {
+        resolved.setError("empty aerosol profile");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    const raw_layers = resolved_request.layers orelse {
+        resolved.setError("null aerosol profile layers");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const profile_layers = allocator.alloc(zdisamar.o2a.AerosolProfileLayer, resolved_request.layer_count) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(profile_layers);
+    for (raw_layers[0..resolved_request.layer_count], profile_layers) |raw, *layer| {
+        layer.* = .{
+            .top_pressure_hpa = raw.top_pressure_hpa,
+            .bottom_pressure_hpa = raw.bottom_pressure_hpa,
+            .optical_depth = raw.optical_depth,
+            .single_scatter_albedo = raw.single_scatter_albedo,
+            .asymmetry_factor = raw.asymmetry_factor,
+            .angstrom_exponent = raw.angstrom_exponent,
+            .reference_wavelength_nm = raw.reference_wavelength_nm,
+        };
+    }
+
+    if (resolved.aerosol_profile_session == null) {
+        var default_input: zdisamar.O2AInput = undefined;
+        const input = if (resolved.parsed_input) |*parsed|
+            &parsed.value
+        else input: {
+            default_input = zdisamar.defaultO2AInput();
+            break :input &default_input;
+        };
+        resolved.aerosol_profile_session = zdisamar.o2a.AerosolProfileSpectrumSession.init(allocator, input) catch |err| {
+            resolved.setError(@errorName(err));
+            return @intFromEnum(ZdsStatus.failure);
+        };
+    }
+
+    const result = allocator.create(zdisamar.Output) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    result.* = resolved.aerosol_profile_session.?.run(
+        allocator,
+        &resolved.o2a_session_storage,
+        profile_layers,
+    ) catch |err| {
         allocator.destroy(result);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
@@ -828,6 +1003,120 @@ export fn zds_run_o2a_optimal_estimation(
     };
 
     resolved_out.* = optimalEstimationResultView(native);
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_run_o2a_profile_retrieval_aod(
+    ctx: ?*Context,
+    request: ?*const ZdsProfileRetrievalRequest,
+    out: ?*ZdsProfileRetrievalResult,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_request = request orelse {
+        resolved.setError("null profile-retrieval request");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const resolved_out = out orelse {
+        resolved.setError("null profile-retrieval result");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    var default_input: zdisamar.O2AInput = undefined;
+    const input = if (resolved.parsed_input) |*parsed|
+        &parsed.value
+    else input: {
+        if (resolved.prepared == null) {
+            resolved.setError("not prepared");
+            return @intFromEnum(ZdsStatus.failure);
+        }
+        default_input = zdisamar.defaultO2AInput();
+        break :input &default_input;
+    };
+    const wavelengths_ptr = resolved_request.wavelength_nm orelse {
+        resolved.setError("null measurement wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const reflectance_ptr = resolved_request.reflectance orelse {
+        resolved.setError("null measurement reflectance");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const variance_ptr = resolved_request.variance orelse {
+        resolved.setError("null measurement variance");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const bins_ptr = resolved_request.bins orelse {
+        resolved.setError("null profile bins");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (resolved_request.sample_count == 0) {
+        resolved.setError("empty measurement");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved_request.bin_count == 0) {
+        resolved.setError("empty profile bin grid");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    const raw_aod = resolved_request.aod;
+    if (raw_aod.has_lower != 0 and !std.math.isFinite(raw_aod.lower)) {
+        resolved.setError("invalid profile AOD lower bound");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (raw_aod.has_upper != 0 and !std.math.isFinite(raw_aod.upper)) {
+        resolved.setError("invalid profile AOD upper bound");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    const bins = allocator.alloc(zdisamar.optimal_estimation.ProfileBinSpec, resolved_request.bin_count) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(bins);
+    for (bins_ptr[0..resolved_request.bin_count], bins) |raw, *bin| {
+        bin.* = .{
+            .top_pressure_hpa = raw.top_pressure_hpa,
+            .bottom_pressure_hpa = raw.bottom_pressure_hpa,
+        };
+    }
+
+    const native = allocator.create(zdisamar.optimal_estimation.ProfileResult) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    native.* = zdisamar.optimal_estimation.runO2AProfileAod(
+        allocator,
+        input,
+        wavelengths_ptr[0..resolved_request.sample_count],
+        reflectance_ptr[0..resolved_request.sample_count],
+        variance_ptr[0..resolved_request.sample_count],
+        .{
+            .state = .aerosol_optical_depth,
+            .initial = raw_aod.initial,
+            .prior = raw_aod.prior,
+            .variance = raw_aod.variance,
+            .lower_bound = if (raw_aod.has_lower != 0) raw_aod.lower else zdisamar.optimal_estimation.no_lower_bound,
+            .upper_bound = if (raw_aod.has_upper != 0) raw_aod.upper else zdisamar.optimal_estimation.no_upper_bound,
+        },
+        bins,
+        resolved_request.layer_thickness_hpa,
+        &resolved.o2a_session_storage,
+        .{
+            .max_iterations = resolved_request.controls.max_iterations,
+            .state_vector_convergence_threshold = resolved_request.controls.state_vector_convergence_threshold,
+            .max_change_transformed_state = resolved_request.controls.max_change_transformed_state,
+        },
+    ) catch |err| {
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.profile_results.append(allocator, native) catch |err| {
+        native.deinit(allocator);
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    resolved_out.* = profileRetrievalResultView(native);
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
@@ -1173,6 +1462,19 @@ export fn zds_optimal_estimation_result_free(ctx: ?*Context, out: ?*ZdsOptimalEs
     output.* = .{};
 }
 
+export fn zds_profile_retrieval_result_free(ctx: ?*Context, out: ?*ZdsProfileRetrievalResult) void {
+    const resolved = ctx orelse return;
+    const output = out orelse return;
+    if (output.result_handle) |handle| {
+        const result: *zdisamar.optimal_estimation.ProfileResult = @ptrCast(@alignCast(handle));
+        if (resolved.removeProfileResult(result)) {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+    }
+    output.* = .{};
+}
+
 export fn zds_atmospheric_budget_free(ctx: ?*Context, out: ?*ZdsAtmosphericBudget) void {
     const resolved = ctx orelse return;
     const budget = out orelse return;
@@ -1251,6 +1553,14 @@ fn optimalEstimationResultView(native: *zdisamar.optimal_estimation.Result) ZdsO
         .history_chi2_state_vector = native.history_chi2_state_vector.ptr,
         .history_state_vector_convergence = native.history_state_vector_convergence.ptr,
         .history_snr_normal = native.history_snr_normal.ptr,
+        .result_handle = @ptrCast(native),
+    };
+}
+
+fn profileRetrievalResultView(native: *zdisamar.optimal_estimation.ProfileResult) ZdsProfileRetrievalResult {
+    return .{
+        .len = native.candidates.len,
+        .candidates = @ptrCast(native.candidates.ptr),
         .result_handle = @ptrCast(native),
     };
 }
