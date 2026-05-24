@@ -35,6 +35,7 @@ class PlotProperties:
     axis_title_font_size = 15
     legend_font_size = 12
     panel_title_font_size = 18
+    subtitle_font_size = 15
     title_font_size = 22
     colors = {
         "blue": "#1f77b4",

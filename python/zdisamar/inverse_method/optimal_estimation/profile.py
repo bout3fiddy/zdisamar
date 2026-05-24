@@ -457,9 +457,7 @@ def expected_aod_bins(
 ) -> tuple[ExpectedAodProfileBin, ...]:
     """Convert location support into probability-weighted AOD by profile bin."""
 
-    expected = [
-        candidate.probability * candidate.retrieved_aod_550_nm for candidate in candidates
-    ]
+    expected = [candidate.probability * candidate.retrieved_aod_550_nm for candidate in candidates]
     total = sum(expected)
 
     return tuple(
@@ -531,6 +529,7 @@ def pressure_bin_id(top_pressure_hpa: float, bottom_pressure_hpa: float) -> str:
     """Return a stable pressure-bin identifier."""
 
     def part(value: float) -> str:
+
         return f"{value:.6g}".replace("-", "m").replace(".", "p")
 
     return f"p_{part(top_pressure_hpa)}_{part(bottom_pressure_hpa)}"

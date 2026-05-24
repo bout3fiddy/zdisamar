@@ -60,29 +60,41 @@ def main() -> int:
     assert result.best_bin_id == "p_300_375"
     assert math.isclose(sum(result.probability_by_bin.values()), 1.0)
     assert result.pressure_p50_hpa == 337.5
-    assert result.expected_aod_profile[1].expected_aod_550_nm > result.expected_aod_profile[
-        0
-    ].expected_aod_550_nm
+    assert (
+        result.expected_aod_profile[1].expected_aod_550_nm
+        > result.expected_aod_profile[0].expected_aod_550_nm
+    )
 
     summary = result.plot.summary()
     spec = summary.to_dict()
     spec_text = json.dumps(spec)
     assert spec["type"] == "zdisamar-svg"
-    assert spec["title"]["text"] == "Discrete aerosol profile retrieval"
+    assert spec["title"]["text"] == "Discrete aerosol-layer profile"
     assert len(spec["panels"]) == 2
     assert spec["panels"][0]["x_title"] == "Probability"
-    assert spec["panels"][0]["y_title"] == "Pressure (hPa)"
+    assert spec["panels"][0]["y_title"] == "Pressure bin (hPa)"
     assert spec["panels"][0]["y_domain"] == [450.0, 225.0]
+    assert spec["panels"][0]["y_tick_labels"] == ["225-300", "300-375", "375-450"]
+    assert spec["panels"][0]["series"][0]["kind"] == "horizontal_bars"
     assert "Expected AOD at 550 nm" in spec_text
 
     with TemporaryDirectory() as directory:
         path = Path(directory) / "profile-summary.svg"
-        result.plot.summary().save(path)
+        result.plot.summary(
+            truth_layers=(
+                {
+                    "top_pressure_hpa": 300.0,
+                    "bottom_pressure_hpa": 375.0,
+                    "optical_depth": 0.12,
+                },
+            )
+        ).save(path)
         svg = path.read_text()
 
     assert "<svg" in svg
     assert "Layer-location probability" in svg
-    assert "Probability-weighted AOD" in svg
+    assert "Model-averaged AOD distribution" in svg
+    assert "Truth AOD fraction" in svg
     print("profile_retrieval_plot=ok")
 
     return 0

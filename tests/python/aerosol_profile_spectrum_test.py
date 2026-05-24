@@ -6,6 +6,7 @@ from zdisamar import rtm
 
 
 def main() -> None:
+
     case = rtm.o2a_reference_case()
     profile = (
         rtm.AerosolProfileLayer(
@@ -33,7 +34,9 @@ def main() -> None:
     assert len(profiled.wavelength_nm) == len(baseline.wavelength_nm)
     assert len(profiled.reflectance) == len(baseline.reflectance)
     assert all(math.isfinite(value) for value in profiled.reflectance)
-    max_delta = max(abs(a - b) for a, b in zip(profiled.reflectance, baseline.reflectance))
+    max_delta = max(
+        abs(a - b) for a, b in zip(profiled.reflectance, baseline.reflectance, strict=True)
+    )
     assert max_delta > 1.0e-8
 
     print("aerosol_profile_spectrum=ok")

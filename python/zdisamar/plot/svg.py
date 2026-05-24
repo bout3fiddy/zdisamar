@@ -20,6 +20,7 @@ Y_AXIS_TITLE_X = -126
 PANEL_TITLE_Y = -54
 LEGEND_Y_WITH_PANEL_TITLE = -20
 LEGEND_Y_WITHOUT_PANEL_TITLE = -24
+SUBTITLE_Y_OFFSET = 30
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,10 @@ class SvgSeries:
     dash: tuple[float, ...] = ()
     y2: tuple[float, ...] = ()
     point_size: float = field(default_factory=lambda: PLOT.default_point_size)
+    value_labels: bool = False
+    value_label_format: str = ".3g"
+    stroke_color: str | None = None
+    bar_stroke_width: float = 0.0
     show_legend: bool = True
 
     @classmethod
@@ -112,6 +117,38 @@ class SvgSeries:
             show_legend=show_legend,
         )
 
+    @classmethod
+    def horizontal_bars(
+        cls,
+        name: str,
+        x: Iterable[float],
+        y_low: Iterable[float],
+        y_high: Iterable[float],
+        *,
+        color: str | None = None,
+        opacity: float = 1.0,
+        stroke_color: str | None = None,
+        stroke_width: float = 0.0,
+        value_labels: bool = False,
+        value_label_format: str = ".3g",
+        show_legend: bool = True,
+    ) -> Self:
+
+        return cls(
+            name=name,
+            kind="horizontal_bars",
+            x=tuple(float(value) for value in x),
+            y=tuple(float(value) for value in y_low),
+            y2=tuple(float(value) for value in y_high),
+            color=color or PLOT.colors["blue"],
+            opacity=opacity,
+            stroke_color=stroke_color,
+            bar_stroke_width=stroke_width,
+            value_labels=value_labels,
+            value_label_format=value_label_format,
+            show_legend=show_legend,
+        )
+
 
 @dataclass(frozen=True)
 class SvgPanel:
@@ -126,10 +163,14 @@ class SvgPanel:
     x_domain: tuple[float, float] | None = None
     x_ticks: tuple[float, ...] = ()
     y_domain: tuple[float, float] | None = None
+    y_ticks: tuple[float, ...] = ()
+    y_tick_labels: tuple[str, ...] = ()
     marker_x: tuple[float, ...] = ()
     rule_y: tuple[float, ...] = ()
     y_axis_multiplier: str | None = None
     show_x_axis: bool = True
+    show_x_grid: bool = False
+    show_y_grid: bool = True
     show_title: bool = True
     show_legend: bool = True
 
@@ -182,10 +223,14 @@ class SvgPanel:
             x_domain=self.x_domain,
             x_ticks=self.x_ticks,
             y_domain=self.y_domain,
+            y_ticks=self.y_ticks,
+            y_tick_labels=self.y_tick_labels,
             marker_x=tuple(marker_values(series_x_values(self.series))),
             rule_y=self.rule_y,
             y_axis_multiplier=self.y_axis_multiplier,
             show_x_axis=self.show_x_axis,
+            show_x_grid=self.show_x_grid,
+            show_y_grid=self.show_y_grid,
             show_title=self.show_title,
             show_legend=self.show_legend,
         )
@@ -197,6 +242,7 @@ class SvgFigure:
 
     title: str
     panels: tuple[SvgPanel, ...]
+    subtitle: str | None = None
     columns: int = 1
     panel_spacing: int = 44
     y_independent: bool = False
@@ -204,6 +250,7 @@ class SvgFigure:
     margin_right: int = 36
     margin_top: int = 96
     margin_bottom: int = 122
+    title_anchor: str = "middle"
 
     @property
     def width(self) -> int:
@@ -236,6 +283,7 @@ class SvgFigure:
         return {
             "type": "zdisamar-svg",
             "title": {"text": self.title},
+            "subtitle": None if self.subtitle is None else {"text": self.subtitle},
             "width": self.width,
             "height": self.height,
             "columns": self.columns,
@@ -265,6 +313,7 @@ class SvgFigure:
             "<style>"
             f"text {{ font-family: {PLOT.font}; fill: black; }}"
             f".plot-title {{ font-size: {PLOT.title_font_size}px; font-weight: 400; }}"
+            f".plot-subtitle {{ font-size: {PLOT.subtitle_font_size}px; font-weight: 400; }}"
             f".panel-title {{ font-size: {PLOT.panel_title_font_size}px; font-weight: 400; }}"
             f".axis-title {{ font-size: {PLOT.axis_title_font_size}px; }}"
             f".tick-label,.axis-multiplier {{ font-size: {PLOT.axis_label_font_size}px; }}"
@@ -289,10 +338,17 @@ class SvgFigure:
             self.svg_css,
             f'<rect class="figure-bg" x="0" y="0" width="{self.width}" height="{self.height}" />',
             (
-                f'<text class="plot-title" x="{self.width / 2:.3f}" y="{FIGURE_TITLE_Y}" '
-                f'text-anchor="middle">{escape(self.title)}</text>'
+                f'<text class="plot-title" x="{self.title_x():.3f}" y="{FIGURE_TITLE_Y}" '
+                f'text-anchor="{escape(self.title_anchor)}">{escape(self.title)}</text>'
             ),
         ]
+
+        if self.subtitle is not None:
+            elements.append(
+                f'<text class="plot-subtitle" x="{self.title_x():.3f}" '
+                f'y="{FIGURE_TITLE_Y + SUBTITLE_Y_OFFSET}" '
+                f'text-anchor="{escape(self.title_anchor)}">{escape(self.subtitle)}</text>'
+            )
 
         for index, panel in enumerate(self.panels):
             elements.extend(self.panel_svg(index, panel))
@@ -317,10 +373,14 @@ class SvgFigure:
             "x_domain": [x_domain[0], x_domain[1]],
             "x_ticks": list(panel.x_ticks),
             "y_domain": [y_domain[0], y_domain[1]],
+            "y_ticks": list(panel.y_ticks),
+            "y_tick_labels": list(panel.y_tick_labels),
             "marker_x": list(panel.marker_x),
             "rule_y": list(panel.rule_y),
             "axis_multiplier": panel.y_axis_multiplier,
             "show_x_axis": panel.show_x_axis,
+            "show_x_grid": panel.show_x_grid,
+            "show_y_grid": panel.show_y_grid,
             "show_title": panel.show_title,
             "show_legend": panel.show_legend,
             "series": [
@@ -457,11 +517,25 @@ class SvgFigure:
             ),
             default=0,
         )
-        top_for_figure_title = (
-            FIGURE_TITLE_Y + PLOT.title_font_size + FIGURE_TO_PANEL_TEXT_GAP + first_row_top_content
-        )
+        figure_text_height = PLOT.title_font_size
+
+        if self.subtitle is not None:
+            figure_text_height = SUBTITLE_Y_OFFSET + PLOT.subtitle_font_size
+
+        top_for_figure_title = FIGURE_TITLE_Y + figure_text_height + FIGURE_TO_PANEL_TEXT_GAP
+        top_for_figure_title += first_row_top_content
 
         return max(self.margin_top, top_for_figure_title)
+
+    def title_x(self) -> float:
+
+        if self.title_anchor == "start":
+            return 8.0
+
+        if self.title_anchor == "end":
+            return float(self.width - 8)
+
+        return self.width / 2.0
 
 
 def line_panel(
@@ -561,7 +635,7 @@ def legend_item_svg(x: int, label: str, kind: str, color: str) -> list[str]:
 
     if kind == "points":
         swatch = f'<circle cx="{x + 9}" cy="{swatch_y}" r="3.2" fill="{color}" />'
-    elif kind == "band":
+    elif kind in {"band", "horizontal_bars"}:
         swatch = f'<rect x="{x}" y="{swatch_y - 4}" width="18" height="8" fill="{color}" />'
     else:
         swatch = (
@@ -619,14 +693,26 @@ def axis_svg(
         f'<line class="axis" x1="0" x2="0" y1="0" y2="{panel.height}" />',
     ]
 
-    for value in ticks(y_domain, PLOT.y_axis_tick_count):
+    y_tick_values = (
+        panel.y_ticks if panel.y_ticks else tuple(ticks(y_domain, PLOT.y_axis_tick_count))
+    )
+
+    for index, value in enumerate(y_tick_values):
         y = scale_value(value, y_domain, float(panel.height), 0.0)
-        elements.append(
-            f'<line class="grid" x1="0" x2="{panel.width}" y1="{y:.3f}" y2="{y:.3f}" />'
+
+        if panel.show_y_grid:
+            elements.append(
+                f'<line class="grid" x1="0" x2="{panel.width}" y1="{y:.3f}" y2="{y:.3f}" />'
+            )
+
+        label = (
+            panel.y_tick_labels[index]
+            if len(panel.y_tick_labels) == len(y_tick_values)
+            else format_tick(value, panel.y_axis_multiplier)
         )
         elements.append(
             f'<text class="tick-label" x="{Y_TICK_LABEL_X}" y="{y + 4:.3f}" text-anchor="end">'
-            f"{escape(format_tick(value, panel.y_axis_multiplier))}</text>"
+            f"{escape(label)}</text>"
         )
 
     if panel.show_x_axis:
@@ -634,6 +720,12 @@ def axis_svg(
 
         for value in x_tick_values:
             x = scale_value(value, x_domain, 0.0, float(panel.width))
+
+            if panel.show_x_grid:
+                elements.append(
+                    f'<line class="grid" x1="{x:.3f}" x2="{x:.3f}" y1="0" y2="{panel.height}" />'
+                )
+
             elements.append(
                 f'<text class="tick-label" x="{x:.3f}" y="{panel.height + X_TICK_LABEL_Y_OFFSET}" '
                 f'text-anchor="middle">{escape(format_tick(value, None))}</text>'
@@ -661,6 +753,9 @@ def series_svg(
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
+
+    if series.kind == "horizontal_bars":
+        return horizontal_bars_svg(panel, series, x_domain, y_domain)
 
     if series.kind == "band":
         elements = []
@@ -731,6 +826,69 @@ def series_svg(
             f'stroke-dasharray="{dash_values(series.dash)}"><title>{escape(series.name)}</title></path>'
         )
     ]
+
+
+def horizontal_bars_svg(
+    panel: SvgPanel,
+    series: SvgSeries,
+    x_domain: tuple[float, float],
+    y_domain: tuple[float, float],
+) -> list[str]:
+
+    elements: list[str] = []
+    zero_x = scale_value(0.0, x_domain, 0.0, float(panel.width))
+
+    for x, y_low, y_high in zip(series.x, series.y, series.y2, strict=True):
+        if not all(isfinite(value) for value in (x, y_low, y_high)):
+            continue
+
+        value_x = scale_value(x, x_domain, 0.0, float(panel.width))
+        top_y = scale_value(y_low, y_domain, float(panel.height), 0.0)
+        bottom_y = scale_value(y_high, y_domain, float(panel.height), 0.0)
+        center_y = 0.5 * (top_y + bottom_y)
+        height = abs(bottom_y - top_y) * 0.90
+        x_min = min(zero_x, value_x)
+        width = abs(value_x - zero_x)
+        stroke = (
+            f' stroke="{series.stroke_color}" stroke-width="{series.bar_stroke_width:g}"'
+            if series.stroke_color is not None and series.bar_stroke_width > 0.0
+            else ""
+        )
+
+        elements.append(
+            f'<rect class="series horizontal-bar" x="{x_min:.3f}" '
+            f'y="{center_y - 0.5 * height:.3f}" width="{width:.3f}" '
+            f'height="{height:.3f}" fill="{series.color}" opacity="{series.opacity:.3f}"'
+            f"{stroke}><title>{escape(series.name)}</title></rect>"
+        )
+
+        if series.value_labels and abs(x) > 0.0:
+            elements.append(horizontal_bar_label_svg(panel, series, x, value_x, center_y))
+
+    return elements
+
+
+def horizontal_bar_label_svg(
+    panel: SvgPanel,
+    series: SvgSeries,
+    value: float,
+    value_x: float,
+    center_y: float,
+) -> str:
+
+    label = format(value, series.value_label_format)
+    outside_x = value_x + 8.0
+
+    if outside_x + 44.0 <= panel.width:
+        return (
+            f'<text class="tick-label" x="{outside_x:.3f}" y="{center_y + 4.0:.3f}" '
+            f'text-anchor="start">{escape(label)}</text>'
+        )
+
+    return (
+        f'<text class="tick-label" x="{max(value_x - 8.0, 8.0):.3f}" '
+        f'y="{center_y + 4.0:.3f}" text-anchor="end">{escape(label)}</text>'
+    )
 
 
 def series_x_values(series: Sequence[SvgSeries]) -> list[float]:
