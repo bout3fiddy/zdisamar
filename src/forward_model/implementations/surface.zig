@@ -51,5 +51,6 @@ fn lambertianBrdfFactor(context: EvaluationContext) f64 {
     _ = context.forward;
     // Lambertian BRDF is isotropic, so the directional factor stays unity here.
     // Scalar surface albedo already enters transport through ForwardInput.surface_albedo.
+    // math: BRDF_factor = 1 for the built-in Lambertian surface scaling stage.
     return 1.0;
 }

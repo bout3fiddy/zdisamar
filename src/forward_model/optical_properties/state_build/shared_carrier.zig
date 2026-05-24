@@ -42,6 +42,7 @@ pub fn resolveSharedRtmSubgrid(
     if (sample_count == 0) return .{};
 
     if (sample_count == 1) {
+        // math: one-point quadrature collapses to midpoint altitude and full interval thickness.
         scratch.nodes[0] = 0.5 * (lower_altitude_km + upper_altitude_km);
         scratch.weights[0] = @max(upper_altitude_km - lower_altitude_km, 0.0);
         return .{
@@ -76,6 +77,7 @@ pub fn accumulateSharedCarrier(
     carrier: *const carrier_eval.SharedOpticalCarrier,
     weight_km: f64,
 ) void {
+    // math: layer tau contribution = per-km optical-depth carrier * quadrature/support weight_km.
     const weighted_gas_absorption = carrier.gas_absorption_optical_depth_per_km * weight_km;
     const weighted_gas_scattering = carrier.gas_scattering_optical_depth_per_km * weight_km;
     const weighted_cia = carrier.cia_optical_depth_per_km * weight_km;
@@ -138,6 +140,7 @@ fn fillLayerInputFromSharedCarrier(
 ) void {
     const total_optical_depth = breakdown.totalOpticalDepth();
     const total_scattering = breakdown.totalScatteringOpticalDepth();
+    // math: omega0 = total_scattering / total_optical_depth and phase is the gas/aerosol scattering-weighted mixture.
     // No-derivative LABOS consumes the aggregate transport fields below;
     // per-component fields feed derivative weighting.
     if (compute_jacobian) {
@@ -277,6 +280,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
 //   when: forward input construction reduces support rows into a transport layer
 //   work: samples carrier cache rows and accumulates layer optical properties
 //   data: support-row descriptors, cached optical scalars, layer output fields
+//   math: breakdown terms integrate k(lambda,z_i) * weight_i over active support rows
 //   follow: WavelengthCarrierCache scalar access and direct phase-numerator accumulation
 pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
@@ -419,6 +423,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
 //   when: pseudo-spherical grids expand shared support rows for a cached wavelength solve
 //   work: writes attenuation samples from support-row carrier optical depth per kilometer
 //   data: support sublayers, strong-line states, scalar carrier cache, attenuation sample outputs
+//   math: sample optical_depth = total_k_ext(lambda,z_i) * support_weight_km_i
 //   follow: fillPseudoSphericalGridAtWavelengthWithCarrierCache and carrier cache reuse
 pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
@@ -484,6 +489,7 @@ pub fn evaluateSharedLayerOnSubgrid(
 //   when: integrated source-function routes evaluate RTM subgrid levels
 //   work: evaluates shared optical carriers on Gauss subgrid points for quadrature
 //   data: subgrid support rows, profile spectroscopy cache, layer input outputs
+//   math: layer breakdown approximates integral int k(lambda,z) dz by sum_i k(lambda,z_i) * w_i
 //   follow: resolveSharedRtmSubgrid and fillSharedPseudoSphericalSamplesOnSubgrid
 pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     self: *const PreparedOpticalState,

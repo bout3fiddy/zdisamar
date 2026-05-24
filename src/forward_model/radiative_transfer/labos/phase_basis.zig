@@ -70,6 +70,7 @@ pub const FourierPlmBasis = struct {
         geo: *const Geometry,
     ) void {
         for (0..geo.nmutot) |imu| {
+            // math: stored PLM basis includes LABOS stream weight, P_l^m(mu_i) * w_i.
             self.plus[coef_idx][imu] = p_l_plus[imu] * geo.w[imu];
         }
     }
@@ -86,6 +87,7 @@ pub const FourierPlmBasis = struct {
         for (i_fourier + 1..max_phase_index + 1) |l| {
             const lf: f64 = @floatFromInt(l);
             const mf: f64 = @floatFromInt(i_fourier);
+            // math: recurrence coefficient sqrt(l^2 - m^2).
             sqlm[l] = @sqrt(lf * lf - mf * mf);
         }
 
@@ -95,6 +97,7 @@ pub const FourierPlmBasis = struct {
             const u = geo.u[imu];
             const one_minus_uu = 1.0 - u * u;
             const squu = @sqrt(@max(one_minus_uu, 0.0));
+            // math: seed P_m^m(mu) for m=i_fourier using DISAMAR-normalized low-order cases.
             const start_val: f64 = switch (i_fourier) {
                 0 => 1.0,
                 1 => squu / @sqrt(2.0),
@@ -119,6 +122,7 @@ pub const FourierPlmBasis = struct {
             const c_coef = -sqlm[l];
             for (0..geo.nmutot) |imu| {
                 const b_plus = (2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
+                // math: recurrence P_{l+1}^m = ((2l+1) mu P_l^m - sqrt(l^2-m^2) P_{l-1}^m) / sqrt((l+1)^2-m^2).
                 const p_lp1 = (b_plus * p_l_plus[imu] + c_coef * p_lm1_plus[imu]) / a_coef;
                 p_lm1_plus[imu] = p_l_plus[imu];
                 p_l_plus[imu] = p_lp1;
@@ -131,6 +135,7 @@ pub const FourierPlmBasis = struct {
 };
 
 inline fn minusParitySign(i_fourier: usize, coef_idx: usize) f64 {
+    // math: Z- uses (-1)^(l-m) parity relative to Z+.
     return if (((coef_idx - i_fourier) & 1) == 0) 1.0 else -1.0;
 }
 
@@ -155,6 +160,7 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
         const u = geo.u[imu];
         const one_minus_uu = 1.0 - u * u;
         const squu = @sqrt(@max(one_minus_uu, 0.0));
+        // math: seed P_m^m(mu) for standalone PLM calculation.
         const start_val: f64 = switch (i_fourier) {
             0 => 1.0,
             1 => squu / @sqrt(2.0),
@@ -183,6 +189,7 @@ fn computePlm(i_fourier: usize, coef_idx: usize, geo: *const Geometry) PlmArrays
         const c_coef = -sqlm[l];
         for (0..n) |imu| {
             const b_plus = (2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
+            // math: recurrence P_{l+1}^m = ((2l+1) mu P_l^m - sqrt(l^2-m^2) P_{l-1}^m) / sqrt((l+1)^2-m^2).
             const p_lp1 = (b_plus * p_l_plus[imu] + c_coef * p_lm1_plus[imu]) / a_coef;
             p_lm1_plus[imu] = p_l_plus[imu];
             p_l_plus[imu] = p_lp1;
@@ -215,6 +222,7 @@ pub fn fillZplusZminFromBasis(
 //   work: builds dense Z+ and Z- phase matrices from coefficients and PLM basis
 //   data: phase coefficients, Fourier PLM basis, stream dimensions, Z matrix outputs
 //   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
+//   math: Zplus_ij = sum_l beta_l P_l^m(mu_i)P_l^m(mu_j); Zmin uses (-1)^(l-m) beta_l.
 pub fn fillZplusZminFromBasisLimited(
     i_fourier: usize,
     phase_coefs: *const [types.max_phase_coef]f64,
@@ -302,6 +310,7 @@ pub fn fillZplusZminFromBasisLimited(
 //   work: builds dense Z+ and Z- phase matrices directly from encoded phase weights
 //   data: phase weights, prepared particle phase rows, Fourier PLM basis
 //   follow: calcRTlayersIntoWithBasis and fixed 12x10 phase builder variants
+//   math: beta_l = aerosol_weight*aerosol_beta_l + rayleigh2_weight for l=2, beta_0=1.
 pub fn fillZplusZminFromWeightedPhaseLimited(
     i_fourier: usize,
     aerosol_weight: f64,
@@ -398,6 +407,7 @@ pub fn fillZplusZminFromWeightedPhaseLimited(
 //   work: builds one Z+/Z- row from phase coefficients and PLM basis
 //   data: phase coefficients, row index, PLM basis, Z row outputs
 //   follow: reflectance buildPhaseRowCache and scattering-source weighting
+//   math: row Zplus_j = sum_l beta_l P_l^m(mu_row)P_l^m(mu_j); Zmin row applies parity (-1)^(l-m).
 pub fn fillZplusZminRowFromBasisLimited(
     i_fourier: usize,
     phase_coefs: *const [types.max_phase_coef]f64,
@@ -544,6 +554,7 @@ inline fn weightedPhaseCoefficient(
 ) f64 {
     if (index == 0) return 1.0;
     var coefficient = aerosol_weight * aerosol_phase_coefs[index];
+    // math: weighted phase coefficient combines aerosol phase with Rayleigh l=2 contribution.
     if (index == 2) coefficient += rayleigh2_weight;
     return coefficient;
 }
@@ -553,6 +564,7 @@ inline fn weightedPhaseCoefficient(
 //   work: builds one Z+/Z- row directly from gas/aerosol phase weights
 //   data: phase weights, prepared particle phase rows, row index, PLM basis
 //   follow: reflectance RTM quadrature path
+//   math: weighted row uses beta_l = aerosol_weight*aerosol_beta_l plus Rayleigh2 at l=2.
 pub fn fillZplusZminRowFromWeightedPhaseLimited(
     i_fourier: usize,
     aerosol_weight: f64,
@@ -804,6 +816,7 @@ inline fn fillPhaseTerm12(
 ) void {
     var scaled_plus_col: [12]f64 = undefined;
     inline for (0..12) |j| {
+        // math: precompute beta_l * P_l^m(mu_j) for the fixed 12-stream phase outer product.
         scaled_plus_col[j] = alpha1 * plus_l[j];
     }
 
@@ -814,6 +827,7 @@ inline fn fillPhaseTerm12(
         inline for (0..12) |j| {
             const idx = row + j;
             if (first_order) {
+                // math: Zplus_ij += beta_l P_i P_j; Zmin_ij += parity * beta_l P_i P_j.
                 zplus.data[idx] = plus_i * scaled_plus_col[j];
                 zmin.data[idx] = minus_i * scaled_plus_col[j];
             } else {

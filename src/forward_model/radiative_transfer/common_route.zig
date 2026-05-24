@@ -17,6 +17,7 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
     if (layers.len == 0) return .{};
     const above_index = @min(ilevel, layers.len - 1);
     const below_index = if (ilevel > 0) ilevel - 1 else above_index;
+    // math: fallback source weight uses layer scattering optical depth, with half weight at the top boundary.
     const source_weight = if (ilevel < layers.len)
         @max(layers[ilevel].scattering_optical_depth, 0.0)
     else

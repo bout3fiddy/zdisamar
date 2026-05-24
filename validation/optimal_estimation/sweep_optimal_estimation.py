@@ -37,7 +37,7 @@ from validation.o2a.measurement_noise import (  # noqa: E402
 from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E402
 from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
-RUN_COUNT = 5
+RUN_COUNT = oe_cases.run_count()
 
 
 def retrieve_scene(

@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Validate O2 A fast-mode optimal-estimation outputs."""
+"""Run retained O2 A fast-mode optimal-estimation sweep outputs."""
 
 import copy
 import math
@@ -48,7 +48,7 @@ PAIRED_MANIFEST_PATH = OUTPUTS_DIR / "paired_oe_plot_manifest.json"
 DATA_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_runs.csv"
 SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.json"
 
-CANONICAL_COMMAND = "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py"
+CANONICAL_COMMAND = "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py"
 RUN_COUNT = oe_cases.run_count()
 FAST_REFERENCE_MAX_ABS_AOD_DELTA = 1.0e-2
 FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 10.0
@@ -168,10 +168,14 @@ def build_rows() -> list[dict[str, Any]]:
                         "aerosol_layer_mid_pressure_hpa",
                     ),
                     "fourier_order_cap": thresholds.fourier_order_cap,
+                    "aerosol_tangent_order_cap": thresholds.aerosol_tangent_order_cap,
                     "fourier_tail_reflectance_epsilon": (
                         thresholds.fourier_tail_reflectance_epsilon
                     ),
                     "threshold_doubl": thresholds.threshold_doubl,
+                    "qzero_rd_product_suppression": thresholds.qzero_rd_product_suppression,
+                    "qzero_tu_product_suppression": thresholds.qzero_tu_product_suppression,
+                    "qzero_td_product_suppression": thresholds.qzero_td_product_suppression,
                     "adaptive_grid_points_per_fwhm": adaptive_grid["points_per_fwhm"],
                     "adaptive_grid_strong_line_min_divisions": adaptive_grid[
                         "strong_line_min_divisions"
@@ -263,16 +267,22 @@ def stats_from_values(values: list[float]) -> dict[str, float]:
     return stats(series)
 
 
-def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
+def fast_mode_overrides() -> dict[str, dict[str, float | int | bool | None]]:
 
     fast = o2a.RadiativeTransferPerformanceThresholds.fast()
-    adaptive_grid: dict[str, float | int | None] = dict(o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID)
+    adaptive_grid: dict[str, float | int | bool | None] = dict(
+        o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID
+    )
 
     return {
         "radiative_transfer": {
             "fourier_order_cap": fast.fourier_order_cap,
+            "aerosol_tangent_order_cap": fast.aerosol_tangent_order_cap,
             "fourier_tail_reflectance_epsilon": fast.fourier_tail_reflectance_epsilon,
             "threshold_doubl": fast.threshold_doubl,
+            "qzero_rd_product_suppression": fast.qzero_rd_product_suppression,
+            "qzero_tu_product_suppression": fast.qzero_tu_product_suppression,
+            "qzero_td_product_suppression": fast.qzero_td_product_suppression,
         },
         "adaptive_reference_grid": adaptive_grid,
     }

@@ -3,8 +3,13 @@ const math = std.math;
 const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// instrumentation: LABOS layers
+// captures: doubling zones, q-series gates, and layer threshold telemetry
+// why: separate expensive matrix work from threshold decisions that may be pruned.
 const phase_odd_reciprocal = blk: {
     var values: [basis.max_phase_coef]f64 = undefined;
     for (&values, 0..) |*value, idx| {
@@ -34,6 +39,7 @@ pub fn zeroFourierIntegral(
     var integral: f64 = 0.0;
     for (0..geo.n_gauss) |imu| {
         const row_weight = @max(geo.w[imu], 1.0e-30);
+        // math: integral += wg_mu * (Zplus(mu,col)+Zmin(mu,col)) / (w_mu * w_col).
         integral += geo.wg[imu] *
             ((zplus.get(imu, column_index) + zmin.get(imu, column_index)) /
                 (row_weight * column_weight));
@@ -47,6 +53,7 @@ pub fn zeroFourierIntegral(
 //   work: normalizes phase coefficients across layers and scattering streams
 //   data: layer phase coefficients, Gaussian stream geometry, normalization factors
 //   follow: phase coefficient order consumed by fillZplusZmin and layer-doubling
+//   math: zero-Fourier phase rows are adjusted so integral_mu (Zplus + Zmin) = 2.
 pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
@@ -126,6 +133,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
 //   work: fills R matrix entries from attenuation, Z- phase matrix, and scattering albedo
 //   data: output matrix, E attenuation vector, Zmin phase matrix, stream geometry
 //   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+//   math: R_ij = omega * Zminus_ij * (1 - E_i E_j) * 0.25/(mu_i + mu_j).
 fn fillSingleScatterR(
     out: *basis.Mat,
     a: f64,
@@ -175,6 +183,7 @@ fn fillSingleScatterR12(
 //   work: fills T matrix entries from attenuation, Z+ phase matrix, optical depth, and scattering albedo
 //   data: output matrix, E attenuation vector, Zplus phase matrix, stream geometry
 //   follow: fixed 12x12 variant and calcRTlayersIntoWithBasis
+//   math: T_ij = omega * Zplus_ij * eet_ij * dmu_min_ij; eet=b*E_i when mu_i ~= mu_j else E_i-E_j.
 fn fillSingleScatterT(
     out: *basis.Mat,
     a: f64,
@@ -254,6 +263,7 @@ inline fn squareAttenuation(n: usize, E: *basis.Vec) void {
 
     for (0..n) |imu| {
         const e = E.data[imu];
+        // math: doubling step squares the half-layer attenuation, E <- E^2.
         E.data[imu] = e * e;
     }
 }
@@ -271,19 +281,24 @@ inline fn squareAttenuation12(E: *basis.Vec) void {
 //   work: updates reflection/transmission matrices through q-series products
 //   data: R/T matrices, q-series temporaries, stream counts, thresholded matrix products
 //   follow: qseriesKnownNonzeroProductInto and smul matrix helpers
+//   math: each doubling step combines two identical sublayers using Q=(I-RR)^-1-I, U=R*E+R*D, then updates R/T.
 fn doDouble(
     ndouble: usize,
     n: usize,
     n_gauss: usize,
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
 ) void {
     if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
-        doDouble12x10(ndouble, threshold_mul, R, T, E);
+        doDouble12x10(ndouble, thresholds, R, T, E, i_fourier, layer_index, phase_max_index);
         return;
     }
+    const threshold_mul = thresholds.threshold_mul;
 
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
@@ -293,17 +308,51 @@ fn doDouble(
     var next_t = &t_storage;
     var final_in_scratch = false;
 
-    for (0..ndouble) |_| {
+    for (0..ndouble) |doubling_step_index| {
+        // instrumentation: trace counter
+        // captures: layer-doubling iterations
+        // why: count the repeated matrix squaring work per layer/Fourier term.
         Trace.plotU("doubling_steps", 1);
         const trace_r = gaussTrace(n, n_gauss, current_r);
         const trace_t = gaussTrace(n, n_gauss, current_t);
-        const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+        // instrumentation: telemetry and perturbation
+        // captures: q-series skip decision from trace(R)^2
+        // why: test whether Q work is negligible at this layer/Fourier/step.
+        const coord = Perturbation.Coord{
+            .layer_index = @intCast(layer_index),
+            .fourier_index = @intCast(i_fourier),
+            .order_index = @intCast(doubling_step_index),
+        };
+        const q_is_zero = Perturbation.decision(
+            .qseries_skip,
+            coord,
+            @abs(trace_r * trace_r) <= threshold_mul,
+        );
+        // instrumentation: calculation telemetry
+        // captures: q-series skip inputs and decision
+        // why: record the trace-based threshold margin behind avoidable Q products.
+        Telemetry.labosDoublingStep(
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+            trace_r,
+            trace_t,
+            threshold_mul,
+            q_is_zero,
+        );
 
         var d_storage: basis.Mat = undefined;
         const D = if (q_is_zero) blk: {
+            // instrumentation: trace counter
+            // captures: q-series products skipped by threshold
+            // why: quantify actual savings from the q-zero path.
             Trace.plotU("doubling_qseries_skipped", 1);
             break :blk current_t;
         } else blk: {
+            // instrumentation: trace counters
+            // captures: nonzero q-series and matrix-product work
+            // why: connect q-series decisions to retained arithmetic volume.
             Trace.plotU("doubling_qseries_nonzero", 1);
             Trace.plotU("matrix_qseries", 1);
             Trace.plotU("matrix_smul_q_product", 1);
@@ -315,48 +364,126 @@ fn doDouble(
         };
         const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, D);
 
+        // instrumentation: trace counter
+        // captures: R-D product gate evaluations
+        // why: count downstream product checks after q-series handling.
         Trace.plotU("matrix_smul_rd", 1);
-        const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+        // instrumentation: telemetry and perturbation
+        // captures: downstream R-D/T-U/T-D product gates
+        // why: test whether q-zero branches imply more matrix products can be skipped.
+        const downstream_coord = Perturbation.Coord{
+            .layer_index = @intCast(layer_index),
+            .fourier_index = @intCast(i_fourier),
+            .order_index = @intCast(doubling_step_index),
+            .branch = if (q_is_zero) 1 else 0,
+        };
+        const rd_nonzero = Perturbation.decision(
+            .qseries_rd_product,
+            downstream_coord,
+            !(q_is_zero and thresholds.qzero_rd_product_suppression) and
+                @abs(trace_r * trace_d) > threshold_mul,
+        );
 
         var U: basis.Mat = undefined;
         if (rd_nonzero) {
+            // instrumentation: trace counters
+            // captures: retained R-D product and semul-add work
+            // why: measure matrix products not skipped by downstream gates.
             Trace.plotU("matrix_smul_rd_nonzero", 1);
             Trace.plotU("matrix_semul_add", 1);
             basis.semulAddProductKnownNonzeroInto(&U, n, n_gauss, current_r, E, D);
         } else {
+            // instrumentation: trace counter
+            // captures: simplified semul path
+            // why: count cheaper fallback operations when R-D is negligible.
             Trace.plotU("matrix_semul", 1);
             basis.semulInto(&U, n, current_r, E);
         }
         const trace_u = gaussTrace(n, n_gauss, &U);
 
+        // instrumentation: trace counter
+        // captures: T-U product gate evaluations
+        // why: count reflectance-update product checks after U construction.
         Trace.plotU("matrix_smul_tu", 1);
-        const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+        const tu_nonzero = Perturbation.decision(
+            .qseries_tu_product,
+            downstream_coord,
+            !(q_is_zero and thresholds.qzero_tu_product_suppression) and
+                @abs(trace_t * trace_u) > threshold_mul,
+        );
 
         if (tu_nonzero) {
+            // instrumentation: trace counters
+            // captures: retained T-U product and full R update work
+            // why: measure when reflectance doubling needs the expensive update.
             Trace.plotU("matrix_smul_tu_nonzero", 1);
             Trace.plotU("matrix_mat_add_esmul3", 1);
             basis.matAddEsmul3ProductKnownNonzeroInto(next_r, n, n_gauss, current_r, E, &U, current_t);
         } else {
+            // instrumentation: trace counter
+            // captures: simplified R update path
+            // why: count cheaper reflectance updates when T-U is negligible.
             Trace.plotU("matrix_mat_add_esmul", 1);
             basis.matAddEsmulInto(next_r, n, current_r, E, &U);
         }
 
+        // instrumentation: trace counter
+        // captures: T-D product gate evaluations
+        // why: count transmission-update product checks after q-series handling.
         Trace.plotU("matrix_smul_td", 1);
-        const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+        const td_nonzero = Perturbation.decision(
+            .qseries_td_product,
+            downstream_coord,
+            !(q_is_zero and thresholds.qzero_td_product_suppression) and
+                @abs(trace_t * trace_d) > threshold_mul,
+        );
+        // instrumentation: calculation telemetry
+        // captures: downstream R-D/T-U/T-D threshold margins
+        // why: record which matrix products were retained after q-zero decisions.
+        Telemetry.labosDoublingDownstreamGates(
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+            q_is_zero,
+            trace_r,
+            trace_t,
+            trace_d,
+            trace_u,
+            threshold_mul,
+            rd_nonzero,
+            tu_nonzero,
+            td_nonzero,
+        );
 
-        if (td_nonzero) {
-            Trace.plotU("matrix_smul_td_nonzero", 1);
-            Trace.plotU("matrix_esmul_semul_add", 1);
-            if (q_is_zero) {
+        if (q_is_zero) {
+            if (td_nonzero) {
+                // instrumentation: trace counters
+                // captures: retained self transmission update under q-zero
+                // why: measure remaining matrix work when Q itself was skipped.
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
                 basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, n, n_gauss, E, current_t);
             } else {
-                basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
+                // instrumentation: trace counter
+                // captures: simplified self transmission update under q-zero
+                // why: count cheaper transmission updates when T-D is negligible.
+                Trace.plotU("matrix_esmul_semul", 1);
+                basis.esmulSemulSelfInto(next_t, n, E, current_t);
             }
         } else {
-            Trace.plotU("matrix_esmul_semul", 1);
-            if (q_is_zero) {
-                basis.esmulSemulSelfInto(next_t, n, E, current_t);
+            if (td_nonzero) {
+                // instrumentation: trace counters
+                // captures: retained transmission update with D product
+                // why: measure matrix work when both Q and T-D are nonzero.
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
+                basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
             } else {
+                // instrumentation: trace counter
+                // captures: simplified transmission update with D
+                // why: count cheaper updates when the final product is negligible.
+                Trace.plotU("matrix_esmul_semul", 1);
                 basis.esmulSemulInto(next_t, n, E, D, current_t);
             }
         }
@@ -369,6 +496,9 @@ fn doDouble(
         next_t = previous_t;
         final_in_scratch = !final_in_scratch;
 
+        // instrumentation: trace counter
+        // captures: attenuation squaring width
+        // why: tie doubling cost to stream dimension.
         Trace.plotU("doubling_square_evals", @intCast(n));
         squareAttenuation(n, E);
     }
@@ -384,12 +514,16 @@ fn doDouble(
 //   work: updates reflection/transmission matrices through fixed-shape q-series products
 //   data: fixed matrix cells, q-series temporaries, precomputed stream geometry
 //   follow: doDouble12x10Step and qseriesFromProduct12x10Into
+//   math: fixed 12x10 doubling applies the same two-sublayer R/T update as doDouble.
 fn doDouble12x10(
     ndouble: usize,
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
 ) void {
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
@@ -399,9 +533,23 @@ fn doDouble12x10(
     var next_t = &t_storage;
     var final_in_scratch = false;
 
-    for (0..ndouble) |_| {
+    for (0..ndouble) |doubling_step_index| {
+        // instrumentation: trace counter
+        // captures: fixed 12x10 layer-doubling iterations
+        // why: count matrix squaring work in the specialized hot path.
         Trace.plotU("doubling_steps", 1);
-        doDouble12x10Step(threshold_mul, current_r, current_t, E, next_r, next_t);
+        doDouble12x10Step(
+            thresholds,
+            current_r,
+            current_t,
+            E,
+            next_r,
+            next_t,
+            i_fourier,
+            layer_index,
+            phase_max_index,
+            doubling_step_index,
+        );
 
         const previous_r = current_r;
         const previous_t = current_t;
@@ -411,6 +559,9 @@ fn doDouble12x10(
         next_t = previous_t;
         final_in_scratch = !final_in_scratch;
 
+        // instrumentation: trace counter
+        // captures: fixed 12x10 attenuation square evaluations
+        // why: tie specialized doubling cost to the full stream width.
         Trace.plotU("doubling_square_evals", basis.max_nmutot);
         squareAttenuation12(E);
     }
@@ -422,22 +573,58 @@ fn doDouble12x10(
 }
 
 inline fn doDouble12x10Step(
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     current_r: *const basis.Mat,
     current_t: *const basis.Mat,
     E: *const basis.Vec,
     next_r: *basis.Mat,
     next_t: *basis.Mat,
+    i_fourier: usize,
+    layer_index: usize,
+    phase_max_index: usize,
+    doubling_step_index: usize,
 ) void {
+    const threshold_mul = thresholds.threshold_mul;
     const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
     const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
-    const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+    // instrumentation: telemetry and perturbation
+    // captures: fixed-size q-series skip decision
+    // why: test the hot 12x10 doubling path without copying matrix payloads.
+    const coord = Perturbation.Coord{
+        .layer_index = @intCast(layer_index),
+        .fourier_index = @intCast(i_fourier),
+        .order_index = @intCast(doubling_step_index),
+    };
+    const q_is_zero = Perturbation.decision(
+        .qseries_skip,
+        coord,
+        @abs(trace_r * trace_r) <= threshold_mul,
+    );
+    // instrumentation: calculation telemetry
+    // captures: fixed-size q-series skip inputs and decision
+    // why: record threshold margins in the specialized hot path.
+    Telemetry.labosDoublingStep(
+        i_fourier,
+        layer_index,
+        phase_max_index,
+        doubling_step_index,
+        trace_r,
+        trace_t,
+        threshold_mul,
+        q_is_zero,
+    );
 
     var d_storage: basis.Mat = undefined;
     const D = if (q_is_zero) blk: {
+        // instrumentation: trace counter
+        // captures: fixed-size q-series products skipped by threshold
+        // why: quantify savings from q-zero specialization.
         Trace.plotU("doubling_qseries_skipped", 1);
         break :blk current_t;
     } else blk: {
+        // instrumentation: trace counters
+        // captures: fixed-size nonzero q-series and matrix-product work
+        // why: connect q-series decisions to retained arithmetic volume.
         Trace.plotU("doubling_qseries_nonzero", 1);
         Trace.plotU("matrix_qseries", 1);
         Trace.plotU("matrix_smul_q_product", 1);
@@ -449,48 +636,126 @@ inline fn doDouble12x10Step(
     };
     const trace_d = if (q_is_zero) trace_t else gaussTrace(basis.max_nmutot, basis.max_gauss, D);
 
+    // instrumentation: trace counter
+    // captures: fixed-size R-D product gate evaluations
+    // why: count downstream product checks after q-series handling.
     Trace.plotU("matrix_smul_rd", 1);
-    const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
+    // instrumentation: telemetry and perturbation
+    // captures: fixed-size downstream product gates
+    // why: count avoidable hot-path matrix products under q-zero conditions.
+    const downstream_coord = Perturbation.Coord{
+        .layer_index = @intCast(layer_index),
+        .fourier_index = @intCast(i_fourier),
+        .order_index = @intCast(doubling_step_index),
+        .branch = if (q_is_zero) 1 else 0,
+    };
+    const rd_nonzero = Perturbation.decision(
+        .qseries_rd_product,
+        downstream_coord,
+        !(q_is_zero and thresholds.qzero_rd_product_suppression) and
+            @abs(trace_r * trace_d) > threshold_mul,
+    );
 
     var U: basis.Mat = undefined;
     if (rd_nonzero) {
+        // instrumentation: trace counters
+        // captures: retained fixed-size R-D product and semul-add work
+        // why: measure matrix products not skipped by downstream gates.
         Trace.plotU("matrix_smul_rd_nonzero", 1);
         Trace.plotU("matrix_semul_add", 1);
         basis.semulAddProductKnownNonzeroInto(&U, basis.max_nmutot, basis.max_gauss, current_r, E, D);
     } else {
+        // instrumentation: trace counter
+        // captures: simplified fixed-size semul path
+        // why: count cheaper fallback operations when R-D is negligible.
         Trace.plotU("matrix_semul", 1);
         basis.semulInto(&U, basis.max_nmutot, current_r, E);
     }
     const trace_u = gaussTrace(basis.max_nmutot, basis.max_gauss, &U);
 
+    // instrumentation: trace counter
+    // captures: fixed-size T-U product gate evaluations
+    // why: count reflectance-update product checks after U construction.
     Trace.plotU("matrix_smul_tu", 1);
-    const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
+    const tu_nonzero = Perturbation.decision(
+        .qseries_tu_product,
+        downstream_coord,
+        !(q_is_zero and thresholds.qzero_tu_product_suppression) and
+            @abs(trace_t * trace_u) > threshold_mul,
+    );
 
     if (tu_nonzero) {
+        // instrumentation: trace counters
+        // captures: retained fixed-size T-U product and R update work
+        // why: measure when reflectance doubling needs the expensive update.
         Trace.plotU("matrix_smul_tu_nonzero", 1);
         Trace.plotU("matrix_mat_add_esmul3", 1);
         basis.matAddEsmul3ProductKnownNonzeroInto(next_r, basis.max_nmutot, basis.max_gauss, current_r, E, &U, current_t);
     } else {
+        // instrumentation: trace counter
+        // captures: simplified fixed-size R update path
+        // why: count cheaper reflectance updates when T-U is negligible.
         Trace.plotU("matrix_mat_add_esmul", 1);
         basis.matAddEsmulInto(next_r, basis.max_nmutot, current_r, E, &U);
     }
 
+    // instrumentation: trace counter
+    // captures: fixed-size T-D product gate evaluations
+    // why: count transmission-update product checks after q-series handling.
     Trace.plotU("matrix_smul_td", 1);
-    const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
+    const td_nonzero = Perturbation.decision(
+        .qseries_td_product,
+        downstream_coord,
+        !(q_is_zero and thresholds.qzero_td_product_suppression) and
+            @abs(trace_t * trace_d) > threshold_mul,
+    );
+    // instrumentation: calculation telemetry
+    // captures: fixed-size downstream product threshold margins
+    // why: record which matrix products were retained after q-zero decisions.
+    Telemetry.labosDoublingDownstreamGates(
+        i_fourier,
+        layer_index,
+        phase_max_index,
+        doubling_step_index,
+        q_is_zero,
+        trace_r,
+        trace_t,
+        trace_d,
+        trace_u,
+        threshold_mul,
+        rd_nonzero,
+        tu_nonzero,
+        td_nonzero,
+    );
 
-    if (td_nonzero) {
-        Trace.plotU("matrix_smul_td_nonzero", 1);
-        Trace.plotU("matrix_esmul_semul_add", 1);
-        if (q_is_zero) {
+    if (q_is_zero) {
+        if (td_nonzero) {
+            // instrumentation: trace counters
+            // captures: retained fixed-size self transmission update under q-zero
+            // why: measure remaining matrix work when Q itself was skipped.
+            Trace.plotU("matrix_smul_td_nonzero", 1);
+            Trace.plotU("matrix_esmul_semul_add", 1);
             basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, current_t);
         } else {
-            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
+            // instrumentation: trace counter
+            // captures: simplified fixed-size self transmission update under q-zero
+            // why: count cheaper transmission updates when T-D is negligible.
+            Trace.plotU("matrix_esmul_semul", 1);
+            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
         }
     } else {
-        Trace.plotU("matrix_esmul_semul", 1);
-        if (q_is_zero) {
-            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
+        if (td_nonzero) {
+            // instrumentation: trace counters
+            // captures: retained fixed-size transmission update with D product
+            // why: measure matrix work when both Q and T-D are nonzero.
+            Trace.plotU("matrix_smul_td_nonzero", 1);
+            Trace.plotU("matrix_esmul_semul_add", 1);
+            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
         } else {
+            // instrumentation: trace counter
+            // captures: simplified fixed-size transmission update with D
+            // why: count cheaper updates when the final product is negligible.
+            Trace.plotU("matrix_esmul_semul", 1);
             basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
         }
     }
@@ -524,6 +789,7 @@ pub fn fillLayerPhaseMaxIndices(
 //   work: scans phase coefficients in reverse order and writes suffix maxima
 //   data: layer phase coefficient arrays, phase max indexes, suffix output array
 //   follow: calcRTlayersIntoWithBasis effective-scattering lookup
+//   math: suffix_m = max_{l>=m} |beta_l|/(2l+1), used as effective scattering strength.
 pub fn fillLayerEffectiveScatteringSuffixes(
     suffixes: []f64,
     layers: []const common.LayerInput,
@@ -547,11 +813,59 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     }
 }
 
+pub const LayerDoublingDecision = struct {
+    start_optical_depth: f64,
+    doubling_count: usize,
+    uses_doubling: bool,
+};
+
+pub fn classifyLayerDoubling(
+    scattering: common.ScatteringMode,
+    threshold_doubl: f64,
+    optical_depth: f64,
+    effective_scattering_coefficient: f64,
+    effective_scattering_depth: f64,
+) LayerDoublingDecision {
+    if (scattering != .multiple or !(effective_scattering_depth > threshold_doubl)) {
+        return .{
+            .start_optical_depth = optical_depth,
+            .doubling_count = 0,
+            .uses_doubling = false,
+        };
+    }
+
+    const ratio = effective_scattering_depth / threshold_doubl;
+    const exponent = math.ilogb(ratio);
+    var count_i32: i32 = if (exponent >= 60) 60 else @max(1, exponent + 1);
+    var count: usize = @intCast(count_i32);
+    var start = math.ldexp(optical_depth, -count_i32);
+
+    while (count > 1) {
+        const previous_count_i32 = count_i32 - 1;
+        const previous_start = math.ldexp(optical_depth, -previous_count_i32);
+        if (effective_scattering_coefficient * previous_start >= threshold_doubl) break;
+        count_i32 = previous_count_i32;
+        count -= 1;
+        start = previous_start;
+    }
+    while (count < 60 and effective_scattering_coefficient * start >= threshold_doubl) {
+        start *= 0.5;
+        count += 1;
+    }
+
+    return .{
+        .start_optical_depth = start,
+        .doubling_count = count,
+        .uses_doubling = true,
+    };
+}
+
 // hot path:
 //   when: for each layer inside each LABOS Fourier term
 //   work: builds phase matrices, effective scattering suffixes, exponentials, single scatter, and doubled RT layers
 //   data: layer optical properties, phase basis, RT layer outputs, doubling workspace
 //   follow: labos.rt_layer trace zones and fixed 12x10 versus dynamic doubling branches
+//   math: layer RT maps tau, omega, phase_l into reflection R and transmission T for each Fourier term.
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -571,10 +885,16 @@ pub fn calcRTlayersIntoWithBasis(
     if (phase_row_valid) |valid| valid[0] = false;
 
     for (0..nlayer) |layer_idx| {
+        // instrumentation: trace counter
+        // captures: layer visits in one Fourier RT-layer build
+        // why: compare active and skipped layer counts during pre-partitioning work.
         Trace.plotU("layer_visits", 1);
         const rt_idx = layer_idx + 1;
         const layer = &layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
+            // instrumentation: trace counter
+            // captures: layers skipped because the Fourier index exceeds storage
+            // why: quantify phase-order pruning before any matrix setup.
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
@@ -586,17 +906,26 @@ pub fn calcRTlayersIntoWithBasis(
         else
             phase.maxIndex();
         if (i_fourier > max_phase_index) {
+            // instrumentation: trace counter
+            // captures: layers skipped by per-layer Fourier phase support
+            // why: quantify savings from layer phase pre-partitioning.
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
+            // instrumentation: trace counter
+            // captures: layers skipped because optical/scattering terms are empty
+            // why: quantify no-op RT layers that can be omitted safely.
             Trace.plotU("layer_skipped_empty_optics", 1);
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_idx, geo.nmutot);
             continue;
         }
 
         var z = z: {
+            // instrumentation: trace zone
+            // captures: phase matrix construction wall time
+            // why: isolate PLM/phase-kernel work before layer scattering decisions.
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_matrix");
             defer zone.end();
             break :z basis.fillZplusZminFromWeightedPhaseLimited(
@@ -609,6 +938,9 @@ pub fn calcRTlayersIntoWithBasis(
                 plm_basis,
             );
         };
+        // instrumentation: trace counter
+        // captures: phase matrix builds
+        // why: count expensive phase-kernel construction after Fourier/layer pruning.
         Trace.plotU("phase_matrix_builds", 1);
         if (phase_row_cache) |cache| {
             cachePhaseKernelViewRow(cache, rt_idx, &z, geo.viewIdx());
@@ -620,6 +952,9 @@ pub fn calcRTlayersIntoWithBasis(
         const a = layer.single_scatter_albedo;
 
         const max_beta_eff = max_beta_eff: {
+            // instrumentation: trace zone
+            // captures: effective scattering suffix computation wall time
+            // why: measure threshold input preparation for layer doubling.
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.effective_scattering");
             defer zone.end();
             if (layer_effective_scattering_suffixes) |suffixes| {
@@ -637,67 +972,115 @@ pub fn calcRTlayersIntoWithBasis(
                 const beta_eff = @abs(phase_coefficient) * phase_odd_reciprocal[ic];
                 if (beta_eff > suffix) suffix = beta_eff;
             }
+            // instrumentation: trace counters
+            // captures: scanned and nonzero phase coefficient terms
+            // why: expose how much phase-support work feeds the doubling threshold.
             Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));
             Trace.plotU("phase_coeff_terms_nonzero", @intCast(nonzero_terms));
             break :max_beta_eff suffix;
         };
-        const a_eff = a * max_beta_eff;
-
-        var use_doubling = false;
-        var b_start = b;
-        var ndouble: usize = 0;
-
-        if (controls.scattering == .multiple and a_eff * b > controls.performance_thresholds.threshold_doubl) {
-            // DECISION:
-            //   Trigger doubling only when the scaled optical thickness crosses
-            //   the configured threshold.
-            use_doubling = true;
-            var bd = b;
-            for (0..60) |_| {
-                bd /= 2.0;
-                ndouble += 1;
-                if (a_eff * bd < controls.performance_thresholds.threshold_doubl) break;
-            }
-            b_start = bd;
-        }
+        const effective_scattering_coefficient = a * max_beta_eff;
+        const effective_scattering_depth = effective_scattering_coefficient * b;
+        // DECISION:
+        //   Trigger doubling only when the scaled optical thickness crosses
+        //   the configured threshold.
+        const doubling_decision = classifyLayerDoubling(
+            controls.scattering,
+            controls.performance_thresholds.threshold_doubl,
+            b,
+            effective_scattering_coefficient,
+            effective_scattering_depth,
+        );
+        // instrumentation: calculation telemetry
+        // captures: layer-doubling threshold inputs
+        // why: explain which layers enter expensive doubling and by how much.
+        Telemetry.labosLayerDecision(
+            i_fourier,
+            layer_idx,
+            max_phase_index,
+            b,
+            a,
+            max_beta_eff,
+            effective_scattering_depth,
+            controls.performance_thresholds.threshold_doubl,
+            doubling_decision.start_optical_depth,
+            doubling_decision.doubling_count,
+            doubling_decision.uses_doubling,
+        );
         const needs_renormalized_phase =
-            use_doubling and i_fourier == 0 and controls.renorm_phase_function;
+            doubling_decision.uses_doubling and i_fourier == 0 and controls.renorm_phase_function;
 
         var E = basis.Vec.zero(geo.nmutot);
         {
+            // instrumentation: trace zone
+            // captures: initial attenuation exponential fill
+            // why: separate exp(-tau/mu) work from scattering matrix setup.
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.initial_exponential");
             defer zone.end();
             for (0..geo.nmutot) |imu| {
-                E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
+                // math: E_mu = exp(-tau_start / mu).
+                E.data[imu] = math.exp(-doubling_decision.start_optical_depth / @max(geo.u[imu], 1.0e-12));
             }
         }
+        // instrumentation: trace counter
+        // captures: number of initial attenuation exponential evaluations
+        // why: tie layer setup cost to stream count.
         Trace.plotU("initial_exp_evals", @intCast(geo.nmutot));
 
         if (needs_renormalized_phase) {
             {
+                // instrumentation: trace zone
+                // captures: zero-Fourier phase renormalization wall time
+                // why: make this optional DISAMAR-parity correction visible.
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
                 defer zone.end();
                 renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
             }
+            // instrumentation: trace counter
+            // captures: phase renormalization executions
+            // why: confirm when the optional correction affects layer setup.
             Trace.plotU("phase_renormalizations", 1);
         }
 
         const layer_rt = &rt[rt_idx];
         {
+            // instrumentation: trace zone
+            // captures: single-scatter R/T construction wall time
+            // why: isolate base layer matrices before optional doubling.
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
             defer zone.end();
             fillSingleScatterR(&layer_rt.R, a, &E, &z.Zmin, geo);
-            fillSingleScatterT(&layer_rt.T, a, b_start, &E, &z.Zplus, geo);
+            fillSingleScatterT(&layer_rt.T, a, doubling_decision.start_optical_depth, &E, &z.Zplus, geo);
         }
+        // instrumentation: trace counters
+        // captures: single-scatter reflection and transmission matrix builds
+        // why: count base layer matrix work before doubling is applied.
         Trace.plotU("single_scatter_r", 1);
         Trace.plotU("single_scatter_t", 1);
 
-        if (use_doubling) {
+        if (doubling_decision.uses_doubling) {
+            // instrumentation: trace counter
+            // captures: layers entering doubling
+            // why: quantify threshold-selected expensive layer work.
             Trace.plotU("doubled_layers", 1);
             {
+                // instrumentation: trace zone
+                // captures: layer doubling wall time
+                // why: isolate repeated matrix squaring from base single scatter setup.
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
-                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, &layer_rt.R, &layer_rt.T, &E);
+                doDouble(
+                    doubling_decision.doubling_count,
+                    geo.nmutot,
+                    geo.n_gauss,
+                    controls.performance_thresholds,
+                    &layer_rt.R,
+                    &layer_rt.T,
+                    &E,
+                    i_fourier,
+                    layer_idx,
+                    max_phase_index,
+                );
             }
         }
 
@@ -751,6 +1134,7 @@ fn cachePhaseKernelViewRow(
 //   work: builds derivative RT layers alongside the base layer matrix path
 //   data: base layer inputs, derivative layer inputs, tangent RT outputs, phase basis
 //   follow: calcRTlayersIntoWithBasis and derivative workspace consumers
+//   math: tangent RT is central difference (RT(x+eps*dx) - RT(x-eps*dx)) / (2eps).
 pub fn calcRTlayersTangentIntoWithBasis(
     rt_tangent: []LayerRT,
     layers: []const common.LayerInput,
@@ -891,6 +1275,7 @@ pub fn fillSurface(
     if (i_fourier == 0) {
         for (0..n) |j| {
             for (0..n) |i| {
+                // math: Lambertian boundary R_ij = w_i * albedo * w_j for the zero Fourier term.
                 result.R.set(i, j, geo.w[i] * albedo * geo.w[j]);
             }
         }

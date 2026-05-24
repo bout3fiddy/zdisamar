@@ -4,6 +4,9 @@ const ztracy = @import("ztracy");
 
 const SourceLocation = std.builtin.SourceLocation;
 
+// instrumentation: ztracy facade
+// captures: phase zones, counters, and frames
+// why: compile timeline tracing out of normal builds.
 pub const enabled: bool = if (@hasDecl(build_options, "enable_ztracy"))
     build_options.enable_ztracy
 else
@@ -38,11 +41,17 @@ pub const Zone = if (enabled) struct {
     }
 };
 
+// instrumentation: trace zone
+// captures: elapsed phase lifetime
+// why: show which named model phase owns wall time.
 pub inline fn staticZone(comptime src: SourceLocation, comptime name: [*:0]const u8) Zone {
     if (!enabled) return .{};
     return .{ .ctx = ztracy.ZoneN(src, name) };
 }
 
+// instrumentation: trace zones
+// captures: nested work boundaries
+// why: separate setup, optical preparation, RTM, and OE phases in Tracy.
 pub inline fn deepStaticZone(comptime src: SourceLocation, comptime name: [*:0]const u8) Zone {
     return staticZone(src, name);
 }
@@ -62,6 +71,9 @@ pub inline fn setThreadName(name: [*:0]const u8) void {
     if (enabled) ztracy.SetThreadName(name);
 }
 
+// instrumentation: trace markers
+// captures: frame/message/counter signals
+// why: align runs and count hot-loop events inside a timeline capture.
 pub inline fn frameMark() void {
     if (enabled) ztracy.FrameMark();
 }

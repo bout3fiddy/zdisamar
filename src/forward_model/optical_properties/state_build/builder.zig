@@ -23,6 +23,9 @@ pub fn prepare(
     inputs: PreparationInputs,
 ) !State.PreparedOpticalState {
     var context = context: {
+        // instrumentation: trace zone
+        // captures: optical preparation context initialization
+        // why: separate input-owned setup from absorber and layer construction.
         const zone = Trace.staticZone(@src(), "optical_prepare.context_init");
         defer zone.end();
         break :context try Context.init(allocator, scene, inputs);
@@ -30,6 +33,9 @@ pub fn prepare(
     defer context.deinit(allocator);
 
     var absorber_state = absorber_state: {
+        // instrumentation: trace zone
+        // captures: absorber preparation wall time
+        // why: isolate spectroscopy and cross-section setup before layer accumulation.
         const zone = Trace.staticZone(@src(), "optical_prepare.absorbers_build");
         defer zone.end();
         break :absorber_state try Absorbers.build(allocator, &context);
@@ -37,12 +43,18 @@ pub fn prepare(
     defer absorber_state.deinit(allocator);
 
     const accumulation = accumulation: {
+        // instrumentation: trace zone
+        // captures: layer accumulation wall time
+        // why: show cost of reducing atmospheric/spectroscopy data into RTM layers.
         const zone = Trace.staticZone(@src(), "optical_prepare.accumulation");
         defer zone.end();
         break :accumulation try Accumulation.accumulate(allocator, &context, &absorber_state);
     };
 
     var prepared = prepared: {
+        // instrumentation: trace zone
+        // captures: prepared optical-state finalization wall time
+        // why: separate final data-layout assembly from physical layer accumulation.
         const zone = Trace.staticZone(@src(), "optical_prepare.finalize");
         defer zone.end();
         break :prepared Finalize.assemble(&context, &absorber_state, accumulation);
@@ -50,6 +62,9 @@ pub fn prepare(
     errdefer prepared.deinit(allocator);
 
     {
+        // instrumentation: trace zone
+        // captures: shared RTM geometry cache construction
+        // why: distinguish reusable geometry setup from wavelength-dependent optical work.
         const zone = Trace.staticZone(@src(), "optical_prepare.shared_geometry");
         defer zone.end();
         try prepared.ensureSharedRtmGeometryCache(allocator);

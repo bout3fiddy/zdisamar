@@ -7,8 +7,13 @@ const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// instrumentation: LABOS execute
+// captures: Fourier zones, contribution telemetry, and perturbation hooks
+// why: explain which Fourier/tangent work can be timed, measured, or ablated.
 const math = std.math;
 const Geometry = basis.Geometry;
 const LayerRT = basis.LayerRT;
@@ -59,7 +64,9 @@ fn directSurfaceOnly(
 ) DirectSurfaceOnlyComputation {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
+    // math: direct path = exp(-tau/mu0) * exp(-tau/muv).
     const direct = math.exp(-input.optical_depth / mu0) * math.exp(-input.optical_depth / muv);
+    // math: direct surface reflectance = surface_albedo * direct path, clamped to [0, 2].
     const reflectance = input.surface_albedo * direct;
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
@@ -112,7 +119,9 @@ fn directSurfaceOnlyResolvedWithWorkspace(
     var upward_path: f64 = 1.0;
     for (1..input.layers.len + 1) |ilevel| upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
 
+    // math: layer-resolved direct surface path = T_sun(top->surface) * product_l T_view(l-1->l).
     const path = atten.get(solar_idx, input.layers.len, 0) * upward_path;
+    // math: R_direct = surface.R(view, sun) * path.
     const reflectance = surface.R.get(view_idx, solar_idx) * path;
     const surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0) blk: {
         const surface_derivative = fillSurface(0, 1.0, geo);
@@ -188,6 +197,7 @@ pub fn executeWithWorkspace(
 //   work: loops Fourier terms through phase basis, RT layer build, scattering orders, reflectance, and Jacobians
 //   data: layer inputs, attenuation arrays, RT matrices, order workspace, reflectance/Jacobian buffers
 //   follow: labos.fourier_loop trace zones and calcRTlayers/ordersScat/calcIntegratedReflectance calls
+//   math: rho = sum_m c_m rho_m, c_0=1 and c_m=2*cos(m*relative_azimuth) for m>0
 fn layerResolvedLabosWithWorkspace(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -308,13 +318,22 @@ fn layerResolvedLabosWithWorkspace(
     for (0..fourier_max + 1) |i_fourier| {
         var stop_fourier_loop = false;
         {
+            // instrumentation: trace zone
+            // captures: one LABOS Fourier term wall time and index
+            // why: expose which Fourier orders dominate reflectance and tangent work.
             const fourier_zone = Trace.deepStaticZone(@src(), "labos.fourier_loop");
             fourier_zone.value(@intCast(i_fourier));
             defer fourier_zone.end();
 
+            // instrumentation: trace counter
+            // captures: evaluated Fourier term count
+            // why: compare threshold pruning against actual term count.
             Trace.plotU("fourier_terms", 1);
             var owned_plm_basis: basis.FourierPlmBasis = undefined;
             const plm_basis = plm_basis: {
+                // instrumentation: trace zone
+                // captures: PLM basis preparation wall time
+                // why: separate Fourier basis setup from RT layer and order propagation.
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
                 break :plm_basis if (workspace) |scratch| blk: {
@@ -325,6 +344,9 @@ fn layerResolvedLabosWithWorkspace(
                 };
             };
             {
+                // instrumentation: trace zone
+                // captures: per-Fourier RT layer construction wall time
+                // why: isolate phase matrix/layer doubling cost before order propagation.
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer_build");
                 defer zone.end();
                 calcRTlayersIntoWithBasis(
@@ -345,6 +367,9 @@ fn layerResolvedLabosWithWorkspace(
             rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
             if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
             const orders_result = orders_result: {
+                // instrumentation: trace zone
+                // captures: scattering-order propagation wall time
+                // why: keep multiple-scattering transport separate from layer setup.
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
                 break :orders_result if (use_integrated_source) blk: {
@@ -406,6 +431,9 @@ fn layerResolvedLabosWithWorkspace(
                 };
             };
             const refl_fc = refl_fc: {
+                // instrumentation: trace zone
+                // captures: reflectance integral wall time
+                // why: separate order-field integration from Fourier loop setup.
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
                 defer zone.end();
                 break :refl_fc if (use_integrated_source)
@@ -429,14 +457,31 @@ fn layerResolvedLabosWithWorkspace(
                 1.0
             else
                 2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-            reflectance += fourier_weight * refl_fc;
+            // math: accumulate Fourier contribution rho += c_m * rho_m.
+            // instrumentation: perturbation
+            // captures: c_m * rho_m before adding it to total reflectance
+            // why: test whether late Fourier terms can be pruned by tolerance.
+            const fourier_coord = Perturbation.Coord{ .fourier_index = @intCast(i_fourier) };
+            const weighted_reflectance = Perturbation.scalar(
+                .fourier_weighted_reflectance,
+                fourier_coord,
+                fourier_weight * refl_fc,
+            );
+            reflectance += weighted_reflectance;
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
+            const evaluate_aerosol_tangent =
+                controls.performance_thresholds.shouldEvaluateAerosolTangent(i_fourier);
+            const wants_aod_tangent = wants_aerosol_optical_depth and evaluate_aerosol_tangent;
+            const wants_pressure_tangent = wants_aerosol_layer_mid_pressure and evaluate_aerosol_tangent;
             const use_paired_aerosol_weighting =
-                use_integrated_source and wants_aerosol_optical_depth and wants_aerosol_layer_mid_pressure;
+                use_integrated_source and wants_aod_tangent and wants_pressure_tangent;
             if (use_paired_aerosol_weighting) {
                 const tangent_refl_fc = tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: paired aerosol tangent weighting wall time
+                    // why: quantify derivative work shared by AOD and pressure states.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aerosol_weighting");
                     defer zone.end();
                     break :tangent_refl_fc calcAerosolDerivativeWeightingWithBasis(
@@ -451,10 +496,30 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     );
                 };
-                aerosol_optical_depth_tangent += fourier_weight * tangent_refl_fc.aerosol_optical_depth;
-                aerosol_layer_mid_pressure_tangent += fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa;
-            } else if (wants_aerosol_optical_depth) {
+                // instrumentation: perturbation
+                // captures: paired aerosol derivative Fourier contributions
+                // why: test whether OE can ignore late tangent terms.
+                aerosol_optical_depth_tangent += Perturbation.scalar(
+                    .aerosol_aod_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_optical_depth)),
+                    },
+                    fourier_weight * tangent_refl_fc.aerosol_optical_depth,
+                );
+                aerosol_layer_mid_pressure_tangent += Perturbation.scalar(
+                    .aerosol_pressure_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_layer_mid_pressure_hpa)),
+                    },
+                    fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa,
+                );
+            } else if (wants_aod_tangent) {
                 const tangent_refl_fc = tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: aerosol optical-depth tangent weighting wall time
+                    // why: isolate derivative work for the AOD retrieval state.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
                     defer zone.end();
                     break :tangent_refl_fc if (use_integrated_source)
@@ -486,10 +551,23 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
-                aerosol_optical_depth_tangent += fourier_weight * tangent_refl_fc;
+                // instrumentation: perturbation
+                // captures: AOD derivative Fourier contribution
+                // why: test whether late AOD tangent work changes retrieval output.
+                aerosol_optical_depth_tangent += Perturbation.scalar(
+                    .aerosol_aod_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_optical_depth)),
+                    },
+                    fourier_weight * tangent_refl_fc,
+                );
             }
-            if (!use_paired_aerosol_weighting and wants_aerosol_layer_mid_pressure) {
+            if (!use_paired_aerosol_weighting and wants_pressure_tangent) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: aerosol pressure tangent weighting wall time
+                    // why: isolate derivative work for pressure-placement retrieval.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
                     defer zone.end();
                     break :pressure_tangent_refl_fc if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
@@ -519,11 +597,40 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
-                aerosol_layer_mid_pressure_tangent += fourier_weight * pressure_tangent_refl_fc;
+                // instrumentation: perturbation
+                // captures: aerosol-pressure derivative Fourier contribution
+                // why: test whether late pressure tangent work changes retrieval output.
+                aerosol_layer_mid_pressure_tangent += Perturbation.scalar(
+                    .aerosol_pressure_tangent,
+                    .{
+                        .fourier_index = @intCast(i_fourier),
+                        .state_index = @intCast(@intFromEnum(jacobian.State.aerosol_layer_mid_pressure_hpa)),
+                    },
+                    fourier_weight * pressure_tangent_refl_fc,
+                );
             }
-            if (i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
-                @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon)
-            {
+            // instrumentation: telemetry and perturbation
+            // captures: Fourier tail-stop decision and term magnitude
+            // why: compare current convergence threshold against forced early stops.
+            const tail_break_base =
+                i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
+                @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon;
+            const tail_break = Perturbation.decision(.fourier_tail_break, fourier_coord, tail_break_base);
+            // instrumentation: calculation telemetry
+            // captures: Fourier contribution size and tail-break decision
+            // why: compare tolerance pruning against each retained term.
+            Telemetry.fourierContribution(
+                i_fourier,
+                fourier_weight,
+                refl_fc,
+                weighted_reflectance,
+                controls.performance_thresholds.fourier_tail_reflectance_epsilon,
+                tail_break,
+            );
+            if (tail_break) {
+                // instrumentation: trace counter
+                // captures: Fourier tail breaks
+                // why: validate the tail-pruning threshold against observed exits.
                 Trace.plotU("fourier_tail_breaks", 1);
                 stop_fourier_loop = true;
             }
@@ -532,6 +639,9 @@ fn layerResolvedLabosWithWorkspace(
     }
 
     const result_jacobian = result_jacobian: {
+        // instrumentation: trace zone
+        // captures: final LABOS Jacobian assembly wall time
+        // why: distinguish derivative vector packing from Fourier/tangent evaluation.
         const zone = Trace.deepStaticZone(@src(), "labos.reflectance.jacobian_assembly");
         defer zone.end();
         var assembled = jacobian.zero();
@@ -540,8 +650,17 @@ fn layerResolvedLabosWithWorkspace(
         jacobian.set(&assembled, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
         break :result_jacobian assembled;
     };
+    const clamped_reflectance = math.clamp(reflectance, 0.0, 2.0);
+    // instrumentation: calculation telemetry
+    // captures: final raw/clamped reflectance and Jacobian norm
+    // why: find suspicious outputs or derivative-negligible samples.
+    if (Telemetry.enabled) {
+        var jacobian_norm1: f64 = 0.0;
+        for (result_jacobian) |value| jacobian_norm1 += @abs(value);
+        Telemetry.labosResult(reflectance, clamped_reflectance, jacobian_norm1);
+    }
     return .{
-        .reflectance = math.clamp(reflectance, 0.0, 2.0),
+        .reflectance = clamped_reflectance,
         .jacobian = result_jacobian,
     };
 }
@@ -551,6 +670,7 @@ fn layerResolvedLabosWithWorkspace(
 //   work: builds derivative attenuation, RT layers, scattering orders, and reflectance outputs
 //   data: tangent work arrays, base layers, derivative layers, attenuation tangent storage
 //   follow: calcRTlayersTangentIntoWithBasis and ordersScatTangent
+//   math: d rho/dx follows linearized attenuation, layer RT, order propagation, and final reflectance extraction.
 fn nonIntegratedReflectanceTangent(
     allocator: std.mem.Allocator,
     layers: []const common.LayerInput,
@@ -604,6 +724,7 @@ fn nonIntegratedReflectanceTangent(
 //   work: runs Fourier phase setup, single-layer scattering orders, and reflectance integration
 //   data: one-layer input, phase basis workspace, order buffers, reflectance result
 //   follow: phase_basis row/matrix builders and ordersScat single-layer path
+//   math: one-layer rho uses the same Fourier sum c_m rho_m with a single optical layer and surface boundary.
 fn singleLayerLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
@@ -699,5 +820,6 @@ fn surfaceAlbedoWeightingFunction(
     }
     const view_direct = ud[surface_level].E.get(geo.viewIdx());
     const solar_direct = ud[surface_level].E.get(geo.n_gauss + 1);
+    // math: d rho/d albedo = (E_view + integral D_view dmu) * (E_sun + integral D_sun dmu).
     return (view_direct + diffuse_view) * (solar_direct + diffuse_solar);
 }

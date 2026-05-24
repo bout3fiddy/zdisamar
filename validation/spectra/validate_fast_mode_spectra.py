@@ -196,16 +196,22 @@ def residual_over_noise(residual: np.ndarray, noise: np.ndarray) -> np.ndarray:
     return residual / np.maximum(noise, np.finfo(np.float64).tiny)
 
 
-def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
+def fast_mode_overrides() -> dict[str, dict[str, float | int | bool | None]]:
 
     fast = o2a.RadiativeTransferPerformanceThresholds.fast()
-    adaptive_grid: dict[str, float | int | None] = dict(o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID)
+    adaptive_grid: dict[str, float | int | bool | None] = dict(
+        o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID
+    )
 
     return {
         "radiative_transfer": {
             "fourier_order_cap": fast.fourier_order_cap,
+            "aerosol_tangent_order_cap": fast.aerosol_tangent_order_cap,
             "fourier_tail_reflectance_epsilon": fast.fourier_tail_reflectance_epsilon,
             "threshold_doubl": fast.threshold_doubl,
+            "qzero_rd_product_suppression": fast.qzero_rd_product_suppression,
+            "qzero_tu_product_suppression": fast.qzero_tu_product_suppression,
+            "qzero_td_product_suppression": fast.qzero_td_product_suppression,
         },
         "adaptive_reference_grid": adaptive_grid,
     }

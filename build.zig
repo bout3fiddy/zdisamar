@@ -52,9 +52,32 @@ pub fn build(b: *std.Build) void {
         "enable-ztracy",
         "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
-
+    // instrumentation: build gates
+    // captures: opt-in trace/telemetry wiring
+    // why: keep research sinks out of product builds.
     const ztracy_stub_module = b.createModule(.{
         .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const calculation_telemetry_stub_module = b.createModule(.{
+        .root_source_file = b.path("src/forward_model/calculation_telemetry_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const perturbation_sensitivity_stub_module = b.createModule(.{
+        .root_source_file = b.path("src/forward_model/perturbation_sensitivity_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const calculation_telemetry_sink_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/calculation_telemetry_sink.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const perturbation_sensitivity_sink_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/perturbation_sensitivity_sink.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -77,15 +100,33 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
     build_options.addOption(bool, "enable_ztracy", false);
+    build_options.addOption(bool, "enable_calculation_telemetry", false);
+    build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const build_options_module = build_options.createModule();
 
-    // Boundary: shipped library/CLI modules always receive the stub trace module
-    // and enable_ztracy=false. Only explicit validation trace executables below
-    // use trace_build_options, so profiling never changes the product build.
+    // instrumentation: product boundary
+    // captures: disabled facades only
+    // why: compile tracing, telemetry, and perturbation away unless a research target opts in.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
+    trace_build_options.addOption(bool, "enable_calculation_telemetry", false);
+    trace_build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const trace_build_options_module = trace_build_options.createModule();
+
+    const calculation_telemetry_build_options = b.addOptions();
+    calculation_telemetry_build_options.addOption(bool, "enable_test_support", false);
+    calculation_telemetry_build_options.addOption(bool, "enable_ztracy", false);
+    calculation_telemetry_build_options.addOption(bool, "enable_calculation_telemetry", true);
+    calculation_telemetry_build_options.addOption(bool, "enable_perturbation_sensitivity", false);
+    const calculation_telemetry_build_options_module = calculation_telemetry_build_options.createModule();
+
+    const perturbation_sensitivity_build_options = b.addOptions();
+    perturbation_sensitivity_build_options.addOption(bool, "enable_test_support", false);
+    perturbation_sensitivity_build_options.addOption(bool, "enable_ztracy", false);
+    perturbation_sensitivity_build_options.addOption(bool, "enable_calculation_telemetry", false);
+    perturbation_sensitivity_build_options.addOption(bool, "enable_perturbation_sensitivity", true);
+    const perturbation_sensitivity_build_options_module = perturbation_sensitivity_build_options.createModule();
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -100,6 +141,14 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "ztracy",
                 .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_stub_module,
             },
         },
     });
@@ -127,6 +176,14 @@ pub fn build(b: *std.Build) void {
                 .name = "ztracy",
                 .module = ztracy_stub_module,
             },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_stub_module,
+            },
         },
     });
     const c_api_lib = b.addLibrary(.{
@@ -153,6 +210,14 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "ztracy",
                 .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_stub_module,
             },
         },
     });
@@ -196,6 +261,14 @@ pub fn build(b: *std.Build) void {
                         .{
                             .name = "ztracy",
                             .module = ztracy_stub_module,
+                        },
+                        .{
+                            .name = "calculation_telemetry_sink",
+                            .module = calculation_telemetry_stub_module,
+                        },
+                        .{
+                            .name = "perturbation_sensitivity_sink",
+                            .module = perturbation_sensitivity_stub_module,
                         },
                     },
                 }),
@@ -271,6 +344,14 @@ pub fn build(b: *std.Build) void {
                             .name = "ztracy",
                             .module = ztracy_stub_module,
                         },
+                        .{
+                            .name = "calculation_telemetry_sink",
+                            .module = calculation_telemetry_stub_module,
+                        },
+                        .{
+                            .name = "perturbation_sensitivity_sink",
+                            .module = perturbation_sensitivity_stub_module,
+                        },
                     },
                 }),
             },
@@ -297,8 +378,19 @@ pub fn build(b: *std.Build) void {
                 .name = "ztracy",
                 .module = trace_ztracy_module,
             },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_stub_module,
+            },
         },
     });
+    // instrumentation: ztracy timeline
+    // captures: nested forward/OE phase zones
+    // why: inspect timing shape without changing normal builds.
     const labos_bottleneck_trace_module = b.createModule(.{
         .root_source_file = b.path("src/validation/performance/labos_bottleneck_trace_cli.zig"),
         .target = target,
@@ -371,6 +463,113 @@ pub fn build(b: *std.Build) void {
     );
     optimal_estimation_trace_bin_step.dependOn(&optimal_estimation_trace_install.step);
 
+    // instrumentation: calculation telemetry
+    // captures: expression rows to Parquet
+    // why: study numeric dataflow and pruning thresholds offline.
+    const calculation_telemetry_internal_module = b.createModule(.{
+        .root_source_file = b.path("src/internal.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = calculation_telemetry_build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_sink_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_stub_module,
+            },
+        },
+    });
+    const calculation_telemetry_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/calculation_telemetry_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = calculation_telemetry_internal_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_sink_module,
+            },
+        },
+    });
+    const calculation_telemetry_exe = b.addExecutable(.{
+        .name = "calculation-telemetry",
+        .root_module = calculation_telemetry_module,
+    });
+    calculation_telemetry_exe.root_module.linkSystemLibrary("z", .{});
+    const run_calculation_telemetry = b.addRunArtifact(calculation_telemetry_exe);
+    if (b.args) |args| run_calculation_telemetry.addArgs(args);
+    const calculation_telemetry_step = b.step(
+        "calculation-telemetry",
+        "Run the O2A calculation telemetry staging harness",
+    );
+    calculation_telemetry_step.dependOn(&run_calculation_telemetry.step);
+
+    // instrumentation: perturbation sensitivity
+    // captures: final-output deltas and changed hook counts
+    // why: test pruning ideas without product code paths.
+    const perturbation_sensitivity_internal_module = b.createModule(.{
+        .root_source_file = b.path("src/internal.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = perturbation_sensitivity_build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_stub_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_sink_module,
+            },
+        },
+    });
+    const perturbation_sensitivity_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/perturbation_sensitivity_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = perturbation_sensitivity_internal_module,
+            },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = perturbation_sensitivity_sink_module,
+            },
+        },
+    });
+    const perturbation_sensitivity_exe = b.addExecutable(.{
+        .name = "perturbation-sensitivity",
+        .root_module = perturbation_sensitivity_module,
+    });
+    const run_perturbation_sensitivity = b.addRunArtifact(perturbation_sensitivity_exe);
+    if (b.args) |args| run_perturbation_sensitivity.addArgs(args);
+    const perturbation_sensitivity_step = b.step(
+        "perturbation-sensitivity",
+        "Run the O2A perturbation sensitivity research harness",
+    );
+    perturbation_sensitivity_step.dependOn(&run_perturbation_sensitivity.step);
+
     const fmt_check_cmd = b.addFmt(.{
         .check = true,
         .paths = &.{ "build.zig", "src", "tests", "scripts" },
@@ -432,6 +631,8 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
+    check_step.dependOn(&calculation_telemetry_exe.step);
+    check_step.dependOn(&perturbation_sensitivity_exe.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_internal_tests.step);
 

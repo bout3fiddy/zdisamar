@@ -6,6 +6,7 @@ pub const Error = error{
 //   when: radiance, irradiance, or active Jacobian columns use slit convolution
 //   work: applies edge-normalized samples plus a SIMD full-kernel interior
 //   data: signal array, kernel weights, output array
+//   math: output_i = sum_j signal_{i+j-half_width} * kernel_j / sum_j kernel_j, with boundary j clipped to valid signal samples
 //   follow: simulate radiance/irradiance convolution and processJacobianSamples
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
@@ -51,6 +52,7 @@ fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: 
     const Vec2 = @Vector(2, f64);
     var vector_sum: Vec2 = @splat(0.0);
     var kernel_index: usize = 0;
+    // math: vector lanes accumulate dot(signal_window, kernel) before scalar normalization by norm.
     while (kernel_index + 2 <= kernel.len) : (kernel_index += 2) {
         vector_sum = @mulAdd(
             Vec2,

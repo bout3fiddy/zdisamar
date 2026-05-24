@@ -7,15 +7,12 @@ that another Fourier term, multiple-scattering order, layer-doubling step, or
 small matrix product is no longer worth evaluating.
 
 The default O2 A thresholds are the reference-grade settings used by validation.
-The `fast()` preset returns the O2 A defaults plus the current fast override.
-For an existing case, prefer `performance_thresholds.with_fast_mode()` so
-scene- or validation-family-specific thresholds are preserved while the fast
-override is applied.  The fast override currently combines the Fourier-tail
-threshold with a Fourier-order cap and a looser layer-doubling threshold.  In
-the retained spectra sweep, that preset is about `0.37 s` faster per spectrum
-on average while staying under roughly `5e-4` reflectance residual.
-The higher-level O2 A fast mode also applies O2 A adaptive-reference-grid
-settings; that combined preset is the user-facing speed mode.
+The `fast()` preset returns the O2 A defaults plus the current aggressive fast
+override.  For an existing case, prefer
+`performance_thresholds.with_fast_mode()` so scene- or validation-family-specific
+thresholds are preserved while the speed/accuracy override is applied.  The
+higher-level O2 A fast mode also applies O2 A adaptive-reference-grid settings;
+that combined preset is the user-facing speed mode.
 
 Threshold guide:
 
@@ -41,6 +38,14 @@ Threshold guide:
   fast preset uses `5`; in the retained four-scene spectra sweep this was the
   main contributor to the speedup while keeping the worst reflectance residual
   below `5e-4` when combined with the layer-doubling override.
+
+- `aerosol_tangent_order_cap`: a hard maximum Fourier order for aerosol AOD and
+  aerosol-pressure tangent weighting functions, or `None` to evaluate every
+  active order.  The perturbation sweep found orders `>=12` to be near-neutral,
+  so the O2 A fast preset uses `11`.  With the current generic Fourier cap of
+  `5`, this is mainly a centrally exposed custom-fast-mode knob; it becomes
+  active when callers relax the full Fourier cap but still want to skip
+  high-order tangent work.
 
 - `num_orders_max`: the hard cap on multiple-scattering order iterations inside
   each Fourier term.  `0` keeps the optical-depth-derived default; any explicit
@@ -75,6 +80,15 @@ Threshold guide:
   `1e-8`.  This looked unsafe as a broad fast-mode control: even `3e-8`
   produced about `2.3e-5` worst reflectance residual in the sweep.
 
+- `qzero_*_product_suppression`: when the layer-doubling q-series gate has
+  already decided `qseries_is_zero = abs(trace(R)^2) <= threshold_mul`, these
+  booleans suppress the downstream `R-D`, `T-U`, and `T-D` product paths for the
+  same doubling step.  The perturbation sweep found this much safer than forcing
+  the q-series skip itself, but each downstream suppression crossed the retained
+  fast-mode spectra residual contract when combined with the existing Fourier
+  and layer-doubling preset.  These are therefore custom-fast-mode controls, not
+  part of the default O2 A fast preset.
+
 - `phase_function_truncation_threshold`: controls how much aerosol
   phase-function structure is retained before the radiative-transfer solve.
   It must be finite and positive; the O2 A default is `1e-8`.  It affects the
@@ -84,7 +98,7 @@ Threshold guide:
 """
 
 from dataclasses import dataclass, replace
-from typing import Self
+from typing import ClassVar, Self
 
 from .shared import object_dict, to_bool, to_float, to_int
 
@@ -93,15 +107,24 @@ from .shared import object_dict, to_bool, to_float, to_int
 class RadiativeTransferPerformanceThresholds:
     """Accuracy and speed thresholds for the LABOS radiative-transfer solve."""
 
+    FAST_FOURIER_ORDER_CAP: ClassVar[int] = 5
+    FAST_AEROSOL_TANGENT_ORDER_CAP: ClassVar[int] = 11
+    FAST_FOURIER_TAIL_REFLECTANCE_EPSILON: ClassVar[float] = 1.0e-11
+    FAST_THRESHOLD_DOUBL: ClassVar[float] = 3.0e-5
+
     num_orders_max: int
     fourier_floor_scalar: int
     fourier_order_cap: int | None
+    aerosol_tangent_order_cap: int | None
     fourier_tail_reflectance_epsilon: float
     threshold_conv_first: float
     threshold_conv_mult: float
     threshold_doubl: float
     threshold_mul: float
     phase_function_truncation_threshold: float = 1.0e-8
+    qzero_rd_product_suppression: bool = False
+    qzero_tu_product_suppression: bool = False
+    qzero_td_product_suppression: bool = False
 
     @classmethod
     def o2a_default(cls) -> Self:
@@ -111,6 +134,7 @@ class RadiativeTransferPerformanceThresholds:
             num_orders_max=0,
             fourier_floor_scalar=2,
             fourier_order_cap=None,
+            aerosol_tangent_order_cap=None,
             fourier_tail_reflectance_epsilon=3.0e-14,
             threshold_conv_first=1.5e-7,
             threshold_conv_mult=1.5e-9,
@@ -124,9 +148,10 @@ class RadiativeTransferPerformanceThresholds:
         """Return the validated O2 A speed/accuracy threshold bundle."""
 
         thresholds = cls.o2a_default()
-        thresholds.fourier_order_cap = 5
-        thresholds.fourier_tail_reflectance_epsilon = 1.0e-11
-        thresholds.threshold_doubl = 3.0e-5
+        thresholds.fourier_order_cap = cls.FAST_FOURIER_ORDER_CAP
+        thresholds.aerosol_tangent_order_cap = cls.FAST_AEROSOL_TANGENT_ORDER_CAP
+        thresholds.fourier_tail_reflectance_epsilon = cls.FAST_FOURIER_TAIL_REFLECTANCE_EPSILON
+        thresholds.threshold_doubl = cls.FAST_THRESHOLD_DOUBL
 
         return thresholds
 
@@ -136,14 +161,19 @@ class RadiativeTransferPerformanceThresholds:
         This preserves case-specific threshold choices, such as a validation
         family's phase-function truncation threshold, and changes only the
         broadly validated speed knobs.  The current fast preset applies the
-        Fourier-order cap, Fourier-tail reflectance epsilon, and layer-doubling
-        threshold used by `fast()`.
+        Fourier-order cap, aerosol tangent cap, Fourier-tail reflectance
+        epsilon, layer-doubling threshold, and q-zero downstream product
+        suppression flags defined by `fast()`.
         """
         thresholds = replace(self)
         fast = type(self).fast()
         thresholds.fourier_order_cap = fast.fourier_order_cap
+        thresholds.aerosol_tangent_order_cap = fast.aerosol_tangent_order_cap
         thresholds.fourier_tail_reflectance_epsilon = fast.fourier_tail_reflectance_epsilon
         thresholds.threshold_doubl = fast.threshold_doubl
+        thresholds.qzero_rd_product_suppression = fast.qzero_rd_product_suppression
+        thresholds.qzero_tu_product_suppression = fast.qzero_tu_product_suppression
+        thresholds.qzero_td_product_suppression = fast.qzero_td_product_suppression
 
         return thresholds
 
@@ -156,6 +186,11 @@ class RadiativeTransferPerformanceThresholds:
             fourier_order_cap=(
                 None if data.get("fourier_order_cap") is None else to_int(data["fourier_order_cap"])
             ),
+            aerosol_tangent_order_cap=(
+                None
+                if data.get("aerosol_tangent_order_cap") is None
+                else to_int(data["aerosol_tangent_order_cap"])
+            ),
             fourier_tail_reflectance_epsilon=to_float(data["fourier_tail_reflectance_epsilon"]),
             threshold_conv_first=to_float(data["threshold_conv_first"]),
             threshold_conv_mult=to_float(data["threshold_conv_mult"]),
@@ -164,20 +199,27 @@ class RadiativeTransferPerformanceThresholds:
             phase_function_truncation_threshold=to_float(
                 data.get("phase_function_truncation_threshold", 1.0e-8)
             ),
+            qzero_rd_product_suppression=to_bool(data.get("qzero_rd_product_suppression", False)),
+            qzero_tu_product_suppression=to_bool(data.get("qzero_tu_product_suppression", False)),
+            qzero_td_product_suppression=to_bool(data.get("qzero_td_product_suppression", False)),
         )
 
-    def to_dict(self) -> dict[str, float | int | None]:
+    def to_dict(self) -> dict[str, float | int | bool | None]:
 
         return {
             "num_orders_max": self.num_orders_max,
             "fourier_floor_scalar": self.fourier_floor_scalar,
             "fourier_order_cap": self.fourier_order_cap,
+            "aerosol_tangent_order_cap": self.aerosol_tangent_order_cap,
             "fourier_tail_reflectance_epsilon": self.fourier_tail_reflectance_epsilon,
             "threshold_conv_first": self.threshold_conv_first,
             "threshold_conv_mult": self.threshold_conv_mult,
             "threshold_doubl": self.threshold_doubl,
             "threshold_mul": self.threshold_mul,
             "phase_function_truncation_threshold": self.phase_function_truncation_threshold,
+            "qzero_rd_product_suppression": self.qzero_rd_product_suppression,
+            "qzero_tu_product_suppression": self.qzero_tu_product_suppression,
+            "qzero_td_product_suppression": self.qzero_td_product_suppression,
         }
 
 

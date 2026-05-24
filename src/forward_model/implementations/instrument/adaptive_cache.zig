@@ -40,6 +40,7 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
     if (!cache.ready) return false;
 
     var sample_count: usize = 0;
+    // math: cached plan reuses interval boundaries; nominal lambda only shifts response weights and final offsets.
     if (!adaptive_plan.appendAdaptiveSamplesFromPlan(
         &cache.plan,
         response,

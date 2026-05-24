@@ -5,6 +5,7 @@ const calibration = @import("../spectral_math/calibration.zig");
 //   work: applies the scene-level calibration gain/offset and stray-light scalar
 //   data: signal array and calibration scalar fields
 //   follow: spectral_math.calibration applySignal
+//   math: y'_i = gain * (y_i + stray_light * (mean(y) - y_i)) + offset for calibrated channel samples
 pub fn applyChannelCorrections(
     calibration_config: calibration.Calibration,
     signal: []f64,
@@ -17,6 +18,7 @@ pub fn applyChannelCorrections(
 //   work: applies derivative-compatible gain/stray-light calibration column by column
 //   data: one Jacobian column and calibration scalar fields
 //   follow: simulate.processJacobianSamples and calibration.applySignalDerivative
+//   math: dy'_i/dx = gain * (dy_i/dx + stray_light * (mean(dy/dx) - dy_i/dx)) for each active state column
 pub fn applyChannelJacobianCorrections(
     calibration_config: calibration.Calibration,
     jacobian: []f64,

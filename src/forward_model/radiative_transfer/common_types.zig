@@ -14,21 +14,25 @@ pub const ScatteringMode = enum(u2) {
 };
 
 // layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 9 fields; largest: fourier_tail_reflectance_epsilon=8 B, threshold_conv_first=8 B, threshold_conv_mult=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 64 B, align: 8 B
+//   field storage: 63 B across 13 fields; largest: fourier_tail_reflectance_epsilon=8 B, threshold_conv_first=8 B, threshold_conv_mult=8 B; padding: 1 B (8 bits)
+//   unused bits: 8 padding + 0 bool-storage slack = 8 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
 pub const RadiativeTransferPerformanceThresholds = struct {
     num_orders_max: u16 = 0,
     fourier_floor_scalar: u16 = 2,
     fourier_order_cap: ?u16 = null,
+    aerosol_tangent_order_cap: ?u16 = null,
     fourier_tail_reflectance_epsilon: f64 = 3.0e-14,
     threshold_conv_first: f64 = 1.0e-6,
     threshold_conv_mult: f64 = 1.0e-4,
     threshold_doubl: f64 = 0.1,
     threshold_mul: f64 = 1.0e-12,
     phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
+    qzero_rd_product_suppression: bool = false,
+    qzero_tu_product_suppression: bool = false,
+    qzero_td_product_suppression: bool = false,
 
     pub fn validate(self: RadiativeTransferPerformanceThresholds) PrepareError!void {
         if (self.fourier_tail_reflectance_epsilon <= 0.0 or
@@ -53,6 +57,7 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         scattering_optical_depth: f64,
     ) u16 {
         if (self.num_orders_max != 0) return self.num_orders_max;
+        // math: default multiple-scattering order cap = clamp(max(tau_sca, 0) + 15, 1, max_u16).
         const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
         return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
     }
@@ -64,27 +69,38 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         return if (self.fourier_order_cap) |cap| @min(resolved_fourier_max, @as(usize, cap)) else resolved_fourier_max;
     }
 
+    pub fn shouldEvaluateAerosolTangent(
+        self: RadiativeTransferPerformanceThresholds,
+        fourier_index: usize,
+    ) bool {
+        return if (self.aerosol_tangent_order_cap) |cap| fourier_index <= @as(usize, cap) else true;
+    }
+
     pub const o2a_default = RadiativeTransferPerformanceThresholds{
         .num_orders_max = 0,
         .fourier_floor_scalar = 2,
         .fourier_order_cap = null,
+        .aerosol_tangent_order_cap = null,
         .fourier_tail_reflectance_epsilon = 3.0e-14,
         .threshold_conv_first = 1.5e-7,
         .threshold_conv_mult = 1.5e-9,
         .threshold_doubl = 1.0e-6,
         .threshold_mul = 1.0e-8,
         .phase_function_truncation_threshold = 1.0e-8,
+        .qzero_rd_product_suppression = false,
+        .qzero_tu_product_suppression = false,
+        .qzero_td_product_suppression = false,
     };
 };
 
 // Resolved radiative transfer controls compiled from canonical configuration.
 // layout(64-bit):
-//   size: 64 B, align: 8 B
-//   field storage: 64 B across 8 fields; largest: performance_thresholds=56 B, n_streams=2 B, scattering=1 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 28 bool-storage slack = 28 bits
-//   cache span: 1 cache line(s) at 64 B per line
+//   size: 72 B, align: 8 B
+//   field storage: 70 B across 6 fields; largest: performance_thresholds=64 B, n_streams=2 B, scattering=1 B; padding: 2 B (16 bits)
+//   unused bits: 16 padding + 27 enum/bool-storage slack = 43 bits
+//   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
+//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
 pub const RadiativeTransferControls = struct {
     scattering: ScatteringMode = .multiple,
     n_streams: u16 = 16,
@@ -166,12 +182,12 @@ pub const ExecutionMode = enum {
 pub const DerivativeMode = SceneModel.DerivativeMode;
 
 // layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: rtm_controls=64 B, regime=1 B, execution_mode=1 B, derivative_mode=1 B; padding: 5 B (40 bits)
+//   size: 80 B, align: 8 B
+//   field storage: 75 B across 4 fields; largest: rtm_controls=72 B, regime=1 B, execution_mode=1 B; padding: 5 B (40 bits)
 //   unused bits: 40 padding + 0 bool-storage slack = 40 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
+//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
 pub const DispatchRequest = struct {
     regime: Regime = .nadir,
     execution_mode: ExecutionMode = .scalar,
@@ -180,12 +196,12 @@ pub const DispatchRequest = struct {
 };
 
 // layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 68 B across 6 fields; largest: rtm_controls=64 B, regime=1 B, execution_mode=1 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
+//   size: 80 B, align: 8 B
+//   field storage: 77 B across 6 fields; largest: rtm_controls=72 B, derivative_state_mask=1 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total = per instance * live instance count
+//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
 pub const Route = struct {
     family: TransportFamily,
     regime: Regime,
@@ -247,6 +263,7 @@ pub const SourceInterfaceInput = struct {
 
     pub fn effectiveWeight(self: SourceInterfaceInput) f64 {
         if (self.rtm_weight > 0.0 and self.ksca_above > 0.0) {
+            // math: RTM quadrature source weight = quadrature_weight * scattering_coefficient_above.
             return self.rtm_weight * self.ksca_above;
         }
         return self.source_weight;
@@ -272,6 +289,7 @@ pub const RtmQuadratureLevel = struct {
     phase_rayleigh2_weight: f64 = 0.0,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
+        // math: weighted scattering source = quadrature_weight * k_sca.
         return self.weight * self.ksca;
     }
 
@@ -288,6 +306,7 @@ pub const RtmQuadratureLevel = struct {
             return;
         }
         const inv_total = 1.0 / total;
+        // math: phase mixture = (aerosol_ksca / total_ksca) * aerosol_phase + (gas_ksca / total_ksca) * Rayleigh2.
         self.phase_aerosol_weight = aerosol_ksca * inv_total;
         self.phase_rayleigh2_weight = gas_ksca * inv_total * rayleigh_phase_coefficient2;
     }

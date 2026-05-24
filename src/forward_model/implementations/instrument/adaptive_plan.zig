@@ -94,6 +94,7 @@ const AdaptiveSupportRange = struct {
 //   work: constructs an adaptive interval plan, emits candidate samples, and finalizes weights
 //   data: strong-line centers, response support window, integration-kernel scratch arrays
 //   follow: buildAdaptiveIntervalPlan, appendAdaptiveSamplesFromPlan, and finalizeAdaptiveKernel
+//   math: adaptive kernel approximates integral response(lambda - lambda_i) y(lambda) dlambda by Gauss samples
 pub fn buildAdaptiveIntegrationKernel(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -185,6 +186,7 @@ pub fn buildAdaptiveSupportWavelengths(
 
     var merged_count: usize = 0;
     for (support.items) |wavelength_nm| {
+        // math: support wavelengths within 1e-9 nm are treated as duplicate nodes.
         if (merged_count != 0 and @abs(support.items[merged_count - 1] - wavelength_nm) <= 1.0e-9) continue;
         support.items[merged_count] = wavelength_nm;
         merged_count += 1;
@@ -248,6 +250,7 @@ pub fn adaptiveKernelSupportWindow(
         response.high_resolution_half_span_nm
     else
         response_support.defaultKernelHalfSpanNm(fwhm_nm);
+    // math: global support expands the spectral grid by 2*FWHM; per-nominal window is lambda_i +/- half_span.
     const global_start_nm = scene.spectral_grid.start_nm - (2.0 * fwhm_nm);
     const global_end_nm = scene.spectral_grid.end_nm + (2.0 * fwhm_nm);
     return .{
@@ -263,6 +266,7 @@ pub fn adaptiveKernelSupportWindow(
 //   work: partitions the global support window around strong-line centers and assigns division counts
 //   data: strong-line center array, interval descriptors, adaptive grid controls
 //   follow: collectAdaptiveStrongLineCenters and adaptiveIntervalDivisionCount
+//   math: interval boundaries advance by FWHM unless a strong line center creates the next boundary first
 pub fn buildAdaptiveIntervalPlan(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -323,6 +327,7 @@ pub fn buildAdaptiveIntervalPlan(
 //   work: visits interval Gauss nodes, computes response weights, sorts candidates, and selects support range
 //   data: interval plan, sample/candidate arrays, response weights, support-range indexes
 //   follow: fillAdaptiveUnitGauss, insertionSortSamples, and selectVendorSupportRange
+//   math: raw_w = response(lambda - lambda_i) * interval_width * gauss_weight on each adaptive interval node
 pub fn appendAdaptiveSamplesFromPlan(
     plan: *const AdaptiveIntervalPlan,
     response: InstrumentModel.SpectralResponse,
@@ -359,6 +364,7 @@ pub fn appendAdaptiveSamplesFromPlan(
             // PARITY: preserve DISAMAR's Gauss division-point contract:
             // nodes and weights are first scaled to [0, 1], then interval
             // width is applied.
+            // math: lambda = interval_start + interval_width * node_01.
             const wavelength_nm = realizedIntervalWavelengthNm(
                 response,
                 interval_start_nm,
@@ -405,6 +411,7 @@ pub fn appendAdaptiveSamplesFromPlan(
 //   work: sorts, merges duplicate wavelengths, normalizes weights, and writes offsets
 //   data: sample wavelength array, raw weights array, kernel offsets/weights
 //   follow: merged sample ordering consumed by spectral_eval integration loops
+//   math: delta_j = lambda_j - lambda_i; w_j = raw_w_j / sum_k raw_w_k after duplicate wavelengths are merged
 pub fn finalizeAdaptiveKernel(
     kernel: *types.IntegrationKernel,
     nominal_wavelength_nm: f64,
@@ -417,6 +424,7 @@ pub fn finalizeAdaptiveKernel(
 
     var merged_count: usize = 0;
     for (sample_wavelengths_nm, sample_raw_weights) |wavelength_nm, raw_weight| {
+        // math: duplicate wavelength nodes within 1e-9 nm merge by adding raw quadrature weights.
         if (merged_count != 0 and @abs(sample_wavelengths_nm[merged_count - 1] - wavelength_nm) <= 1.0e-9) {
             sample_raw_weights[merged_count - 1] += raw_weight;
             continue;
@@ -532,6 +540,7 @@ fn adaptiveIntervalDivisionCount(
     const scaled = @as(usize, @intFromFloat(std.math.round(
         @as(f64, @floatFromInt(max_divisions)) * (@max(interval_width_nm, 1.0e-9) / @max(max_interval_nm, 1.0e-9)),
     )));
+    // math: divisions = clamp(max(round(max_divisions * width / max_width), min_divisions), min_divisions, max_divisions).
     return std.math.clamp(@max(scaled, min_divisions), min_divisions, max_divisions);
 }
 
@@ -553,6 +562,7 @@ fn fillAdaptiveUnitGauss(
 
     try gauss_legendre.fillNodesAndWeights(@intCast(order), nodes_01[0..order], weights_01[0..order]);
     for (0..order) |index| {
+        // math: transform Gauss-Legendre nodes/weights from [-1, 1] to [0, 1]: x'=(x+1)/2, w'=w/2.
         nodes_01[index] = (nodes_01[index] + 1.0) * 0.5;
         weights_01[index] *= 0.5;
     }
@@ -567,6 +577,7 @@ fn realizedIntervalWavelengthNm(
     gauss_index: usize,
     apply_disamar_midpoint_bias: bool,
 ) f64 {
+    // math: lambda = interval_start + interval_width * node_01.
     const wavelength_nm = interval_start_nm + interval_width_nm * node_01;
     if (!apply_disamar_midpoint_bias or response.integration_mode != .disamar_hr_grid) return wavelength_nm;
     if (order % 2 == 0 or gauss_index != order / 2 or node_01 != 0.5) return wavelength_nm;
@@ -574,6 +585,7 @@ fn realizedIntervalWavelengthNm(
     // PARITY: DISAMAR realizes some exact midpoint samples one representable
     // value below Zig's direct double expression. The difference is visible
     // when a midpoint lands on the steep O2 A solar line near 768.2 nm.
+    // math: exact midpoint bias maps lambda to nextAfter(lambda, -inf).
     return std.math.nextAfter(f64, wavelength_nm, -std.math.inf(f64));
 }
 
@@ -583,6 +595,7 @@ fn disamarIntervalDivisionCount(
 ) usize {
     if (adaptive.points_per_fwhm > 0) return adaptive.points_per_fwhm;
     if (response.high_resolution_step_nm > 0.0 and response.fwhm_nm > 0.0) {
+        // math: DISAMAR realized divisions default to round(FWHM / high_resolution_step).
         return @max(
             @as(usize, @intFromFloat(std.math.round(response.fwhm_nm / response.high_resolution_step_nm))),
             1,
@@ -603,6 +616,7 @@ fn buildDisamarIntervalPlan(
     plan.reset(global_start_nm, global_end_nm);
     var current_nm = global_start_nm;
     while (current_nm < global_end_nm - 1.0e-12 and plan.count < types.max_integration_sample_count) {
+        // math: DISAMAR interval edges advance by min(current + interval_width, global_end).
         const next_nm = @min(current_nm + interval_width_nm, global_end_nm);
         if (!plan.append(next_nm, division_count)) return false;
         current_nm = next_nm;
@@ -640,6 +654,7 @@ fn selectVendorSupportRange(
     var closest_distance_nm = @abs(sample_wavelengths_nm[0] - nominal_wavelength_nm);
     for (sample_wavelengths_nm[1..], 1..) |wavelength_nm, index| {
         const distance_nm = @abs(wavelength_nm - nominal_wavelength_nm);
+        // math: support range centers on the sample minimizing |lambda_j - lambda_nominal|.
         if (distance_nm < closest_distance_nm) {
             closest_distance_nm = distance_nm;
             closest_index = index;

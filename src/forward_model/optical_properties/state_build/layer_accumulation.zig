@@ -65,6 +65,7 @@ const CollisionComplexProfileCache = struct {
         for (0..node_count) |index| {
             const pressure_hpa = context.spectroscopy_profile_pressures_hpa[index];
             const temperature_k = context.spectroscopy_profile_temperatures_k[index];
+            // math: n_air = p / (k_B * T); complex VMR proxy = n_o2^2 / n_air, stored as log for spline sampling.
             const node_air_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k;
             const parent_fraction = Spectroscopy.speciesMixingRatioAtPressure(
                 context.scene,
@@ -96,15 +97,18 @@ const CollisionComplexProfileCache = struct {
         fallback_oxygen_number_density_cm3: f64,
     ) f64 {
         if (self.node_count < 3 or air_number_density_cm3 <= 0.0) {
+            // math: fallback collision-pair density = n_O2^2.
             return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
         }
         const altitudes = self.altitudes_km[0..self.node_count];
         const log_complex_vmr_fraction = self.log_complex_vmr_fraction[0..self.node_count];
         const log_complex_second = self.log_complex_second[0..self.node_count];
         if (altitude_km <= altitudes[0]) {
+            // math: lower-edge pair density = exp(log(n_o2^2/n_air)) * n_air.
             return @exp(log_complex_vmr_fraction[0]) * air_number_density_cm3;
         }
         if (altitude_km >= altitudes[self.node_count - 1]) {
+            // math: upper-edge pair density = exp(log(n_o2^2/n_air)) * n_air.
             return @exp(log_complex_vmr_fraction[self.node_count - 1]) * air_number_density_cm3;
         }
         const sampled_log_vmr = spline.sampleWithSecondDerivatives(
@@ -113,6 +117,7 @@ const CollisionComplexProfileCache = struct {
             log_complex_second,
             altitude_km,
         ) catch return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
+        // math: n_pair = exp(spline(log(n_o2^2 / n_air), z)) * n_air
         return @exp(sampled_log_vmr) * air_number_density_cm3;
     }
 };
@@ -239,6 +244,7 @@ const LayerSums = struct {
     aerosol_base_optical_depth: f64 = 0.0,
 
     fn addSublayer(self: *LayerSums, terms: SublayerLayerTerms) void {
+        // math: layer means are density-weighted, e.g. T_bar numerator += T_i * n_i * w_i and denominator += n_i * w_i.
         self.density_weight += terms.density * terms.weight;
         self.density += terms.density * terms.weight;
         self.temperature_weighted += terms.temperature * terms.density * terms.weight;
@@ -300,6 +306,7 @@ const SublayerLayerTerms = struct {
 //   when: once per optical-state preparation before repeated wavelength solves
 //   work: accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM data
 //   data: scene atmosphere, absorber sets, particle profiles, support-row storage
+//   math: aerosol fraction and Angstrom-scaled sublayer weights feed tau_aerosol_i; phase coefficients use HG(g) before gas/aerosol mixing
 //   follow: populateParitySupportRowsParallel, populateLayer, and shared carrier reduction
 pub fn populate(
     allocator: Allocator,
@@ -521,14 +528,23 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
         "zdisamar-accum-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-accum-worker";
+    // instrumentation: trace thread label
+    // captures: parity support-row worker identity
+    // why: make parallel optical-accumulation lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: parity support-row worker wall time
+    // why: expose load balance while support rows are filled before layer reduction.
     const worker_zone = Trace.staticZone(@src(), "optical_prepare.parity_rows_worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: parity support-row chunk wall time and row count
+            // why: reveal chunking overhead in optical-state support-row preparation.
             const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.parity_rows_chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();
@@ -650,6 +666,7 @@ fn reduceParityLayer(
     layer: *State.PreparedLayer,
     index: usize,
 ) void {
+    // math: parity layer totals sum interior support rows; tau = tau_gas + tau_cia + tau_aerosol, omega0 = tau_sca / max(tau_abs + tau_sca, eps).
     const layer_top_altitude_km = context.vertical_grid.layer_top_altitudes_km[index];
     const layer_bottom_altitude_km = context.vertical_grid.layer_bottom_altitudes_km[index];
     const layer_top_pressure_hpa = context.vertical_grid.layer_top_pressures_hpa[index];
@@ -734,6 +751,7 @@ fn reduceParityLayer(
 //   when: for each physical transport layer during optical-state accumulation
 //   work: iterates sublayers and accumulates optical depth, scattering, particle, and phase terms
 //   data: layer descriptors, sublayer rows, absorber/cross-section state, particle distributions
+//   math: tau_layer = sum(tau_gas_i + tau_cia_i + tau_aerosol_i); tau_sca = tau_gas_sca + tau_aerosol * omega0_aerosol; omega0_layer = tau_sca / max(tau_layer, eps)
 //   follow: populateSublayer and layer output storage consumed by forward input construction
 fn populateLayer(
     allocator: Allocator,
@@ -835,6 +853,7 @@ fn populateLayer(
 //   when: for each sublayer or support row during optical-state accumulation
 //   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles
 //   data: sublayer thermodynamics, active absorber sets, optical-depth outputs
+//   math: column = density * path_cm; tau_abs = sigma_cont * N_cont + sigma_line * N_line + sigma_xs * N_xs; tau_cia = sigma_cia * pair_density * path_cm; tau_rayleigh = sigma_rayleigh * N_air
 //   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
 fn populateSublayer(
     allocator: Allocator,
@@ -868,6 +887,7 @@ fn populateSublayer(
     else if (context.scene.atmosphere.interval_grid.enabled() and
         top_pressure_hpa > 0.0 and
         bottom_pressure_hpa > 0.0)
+        // math: midpoint pressure for log-spaced pressure bounds is geometric mean sqrt(p_top * p_bottom).
         @sqrt(top_pressure_hpa * bottom_pressure_hpa)
     else
         context.profile.interpolatePressure(altitude_km);
@@ -1002,6 +1022,7 @@ fn populateSublayer(
     const d_gas_optical_depth_d_temperature =
         spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * line_gas_column_density_cm2 +
         cross_section_d_optical_depth_d_temperature;
+    // math: tau_aerosol(lambda_ref) comes from the normalized sublayer distribution, then applies extinction scale and wavelength fraction.
     const aerosol_base_optical_depth = aerosol_sublayer_distribution[write_index] * aerosol_extinction_scale;
     const aerosol_optical_depth = aerosol_base_optical_depth * aerosol_fraction;
 

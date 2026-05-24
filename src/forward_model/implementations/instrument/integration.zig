@@ -92,6 +92,7 @@ pub fn integrationForWavelengthWithAdaptiveCache(
 //   work: chooses table, fixed line-shape, adaptive, or default integration samples
 //   data: channel response controls, adaptive cache, offsets/weights kernel storage
 //   follow: adaptive_plan builders and response_support.spectralResponseWeight
+//   math: kernel approximates integral y(lambda_i) = sum_j w_ij y(lambda_i + delta_ij), with sum_j w_ij = 1
 pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     scene: *const Scene,
     prepared: ?*const PreparedOpticalState,
@@ -186,6 +187,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
         var offset_nm = -half_span_nm;
         while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
             kernel.offsets_nm[sample_count] = offset_nm;
+            // math: raw w(delta) = response(delta); normalized below as w_j / sum_k w_k.
             const response_weight = response_support.spectralResponseWeight(response, offset_nm);
             kernel.weights[sample_count] = response_weight;
             sample_count += 1;
@@ -256,6 +258,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     var total_weight: f64 = 0.0;
     for (offsets_nm, 0..) |offset_nm, index| {
         kernel.offsets_nm[index] = offset_nm;
+        // math: fallback raw w_j = response(delta_j), normalized so sum_j w_j = 1.
         kernel.weights[index] = response_support.spectralResponseWeight(response, offset_nm);
         total_weight += kernel.weights[index];
     }
@@ -286,6 +289,7 @@ pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 
     //   legacy convolution shape stays recognizable when explicit line-shape
     //   metadata is absent.
     if (response.fwhm_nm <= 0.0) {
+        // math: default convolution kernel is [1,4,6,4,1] before convolution.apply normalizes by its sum.
         return .{ 1.0, 4.0, 6.0, 4.0, 1.0 };
     }
 
@@ -298,6 +302,7 @@ pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 
     for (0..kernel.len) |index| {
         const offset_samples = @as(f64, @floatFromInt(@as(i32, @intCast(index)) - 2));
         const offset_nm = offset_samples * sample_spacing_nm;
+        // math: raw slit weight k_j = response((j - 2) * sample_spacing_nm), then k_j /= sum(k).
         const value = response_support.spectralResponseWeight(response, offset_nm);
         kernel[index] = value;
         sum += value;

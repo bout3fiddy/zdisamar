@@ -14,6 +14,7 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Plan = @import("wavelength_plan.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
@@ -120,6 +121,7 @@ const RunningSummary = struct {
     }
 
     fn addReflectanceSample(self: *RunningSummary, radiance: f64, irradiance: f64, reflectance: f64) void {
+        // math: running sums store sum L_i, sum E0_i, and sum rho_i for later arithmetic means.
         self.radiance_sum += radiance;
         self.irradiance_sum += irradiance;
         self.reflectance_sum += reflectance;
@@ -136,6 +138,7 @@ const RunningSummary = struct {
             .sample_count = @intCast(sample_count),
             .wavelength_start_nm = wavelengths[0],
             .wavelength_end_nm = wavelengths[sample_count - 1],
+            // math: mean(y) = (sum_i y_i) / N for radiance, irradiance, reflectance, and any active Jacobian vector.
             .mean_radiance = self.radiance_sum / denominator,
             .mean_irradiance = self.irradiance_sum / denominator,
             .mean_reflectance = self.reflectance_sum / denominator,
@@ -168,8 +171,14 @@ fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
         "zdisamar-profile-cache-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-profile-cache";
+    // instrumentation: trace thread label
+    // captures: profile spectroscopy cache worker identity
+    // why: make parallel cache-build lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: profile spectroscopy cache worker wall time
+    // why: separate worker fanout cost from the main simulation path.
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.worker");
     zone.value(@intCast(worker.worker_index));
     defer zone.end();
@@ -275,6 +284,9 @@ fn buildProfileSpectroscopyCaches(
     forward_misses: []const SpectralEval.ForwardCacheMiss,
     thread_pool: ?*std.Thread.Pool,
 ) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
+    // instrumentation: trace zone
+    // captures: profile spectroscopy cache build wall time and miss count
+    // why: show when cache construction, rather than LABOS transport, dominates prefetch setup.
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(forward_misses.len));
     defer zone.end();
@@ -348,6 +360,9 @@ pub fn simulateInternal(
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
     wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!Types.InstrumentGridSummary {
+    // instrumentation: trace zone
+    // captures: whole instrument-grid product simulation wall time
+    // why: anchor nested sampling, prefetch, convolution, and assembly phases to one forward solve.
     const simulate_zone = Trace.staticZone(@src(), "simulate.product");
     defer simulate_zone.end();
 
@@ -433,7 +448,11 @@ fn buildSimulationSetup(
     const uses_integrated_radiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .radiance);
     const uses_integrated_irradiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
+    // math: safe_span = max(lambda_end - lambda_start, 1 nm) for normalized carrier and support interpolation.
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
+    // instrumentation: trace counter
+    // captures: number of output wavelength samples
+    // why: normalize product-level timeline cost by the emitted spectrum size.
     Trace.plotU("output_wavelengths", @intCast(sample_count));
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
 
@@ -468,6 +487,9 @@ fn resolveSimulationPlan(
     errdefer plan.deinit(allocator);
 
     plan.wavelength_sampling = blk: {
+        // instrumentation: trace zone
+        // captures: wavelength sampling plan resolution wall time
+        // why: distinguish cache hits, plan rebuilds, and owned one-shot sampling setup.
         const zone = Trace.staticZone(@src(), "simulate.wavelength_sampling");
         defer zone.end();
 
@@ -501,6 +523,9 @@ fn resolveSimulationPlan(
         break :blk plan.owned_wavelength_sampling.view();
     };
     plan.forward_miss_plan = blk: {
+        // instrumentation: trace zone
+        // captures: forward-cache miss collection wall time
+        // why: measure the unique high-resolution wavelength expansion before LABOS prefetch.
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
         defer zone.end();
 
@@ -521,6 +546,9 @@ fn resolveSimulationPlan(
         break :blk plan.owned_forward_miss_plan.view();
     };
     plan.profile_spectroscopy_caches = blk: {
+        // instrumentation: trace zone
+        // captures: profile spectroscopy cache lookup/build wall time
+        // why: isolate profile-node spectroscopy setup from transport execution.
         const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
         defer zone.end();
 
@@ -543,6 +571,9 @@ fn prefetchSimulationPlan(
     wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!void {
     {
+        // instrumentation: trace zone
+        // captures: forward prefetch wall time and miss count
+        // why: track the batched high-resolution LABOS work hidden behind nominal samples.
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
         zone.value(@intCast(simulation_plan.forward_miss_plan.misses.len));
         defer zone.end();
@@ -609,6 +640,7 @@ fn validateTransportBuffers(
 //   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
 //   data: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
 //   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
+//   math: L_out = C_slit(sum_j w_ij F(lambda_i + delta_ij)) followed by channel calibration
 fn fillRadianceSamples(
     route: common.Route,
     setup: SimulationSetup,
@@ -623,6 +655,9 @@ fn fillRadianceSamples(
         ActiveJacobianStates{};
 
     {
+        // instrumentation: trace zone
+        // captures: radiance cache integration wall time
+        // why: isolate nominal-wavelength gather work from later convolution and calibration.
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
         for (wavelength_sampling.rows, 0..) |plan, index| {
@@ -656,11 +691,17 @@ fn fillRadianceSamples(
         //   instrument already performed the spectral integration.
         @memcpy(buffers.radiance, buffers.scratch);
     } else {
+        // instrumentation: trace zone
+        // captures: radiance slit convolution wall time
+        // why: separate instrument-kernel cost from RTM cache integration.
         const zone = Trace.staticZone(@src(), "simulate.radiance_convolution");
         defer zone.end();
         try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.radiance);
     }
     {
+        // instrumentation: trace zone
+        // captures: radiance channel postprocess wall time
+        // why: keep calibration/postprocess cost visible after convolution.
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
         try Postprocess.applyChannelCorrections(
@@ -675,6 +716,7 @@ fn fillRadianceSamples(
 //   work: integrates irradiance samples and applies convolution plus channel postprocess
 //   data: irradiance integration plans, irradiance cache, scratch buffer, output irradiance buffer
 //   follow: SpectralEval.integrateIrradianceAtNominal and calibration-only channel corrections
+//   math: E0_out = C_slit(sum_j w_ij E0(lambda_i + delta_ij)) followed by channel calibration
 fn fillIrradianceSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -684,6 +726,9 @@ fn fillIrradianceSamples(
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!void {
     {
+        // instrumentation: trace zone
+        // captures: irradiance sampling wall time
+        // why: distinguish solar irradiance interpolation/integration from radiance transport.
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
         try evaluation_cache.reserveIrradiance(irradianceCacheCapacity(wavelength_sampling));
@@ -702,11 +747,17 @@ fn fillIrradianceSamples(
     if (setup.uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
+        // instrumentation: trace zone
+        // captures: irradiance slit convolution wall time
+        // why: separate solar-channel instrument-kernel cost from sampling.
         const zone = Trace.staticZone(@src(), "simulate.irradiance_convolution");
         defer zone.end();
         try convolution.apply(buffers.scratch, setup.irradiance_slit_kernel[0..], buffers.irradiance);
     }
     {
+        // instrumentation: trace zone
+        // captures: irradiance channel postprocess wall time
+        // why: keep solar calibration cost visible before reflectance assembly.
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
         try Postprocess.applyChannelCorrections(
@@ -729,6 +780,7 @@ fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSam
 //   work: computes reflectance and accumulates summary statistics
 //   data: radiance, irradiance, reflectance, and running summary fields
 //   follow: contiguous output buffers and the summary accumulator write pattern
+//   math: rho_i = pi * L_i / max(E0_i * mu0, 1e-9)
 fn assembleReflectance(
     scene: *const Scene,
     sample_count: usize,
@@ -736,16 +788,42 @@ fn assembleReflectance(
     summary: *RunningSummary,
 ) void {
     {
+        // instrumentation: trace zone
+        // captures: reflectance assembly wall time
+        // why: isolate final radiance/irradiance-to-reflectance conversion.
         const zone = Trace.staticZone(@src(), "simulate.reflectance_assembly");
         defer zone.end();
         const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+        var denominator_clamp_count: usize = 0;
+        var min_denominator = std.math.inf(f64);
+        var max_reflectance = -std.math.inf(f64);
         for (0..sample_count) |index| {
-            buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
-                @max(buffers.irradiance[index] * solar_cosine, 1e-9);
+            const denominator_raw = buffers.irradiance[index] * solar_cosine;
+            const denominator = @max(denominator_raw, 1e-9);
+            buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) / denominator;
+            // instrumentation: calculation telemetry
+            // captures: denominator clamps and final reflectance extrema
+            // why: identify numerically fragile spectra where simple pruning would change outputs.
+            if (Telemetry.enabled) {
+                if (denominator_raw <= 1e-9) denominator_clamp_count += 1;
+                min_denominator = @min(min_denominator, denominator_raw);
+                max_reflectance = @max(max_reflectance, buffers.reflectance[index]);
+            }
             summary.addReflectanceSample(
                 buffers.radiance[index],
                 buffers.irradiance[index],
                 buffers.reflectance[index],
+            );
+        }
+        // instrumentation: calculation telemetry
+        // captures: per-spectrum reflectance assembly summary
+        // why: store one compact row for studying clamp incidence against scene geometry.
+        if (Telemetry.enabled) {
+            Telemetry.reflectanceAssembly(
+                sample_count,
+                denominator_clamp_count,
+                if (sample_count == 0) 0.0 else min_denominator,
+                if (sample_count == 0) 0.0 else max_reflectance,
             );
         }
     }
@@ -764,6 +842,9 @@ fn processJacobianSamples(
 ) Storage.Error!?jacobian.Vector {
     if (buffers.jacobian) |jacobian_buffer| {
         {
+            // instrumentation: trace zone
+            // captures: Jacobian convolution, calibration, and reduction wall time
+            // why: separate derivative-column postprocessing from RTM evaluation.
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
             const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
@@ -790,7 +871,27 @@ fn processJacobianSamples(
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 const state_index = jacobian.stateIndex(state);
-                for (column) |value| summary.jacobian_sum[state_index] += value;
+                var column_sum: f64 = 0.0;
+                var column_max_abs: f64 = 0.0;
+                for (column) |value| {
+                    column_sum += value;
+                    // instrumentation: calculation telemetry
+                    // captures: maximum absolute derivative value per active state
+                    // why: flag near-zero sensitivity columns that may be safe to skip.
+                    if (Telemetry.enabled) column_max_abs = @max(column_max_abs, @abs(value));
+                }
+                summary.jacobian_sum[state_index] += column_sum;
+                // instrumentation: calculation telemetry
+                // captures: derivative column sum, mean, and max magnitude
+                // why: relate retrieval-state sensitivity to final spectrum impact.
+                if (Telemetry.enabled) {
+                    Telemetry.jacobianColumn(
+                        state_index,
+                        column_sum,
+                        if (setup.sample_count == 0) 0.0 else column_sum / @as(f64, @floatFromInt(setup.sample_count)),
+                        column_max_abs,
+                    );
+                }
             }
             return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
         }

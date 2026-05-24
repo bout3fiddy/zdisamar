@@ -249,6 +249,7 @@ pub const PreparedSublayer = struct {
     support_row_kind: PreparedSupportRowKind = .physical,
 
     pub fn ciaPairDensityCm6(self: PreparedSublayer) f64 {
+        // math: CIA pair density falls back to n_O2^2 when the prepared row has no profile-complex pair density.
         return if (self.cia_pair_density_cm6 > 0.0)
             self.cia_pair_density_cm6
         else
@@ -270,11 +271,13 @@ pub const OpticalDepthBreakdown = struct {
     aerosol_scattering_optical_depth: f64 = 0.0,
 
     pub fn totalScatteringOpticalDepth(self: OpticalDepthBreakdown) f64 {
+        // math: tau_sca = tau_rayleigh + tau_aerosol_sca
         return self.gas_scattering_optical_depth +
             self.aerosol_scattering_optical_depth;
     }
 
     pub fn totalOpticalDepth(self: OpticalDepthBreakdown) f64 {
+        // math: tau_ext = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol_ext
         return self.gas_absorption_optical_depth +
             self.gas_scattering_optical_depth +
             self.cia_optical_depth +
@@ -284,6 +287,7 @@ pub const OpticalDepthBreakdown = struct {
     pub fn singleScatterAlbedo(self: OpticalDepthBreakdown) f64 {
         const total_optical_depth = self.totalOpticalDepth();
         if (total_optical_depth <= 0.0) return 0.0;
+        // math: omega0 = tau_sca / tau_ext, clamped to physical [0, 1].
         return std.math.clamp(
             self.totalScatteringOpticalDepth() / total_optical_depth,
             0.0,

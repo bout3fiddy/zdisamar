@@ -10,6 +10,7 @@ const threshold_q: f64 = 1.0e-3;
 //   work: multiplies small dense RT matrices with thresholded nonzero handling
 //   data: Mat cell arrays, n/n_gauss dimensions, product threshold
 //   follow: smulInto variants and dynamic q-series callers
+//   math: C_ij = sum_{k < n_gauss} A_ik B_kj; skip to zero when |trace_gauss(A)*trace_gauss(B)| <= threshold.
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
@@ -149,6 +150,7 @@ inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
 //   work: writes matrix products directly into caller-owned storage
 //   data: fixed Mat cells, left/right matrix operands, noalias result storage
 //   follow: doDouble12x10Step and fixed-shape product composition
+//   math: fixed-shape C_ij = sum_{k=0}^{9} A_ik B_kj, vectorized across two columns at a time.
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -211,6 +213,7 @@ pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+            // math: left diagonal multiply C_ij = e_i * A_ij.
             result.data[idx] = e.data[i] * a.data[idx];
             idx += n;
         }
@@ -225,6 +228,7 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+            // math: right diagonal multiply C_ij = A_ij * e_j.
             result.data[idx] = a.data[idx] * ej;
             idx += n;
         }
@@ -234,6 +238,7 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
 
 pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = n };
+    // math: C = A + B elementwise.
     for (0..n * n) |idx| result.data[idx] = a.data[idx] + b.data[idx];
     return result;
 }
@@ -245,6 +250,7 @@ pub inline fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+            // math: C_ij = A_ij + B_ij * e_j + C_ij(input).
             result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += n;
         }
@@ -253,6 +259,7 @@ pub inline fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec
 }
 
 pub inline fn smulAddSemul3(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    // math: result = C + A*diag(e) + A*C over the Gaussian subspace.
     if (n == 12 and n_gauss == 10) return smulAddSemul3_12(threshold_mul, a, e, c);
     var product: Mat = undefined;
     smulInto(&product, n, n_gauss, threshold_mul, a, c);
@@ -292,6 +299,7 @@ pub inline fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+            // math: C_ij = A_ij + e_i * B_ij + C_ij(input).
             result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
             idx += n;
         }
@@ -316,6 +324,7 @@ pub inline fn matAddEsmul3ProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += c.data[i * n + k] * b.data[k * n + j];
             const idx = i * n + j;
+            // math: out_ij = A_ij + e_i * B_ij + sum_k C_ik B_kj.
             out.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + product;
         }
     }
@@ -327,6 +336,7 @@ pub inline fn matAddEsmul(n: usize, a: *const Mat, e: *const Vec, b: *const Mat)
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+            // math: C_ij = A_ij + e_i * B_ij.
             result.data[idx] = a.data[idx] + e.data[i] * b.data[idx];
             idx += n;
         }
@@ -346,6 +356,7 @@ pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Ma
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+            // math: C_ij = A_ij * e_j + B_ij.
             result.data[idx] = a.data[idx] * ej + b.data[idx];
             idx += n;
         }
@@ -370,6 +381,7 @@ pub inline fn semulAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += a.data[i * n + k] * b.data[k * n + j];
             const idx = i * n + j;
+            // math: out_ij = A_ij * e_j + sum_k A_ik B_kj.
             out.data[idx] = a.data[idx] * ej + product;
         }
     }
@@ -387,6 +399,7 @@ pub inline fn esmulSemul(n: usize, e: *const Vec, a: *const Mat, b: *const Mat) 
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+            // math: C_ij = e_i * A_ij + B_ij * e_j.
             result.data[idx] = e.data[i] * a.data[idx] + b.data[idx] * ej;
             idx += n;
         }
@@ -406,6 +419,7 @@ pub inline fn esmulSemulSelfInto(noalias out: *Mat, n: usize, e: *const Vec, a: 
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+            // math: C_ij = A_ij * (e_i + e_j).
             out.data[idx] = a.data[idx] * (e.data[i] + ej);
             idx += n;
         }
@@ -419,6 +433,7 @@ pub inline fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Ma
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+            // math: C_ij = e_i * A_ij + B_ij * e_j + C_ij(input).
             result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += n;
         }
@@ -443,6 +458,7 @@ pub inline fn esmulSemulAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += b.data[i * n + k] * a.data[k * n + j];
             const idx = i * n + j;
+            // math: out_ij = e_i*A_ij + B_ij*e_j + sum_k B_ik A_kj.
             out.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + product;
         }
     }
@@ -464,6 +480,7 @@ pub inline fn esmulSemulSelfAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += a.data[i * n + k] * a.data[k * n + j];
             const idx = i * n + j;
+            // math: out_ij = A_ij*(e_i + e_j) + sum_k A_ik A_kj.
             out.data[idx] = a.data[idx] * (e.data[i] + ej) + product;
         }
     }
@@ -974,6 +991,7 @@ fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e
 }
 
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    // math: qseries(A,B) first forms AB over Gaussian streams, then applies Q(AB).
     const ab = smul(n, n_gauss, threshold_mul, a, b);
     return qseriesFromProduct(n, n_gauss, &ab);
 }
@@ -988,6 +1006,7 @@ pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat
 //   work: forms and factorizes the q-series matrix for reflection/transmission updates
 //   data: input product matrices, q-series output, stream dimensions, known-nonzero shape
 //   follow: dynamic doDouble and qseriesFromProductInto
+//   math: Q(AB) = (I - AB_gg)^-1 - I on Gaussian block, with extra rows/cols propagated by the same inverse.
 pub inline fn qseriesKnownNonzeroProductInto(noalias out: *Mat, n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) void {
     @setEvalBranchQuota(20_000);
     var ab: Mat = undefined;
@@ -1035,6 +1054,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
+            // math: factorization target M = I - AB restricted to Gaussian streams.
             one_minus_ab_gg[i * n_gauss + j] = delta - ab.data[i * n + j];
         }
     }
@@ -1075,6 +1095,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
             const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
             one_minus_ab_gg[row_offset + col] = factor;
             for (col + 1..n_gauss) |k| {
+                // math: LU elimination update M_row,k -= factor * M_col,k.
                 one_minus_ab_gg[row_offset + k] -=
                     factor * one_minus_ab_gg[col_offset + k];
             }
@@ -1107,6 +1128,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
+            // math: Gaussian block Q_ij = inverse(I - AB)_ij - delta_ij.
             result.data[i * n + j] = inverse[i * n_gauss + j] - delta;
         }
     }
@@ -1116,6 +1138,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
         for (0..n_gauss) |i| {
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += inverse[i * n_gauss + k] * ab.data[k * n + j];
+            // math: upper-extra block = inverse(I - AB)_gg * AB_gx.
             result.data[i * n + j] = s;
         }
     }
@@ -1126,6 +1149,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += ab.data[(n_gauss + ia) * n + k] * inverse[k * n_gauss + j];
             tmp[ia * n_gauss + j] = s;
+            // math: lower-Gaussian block = AB_xg * inverse(I - AB)_gg.
             result.data[(n_gauss + ia) * n + j] = s;
         }
     }
@@ -1136,6 +1160,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
             const j = n_gauss + ja;
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += tmp[ia * n_gauss + k] * ab.data[k * n + j];
+            // math: extra-extra block = AB_xx + AB_xg * inverse(I - AB)_gg * AB_gx.
             result.data[i * n + j] = s + ab.data[i * n + j];
         }
     }
@@ -1154,6 +1179,7 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
 //   work: factorizes the fixed-shape product used by doubling reflection/transmission updates
 //   data: fixed Mat product, q-series result matrix, known fixed stream dimensions
 //   follow: qseriesFromProduct12x10Into callers inside doDouble12x10Step
+//   math: fixed 12x10 Q(AB) applies the same (I - AB_gg)^-1 - I q-series transform as qseriesFromProduct.
 fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     var trab = ab.data[0];
@@ -1302,6 +1328,7 @@ inline fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const 
             idx = j;
             a_idx = k;
             for (0..n) |_| {
+                // math: nonzero product C_ij += A_ik B_kj.
                 result.data[idx] += a.data[a_idx] * bkj;
                 idx += n;
                 a_idx += n;

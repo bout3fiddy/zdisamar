@@ -9,6 +9,9 @@ const Trace = internal.forward_model.performance_trace;
 const default_labos_trace_output_dir = "research/performance/tracing/output/labos-bottleneck";
 const default_jacobian_trace_output_dir = "research/performance/tracing/output/o2a-jacobian-trace";
 
+// instrumentation: LABOS trace harness
+// captures: prepare/forward wall time and optional ztracy zones
+// why: inspect forward-model phase shape.
 // layout(64-bit):
 //   size: 24 B, align: 8 B
 //   field storage: output_dir=16 B, output_dir_set=1 B, derivative_sweep=1 B; padding: 6 B (48 bits)
@@ -65,8 +68,14 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+    // instrumentation: trace frame
+    // captures: one harness run boundary
+    // why: align timeline messages with summary timing.
     const main_zone = Trace.staticZone(@src(), "trace_cli.main");
     defer main_zone.end();
+    // instrumentation: trace frame markers
+    // captures: start/end messages and frame boundaries
+    // why: make the CLI run easy to find in Tracy captures.
     Trace.message("zdisamar labos trace start");
     Trace.frameMark();
     defer Trace.frameMark();
@@ -87,6 +96,9 @@ fn mainInner() !void {
     var prepare_timer = try std.time.Timer.start();
     const input = o2a_reference.defaultInput();
     var prepared_case = prepared_case: {
+        // instrumentation: trace zone
+        // captures: O2 A input preparation
+        // why: separate setup cost from RTM execution.
         const zone = Trace.staticZone(@src(), "trace_cli.prepare_case");
         defer zone.end();
         break :prepared_case try o2a_reference.prepareResolvedVendorO2ACase(
@@ -111,6 +123,9 @@ fn runSingleTrace(
     prepare_ns: u64,
     prepared_case: anytype,
 ) !void {
+    // instrumentation: trace zone
+    // captures: single forward product run
+    // why: measure the retained LABOS bottleneck boundary.
     const zone = Trace.staticZone(@src(), "trace_cli.single_trace");
     defer zone.end();
 
@@ -121,6 +136,9 @@ fn runSingleTrace(
 
     var forward_timer = try std.time.Timer.start();
     const product = product: {
+        // instrumentation: trace zone
+        // captures: instrument-grid product simulation
+        // why: isolate forward RTM work inside the harness.
         const simulate_zone = Trace.staticZone(@src(), "trace_cli.simulate_product");
         defer simulate_zone.end();
         break :product try InstrumentGrid.simulateProductWithWorkspace(
@@ -151,6 +169,9 @@ fn runDerivativeSweep(
     prepare_ns: u64,
     prepared_case: anytype,
 ) !void {
+    // instrumentation: trace sweep
+    // captures: forward and Jacobian route variants
+    // why: compare derivative-state cost at the same scene boundary.
     var summary_file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer summary_file.close();
     var summary_writer = summary_file.writer(&.{});

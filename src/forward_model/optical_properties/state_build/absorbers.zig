@@ -216,6 +216,9 @@ pub fn build(
         }
     }
     if (!loaded_profile_states and (state.profile_weak_line_states != null or state.profile_strong_line_states != null)) {
+        // instrumentation: trace zone
+        // captures: profile line-state preparation wall time
+        // why: expose expensive spectroscopy state setup not covered by cache hits.
         const zone = Trace.staticZone(@src(), "optical_prepare.profile_line_states");
         defer zone.end();
         try prepareProfileLineStates(
@@ -294,6 +297,9 @@ fn prepareProfileLineStates(
     };
     if (weak_states) |states| {
         if (states.len != temperatures_k.len) return error.InvalidRequest;
+        // instrumentation: trace zone
+        // captures: weak line-state allocation wall time
+        // why: distinguish allocation cost from per-profile spectroscopy preparation.
         const zone = Trace.staticZone(@src(), "optical_prepare.profile_weak_alloc");
         defer zone.end();
         for (states) |*slot| {
@@ -308,6 +314,9 @@ fn prepareProfileLineStates(
     };
     if (strong_states) |states| {
         if (states.len != temperatures_k.len) return error.InvalidRequest;
+        // instrumentation: trace zone
+        // captures: strong line-state allocation wall time
+        // why: distinguish allocation cost from per-profile spectroscopy preparation.
         const zone = Trace.staticZone(@src(), "optical_prepare.profile_strong_alloc");
         defer zone.end();
         for (states) |*slot| {
@@ -410,14 +419,23 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
         "zdisamar-optics-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-optics-worker";
+    // instrumentation: trace thread label
+    // captures: profile line-state worker identity
+    // why: make parallel spectroscopy-preparation lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: profile line-state worker wall time
+    // why: expose work distribution across thermodynamic profile nodes.
     const worker_zone = Trace.staticZone(@src(), "optical_prepare.profile_line_state_worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: profile line-state chunk wall time and node count
+            // why: identify chunking overhead and imbalance in parallel line preparation.
             const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();

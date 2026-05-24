@@ -20,6 +20,7 @@ pub const LineBandMeans = struct {
 //   when: absorber preparation computes band-mean spectroscopy support values
 //   work: scans active line absorbers and accumulates weighted band means
 //   data: line absorber arrays, wavelength windows, weights, output means
+//   math: mean_sigma = sum_i sigma(lambda_i,T,p) / N over the spectral grid
 //   follow: prepared absorber state and band-mean consumers in layer accumulation
 pub fn computeBandLineMeans(
     allocator: std.mem.Allocator,
@@ -109,6 +110,7 @@ pub fn computeOperationalBandMean(
         );
     }
 
+    // math: unweighted operational band mean = sum_i sigma(lambda_i,T,p) / N
     return sigma_sum / @as(f64, @floatFromInt(sample_count));
 }
 
@@ -128,6 +130,7 @@ pub fn computeWeightedOperationalBandMean(
         );
         weight_sum += weight;
     }
+    // math: weighted band mean = sum_i w_i * sigma(lambda_i,T,p) / sum_i w_i
     return sigma_sum / @max(weight_sum, 1e-12);
 }
 
@@ -140,5 +143,6 @@ pub fn computeWeightedWindowMean(values: []const f64, weights: []const f64) f64 
         numerator += value * weight;
         denominator += weight;
     }
+    // math: generic weighted mean = sum(value_i * weight_i) / sum(weight_i)
     return numerator / @max(denominator, 1.0e-12);
 }

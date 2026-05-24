@@ -80,6 +80,7 @@ pub const RuntimeAttenArray = struct {
         if (from + 1 == to) return self.adjacent(imu, from);
         if (to + 1 == from) return self.adjacent(imu, to);
 
+        // math: non-adjacent attenuation = product of adjacent layer transmittances between levels.
         const start = @min(from, to);
         const end = @max(from, to);
         var product: f64 = 1.0;
@@ -97,6 +98,7 @@ fn layerTransmittanceIndex(nlayer: usize, imu: usize, layer_index: usize) usize 
 //   work: converts layer optical depths into per-stream transmittance rows
 //   data: layer optical depths, geometry stream cosines, layer transmittance output
 //   follow: fillRuntimeTopToLevelFromLayerCache and fillDynamicAttenuationFromLayerCache
+//   math: T_layer(imu,l) = exp(-tau_l / max(mu_imu, 1e-6)).
 fn fillLayerTransmittance(
     layer_transmittance: []f64,
     layers: []const common.LayerInput,
@@ -136,6 +138,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamic(
         while (level > 0) {
             level -= 1;
             const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            // math: pseudo-spherical shortcut top attenuation multiplies exp(-tau_l / directional_mu_l).
             cumulative *= math.exp(-layers[level].optical_depth / u);
             atten.set(imu, top_level, level, cumulative);
         }
@@ -160,6 +163,7 @@ fn fillRuntimeTopToLevelFromLayerCache(
         var level = nlayer;
         while (level > 0) {
             level -= 1;
+            // math: top_to_level(level) = product_{l=level}^{top-1} T_layer(l).
             cumulative *= layer_transmittance[layer_offset + level];
             top_to_level[top_offset + level] = cumulative;
         }
@@ -181,6 +185,7 @@ fn applyPseudoSphericalRuntimeTopToLevel(
         while (level > 0) {
             level -= 1;
             const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            // math: pseudo-spherical runtime top_to_level = product exp(-tau_l / directional_mu_l).
             cumulative *= math.exp(-layers[level].optical_depth / u);
             top_to_level[top_offset + level] = cumulative;
         }
@@ -245,8 +250,10 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
                 const sample_radius = rearth_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
                 const numerator = sample.optical_depth * sample_radius;
+                // math: spherical slant tau += tau_sample * r_sample / sqrt(r_sample^2 - r_level^2 sin(theta)^2).
                 sumkext += numerator / @max(denominator, 1.0e-12);
             }
+            // math: T(top->level) = exp(-sum spherical slant optical depths).
             atten.set(imu, top_level, level, math.exp(-sumkext));
         }
     }
@@ -287,8 +294,10 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
                 const sample_radius = rearth_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
                 const numerator = sample.optical_depth * sample_radius;
+                // math: spherical slant tau += tau_sample * r_sample / sqrt(r_sample^2 - r_level^2 sin(theta)^2).
                 sumkext += numerator / @max(denominator, 1.0e-12);
             }
+            // math: top_to_level = exp(-sum spherical slant optical depths).
             top_to_level[top_offset + level] = math.exp(-sumkext);
         }
     }
@@ -335,6 +344,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
             var sumkext: f64 = 0.0;
             for (pseudo_spherical_grid.level_sample_starts[level]..pseudo_spherical_grid.samples.len) |index| {
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
+                // math: prepared-grid spherical tau reuses tau_sample * r_sample and radius squares.
                 sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
             }
             top_to_level[top_offset + level] = math.exp(-sumkext);
@@ -382,6 +392,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
             var sumkext: f64 = 0.0;
             for (pseudo_spherical_grid.level_sample_starts[level]..pseudo_spherical_grid.samples.len) |index| {
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
+                // math: prepared-grid spherical tau reuses tau_sample * r_sample and radius squares.
                 sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
             }
             values[top_level * nlevel + level] = math.exp(-sumkext);
@@ -429,6 +440,7 @@ pub fn fillAttenuationDynamicWithGrid(
 //   work: fills dynamic attenuation derivatives for layer optical-depth perturbations
 //   data: base layers, derivative layers, geometry streams, attenuation tangent buffer
 //   follow: nonIntegratedReflectanceTangent and ordersScatTangent
+//   math: dT_l/dx = exp(-tau_l/mu) * (-(d tau_l/dx) / mu); path derivatives use product rule.
 pub fn fillAttenuationTangentDynamic(
     allocator: Allocator,
     layers: []const common.LayerInput,
@@ -461,6 +473,7 @@ pub fn fillAttenuationTangentDynamic(
                 const u = @max(geo.u[imu], 1.0e-6);
                 const trans = math.exp(-layers[layer_idx].optical_depth / u);
                 const dtrans = trans * (-common.Jacobian.get(layers[layer_idx].optical_depth_jacobian, state) / u);
+                // math: d(product*T_l) = d(product)*T_l + product*dT_l.
                 atten.set(
                     imu,
                     ilFrom_idx - 1,
@@ -494,6 +507,7 @@ fn cumulativeBaseTransmittance(
     const u = @max(geo.u[imu], 1.0e-6);
     for (from_level..to_level) |layer_idx| {
         if (layer_idx >= layers.len) break;
+        // math: base path transmittance = product_l exp(-tau_l / mu).
         value *= math.exp(-layers[layer_idx].optical_depth / u);
     }
     return value;
@@ -670,6 +684,7 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
             for (0..geo.nmutot) |imu| {
                 const u = @max(geo.u[imu], 1.0e-6);
                 const atten_lay = math.exp(-layers[layer_idx].optical_depth / u);
+                // math: dynamic fallback T(from-1,to) = T(from,to) * exp(-tau_layer / mu).
                 atten.set(imu, ilFrom_idx - 1, ilTo, atten.get(imu, ilFrom_idx, ilTo) * atten_lay);
             }
         }

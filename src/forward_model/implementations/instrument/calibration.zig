@@ -6,6 +6,7 @@ pub const Calibration = calibration.Calibration;
 
 pub fn calibrationForScene(scene: *const Scene, channel: SpectralChannel) calibration.Calibration {
     const controls = scene.observation_model.resolvedChannelControls(channel);
+    // math: channel correction uses lambda' = lambda + wavelength_shift, y' = gain*(y + stray_light*(mean(y)-y)) + offset.
     return .{
         .gain = controls.multiplicative_offset,
         .offset = controls.additive_offset,

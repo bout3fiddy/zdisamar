@@ -260,6 +260,7 @@ const CiaWavelengthCoefficients = struct {
 
     fn sigmaAtTemperature(self: CiaWavelengthCoefficients, temperature_k: f64) f64 {
         const temperature_c = temperature_k - 273.15;
+        // math: sigma_cia(T) = scale * max(a0 + a1*T_C + a2*T_C^2, 0)
         const raw_sigma = self.a0 +
             self.a1 * temperature_c +
             self.a2 * temperature_c * temperature_c;
@@ -361,12 +362,14 @@ pub const InterpolatedQuadratureState = struct {
         return if (self.cia_pair_density_cm6 > 0.0)
             self.cia_pair_density_cm6
         else
+            // math: fallback O2-O2 pair density = n_O2^2.
             self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
     }
 };
 
 fn opticalDepthPerKilometer(optical_depth: f64, path_length_cm: f64) f64 {
     const span_km = @max(path_length_cm / centimeters_per_kilometer, 0.0);
+    // math: k_tau = tau / path_km
     return if (span_km > 0.0) optical_depth / span_km else 0.0;
 }
 
@@ -378,6 +381,7 @@ fn particleWavelengthScale(
     if (angstrom_exponent == 0.0 or reference_wavelength_nm == wavelength_nm) return 1.0;
     const safe_wavelength = @max(wavelength_nm, 1.0);
     const safe_reference = @max(reference_wavelength_nm, 1.0);
+    // math: scale(lambda) = (lambda_ref / lambda)^angstrom_exponent
     return std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
@@ -404,6 +408,7 @@ fn particleBoundaryCarrierAtSupportRowWithScales(
         opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
         scales.aerosol,
     );
+    // math: tau_aer_sca/km = tau_aer/km * omega0_aerosol
     return .{
         .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
         .aerosol_scattering_optical_depth_per_km = aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo,
@@ -454,6 +459,7 @@ pub fn sharedBoundaryCarrierAtLevel(
 //   when: RTM levels or source interfaces need boundary carriers without a wavelength carrier cache
 //   work: evaluates boundary gas and particle carriers from support-row and level geometry
 //   data: support sublayers, strong-line states, shared RTM level geometry, profile spectroscopy cache
+//   math: k_sca_above/below = k_sca_gas + k_sca_particle; phase rows blend gas and aerosol by scattering depth
 //   follow: source_interfaces and rtm_quadrature spectroscopy-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
@@ -521,6 +527,7 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
 //   when: RTM levels or source interfaces need boundary carriers for a cached wavelength solve
 //   work: reads gas carrier through WavelengthCarrierCache and composes boundary particle fields
 //   data: support sublayers, strong-line states, shared RTM level geometry, carrier cache
+//   math: cached path preserves k_sca = k_sca_gas + k_sca_particle and reuses precomputed Rayleigh P2(lambda)
 //   follow: source_interfaces and rtm_quadrature carrier-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     self: *const State.PreparedOpticalState,
@@ -586,6 +593,7 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
 //   when: shared-grid source interfaces are filled for one wavelength solve
 //   work: composes boundary scattering scalars and writes final interface rows
 //   data: support-row gas cache, particle boundary rows, prepared phase rows
+//   math: source k_sca_above = k_sca_gas + k_sca_particle_above; phase_above/below = mix(P_rayleigh, P_aerosol, k_sca)
 //   follow: source_interfaces carrier-cache and spectroscopy-cache shared-grid paths
 pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
@@ -727,6 +735,7 @@ fn fillSourceInterfaceFromBoundaryParts(
 //   when: integrated source-function routes fill RTM quadrature levels
 //   work: composes boundary scattering scalars and writes final quadrature rows
 //   data: support-row gas cache, particle boundary rows, prepared phase rows
+//   math: RTM level source fields use the same k_sca and phase-mixture equations as source interfaces
 //   follow: rtm_quadrature carrier-cache and spectroscopy-cache shared-grid paths
 pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
@@ -889,6 +898,7 @@ pub fn sharedActiveCarrierAtLevel(
 //   when: arbitrary RTM or pseudo-spherical levels require interpolated active carriers
 //   work: blends below/above support-row carriers with particle interpolation for one altitude
 //   data: support sublayers, strong-line states, level geometry, profile spectroscopy cache
+//   math: fraction = clamp((z - z_below) / (z_above - z_below), 0, 1); particle carrier is linearly interpolated, gas comes from the boundary row
 //   follow: composeSharedActiveCarrier and altitude-level consumers
 pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
@@ -939,6 +949,7 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     const below_row = sublayers[below_index];
     const above_row = sublayers[above_index];
     const altitude_span_km = above_row.altitude_km - below_row.altitude_km;
+    // math: particle interpolation fraction f = clamp((z - z_below) / (z_above - z_below), 0, 1).
     const fraction = if (altitude_span_km > 0.0)
         std.math.clamp((level_geometry.altitude_km - below_row.altitude_km) / altitude_span_km, 0.0, 1.0)
     else
@@ -952,6 +963,7 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
 //   when: shared active carriers interpolate particle state across a support interval
 //   work: blends gas, aerosol, Rayleigh, and phase coefficient fields
 //   data: gas carrier, below/above particle carriers, interpolation fraction, wavelength
+//   math: aerosol_k = (1 - f) * aerosol_k_below + f * aerosol_k_above; gas terms are copied from the boundary carrier
 //   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and phase coefficient layout
 fn composeSharedActiveCarrier(
     gas_carrier: SharedOpticalCarrier,
@@ -994,6 +1006,7 @@ fn interpolateQuadratureStateBetweenSublayers(
     const left_aerosol_per_km = opticalDepthPerKilometer(left.aerosol_optical_depth, left.path_length_cm);
     const right_aerosol_per_km = opticalDepthPerKilometer(right.aerosol_optical_depth, right.path_length_cm);
 
+    // math: each thermodynamic/scalar field is linearly interpolated over altitude with weights (1-f, f).
     return .{
         .pressure_hpa = @max(left_weight * left.pressure_hpa + right_weight * right.pressure_hpa, 0.0),
         .temperature_k = @max(left_weight * left.temperature_k + right_weight * right.temperature_k, 0.0),
@@ -1277,6 +1290,7 @@ fn sharedOpticalScalarsAtSupportRowWithScalarCache(
 //   when: on a support-row carrier cache miss for the current wavelength
 //   work: combines cross-section LUTs, line spectroscopy, CIA/Rayleigh, and particles into scalar depth terms
 //   data: scalar support row, active absorbers, cross-section LUTs, scalar carrier output fields
+//   math: k_abs_gas = sigma_cont*n_cont*1e5 + sigma_xs*n_xs*1e5 + sigma_line*n_line*1e5; k_sca_gas = sigma_R*n_air*1e5; k_cia = sigma_cia*n_pair*1e5
 //   follow: weightedSpectroscopyEvaluationAtSupportRow and layer/source scalar consumers
 fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     out: *SharedOpticalScalars,
@@ -1425,6 +1439,7 @@ pub fn sharedOpticalCarrierAtAltitude(
 //   when: source-interface or pseudo-spherical paths request carriers at arbitrary altitude
 //   work: interpolates neighboring support rows and evaluates active absorbers at the target altitude
 //   data: support-row slices, profile spectroscopy cache, active absorber state, interpolation weights
+//   math: arbitrary-altitude carrier uses interpolated n,T,p and computes per-km optical depths with the same sigma*n*1e5 equations as support rows
 //   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and altitude bracket lookup
 pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,

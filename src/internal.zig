@@ -77,6 +77,11 @@ pub const common = struct {
 //   field storage: 0 B; padding: 0 B (0 bits)
 //   footprint: no runtime field storage; namespace/type declarations only
 pub const forward_model = struct {
+    // instrumentation: internal test exports
+    // captures: calculation telemetry, perturbation sensitivity, and trace facades
+    // why: validation CLIs and unit tests need access without exposing instrumentation in the public API.
+    pub const calculation_telemetry = @import("forward_model/calculation_telemetry.zig");
+    pub const perturbation_sensitivity = @import("forward_model/perturbation_sensitivity.zig");
     pub const performance_trace = @import("forward_model/performance_trace.zig");
     pub const work_partition = @import("forward_model/work_partition.zig");
 

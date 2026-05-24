@@ -33,6 +33,7 @@ test "unit suite keeps the public surface literal" {
     try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
     try std.testing.expect(!@hasDecl(zdisamar, "compat"));
     try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
+    try std.testing.expect(!@hasDecl(zdisamar, "calculation_telemetry"));
 }
 
 test "prepared lifecycle owns resolved O2A state" {

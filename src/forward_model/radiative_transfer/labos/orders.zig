@@ -3,8 +3,13 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
+const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// instrumentation: LABOS orders
+// captures: scattering-order zones and convergence decisions
+// why: study how early multiple scattering can stop without moving reflectance.
 // layout(64-bit):
 //   size: 48 B, align: 8 B
 //   field storage: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
@@ -106,6 +111,7 @@ pub const OrdersWorkspace = struct {
 //   work: transports up/down source terms between optical levels
 //   data: attenuation cache, level-indexed U/D source arrays, Gauss stream weights
 //   follow: dynamic, runtime12, and fixed12 transport variants selected by route shape
+//   math: U_l = U_local_l + T(l-1->l) U_{l-1}; D_l = D_local_l + T(l+1->l) D_{l+1}.
 fn transportToOtherLevels(
     start_level: usize,
     end_level: usize,
@@ -137,6 +143,7 @@ fn transportToOtherLevels(
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
+            // math: upward transported current order adds attenuated previous-level upward source.
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
             out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
         }
@@ -154,6 +161,7 @@ fn transportToOtherLevels(
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
+            // math: downward transported current order adds attenuated next-level downward source.
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
         }
@@ -327,6 +335,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel - 1, ilevel);
+            // math: dU_l = dU_local_l + dT*U_{l-1} + T*dU_{l-1}.
             out_u0[imu] = local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
             out_u1[imu] = local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
         }
@@ -347,6 +356,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel + 1, ilevel);
+            // math: dD_l = dD_local_l + dT*D_{l+1} + T*dD_{l+1}.
             out_d0[imu] = local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
             out_d1[imu] = local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
         }
@@ -372,6 +382,7 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     }
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
+        // math: dotGauss(row,v) = sum_k mat[row,k] * v_k over Gaussian streams.
         s += mat.data[row_offset + k] * vec_col.data[k];
     }
     return s;
@@ -393,6 +404,7 @@ const DotPair = struct {
 //   work: reduces paired Gauss stream vectors with quadrature weights
 //   data: stream vectors, Gaussian weights, n_gauss loop count
 //   follow: dotGaussPair10 and accumulation callers in ordersScatInternal
+//   math: returns two sums s_c = sum_k mat[row,k] * vec_c[k] for c in {0,1}.
 inline fn dotGaussPair(
     mat: *const basis.Mat,
     row: usize,
@@ -531,6 +543,7 @@ fn initializeOrdersBuffers(
 //   work: adds local U/D fields into per-level sums and current-order buffers
 //   data: ud, ud_sum_local, ud_local arrays, level range, stream count
 //   follow: fixed 12-stream accumulate variant and reflectance integration inputs
+//   math: accumulated field = sum over retained scattering orders; local sum tracks only untransported source terms.
 fn accumulateOrderContribution(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -622,6 +635,7 @@ fn accumulateOrderContribution12(
 //   work: initializes sources, propagates scattering orders, transports levels, and accumulates reflectance terms
 //   data: order U/D buffers, RT matrices, attenuation arrays, Gauss weights, contribution arrays
 //   follow: labos.orders trace zones and transportToOtherLevels variants
+//   math: scattering orders iterate local sources from R/T applied to previous transported U/D, then transport and accumulate until convergence.
 fn ordersScatInternal(
     comptime track_sum_local: bool,
     comptime rt_active_ready: bool,
@@ -653,6 +667,9 @@ fn ordersScatInternal(
     const ud_local_view = ud_local[0..nlevel];
     const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
+    // instrumentation: trace counter
+    // captures: LABOS scattering-order solver calls
+    // why: count the transport solves hidden under each Fourier term.
     Trace.plotU("orders_calls", 1);
 
     if (!rt_active_ready) {
@@ -660,12 +677,16 @@ fn ordersScatInternal(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: initial local source construction wall time
+        // why: separate first-order source setup from later inter-level transport.
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_sources");
         defer zone.end();
         for (start_level..end_level + 1) |ilevel| {
             const e_data = &ud_view[ilevel].E.data;
             for (0..nmutot) |imu| {
                 const att = atten.get(imu, end_level, ilevel);
+                // math: E_l(mu) = T_mu(top_level -> l), the direct attenuation to each level.
                 e_data[imu] = att;
             }
         }
@@ -681,6 +702,7 @@ fn ordersScatInternal(
                 const rt_t = &rt[ilevel + 1].T;
                 var rt_idx = col_idx;
                 for (0..nmutot) |imu| {
+                    // math: initial local downward source D_l = T_layer(:,sun/view) * attenuation_to_layer.
                     local_d[imu] = rt_t.data[rt_idx] * att;
                     rt_idx += rt_t.n;
                 }
@@ -698,6 +720,7 @@ fn ordersScatInternal(
                 const rt_r = &rt[ilevel].R;
                 var rt_idx = col_idx;
                 for (0..nmutot) |imu| {
+                    // math: initial local upward source U_l = R_layer(:,sun/view) * attenuation_to_level.
                     local_u[imu] = rt_r.data[rt_idx] * att;
                     rt_idx += rt_r.n;
                 }
@@ -713,6 +736,9 @@ fn ordersScatInternal(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: initial-order transport wall time
+        // why: isolate first scattering transport before convergence tests.
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_transport");
         defer zone.end();
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
@@ -721,8 +747,33 @@ fn ordersScatInternal(
     copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
 
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
-    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) {
+    // instrumentation: perturbation
+    // captures: initial-order convergence decision
+    // why: test sensitivity of the single-scattering early return.
+    const initial_stop = if (controls.scattering != .multiple)
+        true
+    else
+        Perturbation.decision(
+            .orders_initial_convergence,
+            .{ .order_index = 1 },
+            max_value < controls.performance_thresholds.threshold_conv_first,
+        );
+    if (initial_stop) {
+        // instrumentation: trace counter
+        // captures: initial-order early returns
+        // why: quantify single-scattering exits from the order loop.
         Trace.plotU("orders_initial_returns", 1);
+        // instrumentation: calculation telemetry
+        // captures: initial convergence margin
+        // why: study whether single-scattering exits are safely below tolerance.
+        Telemetry.ordersConvergence(
+            1,
+            num_orders_max,
+            max_value,
+            controls.performance_thresholds.threshold_conv_first,
+            true,
+            false,
+        );
         return .{
             .ud = ud_view,
             .ud_sum_local = ud_sum_local_view,
@@ -732,17 +783,29 @@ fn ordersScatInternal(
     var num_orders: usize = 1;
 
     while (true) {
+        // instrumentation: trace zone
+        // captures: one multiple-scattering order iteration wall time
+        // why: compare cost per retained scattering order.
         const multiple_loop_zone = Trace.deepStaticZone(@src(), "labos.orders.multiple_loop");
         num_orders += 1;
+        // instrumentation: trace counter
+        // captures: number of multiple-scattering iterations
+        // why: tie convergence thresholds to actual order count.
         Trace.plotU("orders_multiple_iterations", 1);
 
         {
+            // instrumentation: trace zone
+            // captures: local downward source update wall time
+            // why: isolate downward matrix-vector work inside each order.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_down");
             defer zone.end();
             for (start_level..end_level) |ilevel| {
                 const local_d0 = &ud_local_view[ilevel].D.col[0].data;
                 const local_d1 = &ud_local_view[ilevel].D.col[1].data;
                 if (!rt_active_view[ilevel + 1]) {
+                    // instrumentation: trace counter
+                    // captures: inactive layers skipped in downward source update
+                    // why: quantify savings from layer pre-partitioning and active masks.
                     Trace.plotU("orders_inactive_down_layers", 1);
                     continue;
                 }
@@ -750,11 +813,15 @@ fn ordersScatInternal(
                 const prev_u1 = &ud_orde_view[ilevel].U.col[1];
                 const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
                 const prev_d1 = &ud_orde_view[ilevel + 1].D.col[1];
+                // instrumentation: trace counters
+                // captures: Gauss-pair dot-product calls and terms for downward updates
+                // why: connect order timing to inner product arithmetic volume.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
                 for (0..nmutot) |imu| {
                     const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                     const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+                    // math: local downward order = R * previous_up + T * previous_down.
                     local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
                     local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
                 }
@@ -763,6 +830,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: local upward source update wall time
+            // why: isolate upward matrix-vector work inside each order.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_up");
             defer zone.end();
             const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
@@ -770,10 +840,14 @@ fn ordersScatInternal(
             const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
             const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
             if (rt_active_view[start_level]) {
+                // instrumentation: trace counters
+                // captures: boundary upward dot-product calls and terms
+                // why: account for the lower-bound source cost separately.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * n_gauss));
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+                    // math: lower-bound local upward source = R * previous_down.
                     local_u_start0[imu] = r_dot_d.col0;
                     local_u_start1[imu] = r_dot_d.col1;
                 }
@@ -783,6 +857,9 @@ fn ordersScatInternal(
                 const local_u0 = &ud_local_view[ilevel].U.col[0].data;
                 const local_u1 = &ud_local_view[ilevel].U.col[1].data;
                 if (!rt_active_view[ilevel]) {
+                    // instrumentation: trace counter
+                    // captures: inactive layers skipped in upward source update
+                    // why: quantify savings from layer pre-partitioning and active masks.
                     Trace.plotU("orders_inactive_up_layers", 1);
                     continue;
                 }
@@ -790,11 +867,15 @@ fn ordersScatInternal(
                 const prev_d1 = &ud_orde_view[ilevel].D.col[1];
                 const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
                 const prev_u1 = &ud_orde_view[ilevel - 1].U.col[1];
+                // instrumentation: trace counters
+                // captures: Gauss-pair dot-product calls and terms for upward updates
+                // why: connect order timing to inner product arithmetic volume.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                     const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+                    // math: local upward order = R * previous_down + T * previous_up.
                     local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
                     local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
                 }
@@ -802,6 +883,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: inter-level transport wall time for this order
+            // why: separate propagation from local source computation.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.transport");
             defer zone.end();
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
@@ -809,7 +893,30 @@ fn ordersScatInternal(
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
-        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) {
+        // instrumentation: telemetry and perturbation
+        // captures: multiple-order stop margin and forced stop experiments
+        // why: identify scattering orders that are safe to skip by tolerance.
+        const hit_iteration_cap = num_orders >= num_orders_max;
+        const multiple_stop = if (hit_iteration_cap)
+            true
+        else
+            Perturbation.decision(
+                .orders_multiple_convergence,
+                .{ .order_index = @intCast(num_orders) },
+                max_value < controls.performance_thresholds.threshold_conv_mult,
+            );
+        if (multiple_stop) {
+            // instrumentation: calculation telemetry
+            // captures: multiple-order convergence margin and iteration cap status
+            // why: study whether later scattering orders can be safely pruned.
+            Telemetry.ordersConvergence(
+                num_orders,
+                num_orders_max,
+                max_value,
+                controls.performance_thresholds.threshold_conv_mult,
+                false,
+                hit_iteration_cap,
+            );
             // PARITY:
             //   `LabosModule::ordersScat` exits the scattering-order loop as
             //   soon as the current order falls below `thresholdConv_mult`.
@@ -819,6 +926,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: accepted order accumulation wall time
+            // why: separate retained-order summation from convergence testing.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.accumulate");
             defer zone.end();
             accumulateOrderContribution(
@@ -1068,6 +1178,7 @@ pub fn ordersScat(
 //   work: propagates base and derivative order payloads through the scattering-order loop
 //   data: tangent U/D buffers, base order buffers, derivative RT layers, attenuation tangent arrays
 //   follow: tangent transport helpers and derivative accumulation writes
+//   math: tangent local sources apply product rule, e.g. d(T*att)=dT*att + T*datt and d(R*U)=dR*U + R*dU.
 pub fn ordersScatTangent(
     allocator: Allocator,
     start_level: usize,
@@ -1149,6 +1260,7 @@ pub fn ordersScatTangent(
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
+                // math: dD_local = dT_layer * attenuation + T_layer * d attenuation.
                 tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
                 rt_idx += rt_t.n;
             }
@@ -1176,6 +1288,7 @@ pub fn ordersScatTangent(
             var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
+                // math: dU_local = dR_layer * attenuation + R_layer * d attenuation.
                 tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
                 rt_idx += rt_r.n;
             }
@@ -1227,6 +1340,7 @@ pub fn ordersScatTangent(
                 const rst_dot_du = dotGaussPair(&rt[ilevel + 1].R, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
                 const dt_dot_d = dotGaussPair(&rt_tangent[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
                 const t_dot_dd = dotGaussPair(&rt[ilevel + 1].T, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
+                // math: dD_local = dR*U + R*dU + dT*D + T*dD.
                 tangent_d0[imu] = drst_dot_u.col0 + rst_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
                 tangent_d1[imu] = drst_dot_u.col1 + rst_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
             }
@@ -1249,6 +1363,7 @@ pub fn ordersScatTangent(
                 local_u_start1[imu] = r_dot_d.col1;
                 const dr_dot_d = dotGaussPair(&rt_tangent[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
                 const r_dot_dd = dotGaussPair(&rt[start_level].R, imu, tangent_prev_d_start0, tangent_prev_d_start1, n_gauss);
+                // math: lower-bound dU_local = dR*D + R*dD.
                 tangent_u_start0[imu] = dr_dot_d.col0 + r_dot_dd.col0;
                 tangent_u_start1[imu] = dr_dot_d.col1 + r_dot_dd.col1;
             }
@@ -1293,6 +1408,7 @@ pub fn ordersScatTangent(
                 const r_dot_dd = dotGaussPair(&rt[ilevel].R, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
                 const dtst_dot_u = dotGaussPair(&rt_tangent[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
                 const tst_dot_du = dotGaussPair(&rt[ilevel].T, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
+                // math: dU_local = dR*D + R*dD + dT*U + T*dU.
                 tangent_u0[imu] = dr_dot_d.col0 + r_dot_dd.col0 + dtst_dot_u.col0 + tst_dot_du.col0;
                 tangent_u1[imu] = dr_dot_d.col1 + r_dot_dd.col1 + dtst_dot_u.col1 + tst_dot_du.col1;
             }

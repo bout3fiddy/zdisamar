@@ -9,9 +9,13 @@ const Plan = @import("wavelength_plan.zig");
 const Storage = @import("storage.zig");
 const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
+// instrumentation: wavelength sampling
+// captures: plan preparation zones and sampling fan-out
+// why: separate spectral-grid setup from forward RTM work.
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
@@ -134,6 +138,7 @@ const KernelStorageBuilder = struct {
 //   work: expands output wavelengths into radiance and irradiance integration plans
 //   data: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
 //   follow: fillWavelengthSamplingPlans and buildForwardMissPlan
+//   math: each output lambda_i maps to per-channel sample sets {lambda_i + delta_ij, w_ij}
 pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
@@ -154,6 +159,9 @@ pub fn buildWavelengthSampling(
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     if (can_cache_adaptive_plan) {
+        // instrumentation: trace zone
+        // captures: adaptive kernel cache preparation
+        // why: measure reusable instrument-response setup.
         const zone = Trace.staticZone(@src(), "wavelength_sampling.prepare_adaptive_cache");
         defer zone.end();
         _ = instrument_integration.prepareAdaptiveKernelCache(
@@ -171,6 +179,9 @@ pub fn buildWavelengthSampling(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: wavelength sampling plan fill
+        // why: measure output-grid expansion into integration samples.
         const zone = Trace.staticZone(@src(), "wavelength_sampling.sample_loop");
         defer zone.end();
         try fillWavelengthSamplingPlans(
@@ -190,6 +201,7 @@ pub fn buildWavelengthSampling(
     const kernel_offsets_nm = try kernel_storage_builder.offsets_nm.toOwnedSlice(allocator);
     errdefer allocator.free(kernel_offsets_nm);
     const kernel_weights = try kernel_storage_builder.weights.toOwnedSlice(allocator);
+    recordWavelengthSamplingPlan(plans, kernel_offsets_nm.len);
     return .{
         .rows = plans,
         .kernel_offsets_nm = kernel_offsets_nm,
@@ -289,14 +301,23 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
         "zdisamar-sampling-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-sampling-worker";
+    // instrumentation: trace thread label
+    // captures: wavelength-sampling worker identity
+    // why: make parallel plan-fill lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: worker chunk timing and chunk sizes
+    // why: inspect parallel wavelength-plan load balance.
     const worker_zone = Trace.staticZone(@src(), "wavelength_sampling.worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: wavelength-sampling chunk wall time and row count
+            // why: reveal chunk imbalance while filling integration plans.
             const chunk_zone = Trace.deepStaticZone(@src(), "wavelength_sampling.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();
@@ -367,6 +388,7 @@ fn fillWavelengthSamplingPlanRange(
 //   work: resolves nominal wavelength, builds channel integration kernels, and applies calibration shifts
 //   data: resolved axis, radiance/irradiance adaptive caches, integration kernel outputs
 //   follow: integrationForWavelengthWithAdaptiveCacheChecked and calibration.shiftedWavelength
+//   math: lambda_radiance = lambda_i + shift_L(lambda_i); lambda_irradiance = lambda_i + shift_E0(lambda_i)
 fn buildWavelengthSamplingPlan(
     allocator: Allocator,
     scene: *const Scene,
@@ -458,9 +480,44 @@ fn compactIntegrationKernel(
     return compact;
 }
 
+fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_count: usize) void {
+    // instrumentation: calculation telemetry
+    // captures: integrated rows and side samples
+    // why: quantify spectral sampling work before forward misses.
+    if (!Telemetry.enabled) return;
+    var radiance_integrated_rows: usize = 0;
+    var irradiance_integrated_rows: usize = 0;
+    var radiance_sample_count: usize = 0;
+    var irradiance_sample_count: usize = 0;
+    var max_kernel_sample_count: usize = 0;
+    for (plans) |plan| {
+        const radiance_count = plan.radiance_integration.activeSampleCount();
+        const irradiance_count = plan.irradiance_integration.activeSampleCount();
+        if (plan.radiance_integration.enabled()) radiance_integrated_rows += 1;
+        if (plan.irradiance_integration.enabled()) irradiance_integrated_rows += 1;
+        radiance_sample_count += radiance_count;
+        irradiance_sample_count += irradiance_count;
+        max_kernel_sample_count = @max(max_kernel_sample_count, radiance_count);
+        max_kernel_sample_count = @max(max_kernel_sample_count, irradiance_count);
+    }
+    // instrumentation: calculation telemetry
+    // captures: compact wavelength sampling plan summary
+    // why: store the sampling workload without per-output-row data volume.
+    Telemetry.wavelengthSamplingPlan(
+        plans.len,
+        radiance_integrated_rows,
+        irradiance_integrated_rows,
+        radiance_sample_count,
+        irradiance_sample_count,
+        side_sample_count,
+        max_kernel_sample_count,
+    );
+}
+
 fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: usize) f64 {
     if (resolved_axis.explicit_wavelengths_nm.len != 0) return resolved_axis.explicit_wavelengths_nm[index];
     const sample_count = resolved_axis.base.sample_count;
+    // math: lambda_i = lambda_start + i * (lambda_end - lambda_start) / (N - 1).
     const step = (resolved_axis.base.end_nm - resolved_axis.base.start_nm) /
         @as(f64, @floatFromInt(sample_count - 1));
     return resolved_axis.base.start_nm + step * @as(f64, @floatFromInt(index));
@@ -475,6 +532,7 @@ fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
 //   work: deduplicates radiance integration wavelengths and records dense miss indexes per nominal row
 //   data: radiance integration offsets, quantized cache keys, forward miss array, per-sample result indexes
 //   follow: SpectralEval.prefetchForwardSamples and direct radiance integration
+//   math: unique misses are lambda_m = lambda_radiance_i + delta_ij, with rows storing indexes into F(lambda_m)
 pub fn buildForwardMissPlan(
     allocator: Allocator,
     table: WavelengthSamplingTable,
@@ -514,6 +572,10 @@ pub fn buildForwardMissPlan(
         };
     }
 
+    // instrumentation: calculation telemetry
+    // captures: sample-index reuse vs unique misses
+    // why: measure how much dense forward work integration actually needs.
+    Telemetry.forwardMissPlan(table.rows.len, sample_indices.items.len, misses.items.len);
     return .{
         .rows = rows,
         .sample_indices = try sample_indices.toOwnedSlice(allocator),
