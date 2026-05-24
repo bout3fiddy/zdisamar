@@ -1,73 +1,109 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="734" height="790" viewBox="0 0 734 790">
+<svg xmlns="http://www.w3.org/2000/svg" width="598" height="1018" viewBox="0 0 598 1018">
 <title>Aerosol layer-location probability</title>
 <style>text { font-family: Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace; fill: black; }.plot-title { font-size: 22px; font-weight: 400; }.plot-subtitle { font-size: 15px; font-weight: 400; }.panel-title { font-size: 18px; font-weight: 400; }.axis-title { font-size: 15px; }.tick-label,.axis-multiplier { font-size: 12px; }.legend-label { font-size: 12px; }.figure-bg { fill: white; }.plot-bg { fill: white; stroke: black; stroke-width: 1; }.axis { stroke: black; stroke-width: 1; }.grid { stroke: #b0b0b0; stroke-opacity: 0.1; }.series.line { stroke-linejoin: round; stroke-linecap: round; }</style>
-<rect class="figure-bg" x="0" y="0" width="734" height="790" />
-<text class="plot-title" x="367.000" y="34" text-anchor="middle">Aerosol layer-location probability</text>
+<rect class="figure-bg" x="0" y="0" width="598" height="1018" />
+<text class="plot-title" x="299.000" y="34" text-anchor="middle">Aerosol layer-location probability</text>
 <g class="panel" transform="translate(178,148)">
-<rect class="plot-bg" x="0" y="0" width="520" height="520" />
-<text class="panel-title" x="260.000" y="-54" text-anchor="middle">Layer-location probability</text>
-<line class="axis" x1="0" x2="520" y1="520" y2="520" />
-<line class="axis" x1="0" x2="0" y1="0" y2="520" />
-<text class="tick-label" x="-28" y="30.041" text-anchor="end">225-288</text>
-<text class="tick-label" x="-28" y="82.124" text-anchor="end">288-351</text>
-<text class="tick-label" x="-28" y="134.207" text-anchor="end">351-414</text>
-<text class="tick-label" x="-28" y="186.289" text-anchor="end">414-477</text>
-<text class="tick-label" x="-28" y="237.959" text-anchor="end">477-539</text>
-<text class="tick-label" x="-28" y="289.628" text-anchor="end">539-602</text>
-<text class="tick-label" x="-28" y="341.711" text-anchor="end">602-665</text>
-<text class="tick-label" x="-28" y="393.793" text-anchor="end">665-728</text>
-<text class="tick-label" x="-28" y="445.876" text-anchor="end">728-791</text>
-<text class="tick-label" x="-28" y="497.959" text-anchor="end">791-854</text>
-<line class="grid" x1="0.000" x2="0.000" y1="0" y2="520" />
-<text class="tick-label" x="0.000" y="556" text-anchor="middle">0</text>
-<line class="grid" x1="104.000" x2="104.000" y1="0" y2="520" />
-<text class="tick-label" x="104.000" y="556" text-anchor="middle">0.1247</text>
-<line class="grid" x1="208.000" x2="208.000" y1="0" y2="520" />
-<text class="tick-label" x="208.000" y="556" text-anchor="middle">0.2493</text>
-<line class="grid" x1="312.000" x2="312.000" y1="0" y2="520" />
-<text class="tick-label" x="312.000" y="556" text-anchor="middle">0.374</text>
-<line class="grid" x1="416.000" x2="416.000" y1="0" y2="520" />
-<text class="tick-label" x="416.000" y="556" text-anchor="middle">0.4987</text>
-<line class="grid" x1="520.000" x2="520.000" y1="0" y2="520" />
-<text class="tick-label" x="520.000" y="556" text-anchor="middle">0.6233</text>
-<text class="axis-title" x="260.000" y="606" text-anchor="middle">Probability</text>
-<text class="axis-title" transform="translate(-126,260.000) rotate(-90)" text-anchor="middle">Pressure bin (hPa)</text>
-<g class="legend" transform="translate(140.000,-20.000)">
+<rect class="plot-bg" x="0" y="0" width="400" height="748" />
+<text class="panel-title" x="200.000" y="-54" text-anchor="middle">Layer-location probability</text>
+<line class="axis" x1="0" x2="400" y1="748" y2="748" />
+<line class="axis" x1="0" x2="0" y1="0" y2="748" />
+<text class="tick-label" x="-28" y="7.369" text-anchor="end" style="font-size: 8px;">5.5</text>
+<text class="tick-label" x="-28" y="16.354" text-anchor="end" style="font-size: 8px;">17.5</text>
+<text class="tick-label" x="-28" y="31.329" text-anchor="end" style="font-size: 8px;">37.5</text>
+<text class="tick-label" x="-28" y="59.407" text-anchor="end" style="font-size: 8px;">75</text>
+<text class="tick-label" x="-28" y="96.845" text-anchor="end" style="font-size: 8px;">125</text>
+<text class="tick-label" x="-28" y="134.282" text-anchor="end" style="font-size: 8px;">175</text>
+<text class="tick-label" x="-28" y="171.720" text-anchor="end" style="font-size: 8px;">225</text>
+<text class="tick-label" x="-28" y="209.157" text-anchor="end" style="font-size: 8px;">275</text>
+<text class="tick-label" x="-28" y="246.595" text-anchor="end" style="font-size: 8px;">325</text>
+<text class="tick-label" x="-28" y="284.032" text-anchor="end" style="font-size: 8px;">375</text>
+<text class="tick-label" x="-28" y="321.469" text-anchor="end" style="font-size: 8px;">425</text>
+<text class="tick-label" x="-28" y="358.907" text-anchor="end" style="font-size: 8px;">475</text>
+<text class="tick-label" x="-28" y="396.344" text-anchor="end" style="font-size: 8px;">525</text>
+<text class="tick-label" x="-28" y="433.782" text-anchor="end" style="font-size: 8px;">575</text>
+<text class="tick-label" x="-28" y="471.219" text-anchor="end" style="font-size: 8px;">625</text>
+<text class="tick-label" x="-28" y="508.657" text-anchor="end" style="font-size: 8px;">675</text>
+<text class="tick-label" x="-28" y="546.094" text-anchor="end" style="font-size: 8px;">725</text>
+<text class="tick-label" x="-28" y="583.532" text-anchor="end" style="font-size: 8px;">775</text>
+<text class="tick-label" x="-28" y="620.969" text-anchor="end" style="font-size: 8px;">825</text>
+<text class="tick-label" x="-28" y="658.406" text-anchor="end" style="font-size: 8px;">875</text>
+<text class="tick-label" x="-28" y="695.844" text-anchor="end" style="font-size: 8px;">925</text>
+<text class="tick-label" x="-28" y="733.281" text-anchor="end" style="font-size: 8px;">975</text>
+<line class="grid" x1="0.000" x2="0.000" y1="0" y2="748" />
+<text class="tick-label" x="0.000" y="784" text-anchor="middle">0</text>
+<line class="grid" x1="80.000" x2="80.000" y1="0" y2="748" />
+<text class="tick-label" x="80.000" y="784" text-anchor="middle">0.1222</text>
+<line class="grid" x1="160.000" x2="160.000" y1="0" y2="748" />
+<text class="tick-label" x="160.000" y="784" text-anchor="middle">0.2444</text>
+<line class="grid" x1="240.000" x2="240.000" y1="0" y2="748" />
+<text class="tick-label" x="240.000" y="784" text-anchor="middle">0.3667</text>
+<line class="grid" x1="320.000" x2="320.000" y1="0" y2="748" />
+<text class="tick-label" x="320.000" y="784" text-anchor="middle">0.4889</text>
+<line class="grid" x1="400.000" x2="400.000" y1="0" y2="748" />
+<text class="tick-label" x="400.000" y="784" text-anchor="middle">0.6111</text>
+<text class="axis-title" x="200.000" y="834" text-anchor="middle">Probability</text>
+<text class="axis-title" transform="translate(-126,374.000) rotate(-90)" text-anchor="middle">Pressure bin (hPa)</text>
+<g class="legend" transform="translate(20.000,-20.000)">
 <rect x="0" y="-8" width="18" height="8" fill="#4C4C4C" />
 <text class="legend-label" x="25" y="0">Truth AOD fraction</text>
 <rect x="178" y="-8" width="18" height="8" fill="#1f77b4" />
 <text class="legend-label" x="203" y="0">Retrieved probability</text>
 </g>
-<line class="rule-y" x1="0" x2="520" y1="99.205" y2="99.205" stroke="#737373" stroke-width="0.8" stroke-dasharray="4 3" />
-<rect class="series horizontal-bar" x="0.000" y="2.604" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="54.687" width="472.727" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="106.769" width="361.497" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="158.852" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="210.893" width="0.000" height="46.130" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="262.191" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="314.273" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="366.356" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="418.439" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="470.521" width="0.000" height="46.874" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
-<rect class="series horizontal-bar" x="0.000" y="2.604" width="93.960" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="101.960" y="30.041" text-anchor="start">0.113</text>
-<rect class="series horizontal-bar" x="0.000" y="54.687" width="381.026" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="389.026" y="82.124" text-anchor="start">0.457</text>
-<rect class="series horizontal-bar" x="0.000" y="106.769" width="300.852" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="308.852" y="134.207" text-anchor="start">0.361</text>
-<rect class="series horizontal-bar" x="0.000" y="158.852" width="39.168" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="47.168" y="186.289" text-anchor="start">0.047</text>
-<rect class="series horizontal-bar" x="0.000" y="210.893" width="13.706" height="46.130" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="21.706" y="237.959" text-anchor="start">0.016</text>
-<rect class="series horizontal-bar" x="0.000" y="262.191" width="4.026" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="12.026" y="289.628" text-anchor="start">0.005</text>
-<rect class="series horizontal-bar" x="0.000" y="314.273" width="1.183" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="9.183" y="341.711" text-anchor="start">0.001</text>
-<rect class="series horizontal-bar" x="0.000" y="366.356" width="0.245" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="8.245" y="393.793" text-anchor="start">0.000</text>
-<rect class="series horizontal-bar" x="0.000" y="418.439" width="0.051" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="8.051" y="445.876" text-anchor="start">0.000</text>
-<rect class="series horizontal-bar" x="0.000" y="470.521" width="0.007" height="46.874" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
-<text class="tick-label" x="8.007" y="497.959" text-anchor="start">0.000</text>
+<line class="rule-y" x1="0" x2="400" y1="257.570" y2="257.570" stroke="#737373" stroke-width="0.8" stroke-dasharray="4 3" />
+<rect class="series horizontal-bar" x="0.000" y="0.337" width="0.000" height="6.065" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="7.300" width="0.000" height="10.108" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="18.906" width="0.000" height="16.847" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="38.561" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="75.998" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="113.435" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="150.873" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="188.310" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="225.748" width="363.636" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="263.185" width="290.909" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="300.623" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="338.060" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="375.497" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="412.935" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="450.372" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="487.810" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="525.247" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="562.685" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="600.122" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="637.560" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="674.997" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="712.434" width="0.000" height="33.694" fill="#4C4C4C" opacity="0.220" stroke="#4C4C4C" stroke-width="0.9"><title>Truth AOD fraction</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="0.337" width="0.001" height="6.065" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="7.300" width="0.002" height="10.108" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="18.906" width="0.007" height="16.847" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="38.561" width="0.073" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="75.998" width="1.029" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="9.029" y="96.845" text-anchor="start">0.002</text>
+<rect class="series horizontal-bar" x="0.000" y="113.435" width="8.458" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="16.458" y="134.282" text-anchor="start">0.013</text>
+<rect class="series horizontal-bar" x="0.000" y="150.873" width="40.506" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="48.506" y="171.720" text-anchor="start">0.062</text>
+<rect class="series horizontal-bar" x="0.000" y="188.310" width="113.034" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="121.034" y="209.157" text-anchor="start">0.173</text>
+<rect class="series horizontal-bar" x="0.000" y="225.748" width="183.792" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="191.792" y="246.595" text-anchor="start">0.281</text>
+<rect class="series horizontal-bar" x="0.000" y="263.185" width="174.128" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="182.128" y="284.032" text-anchor="start">0.266</text>
+<rect class="series horizontal-bar" x="0.000" y="300.623" width="96.126" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="104.126" y="321.469" text-anchor="start">0.147</text>
+<rect class="series horizontal-bar" x="0.000" y="338.060" width="30.920" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="38.920" y="358.907" text-anchor="start">0.047</text>
+<rect class="series horizontal-bar" x="0.000" y="375.497" width="5.795" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="13.795" y="396.344" text-anchor="start">0.009</text>
+<rect class="series horizontal-bar" x="0.000" y="412.935" width="0.633" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<text class="tick-label" x="8.633" y="433.782" text-anchor="start">0.001</text>
+<rect class="series horizontal-bar" x="0.000" y="450.372" width="0.040" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="487.810" width="0.001" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="525.247" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="562.685" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="600.122" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="637.560" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="674.997" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
+<rect class="series horizontal-bar" x="0.000" y="712.434" width="0.000" height="33.694" fill="#1f77b4" opacity="0.820"><title>Retrieved probability</title></rect>
 </g>
 </svg>

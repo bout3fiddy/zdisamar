@@ -165,6 +165,7 @@ class SvgPanel:
     y_domain: tuple[float, float] | None = None
     y_ticks: tuple[float, ...] = ()
     y_tick_labels: tuple[str, ...] = ()
+    y_tick_label_font_size: float | None = None
     marker_x: tuple[float, ...] = ()
     rule_y: tuple[float, ...] = ()
     y_axis_multiplier: str | None = None
@@ -225,6 +226,7 @@ class SvgPanel:
             y_domain=self.y_domain,
             y_ticks=self.y_ticks,
             y_tick_labels=self.y_tick_labels,
+            y_tick_label_font_size=self.y_tick_label_font_size,
             marker_x=tuple(marker_values(series_x_values(self.series))),
             rule_y=self.rule_y,
             y_axis_multiplier=self.y_axis_multiplier,
@@ -251,6 +253,7 @@ class SvgFigure:
     margin_top: int = 96
     margin_bottom: int = 122
     title_anchor: str = "middle"
+    show_title: bool = True
 
     @property
     def width(self) -> int:
@@ -287,6 +290,7 @@ class SvgFigure:
             "width": self.width,
             "height": self.height,
             "columns": self.columns,
+            "show_title": self.show_title,
             "resolve": {"scale": {"y": "independent" if self.y_independent else "shared"}},
             "panels": [self.panel_dict(index, panel) for index, panel in enumerate(self.panels)],
         }
@@ -337,13 +341,15 @@ class SvgFigure:
             f"<title>{escape(self.title)}</title>",
             self.svg_css,
             f'<rect class="figure-bg" x="0" y="0" width="{self.width}" height="{self.height}" />',
-            (
-                f'<text class="plot-title" x="{self.title_x():.3f}" y="{FIGURE_TITLE_Y}" '
-                f'text-anchor="{escape(self.title_anchor)}">{escape(self.title)}</text>'
-            ),
         ]
 
-        if self.subtitle is not None:
+        if self.show_title:
+            elements.append(
+                f'<text class="plot-title" x="{self.title_x():.3f}" y="{FIGURE_TITLE_Y}" '
+                f'text-anchor="{escape(self.title_anchor)}">{escape(self.title)}</text>'
+            )
+
+        if self.show_title and self.subtitle is not None:
             elements.append(
                 f'<text class="plot-subtitle" x="{self.title_x():.3f}" '
                 f'y="{FIGURE_TITLE_Y + SUBTITLE_Y_OFFSET}" '
@@ -375,6 +381,7 @@ class SvgFigure:
             "y_domain": [y_domain[0], y_domain[1]],
             "y_ticks": list(panel.y_ticks),
             "y_tick_labels": list(panel.y_tick_labels),
+            "y_tick_label_font_size": panel.y_tick_label_font_size,
             "marker_x": list(panel.marker_x),
             "rule_y": list(panel.rule_y),
             "axis_multiplier": panel.y_axis_multiplier,
@@ -517,6 +524,10 @@ class SvgFigure:
             ),
             default=0,
         )
+
+        if not self.show_title:
+            return max(self.margin_top, first_row_top_content)
+
         figure_text_height = PLOT.title_font_size
 
         if self.subtitle is not None:
@@ -711,7 +722,8 @@ def axis_svg(
             else format_tick(value, panel.y_axis_multiplier)
         )
         elements.append(
-            f'<text class="tick-label" x="{Y_TICK_LABEL_X}" y="{y + 4:.3f}" text-anchor="end">'
+            f'<text class="tick-label" x="{Y_TICK_LABEL_X}" y="{y + 4:.3f}" '
+            f'text-anchor="end"{tick_label_style(panel.y_tick_label_font_size)}>'
             f"{escape(label)}</text>"
         )
 
@@ -863,7 +875,10 @@ def horizontal_bars_svg(
         )
 
         if series.value_labels and abs(x) > 0.0:
-            elements.append(horizontal_bar_label_svg(panel, series, x, value_x, center_y))
+            label = horizontal_bar_label_svg(panel, series, x, value_x, center_y)
+
+            if label is not None:
+                elements.append(label)
 
     return elements
 
@@ -874,9 +889,13 @@ def horizontal_bar_label_svg(
     value: float,
     value_x: float,
     center_y: float,
-) -> str:
+) -> str | None:
 
     label = format(value, series.value_label_format)
+
+    if float(label) == 0.0:
+        return None
+
     outside_x = value_x + 8.0
 
     if outside_x + 44.0 <= panel.width:
@@ -889,6 +908,14 @@ def horizontal_bar_label_svg(
         f'<text class="tick-label" x="{max(value_x - 8.0, 8.0):.3f}" '
         f'y="{center_y + 4.0:.3f}" text-anchor="end">{escape(label)}</text>'
     )
+
+
+def tick_label_style(font_size: float | None) -> str:
+
+    if font_size is None:
+        return ""
+
+    return f' style="font-size: {font_size:g}px;"'
 
 
 def series_x_values(series: Sequence[SvgSeries]) -> list[float]:

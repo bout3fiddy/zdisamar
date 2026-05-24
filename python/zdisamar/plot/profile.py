@@ -10,8 +10,11 @@ from .properties import PLOT, PlotAccessor
 from .svg import SvgFigure, SvgPanel, SvgSeries
 
 PROFILE_PANEL_WIDTH = 520
-PROFILE_PANEL_HEIGHT = 520
+PROFILE_SINGLE_PANEL_WIDTH = 400
+PROFILE_PANEL_MIN_HEIGHT = 520
+PROFILE_BIN_PIXEL_HEIGHT = 34
 PROFILE_PANEL_SPACING = 100
+PROFILE_Y_TICK_LABEL_FONT_SIZE = 8
 TRUTH_COLOR = "#4C4C4C"
 
 
@@ -76,7 +79,14 @@ def probability_figure(
 
     return SvgFigure(
         title="Aerosol layer-location probability",
-        panels=(probability_panel(result, truth_layers=truth_layers),),
+        panels=(
+            probability_panel(
+                result,
+                truth_layers=truth_layers,
+                width=PROFILE_SINGLE_PANEL_WIDTH,
+            ),
+        ),
+        margin_right=20,
     )
 
 
@@ -88,7 +98,14 @@ def expected_aod_figure(
 
     return SvgFigure(
         title="Expected aerosol optical depth profile",
-        panels=(expected_aod_panel(result, truth_layers=truth_layers),),
+        panels=(
+            expected_aod_panel(
+                result,
+                truth_layers=truth_layers,
+                width=PROFILE_SINGLE_PANEL_WIDTH,
+            ),
+        ),
+        margin_right=20,
     )
 
 
@@ -103,12 +120,16 @@ def summary_figure(
 
     return SvgFigure(
         title="Discrete aerosol-layer profile",
-        subtitle=subtitle if subtitle is not None else default_subtitle(result, truth),
-        panels=(probability_panel(result, truth=truth), expected_aod_panel(result, truth=truth)),
+        subtitle=subtitle,
+        panels=(
+            probability_panel(result, truth=truth),
+            expected_aod_panel(result, truth=truth, show_y_title=False),
+        ),
         columns=2,
         panel_spacing=PROFILE_PANEL_SPACING,
         y_independent=False,
         title_anchor="start",
+        show_title=subtitle is not None,
     )
 
 
@@ -117,6 +138,7 @@ def probability_panel(
     *,
     truth_layers: Sequence[object] | None = None,
     truth: TruthProfile | None = None,
+    width: int = PROFILE_PANEL_WIDTH,
 ) -> SvgPanel:
 
     candidates = ordered_candidates(result)
@@ -157,12 +179,13 @@ def probability_panel(
         x_title="Probability",
         y_title="Pressure bin (hPa)",
         series=tuple(series),
-        width=PROFILE_PANEL_WIDTH,
-        height=PROFILE_PANEL_HEIGHT,
+        width=width,
+        height=profile_panel_height(result),
         x_domain=(0.0, padded_x_max([*probability, *truth_fraction_values(truth_value)])),
         y_domain=pressure_domain(result),
         y_ticks=bin_centers(candidates),
-        y_tick_labels=bin_labels(candidates),
+        y_tick_labels=bin_mid_pressure_labels(candidates),
+        y_tick_label_font_size=PROFILE_Y_TICK_LABEL_FONT_SIZE,
         rule_y=truth_rule_y(truth_value),
         show_x_grid=True,
         show_y_grid=False,
@@ -175,6 +198,8 @@ def expected_aod_panel(
     *,
     truth_layers: Sequence[object] | None = None,
     truth: TruthProfile | None = None,
+    show_y_title: bool = True,
+    width: int = PROFILE_PANEL_WIDTH,
 ) -> SvgPanel:
 
     rows = ordered_expected_aod(result)
@@ -213,14 +238,15 @@ def expected_aod_panel(
     return SvgPanel(
         title="Model-averaged AOD distribution",
         x_title="Expected AOD at 550 nm",
-        y_title="Pressure bin (hPa)",
+        y_title="Pressure bin (hPa)" if show_y_title else None,
         series=tuple(series),
-        width=PROFILE_PANEL_WIDTH,
-        height=PROFILE_PANEL_HEIGHT,
+        width=width,
+        height=profile_panel_height(result),
         x_domain=(0.0, padded_x_max([*expected_aod, *truth_aod_values(truth_value)])),
         y_domain=pressure_domain(result),
         y_ticks=bin_centers(rows),
-        y_tick_labels=bin_labels(rows),
+        y_tick_labels=bin_mid_pressure_labels(rows),
+        y_tick_label_font_size=PROFILE_Y_TICK_LABEL_FONT_SIZE,
         rule_y=truth_rule_y(truth_value),
         show_x_grid=True,
         show_y_grid=False,
@@ -243,12 +269,9 @@ def bin_centers(rows) -> tuple[float, ...]:
     return tuple(row.bin.center_pressure_hpa for row in rows)
 
 
-def bin_labels(rows) -> tuple[str, ...]:
+def bin_mid_pressure_labels(rows) -> tuple[str, ...]:
 
-    return tuple(
-        f"{format_pressure(row.bin.top_pressure_hpa)}-{format_pressure(row.bin.bottom_pressure_hpa)}"
-        for row in rows
-    )
+    return tuple(format_pressure(row.bin.center_pressure_hpa) for row in rows)
 
 
 def format_pressure(value: float) -> str:
@@ -431,6 +454,11 @@ def pressure_domain(result) -> tuple[float, float]:
     bottom = max(candidate.bin.bottom_pressure_hpa for candidate in result.candidates)
 
     return (bottom, top)
+
+
+def profile_panel_height(result) -> int:
+
+    return max(PROFILE_PANEL_MIN_HEIGHT, len(result.candidates) * PROFILE_BIN_PIXEL_HEIGHT)
 
 
 __all__ = [

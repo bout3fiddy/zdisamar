@@ -67,14 +67,20 @@ def main() -> int:
 
     summary = result.plot.summary()
     spec = summary.to_dict()
+    probability = result.plot.probability().to_dict()
     spec_text = json.dumps(spec)
     assert spec["type"] == "zdisamar-svg"
     assert spec["title"]["text"] == "Discrete aerosol-layer profile"
+    assert spec["show_title"] is False
+    assert probability["width"] < spec["width"]
+    assert probability["panels"][0]["width"] == 400
     assert len(spec["panels"]) == 2
     assert spec["panels"][0]["x_title"] == "Probability"
     assert spec["panels"][0]["y_title"] == "Pressure bin (hPa)"
+    assert spec["panels"][1]["y_title"] is None
     assert spec["panels"][0]["y_domain"] == [450.0, 225.0]
-    assert spec["panels"][0]["y_tick_labels"] == ["225-300", "300-375", "375-450"]
+    assert spec["panels"][0]["y_tick_labels"] == ["262.5", "337.5", "412.5"]
+    assert spec["panels"][0]["y_tick_label_font_size"] == 8
     assert spec["panels"][0]["series"][0]["kind"] == "horizontal_bars"
     assert "Expected AOD at 550 nm" in spec_text
 
@@ -92,6 +98,8 @@ def main() -> int:
         svg = path.read_text()
 
     assert "<svg" in svg
+    assert '<text class="plot-title"' not in svg
+    assert '<text class="plot-subtitle"' not in svg
     assert "Layer-location probability" in svg
     assert "Model-averaged AOD distribution" in svg
     assert "Truth AOD fraction" in svg
