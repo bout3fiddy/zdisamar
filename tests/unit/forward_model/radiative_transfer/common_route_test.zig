@@ -6,6 +6,18 @@ const phase_functions = internal.forward_model.optical_properties.shared.phase_f
 const prepareRoute = common.prepareRoute;
 const fillSourceInterfacesFromLayers = common.fillSourceInterfacesFromLayers;
 
+test "radiative-transfer thresholds keep tangent order cap opt-in" {
+    const default_thresholds = common.RadiativeTransferPerformanceThresholds.o2a_default;
+    try std.testing.expect(default_thresholds.shouldEvaluateAerosolTangent(0));
+    try std.testing.expect(default_thresholds.shouldEvaluateAerosolTangent(128));
+
+    const fast_tangent_thresholds: common.RadiativeTransferPerformanceThresholds = .{
+        .aerosol_tangent_order_cap = 11,
+    };
+    try std.testing.expect(fast_tangent_thresholds.shouldEvaluateAerosolTangent(11));
+    try std.testing.expect(!fast_tangent_thresholds.shouldEvaluateAerosolTangent(12));
+}
+
 test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical derivative paths executable" {
     const labos_route = try prepareRoute(.{
         .regime = .nadir,

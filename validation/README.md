@@ -45,38 +45,32 @@ The validation tree is split by target:
 - `reference_data/optimal_estimation/disamar_o2a_two_state_reference.json`: DISAMAR optimal-estimation two-state aerosol
   retrieval fixture for aerosol optical depth and fixed-thickness layer pressure.
 - `reference_data/optimal_estimation/baseline_config.in`: retained DISAMAR 4.1.5
-  optimal-estimation baseline config used by the paired retrieval sweep. It keeps
-  the aerosol-layer-height retrieval setup, 758-770 nm grid, cloud-free scene,
-  and reduced retrieval-output settings while using the reference assets
-  available in this repo.
+  optimal-estimation baseline config kept as provenance for the historical
+  paired-retrieval plots.
 - `reference_data/optimal_estimation/disamar_oe_sweep_cases.json`: shared
-  deterministic OE sweep-case manifest used by the paired DISAMAR/zdisamar
-  sweep, the normal zdisamar OE sweep, and the fast-mode zdisamar OE sweep.
-- `outputs/optimal_estimation/zdisamar_o2a_two_state_summary.json`: generated zdisamar optimal-estimation validation
-  summary.
-- `outputs/optimal_estimation/zdisamar_o2a_two_state_benchmark.json`: timing benchmark from the
-  optimal-estimation validation run.
+  deterministic OE sweep-case manifest used by the normal zdisamar OE sweep and
+  the fast-mode zdisamar OE sweep.
+- `outputs/optimal_estimation/zdisamar_o2a_sweep_runs.csv` and
+  `outputs/optimal_estimation/zdisamar_o2a_sweep_summary.json`: retained
+  slow-mode zdisamar OE sweep outputs from
+  `validation/optimal_estimation/sweep_optimal_estimation.py`.
 - `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png`,
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv`,
   and
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`:
   retained fast-mode sweep comparison between zdisamar reference-threshold
   retrievals and zdisamar fast-mode retrievals, with posterior one-sigma error
-  bars, fast-minus-reference retrieval deltas, and timing panels.
+  bars, fast-minus-reference retrieval deltas, and timing panels. Regenerate it
+  with `validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`.
 - `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: paired-style
   retrieved-state plot comparing zdisamar reference retrievals against zdisamar
   fast-mode retrievals on the fast-mode sweep scenes.
-- `optimal_estimation/paired_disamar_zdisamar_sweep.py`: paired DISAMAR/zdisamar optimal-estimation
-  sweep generator. It renders each DISAMAR case from
-  `reference_data/optimal_estimation/baseline_config.in` and writes large
-  generated parquet data and DISAMAR case directories under
-  `out/validation/optimal_estimation/paired_disamar_zdisamar/`. It also writes
-  the tracked paired plots from the generated parquet.
-- `outputs/optimal_estimation/paired_oe_latency.png`: paired latency plot. When
-  the fast-mode sweep comparison has been regenerated, this plot also includes
-  `zdisamar-fast` as a third model using the fast-mode sweep rows.
+- `outputs/optimal_estimation/paired_oe_latency.png`: latency plot refreshed by
+  the fast-mode sweep. When the historical paired manifest is present, the plot
+  includes DISAMAR Fortran, zdisamar reference, and zdisamar-fast.
 - `outputs/optimal_estimation/paired_oe_*.png` and
-  `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked paired-retrieval plot outputs.
+  `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked
+  paired-retrieval plot outputs kept as historical evidence.
 ## Baseline Commands
 
 - `zig build test`
@@ -84,10 +78,8 @@ The validation tree is split by target:
 - `zig build test-validation-o2a-vendor`
 - `uv run validation/spectra/validate_spectra.py`
 - `uv run validation/spectra/validate_fast_mode_spectra.py`
-- `uv run validation/optimal_estimation/validate_optimal_estimation.py`
 - `uv run validation/optimal_estimation/sweep_optimal_estimation.py`
-- `uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py`
-- `uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py`
+- `uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`
 
 The validation scripts own their plots and tracked summaries. They are invoked
 directly with `uv run ...`, not through `zig build`.

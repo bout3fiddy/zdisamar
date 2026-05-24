@@ -2,77 +2,77 @@
   "by_mode": {
     "fast": {
       "aerosol_mid_pressure_abs_error_hpa": {
-        "max": 5.552768793254131,
-        "max_abs": 5.552768793254131,
-        "mean": 0.8375196646367136,
-        "median": 0.3801670894057452,
-        "min": 0.05577693994155197
+        "max": 5.552768793332575,
+        "max_abs": 5.552768793332575,
+        "mean": 0.8375196646747963,
+        "median": 0.3801670894118274,
+        "min": 0.05577694000606925
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.007392208479157669,
-        "max_abs": 0.007392208479157669,
-        "mean": 0.0009437450686322278,
-        "median": 0.0005603416043173937,
-        "min": 7.399003879582366e-07
+        "max": 0.007392208479274354,
+        "max_abs": 0.007392208479274354,
+        "mean": 0.0009437450675875272,
+        "median": 0.0005603416042980758,
+        "min": 7.399004626762462e-07
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 1.158236708957702,
-        "max_abs": 1.158236708957702,
-        "mean": 0.9377229533717036,
-        "median": 0.9738680000300519,
-        "min": 0.6399455419741571
+        "max": 1.2096162079833448,
+        "max_abs": 1.2096162079833448,
+        "mean": 0.9304500725050456,
+        "median": 0.9487727085361257,
+        "min": 0.6118412078358233
       },
       "rows": 100
     },
     "reference": {
       "aerosol_mid_pressure_abs_error_hpa": {
-        "max": 0.27176107240228475,
-        "max_abs": 0.27176107240228475,
-        "mean": 0.010103962064619054,
-        "median": 0.0019496051929195346,
-        "min": 5.00099092732853e-05
+        "max": 0.2717610722959307,
+        "max_abs": 0.2717610722959307,
+        "mean": 0.010103960984987453,
+        "median": 0.001949605718522207,
+        "min": 5.0009920073534886e-05
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.0001521198872604379,
-        "max_abs": 0.0001521198872604379,
-        "mean": 6.510987787002182e-06,
-        "median": 8.034941427759179e-07,
+        "max": 0.0001521198873327967,
+        "max_abs": 0.0001521198873327967,
+        "mean": 6.510986607689562e-06,
+        "median": 8.034164403758481e-07,
         "min": 1.5020904298168603e-08
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.2837948750238866,
-        "max_abs": 2.2837948750238866,
-        "mean": 1.7819951470918023,
-        "median": 1.8393969585304148,
-        "min": 0.911817374988459
+        "max": 2.2429030418861657,
+        "max_abs": 2.2429030418861657,
+        "mean": 1.7583462359034456,
+        "median": 1.813645604532212,
+        "min": 0.8791551250033081
       },
       "rows": 100
     }
   },
-  "canonical_command": "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py",
+  "canonical_command": "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py",
   "fast_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
-      "max": 2.006511026827411,
-      "max_abs": 5.542106001110369,
-      "mean": -0.73091526710778,
-      "median": -0.3717589523529341,
-      "min": -5.542106001110369
+      "max": 2.0065110261959944,
+      "max_abs": 5.54210600242061,
+      "mean": -0.7309152659722554,
+      "median": -0.37175895234526024,
+      "min": -5.54210600242061
     },
     "aerosol_optical_depth_delta": {
-      "max": 0.0060854673837382744,
-      "max_abs": 0.007394244526943705,
-      "mean": 0.0002515596269870404,
-      "median": 0.00030215650903431257,
-      "min": -0.007394244526943705
+      "max": 0.006085467387733301,
+      "max_abs": 0.007394244529562943,
+      "mean": 0.0002515596276141191,
+      "median": 0.00030215650907698677,
+      "min": -0.007394244529562943
     },
     "retrieval_speedup_s": {
-      "max": 1.1841181659838185,
-      "max_abs": 1.1841181659838185,
-      "mean": 0.8442721937200985,
-      "median": 0.8883430205169134,
-      "min": 0.2711322910618037
+      "max": 1.1612756249960512,
+      "max_abs": 1.1612756249960512,
+      "mean": 0.8278961633984,
+      "median": 0.8665199582464993,
+      "min": 0.230275500100106
     }
   },
   "fast_mode": {
@@ -85,8 +85,12 @@
         "strong_line_min_divisions": 6
       },
       "radiative_transfer": {
+        "aerosol_tangent_order_cap": 11,
         "fourier_order_cap": 5,
         "fourier_tail_reflectance_epsilon": 1e-11,
+        "qzero_rd_product_suppression": false,
+        "qzero_td_product_suppression": false,
+        "qzero_tu_product_suppression": false,
         "threshold_doubl": 3e-05
       }
     }

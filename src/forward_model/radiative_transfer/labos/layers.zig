@@ -286,7 +286,7 @@ fn doDouble(
     ndouble: usize,
     n: usize,
     n_gauss: usize,
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
@@ -295,9 +295,10 @@ fn doDouble(
     phase_max_index: usize,
 ) void {
     if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
-        doDouble12x10(ndouble, threshold_mul, R, T, E, i_fourier, layer_index, phase_max_index);
+        doDouble12x10(ndouble, thresholds, R, T, E, i_fourier, layer_index, phase_max_index);
         return;
     }
+    const threshold_mul = thresholds.threshold_mul;
 
     var r_storage: basis.Mat = undefined;
     var t_storage: basis.Mat = undefined;
@@ -379,7 +380,8 @@ fn doDouble(
         const rd_nonzero = Perturbation.decision(
             .qseries_rd_product,
             downstream_coord,
-            @abs(trace_r * trace_d) > threshold_mul,
+            !(q_is_zero and thresholds.qzero_rd_product_suppression) and
+                @abs(trace_r * trace_d) > threshold_mul,
         );
 
         var U: basis.Mat = undefined;
@@ -406,7 +408,8 @@ fn doDouble(
         const tu_nonzero = Perturbation.decision(
             .qseries_tu_product,
             downstream_coord,
-            @abs(trace_t * trace_u) > threshold_mul,
+            !(q_is_zero and thresholds.qzero_tu_product_suppression) and
+                @abs(trace_t * trace_u) > threshold_mul,
         );
 
         if (tu_nonzero) {
@@ -431,7 +434,8 @@ fn doDouble(
         const td_nonzero = Perturbation.decision(
             .qseries_td_product,
             downstream_coord,
-            @abs(trace_t * trace_d) > threshold_mul,
+            !(q_is_zero and thresholds.qzero_td_product_suppression) and
+                @abs(trace_t * trace_d) > threshold_mul,
         );
         // instrumentation: calculation telemetry
         // captures: downstream R-D/T-U/T-D threshold margins
@@ -513,7 +517,7 @@ fn doDouble(
 //   math: fixed 12x10 doubling applies the same two-sublayer R/T update as doDouble.
 fn doDouble12x10(
     ndouble: usize,
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
@@ -535,7 +539,7 @@ fn doDouble12x10(
         // why: count matrix squaring work in the specialized hot path.
         Trace.plotU("doubling_steps", 1);
         doDouble12x10Step(
-            threshold_mul,
+            thresholds,
             current_r,
             current_t,
             E,
@@ -569,7 +573,7 @@ fn doDouble12x10(
 }
 
 inline fn doDouble12x10Step(
-    threshold_mul: f64,
+    thresholds: common.RadiativeTransferPerformanceThresholds,
     current_r: *const basis.Mat,
     current_t: *const basis.Mat,
     E: *const basis.Vec,
@@ -580,6 +584,7 @@ inline fn doDouble12x10Step(
     phase_max_index: usize,
     doubling_step_index: usize,
 ) void {
+    const threshold_mul = thresholds.threshold_mul;
     const trace_r = gaussTrace(basis.max_nmutot, basis.max_gauss, current_r);
     const trace_t = gaussTrace(basis.max_nmutot, basis.max_gauss, current_t);
     // instrumentation: telemetry and perturbation
@@ -647,7 +652,8 @@ inline fn doDouble12x10Step(
     const rd_nonzero = Perturbation.decision(
         .qseries_rd_product,
         downstream_coord,
-        @abs(trace_r * trace_d) > threshold_mul,
+        !(q_is_zero and thresholds.qzero_rd_product_suppression) and
+            @abs(trace_r * trace_d) > threshold_mul,
     );
 
     var U: basis.Mat = undefined;
@@ -674,7 +680,8 @@ inline fn doDouble12x10Step(
     const tu_nonzero = Perturbation.decision(
         .qseries_tu_product,
         downstream_coord,
-        @abs(trace_t * trace_u) > threshold_mul,
+        !(q_is_zero and thresholds.qzero_tu_product_suppression) and
+            @abs(trace_t * trace_u) > threshold_mul,
     );
 
     if (tu_nonzero) {
@@ -699,7 +706,8 @@ inline fn doDouble12x10Step(
     const td_nonzero = Perturbation.decision(
         .qseries_td_product,
         downstream_coord,
-        @abs(trace_t * trace_d) > threshold_mul,
+        !(q_is_zero and thresholds.qzero_td_product_suppression) and
+            @abs(trace_t * trace_d) > threshold_mul,
     );
     // instrumentation: calculation telemetry
     // captures: fixed-size downstream product threshold margins
@@ -1065,7 +1073,7 @@ pub fn calcRTlayersIntoWithBasis(
                     doubling_decision.doubling_count,
                     geo.nmutot,
                     geo.n_gauss,
-                    controls.performance_thresholds.threshold_mul,
+                    controls.performance_thresholds,
                     &layer_rt.R,
                     &layer_rt.T,
                     &E,

@@ -471,8 +471,12 @@ fn layerResolvedLabosWithWorkspace(
             if (wants_surface_albedo and i_fourier == 0) {
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
+            const evaluate_aerosol_tangent =
+                controls.performance_thresholds.shouldEvaluateAerosolTangent(i_fourier);
+            const wants_aod_tangent = wants_aerosol_optical_depth and evaluate_aerosol_tangent;
+            const wants_pressure_tangent = wants_aerosol_layer_mid_pressure and evaluate_aerosol_tangent;
             const use_paired_aerosol_weighting =
-                use_integrated_source and wants_aerosol_optical_depth and wants_aerosol_layer_mid_pressure;
+                use_integrated_source and wants_aod_tangent and wants_pressure_tangent;
             if (use_paired_aerosol_weighting) {
                 const tangent_refl_fc = tangent_refl_fc: {
                     // instrumentation: trace zone
@@ -511,7 +515,7 @@ fn layerResolvedLabosWithWorkspace(
                     },
                     fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa,
                 );
-            } else if (wants_aerosol_optical_depth) {
+            } else if (wants_aod_tangent) {
                 const tangent_refl_fc = tangent_refl_fc: {
                     // instrumentation: trace zone
                     // captures: aerosol optical-depth tangent weighting wall time
@@ -559,7 +563,7 @@ fn layerResolvedLabosWithWorkspace(
                     fourier_weight * tangent_refl_fc,
                 );
             }
-            if (!use_paired_aerosol_weighting and wants_aerosol_layer_mid_pressure) {
+            if (!use_paired_aerosol_weighting and wants_pressure_tangent) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
                     // instrumentation: trace zone
                     // captures: aerosol pressure tangent weighting wall time

@@ -595,16 +595,28 @@ def assert_reference_data_and_rtm_tables() -> None:
             case = o2a.reference_case()
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
             thresholds = case.radiative_transfer.performance_thresholds
+            assert thresholds.aerosol_tangent_order_cap is None
+            assert not thresholds.qzero_rd_product_suppression
+            assert not thresholds.qzero_tu_product_suppression
+            assert not thresholds.qzero_td_product_suppression
             assert math.isclose(thresholds.fourier_tail_reflectance_epsilon, 3.0e-14)
             fast_thresholds = o2a.RadiativeTransferPerformanceThresholds.fast()
             assert fast_thresholds.fourier_order_cap == 5
+            assert fast_thresholds.aerosol_tangent_order_cap == 11
             assert math.isclose(fast_thresholds.fourier_tail_reflectance_epsilon, 1.0e-11)
             assert math.isclose(fast_thresholds.threshold_doubl, 3.0e-5)
             assert math.isclose(fast_thresholds.threshold_mul, thresholds.threshold_mul)
+            assert not fast_thresholds.qzero_rd_product_suppression
+            assert not fast_thresholds.qzero_tu_product_suppression
+            assert not fast_thresholds.qzero_td_product_suppression
             validation_thresholds = copy.deepcopy(thresholds)
             validation_thresholds.phase_function_truncation_threshold = 1.0e-6
             validation_fast_thresholds = validation_thresholds.with_fast_mode()
             assert validation_fast_thresholds.fourier_order_cap == fast_thresholds.fourier_order_cap
+            assert (
+                validation_fast_thresholds.aerosol_tangent_order_cap
+                == fast_thresholds.aerosol_tangent_order_cap
+            )
             assert math.isclose(
                 validation_fast_thresholds.fourier_tail_reflectance_epsilon,
                 fast_thresholds.fourier_tail_reflectance_epsilon,
@@ -617,12 +629,27 @@ def assert_reference_data_and_rtm_tables() -> None:
                 validation_fast_thresholds.phase_function_truncation_threshold,
                 validation_thresholds.phase_function_truncation_threshold,
             )
+            assert not validation_fast_thresholds.qzero_rd_product_suppression
+            assert not validation_fast_thresholds.qzero_tu_product_suppression
+            assert not validation_fast_thresholds.qzero_td_product_suppression
             fast_case = case.with_fast_mode()
             assert fast_case is not case
             assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap == 5
+            assert (
+                fast_case.radiative_transfer.performance_thresholds.aerosol_tangent_order_cap == 11
+            )
             assert math.isclose(
                 fast_case.radiative_transfer.performance_thresholds.threshold_doubl,
                 3.0e-5,
+            )
+            assert (
+                not fast_case.radiative_transfer.performance_thresholds.qzero_rd_product_suppression
+            )
+            assert (
+                not fast_case.radiative_transfer.performance_thresholds.qzero_tu_product_suppression
+            )
+            assert (
+                not fast_case.radiative_transfer.performance_thresholds.qzero_td_product_suppression
             )
             assert fast_case.instrument_response.adaptive_reference_grid["points_per_fwhm"] == 28
             assert (
