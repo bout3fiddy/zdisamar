@@ -924,6 +924,14 @@ fn scoreFinalState(
     var state = algebra.zeroVector();
     for (0..prepared_case.state_specs.len) |index| state[index] = result.state[index];
 
+    // The profile product scores every bin with a final reference spectrum.
+    // That score does not consume Jacobians, so keep derivative work out of
+    // the per-bin final evaluation.
+    const retrieval_route = prepared_case.route;
+    prepared_case.route.derivative_mode = .none;
+    prepared_case.route.derivative_state_mask = 0;
+    defer prepared_case.route = retrieval_route;
+
     const evaluation = try evaluateO2AState(allocator, prepared_case, state);
     if (evaluation.view.wavelengths.len != prepared_case.measurement.wavelength_nm.len) {
         return error.WavelengthGridMismatch;
