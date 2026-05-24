@@ -244,14 +244,23 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
         "zdisamar-profile-init-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-profile-init";
+    // instrumentation: trace thread label
+    // captures: profile spectroscopy cache worker identity
+    // why: make parallel cache-initialization lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: profile spectroscopy cache worker wall time
+    // why: expose per-worker cost of filling spline-ready spectroscopy values.
     const worker_zone = Trace.staticZone(@src(), "optical_prepare.profile_cache_init_worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: profile spectroscopy cache chunk wall time and node count
+            // why: reveal chunk imbalance while building per-altitude spectroscopy values.
             const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_cache_init_chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();

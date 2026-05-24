@@ -1,6 +1,9 @@
 const build_options = @import("build_options");
 const sink = @import("calculation_telemetry_sink");
 
+// instrumentation: calculation telemetry facade
+// captures: selected math states
+// why: compile data capture out unless the Parquet harness opts in.
 pub const requested: bool = if (@hasDecl(build_options, "enable_calculation_telemetry"))
     build_options.enable_calculation_telemetry
 else
@@ -8,6 +11,9 @@ else
 
 pub const enabled: bool = requested and sink.available;
 
+// instrumentation: calculation telemetry
+// captures: integration kernel counts
+// why: quantify spectral sampling fan-out.
 pub inline fn wavelengthSamplingPlan(
     row_count: usize,
     radiance_integrated_rows: usize,
@@ -29,11 +35,17 @@ pub inline fn wavelengthSamplingPlan(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: unique forward-cache misses
+// why: measure wavelength reuse from integration plans.
 pub inline fn forwardMissPlan(row_count: usize, sample_index_count: usize, miss_count: usize) void {
     if (comptime !enabled) return;
     sink.forwardMissPlan(row_count, sample_index_count, miss_count);
 }
 
+// instrumentation: calculation telemetry
+// captures: reflectance denominator clamps and maxima
+// why: detect unstable output assembly.
 pub inline fn reflectanceAssembly(
     sample_count: usize,
     denominator_clamp_count: usize,
@@ -44,11 +56,17 @@ pub inline fn reflectanceAssembly(
     sink.reflectanceAssembly(sample_count, denominator_clamp_count, min_denominator, max_reflectance);
 }
 
+// instrumentation: calculation telemetry
+// captures: Jacobian column sums and maxima
+// why: find weak derivative signals for OE pruning.
 pub inline fn jacobianColumn(state_index: usize, sum: f64, mean: f64, max_abs: f64) void {
     if (comptime !enabled) return;
     sink.jacobianColumn(state_index, sum, mean, max_abs);
 }
 
+// instrumentation: calculation telemetry
+// captures: LABOS layer-doubling threshold inputs
+// why: study which layer/Fourier coordinates need doubling.
 pub inline fn labosLayerDecision(
     i_fourier: usize,
     layer_index: usize,
@@ -78,6 +96,9 @@ pub inline fn labosLayerDecision(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: q-series skip margin per doubling step
+// why: identify coordinates where Q=(I-RR)^-1-I is negligible.
 pub inline fn labosDoublingStep(
     i_fourier: usize,
     layer_index: usize,
@@ -101,6 +122,9 @@ pub inline fn labosDoublingStep(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: downstream R-D/T-U/T-D product gates
+// why: test if q-zero branches imply more matrix work can be skipped.
 pub inline fn labosDoublingDownstreamGates(
     i_fourier: usize,
     layer_index: usize,
@@ -134,6 +158,9 @@ pub inline fn labosDoublingDownstreamGates(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: scattering-order stop margins
+// why: tune order convergence without losing reflectance.
 pub inline fn ordersConvergence(
     iteration_count: usize,
     max_iteration_count: usize,
@@ -153,6 +180,9 @@ pub inline fn ordersConvergence(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: Fourier term contribution and tail stop
+// why: locate late terms with negligible reflectance.
 pub inline fn fourierContribution(
     i_fourier: usize,
     fourier_weight: f64,
@@ -172,6 +202,9 @@ pub inline fn fourierContribution(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: raw/clamped LABOS reflectance and Jacobian norm
+// why: detect suspicious outputs and weak derivatives.
 pub inline fn labosResult(raw_reflectance: f64, clamped_reflectance: f64, jacobian_norm1: f64) void {
     if (comptime !enabled) return;
     sink.labosResult(raw_reflectance, clamped_reflectance, jacobian_norm1);

@@ -39,6 +39,9 @@ pub fn configuredForwardInput(
         resolved_profile_cache,
     );
     const optical_depths = optical_depths: {
+        // instrumentation: trace zone
+        // captures: wavelength-specific layer optical-depth fill
+        // why: measure carrier-backed layer preparation before LABOS transport.
         const zone = Trace.deepStaticZone(@src(), "forward_input.layers");
         defer zone.end();
         break :optical_depths OpticsPreparation.transport.fillForwardLayersAtWavelengthWithCarrierCache(
@@ -63,6 +66,9 @@ pub fn configuredForwardInput(
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
         {
+            // instrumentation: trace zone
+            // captures: RTM source-function quadrature preparation
+            // why: isolate explicit quadrature setup from coarse source-interface fallback.
             const zone = Trace.deepStaticZone(@src(), "forward_input.rtm_quadrature");
             defer zone.end();
             has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
@@ -90,6 +96,9 @@ pub fn configuredForwardInput(
     if (route.rtm_controls.integrate_source_function and !has_rtm_quadrature) {
         const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
         {
+            // instrumentation: trace zone
+            // captures: source-interface fill wall time
+            // why: quantify the fallback source-function boundary when RTM quadrature is unavailable.
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");
             defer zone.end();
             OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
@@ -109,6 +118,9 @@ pub fn configuredForwardInput(
         //   dense wavelength-specific attenuation contract directly from the
         //   RTM subgrid instead of reusing midpoint-style layer surrogates.
         const has_pseudo_spherical_grid = has_grid: {
+            // instrumentation: trace zone
+            // captures: pseudo-spherical support-grid fill wall time
+            // why: keep geometric-correction setup visible in forward-sample traces.
             const zone = Trace.deepStaticZone(@src(), "forward_input.pseudo_spherical");
             defer zone.end();
             break :has_grid OpticsPreparation.transport.fillPseudoSphericalGridAtWavelengthWithCarrierCache(

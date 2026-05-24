@@ -228,11 +228,20 @@ fn computeForwardSampleAtWavelengthWithScratch(
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
+    // instrumentation: trace zone
+    // captures: one high-resolution forward-sample solve
+    // why: separate per-miss optical input setup and LABOS execution from nominal-grid assembly.
     const sample_zone = Trace.deepStaticZone(@src(), "forward_sample");
     defer sample_zone.end();
 
+    // instrumentation: trace counter
+    // captures: number of high-resolution forward samples evaluated
+    // why: normalize prefetch wall time by actual LABOS solve count.
     Trace.plotU("forward_samples", 1);
     const input = input: {
+        // instrumentation: trace zone
+        // captures: wavelength-specific forward-input construction
+        // why: show carrier/layer preparation cost before transport.
         const zone = Trace.deepStaticZone(@src(), "forward_sample.configured_forward_input");
         defer zone.end();
         break :input try ForwardInput.configuredForwardInput(
@@ -253,6 +262,9 @@ fn computeForwardSampleAtWavelengthWithScratch(
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
     const forward = forward: {
+        // instrumentation: trace zone
+        // captures: LABOS transport execution for one forward sample
+        // why: keep the radiative-transfer solve separate from surrounding input and scaling work.
         const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
         defer zone.end();
         break :forward if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
@@ -276,8 +288,14 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         "zdisamar-forward-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-forward-worker";
+    // instrumentation: trace thread label
+    // captures: forward-prefetch worker identity
+    // why: make parallel miss batches separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: forward-prefetch worker wall time
+    // why: expose load balance across high-resolution miss chunks.
     const worker_zone = Trace.staticZone(@src(), "forward_prefetch.worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
@@ -299,6 +317,9 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
 
     while (nextForwardPrefetchChunk(worker)) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: one prefetch chunk size and wall time
+            // why: reveal tail imbalance and chunking overhead in parallel forward solves.
             const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();
@@ -367,7 +388,13 @@ pub fn prefetchForwardSamples(
 
     const preferred_worker_count = preferredForwardWorkerCount(misses.len);
     const worker_count = preferred_worker_count;
+    // instrumentation: trace counter
+    // captures: selected forward worker count
+    // why: tie prefetch timing to the concurrency shape chosen for this miss batch.
     Trace.plotU("forward_worker_count", @intCast(worker_count));
+    // instrumentation: trace counter
+    // captures: unique high-resolution cache misses
+    // why: distinguish fewer computations from cheaper computation per miss.
     Trace.plotU("high_resolution_misses", @intCast(misses.len));
 
     if (worker_count == 1) {

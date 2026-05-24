@@ -4,6 +4,9 @@ const internal = @import("internal");
 const Telemetry = internal.forward_model.calculation_telemetry;
 
 test "calculation telemetry defaults to disabled no-op instrumentation" {
+    // instrumentation: calculation telemetry test
+    // captures: disabled product-build facade behavior
+    // why: prove telemetry hooks can stay in model code without changing default builds.
     try std.testing.expect(!Telemetry.requested);
     try std.testing.expect(!Telemetry.enabled);
 

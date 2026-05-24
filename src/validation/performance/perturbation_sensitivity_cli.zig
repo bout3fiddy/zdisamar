@@ -11,6 +11,9 @@ const o2a_reference = internal.o2a_reference;
 const default_output_dir = "research/data-pipeline/data/perturbation-sensitivity/o2a-default";
 const measurement_sigma_reflectance = 1.0e-3;
 
+// instrumentation: perturbation harness
+// captures: paired baseline/perturbed residual summaries
+// why: avoid massive event databases.
 const Config = struct {
     output_dir: []const u8 = default_output_dir,
     start_nm: f64 = 758.0,
@@ -21,6 +24,9 @@ const Config = struct {
 
 const ExperimentSpec = struct {
     name: []const u8,
+    // instrumentation: perturbation channel
+    // captures: model expression family targeted by an experiment
+    // why: keep perturbation knobs tied to compile-time channel enums instead of strings.
     channel: Perturbation.Channel,
     mode: Sink.Mode,
     min_fourier: i32 = Sink.any_index,
@@ -50,6 +56,9 @@ const RetrievalOutcome = struct {
     aerosol_layer_mid_pressure_hpa: f64,
 };
 
+// instrumentation: perturbation plan set
+// captures: channel filters and replacement modes
+// why: test pruning hypotheses against final spectra/retrievals.
 const experiments = [_]ExperimentSpec{
     .{
         .name = "fourier_zero_ge_8",
@@ -182,6 +191,9 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+    // instrumentation: perturbation harness gate
+    // captures: compile-time enablement of perturbation channels
+    // why: fail loudly when this validation CLI is built against the product no-op facade.
     if (!Perturbation.enabled) return error.PerturbationSensitivityDisabled;
 
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -206,6 +218,9 @@ fn mainInner() !void {
     forward_route.derivative_state_mask = 0;
     const implementations = internal.forward_model.implementations.exact();
 
+    // instrumentation: perturbation baseline
+    // captures: unmodified forward and OE outputs
+    // why: compare every ablation to the same observable boundary.
     Sink.clearPlan();
     Sink.resetCounters();
     var baseline_storage: InstrumentGrid.ProductStorage = .{};
@@ -303,6 +318,9 @@ fn mainInner() !void {
         const experiment_id: u32 = @intCast(experiment_index + 1);
         const plan = planFromSpec(experiment_id, spec);
 
+        // instrumentation: perturbation run
+        // captures: changed hook counts plus final residuals
+        // why: rank pruning ideas without storing per-event rows.
         Sink.resetCounters();
         Sink.setPlan(plan);
 
@@ -408,6 +426,9 @@ fn runRetrieval(
     };
 }
 
+// instrumentation: perturbation summary
+// captures: aggregate spectral deltas
+// why: discard full spectra after computing final-observable movement.
 fn compareSpectra(
     wavelengths: []const f64,
     baseline_reflectance: []const f64,
@@ -604,6 +625,9 @@ fn writeExperiment(
 }
 
 fn channelName(channel: Perturbation.Channel) []const u8 {
+    // instrumentation: perturbation output label
+    // captures: stable channel names for report rows
+    // why: keep CSV summaries readable without leaking strings into model code.
     return switch (channel) {
         .fourier_weighted_reflectance => "fourier_weighted_reflectance",
         .fourier_tail_break => "fourier_tail_break",

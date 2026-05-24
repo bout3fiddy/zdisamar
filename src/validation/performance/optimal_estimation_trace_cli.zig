@@ -340,8 +340,14 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+    // instrumentation: OE trace frame
+    // captures: retrieval run boundary, zones, and allocation deltas
+    // why: split setup, warmup, and iteration costs.
     const main_zone = Trace.staticZone(@src(), "oe_trace.main");
     defer main_zone.end();
+    // instrumentation: trace frame markers
+    // captures: start/end messages and frame boundaries
+    // why: make the retrieval run easy to find in Tracy captures.
     Trace.message("zdisamar optimal estimation trace start");
     Trace.frameMark();
     defer Trace.frameMark();
@@ -359,6 +365,9 @@ fn mainInner() !void {
 
     const input = o2a_reference.defaultInput();
 
+    // instrumentation: OE allocation trace
+    // captures: reference preparation allocations
+    // why: separate one-time setup memory from retrieval memory.
     var reference_timer = try std.time.Timer.start();
     const reference_alloc_start = counting_allocator.resetPhasePeak();
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(allocator, &input);
@@ -421,6 +430,9 @@ fn mainInner() !void {
     var warm_route = prepared_case.route;
     warm_route.derivative_mode = .semi_analytical;
     warm_route.derivative_state_mask = derivativeStateMask(&state_specs);
+    // instrumentation: OE allocation trace
+    // captures: session workspace warmup
+    // why: measure reusable setup before retrieval iterations.
     var warm_timer = try std.time.Timer.start();
     const warm_alloc_start = counting_allocator.resetPhasePeak();
     try InstrumentGrid.product.warmProductWorkspace(
@@ -435,6 +447,9 @@ fn mainInner() !void {
     const session_warm_allocations = counting_allocator.delta(warm_alloc_start);
     const session_warm_allocation_sites = counting_allocator.allocationSiteReport();
 
+    // instrumentation: OE allocation trace
+    // captures: retrieval wall time and allocation sites
+    // why: find repeated memory cost inside the OE boundary.
     var retrieval_timer = try std.time.Timer.start();
     const retrieval_alloc_start = counting_allocator.resetPhasePeak();
     var result = try OptimalEstimation.runO2A(

@@ -4,6 +4,9 @@ const c = @cImport({
     @cInclude("zlib.h");
 });
 
+// instrumentation: telemetry storage
+// captures: fixed flat columns
+// why: write compact Parquet directly without CSV staging.
 pub const Compression = enum {
     uncompressed,
     gzip,
@@ -57,6 +60,9 @@ const parquet_magic = "PAR1";
 const encoding_plain = 0;
 const encoding_rle = 3;
 
+// instrumentation: telemetry storage
+// captures: row-grouped typed values
+// why: keep capture output columnar and bounded by flush size.
 pub const TableWriter = struct {
     allocator: std.mem.Allocator,
     file: std.fs.File,

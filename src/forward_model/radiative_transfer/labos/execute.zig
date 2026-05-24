@@ -11,6 +11,9 @@ const Telemetry = @import("../../calculation_telemetry.zig");
 const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// instrumentation: LABOS execute
+// captures: Fourier zones, contribution telemetry, and perturbation hooks
+// why: explain which Fourier/tangent work can be timed, measured, or ablated.
 const math = std.math;
 const Geometry = basis.Geometry;
 const LayerRT = basis.LayerRT;
@@ -315,13 +318,22 @@ fn layerResolvedLabosWithWorkspace(
     for (0..fourier_max + 1) |i_fourier| {
         var stop_fourier_loop = false;
         {
+            // instrumentation: trace zone
+            // captures: one LABOS Fourier term wall time and index
+            // why: expose which Fourier orders dominate reflectance and tangent work.
             const fourier_zone = Trace.deepStaticZone(@src(), "labos.fourier_loop");
             fourier_zone.value(@intCast(i_fourier));
             defer fourier_zone.end();
 
+            // instrumentation: trace counter
+            // captures: evaluated Fourier term count
+            // why: compare threshold pruning against actual term count.
             Trace.plotU("fourier_terms", 1);
             var owned_plm_basis: basis.FourierPlmBasis = undefined;
             const plm_basis = plm_basis: {
+                // instrumentation: trace zone
+                // captures: PLM basis preparation wall time
+                // why: separate Fourier basis setup from RT layer and order propagation.
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
                 break :plm_basis if (workspace) |scratch| blk: {
@@ -332,6 +344,9 @@ fn layerResolvedLabosWithWorkspace(
                 };
             };
             {
+                // instrumentation: trace zone
+                // captures: per-Fourier RT layer construction wall time
+                // why: isolate phase matrix/layer doubling cost before order propagation.
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer_build");
                 defer zone.end();
                 calcRTlayersIntoWithBasis(
@@ -352,6 +367,9 @@ fn layerResolvedLabosWithWorkspace(
             rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
             if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
             const orders_result = orders_result: {
+                // instrumentation: trace zone
+                // captures: scattering-order propagation wall time
+                // why: keep multiple-scattering transport separate from layer setup.
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
                 break :orders_result if (use_integrated_source) blk: {
@@ -413,6 +431,9 @@ fn layerResolvedLabosWithWorkspace(
                 };
             };
             const refl_fc = refl_fc: {
+                // instrumentation: trace zone
+                // captures: reflectance integral wall time
+                // why: separate order-field integration from Fourier loop setup.
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
                 defer zone.end();
                 break :refl_fc if (use_integrated_source)
@@ -437,6 +458,9 @@ fn layerResolvedLabosWithWorkspace(
             else
                 2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
             // math: accumulate Fourier contribution rho += c_m * rho_m.
+            // instrumentation: perturbation
+            // captures: c_m * rho_m before adding it to total reflectance
+            // why: test whether late Fourier terms can be pruned by tolerance.
             const fourier_coord = Perturbation.Coord{ .fourier_index = @intCast(i_fourier) };
             const weighted_reflectance = Perturbation.scalar(
                 .fourier_weighted_reflectance,
@@ -451,6 +475,9 @@ fn layerResolvedLabosWithWorkspace(
                 use_integrated_source and wants_aerosol_optical_depth and wants_aerosol_layer_mid_pressure;
             if (use_paired_aerosol_weighting) {
                 const tangent_refl_fc = tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: paired aerosol tangent weighting wall time
+                    // why: quantify derivative work shared by AOD and pressure states.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aerosol_weighting");
                     defer zone.end();
                     break :tangent_refl_fc calcAerosolDerivativeWeightingWithBasis(
@@ -465,6 +492,9 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     );
                 };
+                // instrumentation: perturbation
+                // captures: paired aerosol derivative Fourier contributions
+                // why: test whether OE can ignore late tangent terms.
                 aerosol_optical_depth_tangent += Perturbation.scalar(
                     .aerosol_aod_tangent,
                     .{
@@ -483,6 +513,9 @@ fn layerResolvedLabosWithWorkspace(
                 );
             } else if (wants_aerosol_optical_depth) {
                 const tangent_refl_fc = tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: aerosol optical-depth tangent weighting wall time
+                    // why: isolate derivative work for the AOD retrieval state.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
                     defer zone.end();
                     break :tangent_refl_fc if (use_integrated_source)
@@ -514,6 +547,9 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
+                // instrumentation: perturbation
+                // captures: AOD derivative Fourier contribution
+                // why: test whether late AOD tangent work changes retrieval output.
                 aerosol_optical_depth_tangent += Perturbation.scalar(
                     .aerosol_aod_tangent,
                     .{
@@ -525,6 +561,9 @@ fn layerResolvedLabosWithWorkspace(
             }
             if (!use_paired_aerosol_weighting and wants_aerosol_layer_mid_pressure) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
+                    // instrumentation: trace zone
+                    // captures: aerosol pressure tangent weighting wall time
+                    // why: isolate derivative work for pressure-placement retrieval.
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
                     defer zone.end();
                     break :pressure_tangent_refl_fc if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
@@ -554,6 +593,9 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                 };
+                // instrumentation: perturbation
+                // captures: aerosol-pressure derivative Fourier contribution
+                // why: test whether late pressure tangent work changes retrieval output.
                 aerosol_layer_mid_pressure_tangent += Perturbation.scalar(
                     .aerosol_pressure_tangent,
                     .{
@@ -563,10 +605,16 @@ fn layerResolvedLabosWithWorkspace(
                     fourier_weight * pressure_tangent_refl_fc,
                 );
             }
+            // instrumentation: telemetry and perturbation
+            // captures: Fourier tail-stop decision and term magnitude
+            // why: compare current convergence threshold against forced early stops.
             const tail_break_base =
                 i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
                 @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon;
             const tail_break = Perturbation.decision(.fourier_tail_break, fourier_coord, tail_break_base);
+            // instrumentation: calculation telemetry
+            // captures: Fourier contribution size and tail-break decision
+            // why: compare tolerance pruning against each retained term.
             Telemetry.fourierContribution(
                 i_fourier,
                 fourier_weight,
@@ -576,6 +624,9 @@ fn layerResolvedLabosWithWorkspace(
                 tail_break,
             );
             if (tail_break) {
+                // instrumentation: trace counter
+                // captures: Fourier tail breaks
+                // why: validate the tail-pruning threshold against observed exits.
                 Trace.plotU("fourier_tail_breaks", 1);
                 stop_fourier_loop = true;
             }
@@ -584,6 +635,9 @@ fn layerResolvedLabosWithWorkspace(
     }
 
     const result_jacobian = result_jacobian: {
+        // instrumentation: trace zone
+        // captures: final LABOS Jacobian assembly wall time
+        // why: distinguish derivative vector packing from Fourier/tangent evaluation.
         const zone = Trace.deepStaticZone(@src(), "labos.reflectance.jacobian_assembly");
         defer zone.end();
         var assembled = jacobian.zero();
@@ -593,6 +647,9 @@ fn layerResolvedLabosWithWorkspace(
         break :result_jacobian assembled;
     };
     const clamped_reflectance = math.clamp(reflectance, 0.0, 2.0);
+    // instrumentation: calculation telemetry
+    // captures: final raw/clamped reflectance and Jacobian norm
+    // why: find suspicious outputs or derivative-negligible samples.
     if (Telemetry.enabled) {
         var jacobian_norm1: f64 = 0.0;
         for (result_jacobian) |value| jacobian_norm1 += @abs(value);

@@ -7,6 +7,9 @@ const Telemetry = @import("../../calculation_telemetry.zig");
 const Perturbation = @import("../../perturbation_sensitivity.zig");
 const Trace = @import("../../performance_trace.zig");
 
+// instrumentation: LABOS orders
+// captures: scattering-order zones and convergence decisions
+// why: study how early multiple scattering can stop without moving reflectance.
 // layout(64-bit):
 //   size: 48 B, align: 8 B
 //   field storage: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
@@ -664,6 +667,9 @@ fn ordersScatInternal(
     const ud_local_view = ud_local[0..nlevel];
     const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
+    // instrumentation: trace counter
+    // captures: LABOS scattering-order solver calls
+    // why: count the transport solves hidden under each Fourier term.
     Trace.plotU("orders_calls", 1);
 
     if (!rt_active_ready) {
@@ -671,6 +677,9 @@ fn ordersScatInternal(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: initial local source construction wall time
+        // why: separate first-order source setup from later inter-level transport.
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_sources");
         defer zone.end();
         for (start_level..end_level + 1) |ilevel| {
@@ -727,6 +736,9 @@ fn ordersScatInternal(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: initial-order transport wall time
+        // why: isolate first scattering transport before convergence tests.
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_transport");
         defer zone.end();
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
@@ -735,6 +747,9 @@ fn ordersScatInternal(
     copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
 
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
+    // instrumentation: perturbation
+    // captures: initial-order convergence decision
+    // why: test sensitivity of the single-scattering early return.
     const initial_stop = if (controls.scattering != .multiple)
         true
     else
@@ -744,7 +759,13 @@ fn ordersScatInternal(
             max_value < controls.performance_thresholds.threshold_conv_first,
         );
     if (initial_stop) {
+        // instrumentation: trace counter
+        // captures: initial-order early returns
+        // why: quantify single-scattering exits from the order loop.
         Trace.plotU("orders_initial_returns", 1);
+        // instrumentation: calculation telemetry
+        // captures: initial convergence margin
+        // why: study whether single-scattering exits are safely below tolerance.
         Telemetry.ordersConvergence(
             1,
             num_orders_max,
@@ -762,17 +783,29 @@ fn ordersScatInternal(
     var num_orders: usize = 1;
 
     while (true) {
+        // instrumentation: trace zone
+        // captures: one multiple-scattering order iteration wall time
+        // why: compare cost per retained scattering order.
         const multiple_loop_zone = Trace.deepStaticZone(@src(), "labos.orders.multiple_loop");
         num_orders += 1;
+        // instrumentation: trace counter
+        // captures: number of multiple-scattering iterations
+        // why: tie convergence thresholds to actual order count.
         Trace.plotU("orders_multiple_iterations", 1);
 
         {
+            // instrumentation: trace zone
+            // captures: local downward source update wall time
+            // why: isolate downward matrix-vector work inside each order.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_down");
             defer zone.end();
             for (start_level..end_level) |ilevel| {
                 const local_d0 = &ud_local_view[ilevel].D.col[0].data;
                 const local_d1 = &ud_local_view[ilevel].D.col[1].data;
                 if (!rt_active_view[ilevel + 1]) {
+                    // instrumentation: trace counter
+                    // captures: inactive layers skipped in downward source update
+                    // why: quantify savings from layer pre-partitioning and active masks.
                     Trace.plotU("orders_inactive_down_layers", 1);
                     continue;
                 }
@@ -780,6 +813,9 @@ fn ordersScatInternal(
                 const prev_u1 = &ud_orde_view[ilevel].U.col[1];
                 const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
                 const prev_d1 = &ud_orde_view[ilevel + 1].D.col[1];
+                // instrumentation: trace counters
+                // captures: Gauss-pair dot-product calls and terms for downward updates
+                // why: connect order timing to inner product arithmetic volume.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
                 for (0..nmutot) |imu| {
@@ -794,6 +830,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: local upward source update wall time
+            // why: isolate upward matrix-vector work inside each order.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_up");
             defer zone.end();
             const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
@@ -801,6 +840,9 @@ fn ordersScatInternal(
             const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
             const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
             if (rt_active_view[start_level]) {
+                // instrumentation: trace counters
+                // captures: boundary upward dot-product calls and terms
+                // why: account for the lower-bound source cost separately.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * n_gauss));
                 for (0..nmutot) |imu| {
@@ -815,6 +857,9 @@ fn ordersScatInternal(
                 const local_u0 = &ud_local_view[ilevel].U.col[0].data;
                 const local_u1 = &ud_local_view[ilevel].U.col[1].data;
                 if (!rt_active_view[ilevel]) {
+                    // instrumentation: trace counter
+                    // captures: inactive layers skipped in upward source update
+                    // why: quantify savings from layer pre-partitioning and active masks.
                     Trace.plotU("orders_inactive_up_layers", 1);
                     continue;
                 }
@@ -822,6 +867,9 @@ fn ordersScatInternal(
                 const prev_d1 = &ud_orde_view[ilevel].D.col[1];
                 const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
                 const prev_u1 = &ud_orde_view[ilevel - 1].U.col[1];
+                // instrumentation: trace counters
+                // captures: Gauss-pair dot-product calls and terms for upward updates
+                // why: connect order timing to inner product arithmetic volume.
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
                 for (0..nmutot) |imu| {
@@ -835,6 +883,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: inter-level transport wall time for this order
+            // why: separate propagation from local source computation.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.transport");
             defer zone.end();
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
@@ -842,6 +893,9 @@ fn ordersScatInternal(
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
+        // instrumentation: telemetry and perturbation
+        // captures: multiple-order stop margin and forced stop experiments
+        // why: identify scattering orders that are safe to skip by tolerance.
         const hit_iteration_cap = num_orders >= num_orders_max;
         const multiple_stop = if (hit_iteration_cap)
             true
@@ -852,6 +906,9 @@ fn ordersScatInternal(
                 max_value < controls.performance_thresholds.threshold_conv_mult,
             );
         if (multiple_stop) {
+            // instrumentation: calculation telemetry
+            // captures: multiple-order convergence margin and iteration cap status
+            // why: study whether later scattering orders can be safely pruned.
             Telemetry.ordersConvergence(
                 num_orders,
                 num_orders_max,
@@ -869,6 +926,9 @@ fn ordersScatInternal(
         }
 
         {
+            // instrumentation: trace zone
+            // captures: accepted order accumulation wall time
+            // why: separate retained-order summation from convergence testing.
             const zone = Trace.deepStaticZone(@src(), "labos.orders.accumulate");
             defer zone.end();
             accumulateOrderContribution(

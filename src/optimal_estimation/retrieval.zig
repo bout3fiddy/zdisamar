@@ -402,12 +402,21 @@ pub fn runO2A(
     forward_storage: *InstrumentGrid.ProductStorage,
     controls: Controls,
 ) !Result {
+    // instrumentation: trace zone
+    // captures: full optimal-estimation retrieval wall time
+    // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
     const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
     defer retrieval_zone.end();
 
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+    // instrumentation: trace counter
+    // captures: active retrieval state count
+    // why: normalize iteration and solver timing by inverse-problem dimension.
     Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
+    // instrumentation: trace counter
+    // captures: configured maximum OE iterations
+    // why: make trace comparisons robust when controls change.
     Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
 
     var prepared_case = try RetrievalPreparedCase.init(
@@ -458,12 +467,18 @@ pub fn runO2A(
     var converged = false;
     var iteration_count: usize = 0;
     for (0..controls.max_iterations) |iteration_offset| {
+        // instrumentation: trace zone
+        // captures: one OE iteration wall time and iteration index
+        // why: compare convergence cost across forward/Jacobian, normal-system, and solver phases.
         const iteration_zone = Trace.staticZone(@src(), "optimal_estimation.iteration");
         defer iteration_zone.end();
         iteration_zone.value(@intCast(iteration_offset + 1));
 
         const previous = state;
         const evaluation = traced_evaluation: {
+            // instrumentation: trace zone
+            // captures: RTM product and Jacobian evaluation wall time
+            // why: keep forward-model cost separate from inverse-method linear algebra.
             const zone = Trace.staticZone(@src(), "optimal_estimation.rtm_jacobian");
             defer zone.end();
             break :traced_evaluation try evaluateO2AState(
@@ -474,6 +489,9 @@ pub fn runO2A(
         };
 
         const accumulation = traced_normal_system: {
+            // instrumentation: trace zone
+            // captures: normal-system accumulation wall time
+            // why: measure residual/Jacobian reduction independently from RTM solves.
             const zone = Trace.staticZone(@src(), "optimal_estimation.normal_system");
             defer zone.end();
             break :traced_normal_system try accumulateNormalSystem(
@@ -489,6 +507,9 @@ pub fn runO2A(
         };
 
         const step = traced_solver_update: {
+            // instrumentation: trace zone
+            // captures: solver update wall time
+            // why: isolate state-step computation from forward model and accumulation.
             const zone = Trace.staticZone(@src(), "optimal_estimation.solver_update");
             defer zone.end();
             break :traced_solver_update try solveStep(
@@ -584,6 +605,9 @@ fn evaluateO2AState(
     state: Vector,
 ) !ForwardEvaluation {
     {
+        // instrumentation: trace zone
+        // captures: retrieval-state application wall time
+        // why: separate mutable scene/control updates from optical and RTM recomputation.
         const zone = Trace.staticZone(@src(), "optimal_estimation.state_application");
         defer zone.end();
         // The mutable case starts as the base case once. Each evaluation overwrites
@@ -599,6 +623,9 @@ fn evaluateO2AState(
     }
 
     var prepared_optics = prepared_runtime_optics: {
+        // instrumentation: trace zone
+        // captures: per-iteration optical preparation wall time
+        // why: measure setup rebuilt after aerosol and pressure-state changes.
         const zone = Trace.staticZone(@src(), "optimal_estimation.prepare_evaluation");
         defer zone.end();
         // OE state updates do not change the adaptive weak-line cutoff grid.
@@ -619,6 +646,9 @@ fn evaluateO2AState(
     };
     defer prepared_optics.deinit(allocator);
     const view = simulated_forward_view: {
+        // instrumentation: trace zone
+        // captures: per-iteration forward product plus Jacobian wall time
+        // why: isolate the model evaluation consumed by the OE residual step.
         const zone = Trace.staticZone(@src(), "optimal_estimation.forward_jacobian_product");
         defer zone.end();
         break :simulated_forward_view try InstrumentGrid.simulateProductWithWorkspace(

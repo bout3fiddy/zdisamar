@@ -2,6 +2,9 @@ const std = @import("std");
 
 const Src = std.builtin.SourceLocation;
 
+// instrumentation: ztracy stub
+// captures: nothing
+// why: satisfy trace imports with zero runtime work in product builds.
 pub const enabled = false;
 
 // layout(64-bit):

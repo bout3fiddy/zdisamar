@@ -13,6 +13,9 @@ const Telemetry = @import("../../calculation_telemetry.zig");
 const Trace = @import("../../performance_trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
+// instrumentation: wavelength sampling
+// captures: plan preparation zones and sampling fan-out
+// why: separate spectral-grid setup from forward RTM work.
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
@@ -156,6 +159,9 @@ pub fn buildWavelengthSampling(
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     if (can_cache_adaptive_plan) {
+        // instrumentation: trace zone
+        // captures: adaptive kernel cache preparation
+        // why: measure reusable instrument-response setup.
         const zone = Trace.staticZone(@src(), "wavelength_sampling.prepare_adaptive_cache");
         defer zone.end();
         _ = instrument_integration.prepareAdaptiveKernelCache(
@@ -173,6 +179,9 @@ pub fn buildWavelengthSampling(
     }
 
     {
+        // instrumentation: trace zone
+        // captures: wavelength sampling plan fill
+        // why: measure output-grid expansion into integration samples.
         const zone = Trace.staticZone(@src(), "wavelength_sampling.sample_loop");
         defer zone.end();
         try fillWavelengthSamplingPlans(
@@ -292,14 +301,23 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
         "zdisamar-sampling-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-sampling-worker";
+    // instrumentation: trace thread label
+    // captures: wavelength-sampling worker identity
+    // why: make parallel plan-fill lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: worker chunk timing and chunk sizes
+    // why: inspect parallel wavelength-plan load balance.
     const worker_zone = Trace.staticZone(@src(), "wavelength_sampling.worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: wavelength-sampling chunk wall time and row count
+            // why: reveal chunk imbalance while filling integration plans.
             const chunk_zone = Trace.deepStaticZone(@src(), "wavelength_sampling.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();
@@ -463,6 +481,9 @@ fn compactIntegrationKernel(
 }
 
 fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_count: usize) void {
+    // instrumentation: calculation telemetry
+    // captures: integrated rows and side samples
+    // why: quantify spectral sampling work before forward misses.
     if (!Telemetry.enabled) return;
     var radiance_integrated_rows: usize = 0;
     var irradiance_integrated_rows: usize = 0;
@@ -479,6 +500,9 @@ fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_c
         max_kernel_sample_count = @max(max_kernel_sample_count, radiance_count);
         max_kernel_sample_count = @max(max_kernel_sample_count, irradiance_count);
     }
+    // instrumentation: calculation telemetry
+    // captures: compact wavelength sampling plan summary
+    // why: store the sampling workload without per-output-row data volume.
     Telemetry.wavelengthSamplingPlan(
         plans.len,
         radiance_integrated_rows,
@@ -548,6 +572,9 @@ pub fn buildForwardMissPlan(
         };
     }
 
+    // instrumentation: calculation telemetry
+    // captures: sample-index reuse vs unique misses
+    // why: measure how much dense forward work integration actually needs.
     Telemetry.forwardMissPlan(table.rows.len, sample_indices.items.len, misses.items.len);
     return .{
         .rows = rows,

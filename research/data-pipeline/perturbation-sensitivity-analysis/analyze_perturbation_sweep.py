@@ -5,45 +5,49 @@
 
 """Build the markdown report for the compact perturbation sweep."""
 
-from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REPORT_PATH = Path(__file__).with_name("report.md")
 DEFAULT_SUMMARY = (
-    REPO_ROOT
-    / "research/data-pipeline/data/perturbation-sensitivity/o2a-default/summary.json"
+    REPO_ROOT / "research/data-pipeline/data/perturbation-sensitivity/o2a-default/summary.json"
 )
 FAST_RESULTS = REPO_ROOT / "benchmark/fast_results.json"
 
 
 def parse_args() -> argparse.Namespace:
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--report", type=Path, default=REPORT_PATH)
+
     return parser.parse_args()
 
 
 def main() -> int:
+
     args = parse_args()
     summary_path = args.summary.resolve()
+
     with summary_path.open() as file:
         summary = json.load(file)
+
     fast_results = load_json(FAST_RESULTS)
     report = build_report(summary, summary_path, fast_results)
     args.report.write_text(report, encoding="utf-8")
     print(f"wrote {args.report.relative_to(REPO_ROOT)}")
+
     return 0
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
+
     if not path.exists():
         return None
+
     with path.open() as file:
         return json.load(file)
 
@@ -53,6 +57,7 @@ def build_report(
     summary_path: Path,
     fast_results: dict[str, Any] | None,
 ) -> str:
+
     experiments = summary["experiments"]
     neutral = [
         row
@@ -114,6 +119,7 @@ def build_report(
     lines.append("")
     lines.append("## Learnings")
     lines.append("")
+
     if neutral:
         names = ", ".join(row["name"] for row in neutral)
         lines.append(
@@ -127,12 +133,14 @@ def build_report(
             "were checked. That means the current candidates need tolerance-bounded, not "
             "zero-difference, optimization rules."
         )
+
     if near_neutral:
         names = ", ".join(row["name"] for row in near_neutral)
         lines.append(
             "- Near-neutral candidates under max reflectance 1e-6, AOD 1e-5, and "
             f"pressure 1e-2 hPa: {names}."
         )
+
     lines.append(
         "- The q-zero downstream gates are the cleanest redundancy test: they only act "
         "inside already-recognized q-series skip branches and directly count avoided "
@@ -180,23 +188,22 @@ def build_report(
     lines.append("")
     lines.append("## Fast Benchmark Canary")
     lines.append("")
+
     if fast_results:
         cases = fast_results["cases"]
         lines.append(f"- Source: `{FAST_RESULTS.relative_to(REPO_ROOT)}`")
         lines.append(
-            "- Forward fast-mode median: "
-            f"{cases['forward_fast_mode']['median_total_s']:.6f} s"
+            f"- Forward fast-mode median: {cases['forward_fast_mode']['median_total_s']:.6f} s"
         )
         lines.append(
-            "- OE session retrieval median: "
-            f"{cases['oe_session']['median_retrieval_s']:.6f} s"
+            f"- OE session retrieval median: {cases['oe_session']['median_retrieval_s']:.6f} s"
         )
         lines.append(
-            "- OE sweep session total median: "
-            f"{cases['oe_sweep']['session_total_s']:.6f} s"
+            f"- OE sweep session total median: {cases['oe_sweep']['session_total_s']:.6f} s"
         )
     else:
         lines.append("- Not run yet in this report refresh.")
+
     lines.append("")
     lines.append("## Storage Discipline")
     lines.append("")
@@ -217,14 +224,21 @@ def build_report(
         "compact schema can add scene ids without changing the product path."
     )
     lines.append("")
+
     return "\n".join(lines)
 
 
 def experiment_table(rows: list[dict[str, Any]]) -> list[str]:
+
+    header = (
+        "| Experiment | Changed / Hit | Max abs refl delta | "
+        "AOD abs delta | Pressure abs delta hPa |"
+    )
     lines = [
-        "| Experiment | Changed / Hit | Max abs refl delta | AOD abs delta | Pressure abs delta hPa |",
+        header,
         "| --- | ---: | ---: | ---: | ---: |",
     ]
+
     for row in rows:
         suppression = row["suppression"]
         forward = row["forward"]
@@ -236,6 +250,7 @@ def experiment_table(rows: list[dict[str, Any]]) -> list[str]:
             f"{retrieval['aerosol_optical_depth_abs_delta']:.3e} | "
             f"{retrieval['aerosol_layer_mid_pressure_abs_delta_hpa']:.3e} |"
         )
+
     return lines
 
 

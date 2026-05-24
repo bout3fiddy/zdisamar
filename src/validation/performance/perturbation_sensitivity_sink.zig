@@ -1,5 +1,8 @@
 const std = @import("std");
 
+// instrumentation: perturbation sink
+// captures: changed hook counts and replacements
+// why: run ablation sweeps outside the product build.
 pub const available = true;
 
 pub const max_channel_count: usize = 16;
@@ -15,8 +18,9 @@ pub const Mode = enum(u8) {
     force_false,
 };
 
-// One active plan is installed by the research executable before each paired
-// model run. Hooks only read this value and update fixed atomic counters.
+// instrumentation: perturbation plan
+// captures: active channel/filter/mode
+// why: select one ablation while hooks stay allocation-free.
 pub const Plan = struct {
     experiment_id: u32 = 0,
     channel_id: u8 = 0,
@@ -46,6 +50,9 @@ fn atomicArray() [max_channel_count]AtomicU64 {
     return [_]AtomicU64{AtomicU64.init(0)} ** max_channel_count;
 }
 
+// instrumentation: perturbation activation
+// captures: plan setup/reset
+// why: isolate counters for each paired experiment.
 pub fn setPlan(plan: Plan) void {
     active_plan = plan;
 }
@@ -59,6 +66,9 @@ pub fn resetCounters() void {
     for (&changed_counts) |*counter| counter.store(0, .monotonic);
 }
 
+// instrumentation: perturbation counters
+// captures: hook hits and changed values
+// why: estimate skipped work without storing event rows.
 pub fn snapshot(channel_id: u8) CounterSnapshot {
     const index = channelIndex(channel_id);
     return .{
@@ -67,6 +77,9 @@ pub fn snapshot(channel_id: u8) CounterSnapshot {
     };
 }
 
+// instrumentation: perturbation scalar
+// captures: zero/scale replacements
+// why: measure final-output sensitivity to removing scalar terms.
 pub fn scalar(
     channel_id: u8,
     layer_index: i32,
@@ -91,6 +104,9 @@ pub fn scalar(
     return perturbed;
 }
 
+// instrumentation: perturbation decision
+// captures: forced branch outcomes
+// why: measure final-output sensitivity to skipping or extending work.
 pub fn decision(
     channel_id: u8,
     layer_index: i32,

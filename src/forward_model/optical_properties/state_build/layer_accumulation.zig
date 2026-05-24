@@ -528,14 +528,23 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
         "zdisamar-accum-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-accum-worker";
+    // instrumentation: trace thread label
+    // captures: parity support-row worker identity
+    // why: make parallel optical-accumulation lanes separable in timeline traces.
     Trace.setThreadName(thread_name);
 
+    // instrumentation: trace zone
+    // captures: parity support-row worker wall time
+    // why: expose load balance while support rows are filled before layer reduction.
     const worker_zone = Trace.staticZone(@src(), "optical_prepare.parity_rows_worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
         {
+            // instrumentation: trace zone
+            // captures: parity support-row chunk wall time and row count
+            // why: reveal chunking overhead in optical-state support-row preparation.
             const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.parity_rows_chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();

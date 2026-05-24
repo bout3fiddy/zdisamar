@@ -1,6 +1,9 @@
 const std = @import("std");
 const Parquet = @import("parquet_lite.zig");
 
+// instrumentation: calculation telemetry sink
+// captures: expression rows to Parquet
+// why: make forward-model math inspectable outside the product path.
 pub const available = true;
 
 const nan = std.math.nan(f64);
@@ -363,8 +366,9 @@ const expressions = [_]ExpressionMeta{
     },
 };
 
-// Validation-owned sink. Product builds receive calculation_telemetry_stub
-// instead, so these files and mutexes are never linked into the public model.
+// instrumentation: telemetry collector
+// captures: scalar/reduction/decision tables
+// why: own file I/O and locks only inside the validation harness.
 const Collector = struct {
     allocator: std.mem.Allocator,
     scalar_table: Parquet.TableWriter,
@@ -516,19 +520,28 @@ const Collector = struct {
 
 pub const CollectorHandle = Collector;
 
-// The capture executable runs one forward simulation per process. The active
-// pointer is atomic so hooks can cheaply observe setup/teardown. Event writes
-// take table-local locks because the forward simulation can emit from workers.
+// instrumentation: telemetry activation
+// captures: hook writes during one harness run
+// why: let worker threads emit rows without global product state.
 var active_collector_ptr = std.atomic.Value(usize).init(0);
 
+// instrumentation: telemetry activation
+// captures: active collector pointer
+// why: bound row capture to the current harness process.
 pub fn setCollector(collector: *Collector) void {
     active_collector_ptr.store(@intFromPtr(collector), .release);
 }
 
+// instrumentation: telemetry activation
+// captures: collector teardown
+// why: stop hooks from writing after the harness closes files.
 pub fn clearCollector() void {
     active_collector_ptr.store(0, .release);
 }
 
+// instrumentation: calculation telemetry
+// captures: integration kernel counts
+// why: quantify spectral sampling fan-out.
 pub fn wavelengthSamplingPlan(
     row_count: usize,
     radiance_integrated_rows: usize,
@@ -557,6 +570,9 @@ pub fn wavelengthSamplingPlan(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: unique forward-cache misses
+// why: measure wavelength reuse from integration plans.
 pub fn forwardMissPlan(row_count: usize, sample_index_count: usize, miss_count: usize) void {
     recordReduction(
         .forward_miss_reuse,
@@ -573,6 +589,9 @@ pub fn forwardMissPlan(row_count: usize, sample_index_count: usize, miss_count: 
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: reflectance denominator clamps and maxima
+// why: detect unstable output assembly.
 pub fn reflectanceAssembly(
     sample_count: usize,
     denominator_clamp_count: usize,
@@ -593,6 +612,9 @@ pub fn reflectanceAssembly(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: Jacobian column sums and maxima
+// why: find weak derivative signals for OE pruning.
 pub fn jacobianColumn(state_index: usize, sum: f64, mean: f64, max_abs: f64) void {
     recordReduction(
         .jacobian_column,
@@ -606,6 +628,9 @@ pub fn jacobianColumn(state_index: usize, sum: f64, mean: f64, max_abs: f64) voi
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: LABOS layer-doubling threshold inputs
+// why: study which layer/Fourier coordinates need doubling.
 pub fn labosLayerDecision(
     i_fourier: usize,
     layer_index: usize,
@@ -651,6 +676,9 @@ pub fn labosLayerDecision(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: q-series skip margin per doubling step
+// why: identify coordinates where Q=(I-RR)^-1-I is negligible.
 pub fn labosDoublingStep(
     i_fourier: usize,
     layer_index: usize,
@@ -680,6 +708,9 @@ pub fn labosDoublingStep(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: downstream R-D/T-U/T-D product gates
+// why: test if q-zero branches imply more matrix work can be skipped.
 pub fn labosDoublingDownstreamGates(
     i_fourier: usize,
     layer_index: usize,
@@ -740,6 +771,9 @@ pub fn labosDoublingDownstreamGates(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: scattering-order stop margins
+// why: tune order convergence without losing reflectance.
 pub fn ordersConvergence(
     iteration_count: usize,
     max_iteration_count: usize,
@@ -765,6 +799,9 @@ pub fn ordersConvergence(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: Fourier term contribution and tail stop
+// why: locate late terms with negligible reflectance.
 pub fn fourierContribution(
     i_fourier: usize,
     fourier_weight: f64,
@@ -799,6 +836,9 @@ pub fn fourierContribution(
     );
 }
 
+// instrumentation: calculation telemetry
+// captures: raw/clamped LABOS reflectance and Jacobian norm
+// why: detect suspicious outputs and weak derivatives.
 pub fn labosResult(raw_reflectance: f64, clamped_reflectance: f64, jacobian_norm1: f64) void {
     recordScalar(
         .labos_reflectance_clamp,

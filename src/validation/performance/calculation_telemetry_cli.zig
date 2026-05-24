@@ -13,6 +13,9 @@ const default_end_nm: f64 = 761.0;
 const default_sample_count: u32 = 21;
 const default_high_resolution_step_nm: f64 = 0.1;
 
+// instrumentation: calculation telemetry harness
+// captures: configured O2 A run and row counts
+// why: make expression data reproducible.
 // Configuration remains CLI-owned. The forward model only sees the resolved
 // typed O2 A input and the compile-time telemetry facade.
 const Config = struct {
@@ -53,6 +56,9 @@ fn mainInner() !void {
     const config = try parseArgs(args);
     try std.fs.cwd().makePath(config.output_dir);
 
+    // instrumentation: calculation telemetry activation
+    // captures: all enabled facade hooks
+    // why: route model events into Parquet tables for this process.
     var collector = try TelemetrySink.CollectorHandle.init(allocator, config.output_dir);
     defer collector.deinit();
     TelemetrySink.setCollector(&collector);
@@ -112,6 +118,9 @@ fn mainInner() !void {
     );
 }
 
+// instrumentation: calculation telemetry scope
+// captures: forward-only or two-state Jacobian path
+// why: choose which math expressions appear in the dataset.
 fn telemetryRoute(route: RadiativeTransfer.Route, include_jacobian: bool) RadiativeTransfer.Route {
     var resolved = route;
     if (!include_jacobian) {
@@ -253,6 +262,9 @@ fn writeSummary(
         \\
     ,
         .{
+            // instrumentation: calculation telemetry metadata
+            // captures: compile-time request/enabled flags in the run summary
+            // why: make disabled or miswired telemetry captures obvious in generated JSON.
             CalculationTelemetry.requested,
             CalculationTelemetry.enabled,
             input.scene_id,

@@ -1,3 +1,6 @@
+// instrumentation: calculation telemetry stub
+// captures: nothing
+// why: keep product/test builds free of Parquet capture state.
 pub const available = false;
 
 pub inline fn wavelengthSamplingPlan(

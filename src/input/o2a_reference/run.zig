@@ -583,6 +583,9 @@ pub fn prepareResolvedVendorO2ACase(
     resolved: *const ResolvedVendorO2ACase,
 ) !PreparedRuntimeCase {
     var inputs = inputs: {
+        // instrumentation: trace zone
+        // captures: O2 A reference input loading wall time
+        // why: keep file/data preparation separate from model setup in trace runs.
         const zone = Trace.staticZone(@src(), "prepare.load_inputs");
         defer zone.end();
         break :inputs try loadResolvedVendorO2AInputs(allocator, resolved);
@@ -590,6 +593,9 @@ pub fn prepareResolvedVendorO2ACase(
     defer inputs.deinit(allocator);
 
     var scene = scene: {
+        // instrumentation: trace zone
+        // captures: typed scene construction wall time
+        // why: separate input translation from optical-state preparation.
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
         break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
@@ -601,6 +607,9 @@ pub fn prepareResolvedVendorO2ACase(
     errdefer allocator.free(reference);
 
     var prepared = prepared: {
+        // instrumentation: trace zone
+        // captures: optical-state preparation wall time
+        // why: expose setup cost before any instrument-grid simulation.
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
         break :prepared try OpticsPrepare.prepare(allocator, &scene, .{
@@ -615,18 +624,27 @@ pub fn prepareResolvedVendorO2ACase(
     errdefer prepared.deinit(allocator);
 
     {
+        // instrumentation: trace zone
+        // captures: weak-line cutoff support-grid installation
+        // why: isolate retained spectroscopy pruning setup from core optical preparation.
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
         try installVendorWeakCutoffGrid(allocator, &scene, &prepared, null);
     }
 
     {
+        // instrumentation: trace zone
+        // captures: solar support rewindowing wall time
+        // why: separate instrument-kernel alignment from RTM setup.
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
         try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
     }
 
     const route = route: {
+        // instrumentation: trace zone
+        // captures: RTM route preparation wall time
+        // why: show control/route setup independently from optical data construction.
         const zone = Trace.staticZone(@src(), "prepare.route");
         defer zone.end();
         break :route try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
@@ -649,6 +667,9 @@ pub fn prepareResolvedVendorO2AEvaluationWithInputs(
     errdefer optics.deinit(allocator);
 
     const route = route: {
+        // instrumentation: trace zone
+        // captures: RTM route preparation wall time
+        // why: measure route setup for input-reuse validation and retrieval lanes.
         const zone = Trace.staticZone(@src(), "prepare.route");
         defer zone.end();
         break :route try prepareResolvedVendorO2ARoute(&optics.scene, resolved.plan, resolved.rtm_controls);
@@ -695,6 +716,9 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
     weak_cutoff_grid: ?*WeakCutoffGridCache,
 ) !PreparedRuntimeOptics {
     var scene = scene: {
+        // instrumentation: trace zone
+        // captures: typed scene construction wall time
+        // why: separate reused loaded inputs from per-scene reconstruction cost.
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
         break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
@@ -792,6 +816,9 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     static_input_table_mode: StaticInputTableMode,
 ) !OpticsPrepare.PreparedOpticalState {
     var prepared = prepared: {
+        // instrumentation: trace zone
+        // captures: optical-state preparation wall time
+        // why: show setup cost when inputs are reused across retrieval iterations.
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
         break :prepared try OpticsPrepare.prepare(allocator, scene, .{
@@ -809,12 +836,18 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     errdefer prepared.deinit(allocator);
 
     {
+        // instrumentation: trace zone
+        // captures: weak-line cutoff support-grid installation
+        // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
         try installVendorWeakCutoffGrid(allocator, scene, &prepared, weak_cutoff_grid);
     }
 
     if (!solar_rewindowed.*) {
+        // instrumentation: trace zone
+        // captures: one-time solar support rewindowing wall time
+        // why: verify retrieval sessions reuse this instrument-grid setup.
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
         try rewindowParitySolarSupportToMeasurementKernel(allocator, scene, &prepared);

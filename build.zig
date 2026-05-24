@@ -52,6 +52,9 @@ pub fn build(b: *std.Build) void {
         "enable-ztracy",
         "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
+    // instrumentation: build gates
+    // captures: opt-in trace/telemetry wiring
+    // why: keep research sinks out of product builds.
     const ztracy_stub_module = b.createModule(.{
         .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
         .target = target,
@@ -101,10 +104,9 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const build_options_module = build_options.createModule();
 
-    // Boundary: shipped library/CLI modules always receive the stub trace module
-    // and disabled tracing/telemetry options. Only explicit validation trace
-    // executables below use trace_build_options, so profiling and calculation
-    // telemetry never change the product build.
+    // instrumentation: product boundary
+    // captures: disabled facades only
+    // why: compile tracing, telemetry, and perturbation away unless a research target opts in.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
@@ -386,6 +388,9 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
+    // instrumentation: ztracy timeline
+    // captures: nested forward/OE phase zones
+    // why: inspect timing shape without changing normal builds.
     const labos_bottleneck_trace_module = b.createModule(.{
         .root_source_file = b.path("src/validation/performance/labos_bottleneck_trace_cli.zig"),
         .target = target,
@@ -458,6 +463,9 @@ pub fn build(b: *std.Build) void {
     );
     optimal_estimation_trace_bin_step.dependOn(&optimal_estimation_trace_install.step);
 
+    // instrumentation: calculation telemetry
+    // captures: expression rows to Parquet
+    // why: study numeric dataflow and pruning thresholds offline.
     const calculation_telemetry_internal_module = b.createModule(.{
         .root_source_file = b.path("src/internal.zig"),
         .target = target,
@@ -509,6 +517,9 @@ pub fn build(b: *std.Build) void {
     );
     calculation_telemetry_step.dependOn(&run_calculation_telemetry.step);
 
+    // instrumentation: perturbation sensitivity
+    // captures: final-output deltas and changed hook counts
+    // why: test pruning ideas without product code paths.
     const perturbation_sensitivity_internal_module = b.createModule(.{
         .root_source_file = b.path("src/internal.zig"),
         .target = target,
