@@ -5,6 +5,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from zdisamar import rtm
+from zdisamar.bindings.handles import RtmHandle
 from zdisamar.inverse_method import optimal_estimation
 
 
@@ -122,6 +123,7 @@ def main() -> None:
     assert len(cached_profiled.reflectance) == len(profiled.reflectance)
     assert load_mock.call_count == 0
     assert all(math.isfinite(value) for value in profiled.reflectance)
+    expect_profile_oe_correction_rejected(profile_case, profiled)
     assert not hasattr(cache, "aerosol_profile_spectrum")
     assert not hasattr(rtm, "aerosol_profile_spectrum")
     max_delta = max(
@@ -169,6 +171,37 @@ def expect_profile_jacobian_rejected(cache: rtm.SessionCache) -> None:
         assert "profile Jacobians" in str(error)
     else:
         raise AssertionError("multi-layer aerosol profile Jacobian was accepted")
+
+
+def expect_profile_oe_correction_rejected(case, spectrum) -> None:
+
+    measurement = optimal_estimation.Measurement(
+        spectrum.wavelength_nm[:2],
+        spectrum.reflectance[:2],
+        (1.0, 1.0),
+    )
+
+    with RtmHandle() as handle:
+        handle.load_o2a_case(case)
+
+        try:
+            handle.optimal_estimation_correction(
+                measurement=measurement,
+                state_vector=optimal_estimation.StateVector(
+                    [
+                        optimal_estimation.AerosolOpticalDepth(
+                            initial=0.3,
+                            prior=0.3,
+                            variance=0.8,
+                        )
+                    ]
+                ),
+                controls=optimal_estimation.RetrievalControls(max_iterations=1),
+            )
+        except RuntimeError as error:
+            assert "forward-simulation only" in str(error)
+        else:
+            raise AssertionError("multi-layer aerosol profile correction was accepted")
 
 
 if __name__ == "__main__":
