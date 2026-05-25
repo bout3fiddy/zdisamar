@@ -17,11 +17,45 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 1.2096162079833448,
-        "max_abs": 1.2096162079833448,
-        "mean": 0.9304500725050456,
-        "median": 0.9487727085361257,
-        "min": 0.6118412078358233
+        "max": 1.9738828749395907,
+        "max_abs": 1.9738828749395907,
+        "mean": 1.0711618587025442,
+        "median": 1.0306269789580256,
+        "min": 0.6281253749039024
+      },
+      "rows": 100
+    },
+    "fast_accurate": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 0.15088720881396966,
+        "max_abs": 0.15088720881396966,
+        "mean": 0.018168880290307356,
+        "median": 0.007974437899804343,
+        "min": 0.0004937577302825957
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 0.00021628806509044196,
+        "max_abs": 0.00021628806509044196,
+        "mean": 1.379370850704581e-05,
+        "median": 2.5491017314749342e-06,
+        "min": 2.7709464722747157e-09
+      },
+      "converged": 100,
+      "fast_stage_converged": 100,
+      "full_correction_converged": 21,
+      "full_correction_state_vector_convergence": {
+        "max": 15.871306666976468,
+        "max_abs": 15.871306666976468,
+        "mean": 2.196519719335101,
+        "median": 1.5543686472103073,
+        "min": 0.2741404157554976
+      },
+      "retrieval_s": {
+        "max": 3.6438422920182347,
+        "max_abs": 3.6438422920182347,
+        "mean": 2.0038589865877294,
+        "median": 1.8664424375165254,
+        "min": 1.2115264998283237
       },
       "rows": 100
     },
@@ -42,16 +76,39 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.2429030418861657,
-        "max_abs": 2.2429030418861657,
-        "mean": 1.7583462359034456,
-        "median": 1.813645604532212,
-        "min": 0.8791551250033081
+        "max": 4.204888707958162,
+        "max_abs": 4.204888707958162,
+        "mean": 2.0500712570850737,
+        "median": 1.9648087291279808,
+        "min": 0.8905377499759197
       },
       "rows": 100
     }
   },
   "canonical_command": "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py",
+  "fast_accurate_minus_reference": {
+    "aerosol_mid_pressure_delta_hpa": {
+      "max": 0.08697175895849796,
+      "max_abs": 0.19381440316107046,
+      "mean": -0.009310079470953383,
+      "median": -0.005540024409526723,
+      "min": -0.19381440316107046
+    },
+    "aerosol_optical_depth_delta": {
+      "max": 0.00023071115586859037,
+      "max_abs": 0.00023071115586859037,
+      "mean": 1.8033999714664462e-06,
+      "median": 1.1673951205715127e-06,
+      "min": -0.00014876209563463583
+    },
+    "retrieval_speedup_s": {
+      "max": 0.632901833159849,
+      "max_abs": 1.3907743331510574,
+      "mean": 0.046212270497344436,
+      "median": 0.091105354600586,
+      "min": -1.3907743331510574
+    }
+  },
   "fast_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
       "max": 2.0065110261959944,
@@ -68,16 +125,16 @@
       "min": -0.007394244529562943
     },
     "retrieval_speedup_s": {
-      "max": 1.1612756249960512,
-      "max_abs": 1.1612756249960512,
-      "mean": 0.8278961633984,
-      "median": 0.8665199582464993,
-      "min": 0.230275500100106
+      "max": 2.2415693330112845,
+      "max_abs": 2.2415693330112845,
+      "mean": 0.9789093983825297,
+      "median": 0.9519665003754199,
+      "min": 0.2624123750720173
     }
   },
   "fast_mode": {
     "method": "O2AInput.with_fast_mode()",
-    "note": "Reference rows and fast rows use the same deterministic zdisamar O2 A optimal-estimation sweep cases, measurement vectors, priors, and initial states. Fast rows apply O2AInput.with_fast_mode().",
+    "note": "Reference, fast, and fast-accurate rows use the same deterministic zdisamar O2 A optimal-estimation sweep cases, measurement vectors, priors, and initial states. Fast rows apply O2AInput.with_fast_mode(). Fast-accurate rows solve the fast-mode OE problem to convergence, then apply one full-physics OE correction.",
     "overrides": {
       "adaptive_reference_grid": {
         "points_per_fwhm": 28,

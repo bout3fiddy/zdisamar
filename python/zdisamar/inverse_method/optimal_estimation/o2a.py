@@ -9,7 +9,7 @@ from dataclasses import replace
 from ... import rtm
 from ...input.wavelength_band.o2a import O2AInput
 from .measurement import require_matching_wavelength_grid
-from .retrieval import Iteration, Measurement, Result, RetrievalControls
+from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import PressureAltitudeProfile, StateVector
 
@@ -79,6 +79,146 @@ def disamar_oe(
         controls=controls,
         cache=cache,
         load_case=True,
+    )
+
+
+def disamar_oe_fast(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls | None = None,
+    cache: rtm.SessionCache | None = None,
+) -> Result:
+    """Retrieve with fast-mode convergence followed by one full-physics correction."""
+
+    fast_case = case.with_fast_mode()
+    active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
+
+    if cache is None:
+        with rtm.SessionCache(fast_case) as local_cache:
+            return run_fast_accurate_oe(
+                case=case,
+                fast_case=fast_case,
+                measurement=measurement,
+                state_vector=state_vector,
+                controls=active_controls,
+                cache=local_cache,
+                fast_case_loaded=True,
+            )
+
+    return run_fast_accurate_oe(
+        case=case,
+        fast_case=fast_case,
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=active_controls,
+        cache=cache,
+        fast_case_loaded=False,
+    )
+
+
+def run_fast_accurate_oe(
+    *,
+    case: O2AInput,
+    fast_case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls,
+    cache: rtm.SessionCache,
+    fast_case_loaded: bool,
+) -> Result:
+    """Run the two-stage fast-accurate O2 A retrieval in one cache."""
+
+    fast_result = _disamar_oe(
+        case=fast_case,
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=controls,
+        cache=cache,
+        load_case=not fast_case_loaded,
+    )
+    corrected_state_vector = state_vector_with_initial(state_vector, fast_result.state)
+    full_result = _disamar_oe(
+        case=case,
+        measurement=measurement,
+        state_vector=corrected_state_vector,
+        controls=full_correction_controls(controls),
+        cache=cache,
+        load_case=True,
+    )
+
+    return combine_fast_accurate_result(fast_result, full_result)
+
+
+def state_vector_with_initial(
+    state_vector: StateVector,
+    initial_state: Sequence[float],
+) -> StateVector:
+    """Use one retrieved state as the next solver initial state without moving the prior."""
+
+    if len(initial_state) != len(state_vector.parameters):
+        raise ValueError("initial state length does not match state vector")
+
+    parameters = []
+
+    for parameter, value in zip(state_vector.parameters, initial_state, strict=True):
+        updated = copy.copy(parameter)
+        object.__setattr__(updated, "initial", float(value))
+        parameters.append(updated)
+
+    return StateVector(tuple(parameters))
+
+
+def full_correction_controls(controls: RetrievalControls) -> RetrievalControls:
+    """Keep OE damping settings while limiting the full-physics stage to one update."""
+
+    return replace(controls, max_iterations=1)
+
+
+def combine_fast_accurate_result(fast_result: Result, full_result: Result) -> Result:
+    """Expose the full-physics corrected state with fast-stage convergence semantics."""
+
+    full_correction = None
+    combined_history = fast_result.history
+
+    if full_result.history:
+        full_correction = replace(
+            full_result.history[-1],
+            index=fast_result.iterations + full_result.history[-1].index,
+        )
+        combined_history = (*fast_result.history, full_correction)
+
+    correction_convergence = (
+        math.nan if full_correction is None else float(full_correction.state_vector_convergence)
+    )
+    diagnostics = FastCorrection(
+        fast_iterations=fast_result.iterations,
+        fast_converged=fast_result.converged,
+        fast_state=tuple(float(value) for value in fast_result.state),
+        full_correction=full_correction,
+        full_correction_converged=full_result.converged,
+        full_correction_state_vector_convergence=correction_convergence,
+    )
+
+    return Result(
+        state_names=full_result.state_names,
+        state=full_result.state,
+        iterations=fast_result.iterations + full_result.iterations,
+        converged=fast_result.converged,
+        history=combined_history,
+        posterior_covariance=full_result.posterior_covariance,
+        averaging_kernel=full_result.averaging_kernel,
+        measurement=full_result.measurement,
+        final_evaluation=object.__getattribute__(full_result, "final_evaluation"),
+        last_evaluated_state=full_result.last_evaluated_state,
+        last_evaluation=full_result.last_evaluation,
+        initial_state=fast_result.initial_state,
+        fast_correction=diagnostics,
+        _final_evaluation_factory=object.__getattribute__(
+            full_result,
+            "_final_evaluation_factory",
+        ),
     )
 
 
