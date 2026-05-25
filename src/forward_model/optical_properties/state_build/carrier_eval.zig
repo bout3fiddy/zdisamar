@@ -326,6 +326,8 @@ const ParticleBoundaryCarrier = struct {
 //   footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count
 const ParticleWavelengthScales = struct {
     aerosol: f64,
+    wavelength_nm: f64,
+    profile_sublayer_properties: bool,
 
     fn init(
         prepared: *const State.PreparedOpticalState,
@@ -337,7 +339,18 @@ const ParticleWavelengthScales = struct {
                 prepared.aerosol_angstrom_exponent,
                 wavelength_nm,
             ),
+            .wavelength_nm = wavelength_nm,
+            .profile_sublayer_properties = prepared.has_aerosol_profile_properties,
         };
+    }
+
+    fn aerosolScale(self: ParticleWavelengthScales, sublayer: PreparedSublayer) f64 {
+        if (!self.profile_sublayer_properties) return self.aerosol;
+        return particleWavelengthScale(
+            sublayer.aerosol_reference_wavelength_nm,
+            sublayer.aerosol_angstrom_exponent,
+            self.wavelength_nm,
+        );
     }
 };
 
@@ -357,6 +370,8 @@ pub const InterpolatedQuadratureState = struct {
     absorber_number_density_cm3: f64,
     aerosol_optical_depth_per_km: f64,
     aerosol_single_scatter_albedo: f64,
+    aerosol_reference_wavelength_nm: f64 = 550.0,
+    aerosol_angstrom_exponent: f64 = 0.0,
 
     fn ciaPairDensityCm6(self: InterpolatedQuadratureState) f64 {
         return if (self.cia_pair_density_cm6 > 0.0)
@@ -404,9 +419,10 @@ fn particleBoundaryCarrierAtSupportRowWithScales(
     sublayer: PreparedSublayer,
     scales: ParticleWavelengthScales,
 ) ParticleBoundaryCarrier {
+    const aerosol_scale = scales.aerosolScale(sublayer);
     const aerosol_optical_depth_per_km = scaleParticleDepth(
         opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
-        scales.aerosol,
+        aerosol_scale,
     );
     // math: tau_aer_sca/km = tau_aer/km * omega0_aerosol
     return .{
@@ -1020,6 +1036,13 @@ fn interpolateQuadratureStateBetweenSublayers(
             0.0,
             1.0,
         ),
+        .aerosol_reference_wavelength_nm = @max(
+            left_weight * left.aerosol_reference_wavelength_nm +
+                right_weight * right.aerosol_reference_wavelength_nm,
+            1.0,
+        ),
+        .aerosol_angstrom_exponent = left_weight * left.aerosol_angstrom_exponent +
+            right_weight * right.aerosol_angstrom_exponent,
     };
 }
 
@@ -1044,6 +1067,8 @@ pub fn interpolateQuadratureStateAtAltitude(
             .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
             .aerosol_optical_depth_per_km = opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
             .aerosol_single_scatter_albedo = sublayer.aerosol_single_scatter_albedo,
+            .aerosol_reference_wavelength_nm = sublayer.aerosol_reference_wavelength_nm,
+            .aerosol_angstrom_exponent = sublayer.aerosol_angstrom_exponent,
         };
     }
 
@@ -1533,8 +1558,8 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         state.aerosol_optical_depth_per_km,
-        self.aerosol_reference_wavelength_nm,
-        self.aerosol_angstrom_exponent,
+        if (self.has_aerosol_profile_properties) state.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
+        if (self.has_aerosol_profile_properties) state.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
         wavelength_nm,
     );
     const aerosol_scattering_optical_depth_per_km =

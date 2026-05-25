@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Self
 
 from ...display import NotebookDisplay
-from ..aerosol import Aerosol
+from ..aerosol import Aerosol, AerosolProfileLayer, coerce_profile_layers
 from ..assets import ReferenceAssets
 from ..atmosphere import Atmosphere
 from ..geometry import Geometry, Surface
@@ -63,7 +63,18 @@ class O2AInput(NotebookDisplay):
     @aerosol_optical_depth_550_nm.setter
     def aerosol_optical_depth_550_nm(self, value: float) -> None:
 
-        self.aerosol.optical_depth_550_nm = float(value)
+        self.aerosol.set_single_layer_optical_depth_550_nm(float(value))
+
+    @property
+    def aerosol_profile(self) -> tuple[AerosolProfileLayer, ...]:
+        """Return aerosol layers used by forward simulation."""
+
+        return self.aerosol.profile
+
+    @aerosol_profile.setter
+    def aerosol_profile(self, layers: object) -> None:
+
+        self.set_aerosol_profile(layers)
 
     @property
     def aerosol_layer(self) -> "AerosolLayer":  # noqa: UP037
@@ -72,6 +83,20 @@ class O2AInput(NotebookDisplay):
         return AerosolLayer(self)
 
     def __repr__(self) -> str:
+
+        aerosol_profile = self.aerosol.profile
+
+        if len(aerosol_profile) > 1:
+            aerosol_description = (
+                f"profile with {len(aerosol_profile)} layers, "
+                f"total optical depth {sum(layer.optical_depth for layer in aerosol_profile):g}"
+            )
+        else:
+            aerosol_description = (
+                f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
+                f"layer mid-pressure {self.aerosol_layer.mid_pressure_hpa:g} hPa, "
+                f"thickness {self.aerosol_layer.thickness_hpa:g} hPa"
+            )
 
         return (
             "O2AInput(\n"
@@ -89,10 +114,7 @@ class O2AInput(NotebookDisplay):
             f"solar {self.geometry.solar_zenith_deg:g} deg, "
             f"viewing {self.geometry.viewing_zenith_deg:g} deg, "
             f"relative azimuth {self.geometry.relative_azimuth_deg:g} deg,\n"
-            "  aerosol="
-            f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
-            f"layer mid-pressure {self.aerosol_layer.mid_pressure_hpa:g} hPa, "
-            f"thickness {self.aerosol_layer.thickness_hpa:g} hPa,\n"
+            f"  aerosol={aerosol_description},\n"
             "  instrument="
             f"{self.instrument_response.instrument_name!r}, "
             f"FWHM {self.instrument_response.instrument_line_fwhm_nm:g} nm, "
@@ -170,6 +192,42 @@ class O2AInput(NotebookDisplay):
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
+
+    def set_aerosol_profile(self, layers: object) -> None:
+        """Install a case-owned aerosol profile for forward simulations."""
+
+        profile = coerce_profile_layers(layers)
+
+        if not profile:
+            raise ValueError("aerosol profile must contain at least one layer")
+
+        if len(profile) == 1:
+            self.set_single_aerosol_profile_layer(profile[0])
+
+            return
+
+        for layer in profile:
+            layer.validate()
+
+        self.aerosol.set_profile_layers(profile)
+
+    def set_single_aerosol_profile_layer(self, layer: AerosolProfileLayer) -> None:
+        """Move the scalar aerosol layer and keep the atmosphere grid coherent."""
+
+        layer.validate()
+        placement = self.aerosol.placement
+
+        if placement.semantics != "explicit_interval_bounds":
+            raise ValueError("aerosol profile setters require explicit interval bounds placement")
+
+        if placement.interval_index_1based != self.atmosphere.fit_interval_index_1based:
+            raise ValueError("aerosol placement interval does not match atmosphere fit interval")
+
+        self.atmosphere.set_fit_interval_pressure_bounds(
+            top_pressure_hpa=layer.top_pressure_hpa,
+            bottom_pressure_hpa=layer.bottom_pressure_hpa,
+        )
+        self.aerosol.set_profile_layers((layer,))
 
     def with_fast_mode(self) -> Self:
         """Return a copy with the validated O2 A fast-mode preset applied.
@@ -256,6 +314,8 @@ def apply_aerosol_layer_midpoint_and_thickness(
     if thickness_hpa <= 0.0:
         raise ValueError("aerosol layer pressure thickness must be positive")
 
+    case.aerosol.require_retrieval_compatible()
+
     top_pressure_hpa = mid_pressure_hpa - 0.5 * thickness_hpa
     bottom_pressure_hpa = mid_pressure_hpa + 0.5 * thickness_hpa
 
@@ -273,6 +333,10 @@ def apply_aerosol_layer_midpoint_and_thickness(
     )
     placement.top_pressure_hpa = top_pressure_hpa
     placement.bottom_pressure_hpa = bottom_pressure_hpa
+    case.aerosol.replace_single_profile_layer(
+        top_pressure_hpa=top_pressure_hpa,
+        bottom_pressure_hpa=bottom_pressure_hpa,
+    )
 
 
 class AerosolLayer:
@@ -288,6 +352,7 @@ class AerosolLayer:
     def mid_pressure_hpa(self) -> float:
         """Return the aerosol-layer midpoint pressure."""
 
+        self.case.aerosol.require_retrieval_compatible()
         placement = self.case.aerosol.placement
 
         return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
@@ -305,6 +370,7 @@ class AerosolLayer:
     def thickness_hpa(self) -> float:
         """Return the aerosol-layer pressure thickness."""
 
+        self.case.aerosol.require_retrieval_compatible()
         placement = self.case.aerosol.placement
 
         return placement.bottom_pressure_hpa - placement.top_pressure_hpa

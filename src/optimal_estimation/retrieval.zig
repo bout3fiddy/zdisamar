@@ -430,6 +430,7 @@ pub fn runO2A(
 
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+    if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
     // instrumentation: trace counter
     // captures: active retrieval state count
     // why: normalize iteration and solver timing by inverse-problem dimension.

@@ -1,6 +1,6 @@
 """Typed input objects."""
 
-from .aerosol import Aerosol, AerosolPlacement
+from .aerosol import Aerosol, AerosolPlacement, AerosolProfileLayer
 from .assets import ReferenceAsset, ReferenceAssets
 from .atmosphere import Atmosphere, VerticalInterval
 from .geometry import Geometry, Surface
@@ -12,6 +12,7 @@ from .wavelength_band import O2AInput
 __all__ = [
     "Aerosol",
     "AerosolPlacement",
+    "AerosolProfileLayer",
     "Atmosphere",
     "Geometry",
     "InstrumentResponse",

@@ -1,4 +1,5 @@
 const std = @import("std");
+const AerosolModel = @import("../../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
@@ -22,9 +23,75 @@ const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const centimeters_per_kilometer = 1.0e5;
 const boltzmann_hpa_cm3_per_k = internal.boltzmann_hpa_cm3_per_k;
 const max_collision_complex_profile_nodes: usize = 64;
+const profile_pressure_tolerance_hpa: f64 = 1.0e-9;
+const profile_spectral_tolerance: f64 = 1.0e-12;
 
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
+
+const AerosolSublayerProperties = struct {
+    optical_depth: f64 = 0.0,
+    base_optical_depth: f64 = 0.0,
+    single_scatter_albedo: f64 = 0.0,
+    reference_wavelength_nm: f64 = 550.0,
+    angstrom_exponent: f64 = 0.0,
+    asymmetry_factor: f64 = 0.0,
+};
+
+const ScalarAerosolSublayers = struct {
+    distribution: []const f64,
+    single_scatter_albedo: f64,
+    reference_wavelength_nm: f64,
+    angstrom_exponent: f64,
+    asymmetry_factor: f64,
+    fraction: f64,
+};
+
+const AerosolSublayers = union(enum) {
+    scalar: ScalarAerosolSublayers,
+    profile: []const AerosolSublayerProperties,
+
+    fn deinit(self: AerosolSublayers, allocator: Allocator) void {
+        switch (self) {
+            .scalar => |scalar| allocator.free(scalar.distribution),
+            .profile => |profile| allocator.free(profile),
+        }
+    }
+
+    fn propertyAt(self: AerosolSublayers, index: usize) AerosolSublayerProperties {
+        return switch (self) {
+            .scalar => |scalar| if (index < scalar.distribution.len) .{
+                .optical_depth = scalar.distribution[index] * scalar.fraction,
+                .base_optical_depth = scalar.distribution[index],
+                .single_scatter_albedo = scalar.single_scatter_albedo,
+                .reference_wavelength_nm = scalar.reference_wavelength_nm,
+                .angstrom_exponent = scalar.angstrom_exponent,
+                .asymmetry_factor = scalar.asymmetry_factor,
+            } else .{},
+            .profile => |profile| if (index < profile.len) profile[index] else .{},
+        };
+    }
+
+    fn singleScatterAlbedo(self: AerosolSublayers, context: *const Context) f64 {
+        return switch (self) {
+            .scalar => context.scene.aerosol.single_scatter_albedo,
+            .profile => |profile| profileMeanSingleScatterAlbedo(context, profile),
+        };
+    }
+
+    fn phaseCoefficients(
+        self: AerosolSublayers,
+        context: *const Context,
+    ) [PhaseFunctions.phase_coefficient_count]f64 {
+        return switch (self) {
+            .scalar => PhaseFunctions.hgPhaseCoefficientsWithThreshold(
+                context.scene.aerosol.asymmetry_factor,
+                context.scene.phase_function_truncation_threshold,
+            ),
+            .profile => |profile| profileEquivalentPhaseCoefficients(context, profile),
+        };
+    }
+};
 
 // layout(64-bit):
 //   size: 1048 B, align: 8 B
@@ -140,23 +207,20 @@ const ParitySupportRowErrorState = struct {
 };
 
 // layout(64-bit):
-//   size: 312 B, align: 8 B
-//   field storage: 312 B across 17 fields; largest: totals=160 B, allocator=16 B, aerosol_sublayer_distribution=16 B; padding: 0 B (0 bits)
+//   size: 344 B, align: 8 B
+//   field storage: 344 B across 17 fields; largest: totals=160 B, aerosol_sublayers=48 B, allocator=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayer_distribution, +3 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
+//   out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayers, +3 more carry references/descriptors; referenced storage is not included in size
+//   cache span: 6 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 312 B (0.305 KiB); total also includes referenced storage above
+//   footprint: per instance = 344 B (0.336 KiB); total also includes referenced storage above
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
     queue: *work_partition.ChunkQueue,
     error_state: *ParitySupportRowErrorState,
     worker_index: usize,
@@ -242,6 +306,9 @@ const LayerSums = struct {
     cia_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64 = 0.0,
     aerosol_base_optical_depth: f64 = 0.0,
+    aerosol_scattering_optical_depth: f64 = 0.0,
+    aerosol_reference_wavelength_sum: f64 = 0.0,
+    aerosol_angstrom_sum: f64 = 0.0,
 
     fn addSublayer(self: *LayerSums, terms: SublayerLayerTerms) void {
         // math: layer means are density-weighted, e.g. T_bar numerator += T_i * n_i * w_i and denominator += n_i * w_i.
@@ -257,6 +324,9 @@ const LayerSums = struct {
         self.cia_optical_depth += terms.cia_optical_depth;
         self.aerosol_optical_depth += terms.aerosol_optical_depth;
         self.aerosol_base_optical_depth += terms.aerosol_base_optical_depth;
+        self.aerosol_scattering_optical_depth += terms.aerosol_scattering_optical_depth;
+        self.aerosol_reference_wavelength_sum += terms.aerosol_optical_depth * terms.aerosol_reference_wavelength_nm;
+        self.aerosol_angstrom_sum += terms.aerosol_optical_depth * terms.aerosol_angstrom_exponent;
     }
 
     fn temperature(self: LayerSums) f64 {
@@ -300,6 +370,9 @@ const SublayerLayerTerms = struct {
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
     aerosol_base_optical_depth: f64,
+    aerosol_scattering_optical_depth: f64,
+    aerosol_reference_wavelength_nm: f64,
+    aerosol_angstrom_exponent: f64,
 };
 
 // hot path:
@@ -320,26 +393,11 @@ pub fn populate(
         ),
     };
 
-    const aerosol_sublayer_distribution = try ParticleProfiles.buildAerosolSublayerDistribution(
-        allocator,
-        context.scene,
-        context.vertical_grid.borrow(),
-    );
-    defer allocator.free(aerosol_sublayer_distribution);
+    const aerosol_sublayers = try buildAerosolSublayers(allocator, context);
+    defer aerosol_sublayers.deinit(allocator);
 
-    const aerosol_phase_coefficients = PhaseFunctions.hgPhaseCoefficientsWithThreshold(
-        context.scene.aerosol.asymmetry_factor,
-        context.scene.phase_function_truncation_threshold,
-    );
-    totals.aerosol_single_scatter_albedo = context.scene.aerosol.single_scatter_albedo;
-    const aerosol_extinction_scale = 1.0;
-    const aerosol_fraction = if (context.scene.aerosol.fraction.enabled)
-        context.scene.aerosol.fraction.valueAtWavelength(context.midpoint_nm)
-    else if (context.scene.aerosol.enabled)
-        @as(f64, 1.0)
-    else
-        @as(f64, 0.0);
-    context.aerosol_phase_coefficients = aerosol_phase_coefficients;
+    totals.aerosol_single_scatter_albedo = aerosol_sublayers.singleScatterAlbedo(context);
+    context.aerosol_phase_coefficients = aerosol_sublayers.phaseCoefficients(context);
     var profile_spectroscopy_cache = try LayerSpectroscopy.ProfileSpectroscopyCache.init(
         context,
         absorbers,
@@ -361,10 +419,7 @@ pub fn populate(
                 profile_spectroscopy_cache_ptr,
                 &collision_complex_cache,
                 &totals,
-                aerosol_sublayer_distribution,
-                totals.aerosol_single_scatter_albedo,
-                aerosol_extinction_scale,
-                aerosol_fraction,
+                aerosol_sublayers,
             );
         } else {
             try populateParitySupportRows(
@@ -374,16 +429,12 @@ pub fn populate(
                 profile_spectroscopy_cache_ptr,
                 &collision_complex_cache,
                 &totals,
-                aerosol_sublayer_distribution,
-                totals.aerosol_single_scatter_albedo,
-                aerosol_extinction_scale,
-                aerosol_fraction,
+                aerosol_sublayers,
             );
         }
         for (context.layers, 0..) |*layer, index| {
             reduceParityLayer(
                 context,
-                totals.aerosol_single_scatter_albedo,
                 layer,
                 index,
             );
@@ -399,16 +450,183 @@ pub fn populate(
             profile_spectroscopy_cache_ptr,
             &collision_complex_cache,
             &totals,
-            aerosol_sublayer_distribution,
-            totals.aerosol_single_scatter_albedo,
-            aerosol_extinction_scale,
-            aerosol_fraction,
+            aerosol_sublayers,
             layer,
             index,
         );
     }
 
     return totals;
+}
+
+fn buildAerosolSublayers(
+    allocator: Allocator,
+    context: *const Context,
+) !AerosolSublayers {
+    if (context.aerosol_profile_layers.len != 0) {
+        return .{ .profile = try buildAerosolProfileSublayerProperties(allocator, context) };
+    }
+
+    const distribution = try ParticleProfiles.buildAerosolSublayerDistribution(
+        allocator,
+        context.scene,
+        context.vertical_grid.borrow(),
+    );
+
+    const aerosol_fraction = if (context.scene.aerosol.fraction.enabled)
+        context.scene.aerosol.fraction.valueAtWavelength(context.midpoint_nm)
+    else if (context.scene.aerosol.enabled)
+        @as(f64, 1.0)
+    else
+        @as(f64, 0.0);
+
+    return .{
+        .scalar = .{
+            .distribution = distribution,
+            .single_scatter_albedo = context.scene.aerosol.single_scatter_albedo,
+            .reference_wavelength_nm = context.scene.aerosol.reference_wavelength_nm,
+            .angstrom_exponent = context.scene.aerosol.angstrom_exponent,
+            .asymmetry_factor = context.scene.aerosol.asymmetry_factor,
+            .fraction = aerosol_fraction,
+        },
+    };
+}
+
+fn buildAerosolProfileSublayerProperties(
+    allocator: Allocator,
+    context: *const Context,
+) ![]AerosolSublayerProperties {
+    const sublayer_count = context.vertical_grid.sublayer_mid_altitudes_km.len;
+    const properties = try allocator.alloc(AerosolSublayerProperties, sublayer_count);
+    errdefer allocator.free(properties);
+    @memset(properties, AerosolSublayerProperties{});
+
+    for (context.aerosol_profile_layers) |profile_layer| {
+        const layer_pressure_span = profile_layer.bottom_pressure_hpa - profile_layer.top_pressure_hpa;
+        if (layer_pressure_span <= 0.0 or profile_layer.optical_depth == 0.0) continue;
+        var covered_pressure_span: f64 = 0.0;
+        for (
+            properties,
+            context.vertical_grid.sublayer_top_pressures_hpa,
+            context.vertical_grid.sublayer_bottom_pressures_hpa,
+        ) |*property, sublayer_top_pressure, sublayer_bottom_pressure| {
+            const overlap_top = @max(profile_layer.top_pressure_hpa, sublayer_top_pressure);
+            const overlap_bottom = @min(profile_layer.bottom_pressure_hpa, sublayer_bottom_pressure);
+            const overlap = overlap_bottom - overlap_top;
+            if (overlap <= 0.0) continue;
+            covered_pressure_span += overlap;
+
+            const added_optical_depth = profile_layer.optical_depth * (overlap / layer_pressure_span);
+            if (added_optical_depth <= 0.0) continue;
+            const old_optical_depth = property.optical_depth;
+            if (old_optical_depth > 0.0 and !profileSpectralScalingMatches(property.*, profile_layer)) {
+                return error.InvalidRequest;
+            }
+            const new_optical_depth = old_optical_depth + added_optical_depth;
+            const old_scattering = old_optical_depth * property.single_scatter_albedo;
+            const added_scattering = added_optical_depth * profile_layer.single_scatter_albedo;
+            const new_scattering = old_scattering + added_scattering;
+
+            property.base_optical_depth = new_optical_depth;
+            property.optical_depth = new_optical_depth;
+            property.single_scatter_albedo = if (new_optical_depth > 0.0)
+                std.math.clamp(new_scattering / new_optical_depth, 0.0, 1.0)
+            else
+                0.0;
+            property.reference_wavelength_nm = if (new_optical_depth > 0.0)
+                (old_optical_depth * property.reference_wavelength_nm +
+                    added_optical_depth * profile_layer.reference_wavelength_nm) / new_optical_depth
+            else
+                profile_layer.reference_wavelength_nm;
+            property.angstrom_exponent = if (new_optical_depth > 0.0)
+                (old_optical_depth * property.angstrom_exponent +
+                    added_optical_depth * profile_layer.angstrom_exponent) / new_optical_depth
+            else
+                profile_layer.angstrom_exponent;
+            property.asymmetry_factor = if (new_scattering > 0.0)
+                (old_scattering * property.asymmetry_factor +
+                    added_scattering * profile_layer.asymmetry_factor) / new_scattering
+            else
+                profile_layer.asymmetry_factor;
+        }
+        if (covered_pressure_span + profile_pressure_tolerance_hpa < layer_pressure_span) {
+            return error.InvalidRequest;
+        }
+    }
+    return properties;
+}
+
+fn profileSpectralScalingMatches(
+    property: AerosolSublayerProperties,
+    profile_layer: AerosolModel.ProfileLayer,
+) bool {
+    return std.math.approxEqAbs(
+        f64,
+        property.reference_wavelength_nm,
+        profile_layer.reference_wavelength_nm,
+        profile_spectral_tolerance,
+    ) and std.math.approxEqAbs(
+        f64,
+        property.angstrom_exponent,
+        profile_layer.angstrom_exponent,
+        profile_spectral_tolerance,
+    );
+}
+
+fn profileScatteringAtMidpoint(context: *const Context, property: AerosolSublayerProperties) f64 {
+    if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
+    const optical_depth = ParticleProfiles.scaleOpticalDepth(
+        property.optical_depth,
+        property.reference_wavelength_nm,
+        property.angstrom_exponent,
+        context.midpoint_nm,
+    );
+    return optical_depth * property.single_scatter_albedo;
+}
+
+fn profileMeanSingleScatterAlbedo(
+    context: *const Context,
+    aerosol_sublayers: []const AerosolSublayerProperties,
+) f64 {
+    var optical_depth: f64 = 0.0;
+    var scattering: f64 = 0.0;
+    for (aerosol_sublayers) |property| {
+        if (property.optical_depth <= 0.0) continue;
+        const scaled_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            property.optical_depth,
+            property.reference_wavelength_nm,
+            property.angstrom_exponent,
+            context.midpoint_nm,
+        );
+        optical_depth += scaled_optical_depth;
+        scattering += scaled_optical_depth * property.single_scatter_albedo;
+    }
+    return if (optical_depth > 0.0)
+        std.math.clamp(scattering / optical_depth, 0.0, 1.0)
+    else
+        0.0;
+}
+
+fn profileEquivalentPhaseCoefficients(
+    context: *const Context,
+    aerosol_sublayers: []const AerosolSublayerProperties,
+) [PhaseFunctions.phase_coefficient_count]f64 {
+    var scattering: f64 = 0.0;
+    var asymmetry_sum: f64 = 0.0;
+    for (aerosol_sublayers) |property| {
+        const sublayer_scattering = profileScatteringAtMidpoint(context, property);
+        if (sublayer_scattering <= 0.0) continue;
+        scattering += sublayer_scattering;
+        asymmetry_sum += sublayer_scattering * property.asymmetry_factor;
+    }
+    const asymmetry_factor = if (scattering > 0.0)
+        asymmetry_sum / scattering
+    else
+        context.scene.aerosol.asymmetry_factor;
+    return PhaseFunctions.hgPhaseCoefficientsWithThreshold(
+        asymmetry_factor,
+        context.scene.phase_function_truncation_threshold,
+    );
 }
 
 fn populateParitySupportRows(
@@ -418,10 +636,7 @@ fn populateParitySupportRows(
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
 ) !void {
     for (0..context.sublayers.len) |write_index| {
         const current_layer_index: usize = @intCast(context.sublayers[write_index].parent_layer_index);
@@ -432,10 +647,7 @@ fn populateParitySupportRows(
             profile_spectroscopy_cache,
             collision_complex_cache,
             totals,
-            aerosol_sublayer_distribution,
-            aerosol_single_scatter_albedo,
-            aerosol_extinction_scale,
-            aerosol_fraction,
+            aerosol_sublayers,
             current_layer_index,
             @intCast(context.sublayers[write_index].sublayer_index),
             write_index,
@@ -455,10 +667,7 @@ fn populateParitySupportRowsParallel(
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
 ) !void {
     const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
     if (worker_count == 1) {
@@ -469,10 +678,7 @@ fn populateParitySupportRowsParallel(
             profile_spectroscopy_cache,
             collision_complex_cache,
             totals,
-            aerosol_sublayer_distribution,
-            aerosol_single_scatter_albedo,
-            aerosol_extinction_scale,
-            aerosol_fraction,
+            aerosol_sublayers,
         );
     }
 
@@ -491,10 +697,7 @@ fn populateParitySupportRowsParallel(
             .absorbers = absorbers,
             .profile_spectroscopy_cache = profile_spectroscopy_cache,
             .collision_complex_cache = collision_complex_cache,
-            .aerosol_sublayer_distribution = aerosol_sublayer_distribution,
-            .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
-            .aerosol_extinction_scale = aerosol_extinction_scale,
-            .aerosol_fraction = aerosol_fraction,
+            .aerosol_sublayers = aerosol_sublayers,
             .queue = &queue,
             .error_state = &error_state,
             .worker_index = worker_index,
@@ -562,10 +765,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                     worker.profile_spectroscopy_cache,
                     worker.collision_complex_cache,
                     &worker.totals,
-                    worker.aerosol_sublayer_distribution,
-                    worker.aerosol_single_scatter_albedo,
-                    worker.aerosol_extinction_scale,
-                    worker.aerosol_fraction,
+                    worker.aerosol_sublayers,
                     current_layer_index,
                     @intCast(worker.context.sublayers[write_index].sublayer_index),
                     write_index,
@@ -585,10 +785,7 @@ fn populateParitySupportRow(
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
     current_layer_index: usize,
     current_sublayer_index: usize,
     write_index: usize,
@@ -606,10 +803,7 @@ fn populateParitySupportRow(
         profile_spectroscopy_cache,
         collision_complex_cache,
         totals,
-        aerosol_sublayer_distribution,
-        aerosol_single_scatter_albedo,
-        aerosol_extinction_scale,
-        aerosol_fraction,
+        aerosol_sublayers,
         layer_thickness_km,
         current_layer_index,
         current_sublayer_index,
@@ -662,7 +856,6 @@ fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation)
 
 fn reduceParityLayer(
     context: *Context,
-    aerosol_single_scatter_albedo: f64,
     layer: *State.PreparedLayer,
     index: usize,
 ) void {
@@ -687,6 +880,9 @@ fn reduceParityLayer(
     var layer_cia_optical_depth: f64 = 0.0;
     var layer_aerosol_optical_depth: f64 = 0.0;
     var layer_aerosol_base_optical_depth: f64 = 0.0;
+    var layer_aerosol_scattering_optical_depth: f64 = 0.0;
+    var layer_reference_wavelength_sum: f64 = 0.0;
+    var layer_angstrom_sum: f64 = 0.0;
     var support_point_count: usize = 0;
 
     if (support_rows.len > 2) {
@@ -699,11 +895,14 @@ fn reduceParityLayer(
             layer_cia_optical_depth += support_row.cia_optical_depth;
             layer_aerosol_optical_depth += support_row.aerosol_optical_depth;
             layer_aerosol_base_optical_depth += support_row.aerosol_base_optical_depth;
+            layer_aerosol_scattering_optical_depth += support_row.aerosol_optical_depth * support_row.aerosol_single_scatter_albedo;
+            layer_reference_wavelength_sum += support_row.aerosol_optical_depth * support_row.aerosol_reference_wavelength_nm;
+            layer_angstrom_sum += support_row.aerosol_optical_depth * support_row.aerosol_angstrom_exponent;
             support_point_count += 1;
         }
     }
 
-    const aerosol_scattering = layer_aerosol_optical_depth * aerosol_single_scatter_albedo;
+    const aerosol_scattering = layer_aerosol_scattering_optical_depth;
     const gas_scattering = layer_gas_scattering_optical_depth;
     const optical_depth =
         layer_gas_optical_depth +
@@ -735,6 +934,18 @@ fn reduceParityLayer(
         .gas_scattering_optical_depth = gas_scattering,
         .aerosol_optical_depth = layer_aerosol_optical_depth,
         .aerosol_base_optical_depth = layer_aerosol_base_optical_depth,
+        .aerosol_single_scatter_albedo = if (layer_aerosol_optical_depth > 0.0)
+            std.math.clamp(layer_aerosol_scattering_optical_depth / layer_aerosol_optical_depth, 0.0, 1.0)
+        else
+            lower_boundary.aerosol_single_scatter_albedo,
+        .aerosol_reference_wavelength_nm = if (layer_aerosol_optical_depth > 0.0)
+            layer_reference_wavelength_sum / layer_aerosol_optical_depth
+        else
+            lower_boundary.aerosol_reference_wavelength_nm,
+        .aerosol_angstrom_exponent = if (layer_aerosol_optical_depth > 0.0)
+            layer_angstrom_sum / layer_aerosol_optical_depth
+        else
+            lower_boundary.aerosol_angstrom_exponent,
         .layer_single_scatter_albedo = layer_single_scatter_albedo,
         .depolarization_factor = depolarization,
         .optical_depth = optical_depth,
@@ -760,10 +971,7 @@ fn populateLayer(
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
     layer: *State.PreparedLayer,
     index: usize,
 ) !void {
@@ -779,10 +987,7 @@ fn populateLayer(
             profile_spectroscopy_cache,
             collision_complex_cache,
             totals,
-            aerosol_sublayer_distribution,
-            aerosol_single_scatter_albedo,
-            aerosol_extinction_scale,
-            aerosol_fraction,
+            aerosol_sublayers,
             geometry.thickness_km,
             index,
             sublayer_index,
@@ -798,7 +1003,7 @@ fn populateLayer(
     const aerosol_optical_depth = layer_sums.aerosol_optical_depth;
     const aerosol_base_optical_depth = layer_sums.aerosol_base_optical_depth;
     const optical_depth = gas_optical_depth + layer_sums.cia_optical_depth + aerosol_optical_depth;
-    const aerosol_scattering = aerosol_optical_depth * aerosol_single_scatter_albedo;
+    const aerosol_scattering = layer_sums.aerosol_scattering_optical_depth;
     const gas_scattering = layer_sums.gas_scattering_optical_depth;
     const scattering = aerosol_scattering + gas_scattering;
     const absorption = @max(optical_depth - scattering, 1e-9);
@@ -837,6 +1042,18 @@ fn populateLayer(
         .gas_scattering_optical_depth = gas_scattering,
         .aerosol_optical_depth = aerosol_optical_depth,
         .aerosol_base_optical_depth = aerosol_base_optical_depth,
+        .aerosol_single_scatter_albedo = if (aerosol_optical_depth > 0.0)
+            std.math.clamp(aerosol_scattering / aerosol_optical_depth, 0.0, 1.0)
+        else
+            0.0,
+        .aerosol_reference_wavelength_nm = if (aerosol_optical_depth > 0.0)
+            layer_sums.aerosol_reference_wavelength_sum / aerosol_optical_depth
+        else
+            context.scene.aerosol.reference_wavelength_nm,
+        .aerosol_angstrom_exponent = if (aerosol_optical_depth > 0.0)
+            layer_sums.aerosol_angstrom_sum / aerosol_optical_depth
+        else
+            context.scene.aerosol.angstrom_exponent,
         .layer_single_scatter_albedo = layer_single_scatter_albedo,
         .depolarization_factor = depolarization,
         .optical_depth = optical_depth,
@@ -845,7 +1062,10 @@ fn populateLayer(
         .top_pressure_hpa = geometry.top_pressure_hpa,
         .bottom_pressure_hpa = geometry.bottom_pressure_hpa,
         .interval_index_1based = geometry.interval_index_1based,
-        .aerosol_fraction = aerosol_fraction,
+        .aerosol_fraction = if (aerosol_base_optical_depth > 0.0)
+            aerosol_optical_depth / aerosol_base_optical_depth
+        else
+            0.0,
     };
 }
 
@@ -862,10 +1082,7 @@ fn populateSublayer(
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     totals: *LayerAccumulation,
-    aerosol_sublayer_distribution: []const f64,
-    aerosol_single_scatter_albedo: f64,
-    aerosol_extinction_scale: f64,
-    aerosol_fraction: f64,
+    aerosol_sublayers: AerosolSublayers,
     layer_thickness_km: f64,
     parent_layer_index: usize,
     sublayer_index: usize,
@@ -1022,9 +1239,12 @@ fn populateSublayer(
     const d_gas_optical_depth_d_temperature =
         spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * line_gas_column_density_cm2 +
         cross_section_d_optical_depth_d_temperature;
-    // math: tau_aerosol(lambda_ref) comes from the normalized sublayer distribution, then applies extinction scale and wavelength fraction.
-    const aerosol_base_optical_depth = aerosol_sublayer_distribution[write_index] * aerosol_extinction_scale;
-    const aerosol_optical_depth = aerosol_base_optical_depth * aerosol_fraction;
+    // math: tau_aerosol(lambda_ref) is already distributed onto the prepared
+    // sublayer grid. Single-layer cases use the existing placement logic;
+    // aerosol-profile cases write the pressure-overlap profile directly.
+    const aerosol_property = aerosol_sublayers.propertyAt(write_index);
+    const aerosol_base_optical_depth = aerosol_property.base_optical_depth;
+    const aerosol_optical_depth = aerosol_property.optical_depth;
 
     context.sublayers[write_index] = .{
         .parent_layer_index = @intCast(parent_layer_index),
@@ -1054,13 +1274,15 @@ fn populateSublayer(
         .d_cia_optical_depth_d_temperature = d_cia_optical_depth_d_temperature,
         .aerosol_optical_depth = aerosol_optical_depth,
         .aerosol_base_optical_depth = aerosol_base_optical_depth,
-        .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
+        .aerosol_single_scatter_albedo = aerosol_property.single_scatter_albedo,
+        .aerosol_reference_wavelength_nm = aerosol_property.reference_wavelength_nm,
+        .aerosol_angstrom_exponent = aerosol_property.angstrom_exponent,
         .top_altitude_km = top_altitude_km,
         .bottom_altitude_km = bottom_altitude_km,
         .top_pressure_hpa = top_pressure_hpa,
         .bottom_pressure_hpa = bottom_pressure_hpa,
         .interval_index_1based = context.vertical_grid.sublayer_interval_indices_1based[write_index],
-        .aerosol_fraction = aerosol_fraction,
+        .aerosol_fraction = if (aerosol_base_optical_depth > 0.0) aerosol_optical_depth / aerosol_base_optical_depth else 0.0,
         .support_row_kind = if (!disamar_support_grid)
             .physical
         else if (support_weight_km > 0.0)
@@ -1082,6 +1304,9 @@ fn populateSublayer(
         .cia_optical_depth = cia_optical_depth,
         .aerosol_optical_depth = aerosol_optical_depth,
         .aerosol_base_optical_depth = aerosol_base_optical_depth,
+        .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_property.single_scatter_albedo,
+        .aerosol_reference_wavelength_nm = aerosol_property.reference_wavelength_nm,
+        .aerosol_angstrom_exponent = aerosol_property.angstrom_exponent,
     });
     totals.air_column_density_factor += density * sublayer_path_length_cm;
     totals.oxygen_column_density_factor += o2_density_cm3 * sublayer_path_length_cm;

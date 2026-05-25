@@ -275,8 +275,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
             layer.aerosol_optical_depth,
             layer.aerosol_base_optical_depth,
-            self.aerosol_reference_wavelength_nm,
-            self.aerosol_angstrom_exponent,
+            if (self.has_aerosol_profile_properties) layer.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
+            if (self.has_aerosol_profile_properties) layer.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
             self.aerosol_fraction_control,
             wavelength_nm,
         );
@@ -285,8 +285,11 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             layer.gas_optical_depth - gas_scattering_optical_depth,
             0.0,
         );
-        const aerosol_scattering_optical_depth =
-            aerosol_optical_depth * aerosol_single_scatter_albedo;
+        const aerosol_scattering_optical_depth = aerosol_optical_depth *
+            if (self.has_aerosol_profile_properties)
+                layer.aerosol_single_scatter_albedo
+            else
+                aerosol_single_scatter_albedo;
         // math: tau_ext = tau_gas_abs + tau_gas_sca + tau_cia + tau_aerosol.
         const optical_depth =
             gas_absorption_optical_depth +

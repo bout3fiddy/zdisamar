@@ -108,6 +108,7 @@ class RtmHandle:
         self._ctx = self._lib.zds_context_create()
         self._case: O2AInput | None = None
         self._case_fingerprint: bytes | None = None
+        self._loaded_has_multi_layer_aerosol_profile = False
         self._solar_mu0: float | None = None
 
         if not self._ctx:
@@ -150,6 +151,7 @@ class RtmHandle:
         )
         self._case = copy.deepcopy(case) if copy_case else None
         self._case_fingerprint = payload
+        self._loaded_has_multi_layer_aerosol_profile = len(case.aerosol.profile) > 1
         self._solar_mu0 = case.geometry.solar_mu0
 
     def loaded_o2a_case_matches(self, case: O2AInput) -> bool:
@@ -185,6 +187,9 @@ class RtmHandle:
 
         if jacobian_state_names is not None and not jacobian:
             raise ValueError("jacobian_state_names requires jacobian=True")
+
+        if jacobian and self._loaded_has_multi_layer_aerosol_profile:
+            raise ValueError("multi-layer aerosol profile Jacobians are not supported")
 
         if jacobian_state_names is not None:
             if len(jacobian_state_names) == 0:
@@ -484,6 +489,7 @@ class RtmHandle:
             self._ctx = None
             self._case = None
             self._case_fingerprint = None
+            self._loaded_has_multi_layer_aerosol_profile = False
             self._solar_mu0 = None
 
     def _copied_spectrum(

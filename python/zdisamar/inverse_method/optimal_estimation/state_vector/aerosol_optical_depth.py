@@ -18,4 +18,4 @@ class AerosolOpticalDepth:
 
     def write_to(self, target, value: float) -> None:
 
-        target.aerosol.optical_depth_550_nm = value
+        target.aerosol.set_single_layer_optical_depth_550_nm(value)

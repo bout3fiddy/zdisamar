@@ -63,6 +63,7 @@ pub const PreparedOpticalState = struct {
     cia_pair_path_factor_cm5: f64,
     aerosol_reference_wavelength_nm: f64,
     aerosol_angstrom_exponent: f64,
+    has_aerosol_profile_properties: bool = false,
     gas_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,

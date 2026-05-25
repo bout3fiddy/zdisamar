@@ -1,10 +1,12 @@
 const std = @import("std");
+const AerosolModel = @import("../Aerosol.zig");
 const AtmosphereModel = @import("../Atmosphere.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const implementations = @import("../../forward_model/implementations/root.zig");
 const Jacobian = @import("../../forward_model/jacobian/root.zig");
 const metrics = @import("metrics.zig");
 const reference_types = @import("types.zig");
+const runtime = @import("run.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,6 +16,8 @@ pub const O2AInput = reference_types.ResolvedVendorO2ACase;
 pub const PreparedO2A = metrics.VendorO2APreparedCase;
 pub const SessionStorage = InstrumentGrid.ProductStorage;
 pub const Output = InstrumentGrid.InstrumentGridProduct;
+pub const AerosolProfileLayer = AerosolModel.ProfileLayer;
+pub const max_aerosol_profile_layers = AerosolModel.max_profile_layers;
 pub const ReflectanceCase = metrics.VendorO2AReflectanceCase;
 pub const ComparisonMetrics = metrics.ComparisonMetrics;
 pub const TrendTolerances = metrics.TrendTolerances;
@@ -311,7 +315,7 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.layer_count == 0 or input.sublayer_divisions == 0) return error.InvalidAtmosphere;
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
     for (input.intervals) |interval| try interval.validate();
-    try input.aerosol.placement.validate();
+    try validateAerosol(input);
     try input.plan.validate();
     try input.rtm_controls.validate();
     try requireAsset(input.inputs.atmosphere_profile);
@@ -324,6 +328,20 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.o2o2.enabled) {
         try requireAsset(input.o2o2.cia_asset orelse return error.MissingCollisionInducedAbsorptionAsset);
     }
+}
+
+pub fn hasMultiLayerAerosolProfile(input: *const O2AInput) bool {
+    return input.aerosol.profile.len > 1;
+}
+
+pub fn requireRetrievalCompatibleAerosol(input: *const O2AInput) !void {
+    if (hasMultiLayerAerosolProfile(input)) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
+}
+
+fn validateAerosol(input: *const O2AInput) !void {
+    try input.aerosol.placement.validate();
+    if (input.aerosol.profile.len > max_aerosol_profile_layers) return error.InvalidAerosolProfile;
+    for (input.aerosol.profile) |layer| try layer.validate();
 }
 
 fn requireAsset(value: reference_types.ExternalAsset) !void {

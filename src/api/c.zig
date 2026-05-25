@@ -871,6 +871,10 @@ export fn zds_run_o2a_optimal_estimation(
         default_input = zdisamar.defaultO2AInput();
         break :input &default_input;
     };
+    zdisamar.o2a.requireRetrievalCompatibleAerosol(input) catch {
+        resolved.setError("multi-layer aerosol profiles are forward-simulation only");
+        return @intFromEnum(ZdsStatus.failure);
+    };
     const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
     const controls = optimalEstimationControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
     var state_specs = optimalEstimationStateSpecs(resolved, resolved_request) catch return @intFromEnum(ZdsStatus.failure);
@@ -924,6 +928,12 @@ export fn zds_run_o2a_optimal_estimation_correction(
         resolved.setError("not prepared");
         return @intFromEnum(ZdsStatus.failure);
     };
+    if (resolved.parsed_input) |*parsed| {
+        zdisamar.o2a.requireRetrievalCompatibleAerosol(&parsed.value) catch {
+            resolved.setError("multi-layer aerosol profiles are forward-simulation only");
+            return @intFromEnum(ZdsStatus.failure);
+        };
+    }
     const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
     const controls = optimalEstimationControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
     var state_specs = optimalEstimationStateSpecs(resolved, resolved_request) catch return @intFromEnum(ZdsStatus.failure);

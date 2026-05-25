@@ -46,7 +46,7 @@ class SessionCache:
     ):
         """Run the RTM using cached storage."""
 
-        if case is not None:
+        if case is not None and (include_case or not self.has_loaded_case(case)):
             self.load(case, copy_case=include_case)
         elif not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
