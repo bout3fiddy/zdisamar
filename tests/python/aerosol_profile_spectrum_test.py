@@ -112,6 +112,7 @@ def main() -> None:
 
     with rtm.SessionCache(profile_case) as cache:
         profiled = cache.spectrum()
+        expect_profile_jacobian_rejected(cache)
 
         with patch.object(cache, "load", wraps=cache.load) as load_mock:
             cached_profiled = cache.spectrum(profile_case)
@@ -158,6 +159,16 @@ def expect_spectrum_rejected(case) -> None:
         assert "InvalidRequest" in str(error)
     else:
         raise AssertionError("invalid aerosol profile was accepted")
+
+
+def expect_profile_jacobian_rejected(cache: rtm.SessionCache) -> None:
+
+    try:
+        cache.spectrum(jacobian=True, jacobian_state_names=("aerosol_optical_depth",))
+    except ValueError as error:
+        assert "profile Jacobians" in str(error)
+    else:
+        raise AssertionError("multi-layer aerosol profile Jacobian was accepted")
 
 
 if __name__ == "__main__":
