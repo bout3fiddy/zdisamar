@@ -107,6 +107,9 @@ def disamar_oe_fast(
                 fast_case_loaded=True,
             )
 
+    if not cache.has_loaded_case(fast_case):
+        cache.load(fast_case, copy_case=False)
+
     return run_fast_accurate_oe(
         case=case,
         fast_case=fast_case,
@@ -114,7 +117,7 @@ def disamar_oe_fast(
         state_vector=state_vector,
         controls=active_controls,
         cache=cache,
-        fast_case_loaded=False,
+        fast_case_loaded=True,
     )
 
 
@@ -139,13 +142,14 @@ def run_fast_accurate_oe(
         load_case=not fast_case_loaded,
     )
     corrected_state_vector = state_vector_with_initial(state_vector, fast_result.state)
+    cache.load(case, copy_case=False)
     full_result = _disamar_oe(
         case=case,
         measurement=measurement,
         state_vector=corrected_state_vector,
         controls=full_correction_controls(controls),
         cache=cache,
-        load_case=True,
+        load_case=False,
     )
 
     return combine_fast_accurate_result(fast_result, full_result)

@@ -570,7 +570,7 @@ def _mode_color() -> alt.Color:
         title=None,
         scale=alt.Scale(
             domain=list(MODE_LABELS.values()),
-            range=[MODE_COLORS["reference"], MODE_COLORS["fast"]],
+            range=[MODE_COLORS[mode] for mode in MODE_LABELS],
         ),
     )
 

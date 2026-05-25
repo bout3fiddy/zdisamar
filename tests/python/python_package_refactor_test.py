@@ -537,6 +537,7 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
         _final_evaluation_factory=unexpected_final_evaluation,
     )
     calls: list[dict[str, object]] = []
+    loads: list[tuple[object, bool]] = []
 
     def fake_disamar_oe(**kwargs):
 
@@ -544,19 +545,32 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
 
         return fast_result if len(calls) == 1 else full_result
 
+    class Cache:
+        def has_loaded_case(self, case) -> bool:
+
+            assert case is fast_case
+
+            return False
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            loads.append((case, copy_case))
+
     with patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe):
         result = o2a_oe.disamar_oe_fast(
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
-            cache=cast(SessionCache, object()),
+            cache=cast(SessionCache, Cache()),
         )
 
     assert calls[0]["case"] is fast_case
     assert calls[0]["controls"] is controls
-    assert calls[0]["load_case"] is True
+    assert calls[0]["load_case"] is False
+    assert loads == [(fast_case, False), (reference_case, False)]
     assert calls[1]["case"] is reference_case
+    assert calls[1]["load_case"] is False
     correction_controls = cast(RetrievalControls, calls[1]["controls"])
     assert correction_controls.max_iterations == 1
     assert correction_controls.state_vector_convergence_threshold == 0.7
