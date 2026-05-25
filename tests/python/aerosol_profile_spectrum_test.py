@@ -61,6 +61,42 @@ def main() -> None:
     profile_case.set_aerosol_profile(profile)
     assert b'"profile"' in profile_case.to_json_bytes()
 
+    partially_off_grid_case = deepcopy(case)
+    partially_off_grid_case.set_aerosol_profile(
+        (
+            rtm.AerosolProfileLayer(
+                top_pressure_hpa=1000.0,
+                bottom_pressure_hpa=1100.0,
+                optical_depth=0.05,
+            ),
+            rtm.AerosolProfileLayer(
+                top_pressure_hpa=760.0,
+                bottom_pressure_hpa=900.0,
+                optical_depth=0.05,
+            ),
+        )
+    )
+    expect_spectrum_rejected(partially_off_grid_case)
+
+    spectral_merge_case = deepcopy(case)
+    spectral_merge_case.set_aerosol_profile(
+        (
+            rtm.AerosolProfileLayer(
+                top_pressure_hpa=430.0,
+                bottom_pressure_hpa=460.0,
+                optical_depth=0.05,
+                angstrom_exponent=0.4,
+            ),
+            rtm.AerosolProfileLayer(
+                top_pressure_hpa=440.0,
+                bottom_pressure_hpa=470.0,
+                optical_depth=0.05,
+                angstrom_exponent=1.5,
+            ),
+        )
+    )
+    expect_spectrum_rejected(spectral_merge_case)
+
     baseline = rtm.spectrum(case)
     one_layer_spectrum = rtm.spectrum(one_layer_case)
     layer_view_spectrum = rtm.spectrum(layer_view_case)
@@ -112,6 +148,16 @@ def main() -> None:
         raise AssertionError("multi-layer aerosol profile was accepted by retrieval")
 
     print("aerosol_profile_spectrum=ok")
+
+
+def expect_spectrum_rejected(case) -> None:
+
+    try:
+        rtm.spectrum(case)
+    except RuntimeError as error:
+        assert "InvalidRequest" in str(error)
+    else:
+        raise AssertionError("invalid aerosol profile was accepted")
 
 
 if __name__ == "__main__":

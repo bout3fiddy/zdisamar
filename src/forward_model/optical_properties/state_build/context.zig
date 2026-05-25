@@ -221,6 +221,7 @@ pub fn init(
 
     const aerosol_profile: AerosolModel.Profile = .{ .layers = inputs.aerosol_profile_layers };
     try aerosol_profile.validate();
+    if (aerosol_profile.enabled() and scene.aerosol.fraction.enabled) return error.InvalidRequest;
     var aerosol_fraction_control = if (aerosol_profile.enabled())
         AtmosphereModel.FractionControl{}
     else

@@ -1,4 +1,5 @@
 const std = @import("std");
+const AerosolModel = @import("../../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
@@ -22,6 +23,8 @@ const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const centimeters_per_kilometer = 1.0e5;
 const boltzmann_hpa_cm3_per_k = internal.boltzmann_hpa_cm3_per_k;
 const max_collision_complex_profile_nodes: usize = 64;
+const profile_pressure_tolerance_hpa: f64 = 1.0e-9;
+const profile_spectral_tolerance: f64 = 1.0e-12;
 
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
@@ -501,6 +504,7 @@ fn buildAerosolProfileSublayerProperties(
     for (context.aerosol_profile_layers) |profile_layer| {
         const layer_pressure_span = profile_layer.bottom_pressure_hpa - profile_layer.top_pressure_hpa;
         if (layer_pressure_span <= 0.0 or profile_layer.optical_depth == 0.0) continue;
+        var covered_pressure_span: f64 = 0.0;
         for (
             properties,
             context.vertical_grid.sublayer_top_pressures_hpa,
@@ -510,10 +514,14 @@ fn buildAerosolProfileSublayerProperties(
             const overlap_bottom = @min(profile_layer.bottom_pressure_hpa, sublayer_bottom_pressure);
             const overlap = overlap_bottom - overlap_top;
             if (overlap <= 0.0) continue;
+            covered_pressure_span += overlap;
 
             const added_optical_depth = profile_layer.optical_depth * (overlap / layer_pressure_span);
             if (added_optical_depth <= 0.0) continue;
             const old_optical_depth = property.optical_depth;
+            if (old_optical_depth > 0.0 and !profileSpectralScalingMatches(property.*, profile_layer)) {
+                return error.InvalidRequest;
+            }
             const new_optical_depth = old_optical_depth + added_optical_depth;
             const old_scattering = old_optical_depth * property.single_scatter_albedo;
             const added_scattering = added_optical_depth * profile_layer.single_scatter_albedo;
@@ -541,8 +549,28 @@ fn buildAerosolProfileSublayerProperties(
             else
                 profile_layer.asymmetry_factor;
         }
+        if (covered_pressure_span + profile_pressure_tolerance_hpa < layer_pressure_span) {
+            return error.InvalidRequest;
+        }
     }
     return properties;
+}
+
+fn profileSpectralScalingMatches(
+    property: AerosolSublayerProperties,
+    profile_layer: AerosolModel.ProfileLayer,
+) bool {
+    return std.math.approxEqAbs(
+        f64,
+        property.reference_wavelength_nm,
+        profile_layer.reference_wavelength_nm,
+        profile_spectral_tolerance,
+    ) and std.math.approxEqAbs(
+        f64,
+        property.angstrom_exponent,
+        profile_layer.angstrom_exponent,
+        profile_spectral_tolerance,
+    );
 }
 
 fn profileScatteringAtMidpoint(context: *const Context, property: AerosolSublayerProperties) f64 {
