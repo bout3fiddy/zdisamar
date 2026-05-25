@@ -15,6 +15,7 @@ import copy
 import math
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
 from zdisamar.wavelength_bands import o2a  # noqa: E402
@@ -52,28 +52,35 @@ CANONICAL_COMMAND = "uv run validation/optimal_estimation/sweep_fast_mode_optima
 RUN_COUNT = oe_cases.run_count()
 FAST_REFERENCE_MAX_ABS_AOD_DELTA = 1.0e-2
 FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 10.0
+FAST_ACCURATE_REFERENCE_MAX_ABS_AOD_DELTA = 5.0e-4
+FAST_ACCURATE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 0.5
 
 MODE_LABELS = {
     "reference": "zdisamar reference",
     "fast": "zdisamar fast",
+    "fast_accurate": "zdisamar fast-accurate",
 }
 MODE_COLORS = {
     "reference": PLOT.colors["blue"],
     "fast": PLOT.colors["orange"],
+    "fast_accurate": "#2ca02c",
 }
 MODE_MARKERS = {
     "reference": "o",
     "fast": "x",
+    "fast_accurate": "diamond",
 }
 LATENCY_MODE_LABELS = {
     "disamar_fortran": "DISAMAR Fortran",
     "zdisamar": "zdisamar",
     "zdisamar_fast": "zdisamar-fast",
+    "zdisamar_fast_accurate": "zdisamar-fast-accurate",
 }
 LATENCY_MODE_COLORS = {
     "disamar_fortran": PLOT.colors["blue"],
     "zdisamar": PLOT.colors["orange"],
     "zdisamar_fast": PLOT.colors["red"],
+    "zdisamar_fast_accurate": "#2ca02c",
 }
 
 
@@ -82,17 +89,24 @@ def with_fast_thresholds(case: Any) -> Any:
     return copy.deepcopy(case).with_fast_mode()
 
 
-def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
+def run_retrieval(case: Any, measurement, state_vector, *, mode: str) -> tuple[Any, float]:
 
     start = time.perf_counter()
+    controls = oe_setup.retrieval_controls()
 
-    with rtm.SessionCache(case) as cache:
+    if mode == "fast_accurate":
+        result = o2a_oe.disamar_oe_fast(
+            case=case,
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+    else:
         result = o2a_oe.disamar_oe(
             case=case,
             measurement=measurement,
             state_vector=state_vector,
-            controls=oe_setup.retrieval_controls(),
-            cache=cache,
+            controls=controls,
         )
 
     return result, time.perf_counter() - start
@@ -135,12 +149,22 @@ def build_rows() -> list[dict[str, Any]]:
         for mode, retrieval_case in (
             ("reference", reference_case),
             ("fast", with_fast_thresholds(reference_case)),
+            ("fast_accurate", reference_case),
         ):
-            result, retrieval_s = run_retrieval(retrieval_case, measurement, state_vector)
-            thresholds = retrieval_case.radiative_transfer.performance_thresholds
-            adaptive_grid = retrieval_case.instrument_response.adaptive_reference_grid
+            result, retrieval_s = run_retrieval(
+                retrieval_case,
+                measurement,
+                state_vector,
+                mode=mode,
+            )
+            fast_settings_case = (
+                with_fast_thresholds(reference_case) if mode == "fast_accurate" else retrieval_case
+            )
+            thresholds = fast_settings_case.radiative_transfer.performance_thresholds
+            adaptive_grid = fast_settings_case.instrument_response.adaptive_reference_grid
             retrieved_aod = result.value("aerosol_optical_depth")
             retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
+            correction = result.fast_correction
             rows.append(
                 {
                     "scene": index,
@@ -148,6 +172,22 @@ def build_rows() -> list[dict[str, Any]]:
                     "mode_label": MODE_LABELS[mode],
                     "converged": bool(result.converged),
                     "iterations": int(result.iterations),
+                    "fast_stage_iterations": (
+                        math.nan if correction is None else int(correction.fast_iterations)
+                    ),
+                    "fast_stage_converged": (
+                        math.nan if correction is None else bool(correction.fast_converged)
+                    ),
+                    "full_correction_converged": (
+                        math.nan
+                        if correction is None
+                        else bool(correction.full_correction_converged)
+                    ),
+                    "full_correction_state_vector_convergence": (
+                        math.nan
+                        if correction is None
+                        else float(correction.full_correction_state_vector_convergence)
+                    ),
                     "retrieval_s": retrieval_s,
                     "truth_aerosol_optical_depth": truth["aerosol_optical_depth"],
                     "truth_aerosol_mid_pressure_hpa": truth["aerosol_mid_pressure_hpa"],
@@ -191,40 +231,86 @@ def build_rows() -> list[dict[str, Any]]:
                 }
             )
 
-        print(f"{index:03d}/{RUN_COUNT} reference+fast complete", flush=True)
+        print(f"{index:03d}/{RUN_COUNT} reference+fast+fast-accurate complete", flush=True)
 
     return rows
 
 
-def paired_delta_frame(data: pd.DataFrame) -> pd.DataFrame:
+def paired_delta_frame(data: pd.DataFrame, modes: Sequence[str] | None = None) -> pd.DataFrame:
 
     reference = data[data["mode"] == "reference"].set_index("scene")
-    fast = data[data["mode"] == "fast"].set_index("scene")
+    comparison_modes = (
+        tuple(modes)
+        if modes is not None
+        else tuple(mode for mode in MODE_LABELS if mode != "reference")
+    )
     rows = []
 
-    for scene in sorted(reference.index):
-        ref = reference.loc[scene]
-        fst = fast.loc[scene]
+    for mode in comparison_modes:
+        comparison = data[data["mode"] == mode].set_index("scene")
+
+        for scene in sorted(reference.index):
+            ref = reference.loc[scene]
+            current = comparison.loc[scene]
+            rows.append(
+                {
+                    "scene": int(scene),
+                    "mode": mode,
+                    "mode_label": MODE_LABELS[mode],
+                    "aerosol_optical_depth_delta": (
+                        float(current["retrieved_aerosol_optical_depth"])
+                        - float(ref["retrieved_aerosol_optical_depth"])
+                    ),
+                    "aerosol_optical_depth_combined_sigma": math.sqrt(
+                        float(ref["aerosol_optical_depth_sigma"]) ** 2
+                        + float(current["aerosol_optical_depth_sigma"]) ** 2
+                    ),
+                    "aerosol_mid_pressure_delta_hpa": (
+                        float(current["retrieved_aerosol_mid_pressure_hpa"])
+                        - float(ref["retrieved_aerosol_mid_pressure_hpa"])
+                    ),
+                    "aerosol_mid_pressure_combined_sigma_hpa": math.sqrt(
+                        float(ref["aerosol_mid_pressure_sigma_hpa"]) ** 2
+                        + float(current["aerosol_mid_pressure_sigma_hpa"]) ** 2
+                    ),
+                    "retrieval_speedup_s": float(ref["retrieval_s"])
+                    - float(current["retrieval_s"]),
+                }
+            )
+
+    return pd.DataFrame.from_records(rows)
+
+
+def paired_fast_accurate_fast_frame(data: pd.DataFrame) -> pd.DataFrame:
+
+    fast = data[data["mode"] == "fast"].set_index("scene")
+    fast_accurate = data[data["mode"] == "fast_accurate"].set_index("scene")
+    rows = []
+
+    for scene in sorted(fast.index):
+        fast_row = fast.loc[scene]
+        accurate_row = fast_accurate.loc[scene]
         rows.append(
             {
                 "scene": int(scene),
+                "retrieval_extra_s": float(accurate_row["retrieval_s"])
+                - float(fast_row["retrieval_s"]),
                 "aerosol_optical_depth_delta": (
-                    float(fst["retrieved_aerosol_optical_depth"])
-                    - float(ref["retrieved_aerosol_optical_depth"])
-                ),
-                "aerosol_optical_depth_combined_sigma": math.sqrt(
-                    float(ref["aerosol_optical_depth_sigma"]) ** 2
-                    + float(fst["aerosol_optical_depth_sigma"]) ** 2
+                    float(accurate_row["retrieved_aerosol_optical_depth"])
+                    - float(fast_row["retrieved_aerosol_optical_depth"])
                 ),
                 "aerosol_mid_pressure_delta_hpa": (
-                    float(fst["retrieved_aerosol_mid_pressure_hpa"])
-                    - float(ref["retrieved_aerosol_mid_pressure_hpa"])
+                    float(accurate_row["retrieved_aerosol_mid_pressure_hpa"])
+                    - float(fast_row["retrieved_aerosol_mid_pressure_hpa"])
                 ),
-                "aerosol_mid_pressure_combined_sigma_hpa": math.sqrt(
-                    float(ref["aerosol_mid_pressure_sigma_hpa"]) ** 2
-                    + float(fst["aerosol_mid_pressure_sigma_hpa"]) ** 2
-                ),
-                "retrieval_speedup_s": float(ref["retrieval_s"]) - float(fst["retrieval_s"]),
+                "aerosol_optical_depth_abs_error_improvement": abs(
+                    float(fast_row["aerosol_optical_depth_error"])
+                )
+                - abs(float(accurate_row["aerosol_optical_depth_error"])),
+                "aerosol_mid_pressure_abs_error_improvement_hpa": abs(
+                    float(fast_row["aerosol_mid_pressure_error_hpa"])
+                )
+                - abs(float(accurate_row["aerosol_mid_pressure_error_hpa"])),
             }
         )
 
@@ -290,12 +376,14 @@ def fast_mode_overrides() -> dict[str, dict[str, float | int | bool | None]]:
 
 def build_summary(data: pd.DataFrame) -> dict[str, Any]:
 
-    delta = paired_delta_frame(data)
+    fast_delta = paired_delta_frame(data, ("fast",))
+    fast_accurate_delta = paired_delta_frame(data, ("fast_accurate",))
+    fast_accurate_fast_delta = paired_fast_accurate_fast_frame(data)
     by_mode = {}
 
     for mode in MODE_LABELS:
         subset = data[data["mode"] == mode]
-        by_mode[mode] = {
+        payload = {
             "rows": int(len(subset)),
             "converged": int(subset["converged"].sum()),
             "retrieval_s": stats(subset["retrieval_s"]),
@@ -304,6 +392,25 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
                 subset["aerosol_mid_pressure_error_hpa"].abs()
             ),
         }
+
+        if mode == "fast_accurate":
+            payload["fast_stage_converged"] = int(subset["fast_stage_converged"].sum())
+            payload["full_correction_converged"] = int(subset["full_correction_converged"].sum())
+            payload["full_correction_state_vector_convergence"] = stats(
+                subset["full_correction_state_vector_convergence"]
+            )
+
+        by_mode[mode] = payload
+
+    reference_median_s = float(by_mode["reference"]["retrieval_s"]["median"])
+    fast_median_s = float(by_mode["fast"]["retrieval_s"]["median"])
+    fast_accurate_median_s = float(by_mode["fast_accurate"]["retrieval_s"]["median"])
+    fast_reference_gap_s = reference_median_s - fast_median_s
+    latency_position = (
+        math.nan
+        if fast_reference_gap_s <= 0.0
+        else (fast_accurate_median_s - fast_median_s) / fast_reference_gap_s
+    )
 
     return {
         "schema_version": 1,
@@ -315,10 +422,13 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
         "fast_mode": {
             "method": "O2AInput.with_fast_mode()",
             "overrides": fast_mode_overrides(),
+            "fast_accurate_correction_window_nm": list(o2a_oe.FULL_CORRECTION_WINDOW_NM),
             "note": (
-                "Reference rows and fast rows use the same deterministic zdisamar O2 A "
-                "optimal-estimation sweep cases, measurement vectors, priors, and initial "
-                "states. Fast rows apply O2AInput.with_fast_mode()."
+                "Reference, fast, and fast-accurate rows use the same deterministic "
+                "zdisamar O2 A optimal-estimation sweep cases, measurement vectors, "
+                "priors, and initial states. Fast rows apply O2AInput.with_fast_mode(). "
+                "Fast-accurate rows solve the fast-mode OE problem to convergence, then "
+                "apply one full-physics OE correction over the retained correction window."
             ),
         },
         "outputs": {
@@ -330,9 +440,44 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
         },
         "by_mode": by_mode,
         "fast_minus_reference": {
-            "aerosol_optical_depth_delta": stats(delta["aerosol_optical_depth_delta"]),
-            "aerosol_mid_pressure_delta_hpa": stats(delta["aerosol_mid_pressure_delta_hpa"]),
-            "retrieval_speedup_s": stats(delta["retrieval_speedup_s"]),
+            "aerosol_optical_depth_delta": stats(fast_delta["aerosol_optical_depth_delta"]),
+            "aerosol_mid_pressure_delta_hpa": stats(fast_delta["aerosol_mid_pressure_delta_hpa"]),
+            "retrieval_speedup_s": stats(fast_delta["retrieval_speedup_s"]),
+        },
+        "fast_accurate_minus_reference": {
+            "aerosol_optical_depth_delta": stats(
+                fast_accurate_delta["aerosol_optical_depth_delta"]
+            ),
+            "aerosol_mid_pressure_delta_hpa": stats(
+                fast_accurate_delta["aerosol_mid_pressure_delta_hpa"]
+            ),
+            "retrieval_speedup_s": stats(fast_accurate_delta["retrieval_speedup_s"]),
+        },
+        "fast_accurate_minus_fast": {
+            "retrieval_extra_s": stats(fast_accurate_fast_delta["retrieval_extra_s"]),
+            "aerosol_optical_depth_delta": stats(
+                fast_accurate_fast_delta["aerosol_optical_depth_delta"]
+            ),
+            "aerosol_mid_pressure_delta_hpa": stats(
+                fast_accurate_fast_delta["aerosol_mid_pressure_delta_hpa"]
+            ),
+            "aerosol_optical_depth_abs_error_improvement": stats(
+                fast_accurate_fast_delta["aerosol_optical_depth_abs_error_improvement"]
+            ),
+            "aerosol_mid_pressure_abs_error_improvement_hpa": stats(
+                fast_accurate_fast_delta["aerosol_mid_pressure_abs_error_improvement_hpa"]
+            ),
+        },
+        "latency_position": {
+            "reference_median_s": reference_median_s,
+            "fast_median_s": fast_median_s,
+            "fast_accurate_median_s": fast_accurate_median_s,
+            "fast_reference_gap_s": fast_reference_gap_s,
+            "fast_accurate_position_between_fast_and_reference": latency_position,
+            "note": (
+                "0.0 equals fast median latency and 1.0 equals full reference median latency; "
+                "values below 0.5 are closer to fast mode than full reference mode."
+            ),
         },
     }
 
@@ -365,6 +510,63 @@ def validate_summary(summary: dict[str, Any]) -> None:
         failures.append(
             f"fast-reference pressure max_abs_delta={pressure_delta:.3e}hPa "
             f"exceeds {FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:.3e}hPa"
+        )
+
+    fast_accurate_delta = summary["fast_accurate_minus_reference"]
+    fast_accurate_aod_delta = float(fast_accurate_delta["aerosol_optical_depth_delta"]["max_abs"])
+
+    if fast_accurate_aod_delta > FAST_ACCURATE_REFERENCE_MAX_ABS_AOD_DELTA:
+        failures.append(
+            f"fast-accurate-reference AOD max_abs_delta={fast_accurate_aod_delta:.3e} "
+            f"exceeds {FAST_ACCURATE_REFERENCE_MAX_ABS_AOD_DELTA:.3e}"
+        )
+
+    fast_accurate_pressure_delta = float(
+        fast_accurate_delta["aerosol_mid_pressure_delta_hpa"]["max_abs"]
+    )
+
+    if fast_accurate_pressure_delta > FAST_ACCURATE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:
+        failures.append(
+            "fast-accurate-reference pressure "
+            f"max_abs_delta={fast_accurate_pressure_delta:.3e}hPa exceeds "
+            f"{FAST_ACCURATE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:.3e}hPa"
+        )
+
+    fast = summary["by_mode"]["fast"]
+    fast_accurate = summary["by_mode"]["fast_accurate"]
+    reference = summary["by_mode"]["reference"]
+
+    if int(fast_accurate["fast_stage_converged"]) != RUN_COUNT:
+        failures.append(
+            "fast-accurate fast-stage converged="
+            f"{fast_accurate['fast_stage_converged']} expected={RUN_COUNT}"
+        )
+
+    if float(fast_accurate["aerosol_optical_depth_abs_error"]["max_abs"]) >= float(
+        fast["aerosol_optical_depth_abs_error"]["max_abs"]
+    ):
+        failures.append("fast-accurate AOD max_abs_error did not improve over fast mode")
+
+    if float(fast_accurate["aerosol_mid_pressure_abs_error_hpa"]["max_abs"]) >= float(
+        fast["aerosol_mid_pressure_abs_error_hpa"]["max_abs"]
+    ):
+        failures.append("fast-accurate pressure max_abs_error did not improve over fast mode")
+
+    if float(fast_accurate["retrieval_s"]["median"]) >= float(reference["retrieval_s"]["median"]):
+        failures.append("fast-accurate median retrieval time did not beat reference mode")
+
+    latency_position = summary["latency_position"]
+    fast_reference_gap_s = float(latency_position["fast_reference_gap_s"])
+
+    if fast_reference_gap_s <= 0.0:
+        failures.append("fast median retrieval time did not beat reference mode")
+
+    position = float(latency_position["fast_accurate_position_between_fast_and_reference"])
+
+    if not math.isfinite(position) or position >= 0.5:
+        failures.append(
+            "fast-accurate median retrieval time was not closer to fast mode than reference mode "
+            f"(position={position:.3f})"
         )
 
     if failures:
@@ -404,25 +606,29 @@ def fast_retrieved_rows(data: pd.DataFrame) -> pd.DataFrame:
 def fast_difference_rows(data: pd.DataFrame) -> pd.DataFrame:
 
     delta = paired_delta_frame(data)
+    records = []
 
-    return pd.DataFrame.from_records(
-        [
-            {
-                "scene": int(row["scene"]),
-                "parameter": "Aerosol optical depth",
-                "difference": float(row["aerosol_optical_depth_delta"]),
-            }
-            for _, row in delta.iterrows()
-        ]
-        + [
-            {
-                "scene": int(row["scene"]),
-                "parameter": "Aerosol mid pressure [hPa]",
-                "difference": float(row["aerosol_mid_pressure_delta_hpa"]),
-            }
-            for _, row in delta.iterrows()
-        ]
-    )
+    for _, row in delta.iterrows():
+        records.extend(
+            [
+                {
+                    "scene": int(row["scene"]),
+                    "mode": row["mode"],
+                    "mode_label": row["mode_label"],
+                    "parameter": "Aerosol optical depth",
+                    "difference": float(row["aerosol_optical_depth_delta"]),
+                },
+                {
+                    "scene": int(row["scene"]),
+                    "mode": row["mode"],
+                    "mode_label": row["mode_label"],
+                    "parameter": "Aerosol mid pressure [hPa]",
+                    "difference": float(row["aerosol_mid_pressure_delta_hpa"]),
+                },
+            ]
+        )
+
+    return pd.DataFrame.from_records(records)
 
 
 def signed(value: float, precision: str) -> str:
@@ -452,7 +658,7 @@ def _mode_color() -> alt.Color:
         title=None,
         scale=alt.Scale(
             domain=list(MODE_LABELS.values()),
-            range=[MODE_COLORS["reference"], MODE_COLORS["fast"]],
+            range=[MODE_COLORS[mode] for mode in MODE_LABELS],
         ),
     )
 
@@ -519,12 +725,14 @@ def histogram_chart(
     subset = data[data["parameter"] == parameter]
     histogram = (
         alt.Chart(subset)
-        .mark_bar(color=PLOT.colors["blue"], opacity=0.78)
+        .mark_bar(opacity=0.62)
         .encode(
             x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=xlabel),
             y=alt.Y("count():Q", title="Count"),
+            color=_mode_color(),
             tooltip=[
                 alt.Tooltip("count():Q", title="Count"),
+                alt.Tooltip("mode_label:N", title="Mode"),
                 alt.Tooltip("difference:Q", title="Difference", format=".6g"),
             ],
         )
@@ -572,14 +780,14 @@ def create_paired_style_retrieved_fast_scatter(
             parameter="Aerosol optical depth",
             title="Aerosol optical depth",
             subtitle=difference_subtitle(aod_diff, ".3e"),
-            xlabel="zdisamar fast - zdisamar reference",
+            xlabel="mode - zdisamar reference",
         ),
         histogram_chart(
             differences,
             parameter="Aerosol mid pressure [hPa]",
             title="Aerosol mid pressure [hPa]",
             subtitle=difference_subtitle(pressure_diff, ".4f", "hPa"),
-            xlabel="zdisamar fast - zdisamar reference [hPa]",
+            xlabel="mode - zdisamar reference [hPa]",
         ),
         spacing=32,
     )
@@ -587,9 +795,9 @@ def create_paired_style_retrieved_fast_scatter(
         title={
             "text": "Retrieved State Versus Truth",
             "subtitle": (
-                "Top: zdisamar reference and zdisamar fast retrievals against known "
-                "synthetic truth. Bottom: paired retrieval difference per scene "
-                "(zdisamar fast - zdisamar reference)."
+                "Top: zdisamar reference, fast, and fast-accurate retrievals against "
+                "known synthetic truth. Bottom: paired retrieval difference per scene "
+                "relative to zdisamar reference."
             ),
         }
     )
@@ -619,9 +827,12 @@ def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None
     stats_by_model["zdisamar_fast"] = stats_from_values(
         data[data["mode"] == "fast"]["retrieval_s"].to_list()
     )
+    stats_by_model["zdisamar_fast_accurate"] = stats_from_values(
+        data[data["mode"] == "fast_accurate"]["retrieval_s"].to_list()
+    )
     rows = []
 
-    for model in ("disamar_fortran", "zdisamar", "zdisamar_fast"):
+    for model in ("disamar_fortran", "zdisamar", "zdisamar_fast", "zdisamar_fast_accurate"):
         payload = stats_by_model.get(model, {})
 
         if not payload:
@@ -766,21 +977,27 @@ def delta_chart(
     )
     error = (
         alt.Chart(frame)
-        .mark_rule(color=PLOT.colors["red"], opacity=0.55)
+        .mark_rule(opacity=0.55)
         .encode(
             x=alt.X("scene:O", title="Scene"),
+            xOffset=alt.XOffset("mode_label:N"),
             y=alt.Y("lower:Q", title=ylabel),
             y2="upper:Q",
+            color=_mode_color(),
         )
     )
     points = (
         alt.Chart(frame)
-        .mark_point(filled=True, size=46, color=PLOT.colors["red"], opacity=0.84)
+        .mark_point(filled=True, size=46, opacity=0.84)
         .encode(
             x=alt.X("scene:O", title="Scene"),
+            xOffset=alt.XOffset("mode_label:N"),
             y=alt.Y(value_column + ":Q", title=ylabel, axis=alt.Axis(format=".3e")),
+            color=_mode_color(),
+            shape=alt.Shape("mode_label:N", title=None),
             tooltip=[
                 alt.Tooltip("scene:O", title="Scene"),
+                alt.Tooltip("mode_label:N", title="Mode"),
                 alt.Tooltip(value_column + ":Q", title=ylabel, format=".6g"),
                 alt.Tooltip(sigma_column + ":Q", title="Combined sigma", format=".6g"),
             ],
@@ -846,14 +1063,14 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
                 delta,
                 value_column="aerosol_optical_depth_delta",
                 sigma_column="aerosol_optical_depth_combined_sigma",
-                title="Fast - reference retrieved AOD",
+                title="Mode - reference retrieved AOD",
                 ylabel="Delta AOD",
             ),
             delta_chart(
                 delta,
                 value_column="aerosol_mid_pressure_delta_hpa",
                 sigma_column="aerosol_mid_pressure_combined_sigma_hpa",
-                title="Fast - reference retrieved pressure",
+                title="Mode - reference retrieved pressure",
                 ylabel="Delta pressure [hPa]",
             ),
             spacing=32,
@@ -870,11 +1087,11 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
         spacing=34,
     ).properties(
         title={
-            "text": "O2A Optimal-Estimation Sweep: zdisamar Reference vs zdisamar Fast",
+            "text": ("O2A Optimal-Estimation Sweep: zdisamar Reference, Fast, and Fast-Accurate"),
             "subtitle": (
                 "Each paired scene uses identical measurements, priors, and initial states; "
                 "error bars are posterior 1-sigma for retrieved states and combined "
-                "posterior 1-sigma for fast-reference deltas."
+                "posterior 1-sigma for mode-reference deltas."
             ),
         }
     )
@@ -894,13 +1111,24 @@ def main() -> None:
     create_paired_style_retrieved_fast_scatter(data, RETRIEVED_FAST_SCATTER_PATH)
     create_latency_plot_with_fast(data, PAIRED_LATENCY_PATH)
     write_json(SUMMARY_PATH, summary)
-    delta = summary["fast_minus_reference"]
+    fast_delta = summary["fast_minus_reference"]
+    fast_accurate_delta = summary["fast_accurate_minus_reference"]
+    fast_accurate_fast_delta = summary["fast_accurate_minus_fast"]
+    latency_position = summary["latency_position"]
     print(
         "zdisamar_o2a_fast_mode_sweep_comparison="
         f"{stable_repo_path(PLOT_PATH)} "
-        f"mean_retrieval_speedup={delta['retrieval_speedup_s']['mean']:+.3f}s "
-        f"max_abs_aod_delta={delta['aerosol_optical_depth_delta']['max_abs']:.3e} "
-        f"max_abs_pressure_delta={delta['aerosol_mid_pressure_delta_hpa']['max_abs']:.3e}hPa"
+        f"fast_mean_retrieval_speedup={fast_delta['retrieval_speedup_s']['mean']:+.3f}s "
+        "fast_accurate_mean_retrieval_speedup="
+        f"{fast_accurate_delta['retrieval_speedup_s']['mean']:+.3f}s "
+        "fast_accurate_median_extra_vs_fast="
+        f"{fast_accurate_fast_delta['retrieval_extra_s']['median']:+.3f}s "
+        "fast_accurate_latency_position="
+        f"{latency_position['fast_accurate_position_between_fast_and_reference']:.3f} "
+        "fast_accurate_max_abs_aod_delta="
+        f"{fast_accurate_delta['aerosol_optical_depth_delta']['max_abs']:.3e} "
+        "fast_accurate_max_abs_pressure_delta="
+        f"{fast_accurate_delta['aerosol_mid_pressure_delta_hpa']['max_abs']:.3e}hPa"
     )
 
 

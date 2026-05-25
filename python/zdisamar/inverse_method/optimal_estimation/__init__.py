@@ -5,6 +5,7 @@ from .o2a import (
     attach_final_evaluation,
     case_for_state,
     disamar_oe,
+    disamar_oe_fast,
     evaluate_reflectance,
     evaluate_state,
     measurement_from_case,
@@ -12,6 +13,7 @@ from .o2a import (
     pressure_altitude_profile_from_case,
 )
 from .retrieval import (
+    FastCorrection,
     Iteration,
     Measurement,
     Result,
@@ -36,6 +38,7 @@ __all__ = [
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
+    "FastCorrection",
     "RtmEvaluation",
     "Iteration",
     "Measurement",
@@ -49,6 +52,7 @@ __all__ = [
     "attach_final_evaluation",
     "case_for_state",
     "disamar_oe",
+    "disamar_oe_fast",
     "evaluate_reflectance",
     "evaluate_state",
     "measurement_from_case",

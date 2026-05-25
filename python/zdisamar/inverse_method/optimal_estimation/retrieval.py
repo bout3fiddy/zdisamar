@@ -62,6 +62,18 @@ class Iteration:
 
 
 @dataclass(frozen=True)
+class FastCorrection:
+    """Diagnostics for a fast-mode retrieval finalized by one full-physics update."""
+
+    fast_iterations: int
+    fast_converged: bool
+    fast_state: Sequence[float]
+    full_correction: Iteration | None
+    full_correction_converged: bool
+    full_correction_state_vector_convergence: float
+
+
+@dataclass(frozen=True)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
@@ -77,6 +89,7 @@ class Result:
     last_evaluated_state: Sequence[float] | None = None
     last_evaluation: RtmEvaluation | None = None
     initial_state: Sequence[float] | None = None
+    fast_correction: FastCorrection | None = None
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,

@@ -5,6 +5,7 @@ const implementations = @import("../forward_model/implementations/root.zig");
 const jacobian = @import("../forward_model/jacobian/root.zig");
 const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
+const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
 const Trace = @import("../forward_model/performance_trace.zig");
 const algebra = @import("algebra.zig");
@@ -254,6 +255,25 @@ pub const Controls = struct {
     max_change_transformed_state: f64 = 1.0,
 };
 
+// Dense state-space vectors derived once before an OE run or correction step.
+// layout(64-bit):
+//   size: 128 B, align: 8 B
+//   field storage: vectors=120 B across 5 x [3]f64, derivative_state_mask=1 B; padding: 7 B
+//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: one stack value per active retrieval or correction
+//   footprint: per instance = 128 B (0.125 KiB)
+//   ownership: no heap references; copied by value so the correction path reuses prepared scalar state without aliases
+//   hot-path reason: keeps state/prior/bounds/mask contiguous for the single full-physics correction solve
+const StateSpace = struct {
+    state: Vector,
+    prior: Vector,
+    variance: Vector,
+    lower: Vector,
+    upper: Vector,
+    derivative_state_mask: jacobian.StateMask,
+};
+
 // Retrieval-session cache for profile spectroscopy support.
 // layout(64-bit):
 //   size: 104 B, align: 8 B
@@ -434,34 +454,18 @@ pub fn runO2A(
     var result = try Result.init(allocator, state_specs.len, controls.max_iterations);
     errdefer result.deinit(allocator);
 
-    var state = algebra.zeroVector();
-    var prior = algebra.zeroVector();
-    var variance = algebra.zeroVector();
-    var lower = algebra.zeroVector();
-    var upper = algebra.zeroVector();
-    var derivative_state_mask: jacobian.StateMask = 0;
-
-    for (state_specs, 0..) |spec, index| {
-        try validateStateSpec(spec);
-        result.state_ids[index] = spec.state;
-        state[index] = spec.initial;
-        prior[index] = spec.prior;
-        variance[index] = spec.variance;
-        result.initial_state[index] = spec.initial;
-        derivative_state_mask |= jacobian.stateMask(spec.state);
-        lower[index] = spec.lower_bound;
-        upper[index] = spec.upper_bound;
-    }
+    const state_space = try initializeStateSpace(state_specs, &result);
+    var state = state_space.state;
     prepared_case.route.derivative_mode = .semi_analytical;
-    prepared_case.route.derivative_state_mask = derivative_state_mask;
+    prepared_case.route.derivative_state_mask = state_space.derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
-    try algebra.choleskyLowerDiagonal(variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
+    try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
 
     var final_posterior_precision = algebra.zeroMatrix();
     for (0..state_specs.len) |index| {
-        final_posterior_precision[index][index] = 1.0 / variance[index];
-        scratch.posterior_covariance[index][index] = variance[index];
+        final_posterior_precision[index][index] = 1.0 / state_space.variance[index];
+        scratch.posterior_covariance[index][index] = state_space.variance[index];
         scratch.averaging_kernel[index][index] = 1.0;
     }
 
@@ -500,7 +504,7 @@ pub fn runO2A(
                 evaluation.view,
                 state_specs,
                 previous,
-                prior,
+                state_space.prior,
                 scratch.sqrt_sa,
                 evaluation.solar_mu0,
                 &scratch,
@@ -517,7 +521,7 @@ pub fn runO2A(
                 state_specs.len,
                 scratch.g,
                 scratch.b,
-                prior,
+                state_space.prior,
                 scratch.sqrt_sa,
                 scratch.sqrt_inv_sa,
                 controls.max_change_transformed_state,
@@ -526,13 +530,13 @@ pub fn runO2A(
         };
         state = step.state;
         for (0..state_specs.len) |index| {
-            state[index] = @min(upper[index], @max(lower[index], state[index]));
+            state[index] = @min(state_space.upper[index], @max(state_space.lower[index], state[index]));
         }
 
         var dx_iter = algebra.zeroVector();
         for (0..state_specs.len) |index| dx_iter[index] = state[index] - previous[index];
         var chi2_state: f64 = 0.0;
-        for (0..state_specs.len) |index| chi2_state += dx_iter[index] * dx_iter[index] / variance[index];
+        for (0..state_specs.len) |index| chi2_state += dx_iter[index] * dx_iter[index] / state_space.variance[index];
         const state_conv = quadraticForm(step.posterior_precision, dx_iter, state_specs.len) /
             @as(f64, @floatFromInt(state_specs.len));
         converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
@@ -563,6 +567,139 @@ pub fn runO2A(
         }
     }
     return result;
+}
+
+pub fn correctPreparedO2A(
+    allocator: Allocator,
+    prepared_case: *const o2a_prepared.PreparedO2A,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_specs: []const StateSpec,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    controls: Controls,
+) !Result {
+    const correction_zone = Trace.staticZone(@src(), "optimal_estimation.prepared_correction");
+    defer correction_zone.end();
+
+    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+
+    var measurement = try MeasurementWorkspace.init(
+        allocator,
+        measurement_wavelength_nm,
+        measurement_reflectance,
+        measurement_variance,
+    );
+    defer measurement.deinit(allocator);
+
+    var result = try Result.init(allocator, state_specs.len, 1);
+    errdefer result.deinit(allocator);
+
+    const state_space = try initializeStateSpace(state_specs, &result);
+    var prepared = prepared_case.*;
+    prepared.route.derivative_mode = .semi_analytical;
+    prepared.route.derivative_state_mask = state_space.derivative_state_mask;
+
+    var scratch: IterationWorkspace = .{};
+    try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
+
+    const evaluation = traced_evaluation: {
+        const zone = Trace.staticZone(@src(), "optimal_estimation.prepared_correction_rtm_jacobian");
+        defer zone.end();
+        const view = try InstrumentGrid.simulateProductWithWorkspace(
+            allocator,
+            forward_storage,
+            &prepared.scene,
+            prepared.route,
+            &prepared.prepared,
+            implementations.exact(),
+        );
+        break :traced_evaluation ForwardEvaluation{
+            .view = view,
+            .solar_mu0 = prepared.scene.geometry.solarCosineAtAltitude(0.0),
+        };
+    };
+
+    const accumulation = try accumulateNormalSystem(
+        measurement,
+        evaluation.view,
+        state_specs,
+        state_space.state,
+        state_space.prior,
+        scratch.sqrt_sa,
+        evaluation.solar_mu0,
+        &scratch,
+    );
+
+    const step = try solveStep(
+        state_specs.len,
+        scratch.g,
+        scratch.b,
+        state_space.prior,
+        scratch.sqrt_sa,
+        scratch.sqrt_inv_sa,
+        controls.max_change_transformed_state,
+        &scratch,
+    );
+
+    var state = step.state;
+    for (0..state_specs.len) |index| {
+        state[index] = @min(state_space.upper[index], @max(state_space.lower[index], state[index]));
+    }
+
+    var dx_iter = algebra.zeroVector();
+    for (0..state_specs.len) |index| dx_iter[index] = state[index] - state_space.state[index];
+    var chi2_state: f64 = 0.0;
+    for (0..state_specs.len) |index| {
+        chi2_state += dx_iter[index] * dx_iter[index] / state_space.variance[index];
+    }
+    const state_conv = quadraticForm(step.posterior_precision, dx_iter, state_specs.len) /
+        @as(f64, @floatFromInt(state_specs.len));
+    const converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
+
+    for (0..state_specs.len) |index| result.history_state[index] = state[index];
+    result.history_chi2[0] = accumulation.chi2_reflectance + chi2_state;
+    result.history_chi2_reflectance[0] = accumulation.chi2_reflectance;
+    result.history_chi2_state_vector[0] = chi2_state;
+    result.history_state_vector_convergence[0] = state_conv;
+    result.history_snr_normal[0] = if (step.snr_normal) 1 else 0;
+
+    const posterior_covariance = try algebra.invertSymmetric(step.posterior_precision, state_specs.len);
+    const averaging_kernel = algebra.multiply(posterior_covariance, accumulation.jt_invse_j, state_specs.len);
+    result.iteration_count = 1;
+    result.converged = converged;
+    for (0..state_specs.len) |row| {
+        result.state[row] = state[row];
+        for (0..state_specs.len) |col| {
+            result.posterior_covariance[row * state_specs.len + col] = posterior_covariance[row][col];
+            result.averaging_kernel[row * state_specs.len + col] = averaging_kernel[row][col];
+        }
+    }
+    return result;
+}
+
+fn initializeStateSpace(state_specs: []const StateSpec, result: *Result) !StateSpace {
+    var state_space: StateSpace = .{
+        .state = algebra.zeroVector(),
+        .prior = algebra.zeroVector(),
+        .variance = algebra.zeroVector(),
+        .lower = algebra.zeroVector(),
+        .upper = algebra.zeroVector(),
+        .derivative_state_mask = 0,
+    };
+
+    for (state_specs, 0..) |spec, index| {
+        try validateStateSpec(spec);
+        result.state_ids[index] = spec.state;
+        state_space.state[index] = spec.initial;
+        state_space.prior[index] = spec.prior;
+        state_space.variance[index] = spec.variance;
+        state_space.lower[index] = spec.lower_bound;
+        state_space.upper[index] = spec.upper_bound;
+        result.initial_state[index] = spec.initial;
+        state_space.derivative_state_mask |= jacobian.stateMask(spec.state);
+    }
+    return state_space;
 }
 
 fn validateStateSpec(spec: StateSpec) !void {

@@ -17,11 +17,45 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 1.2096162079833448,
-        "max_abs": 1.2096162079833448,
-        "mean": 0.9304500725050456,
-        "median": 0.9487727085361257,
-        "min": 0.6118412078358233
+        "max": 1.1461537501309067,
+        "max_abs": 1.1461537501309067,
+        "mean": 0.9193686849763617,
+        "median": 0.942824729019776,
+        "min": 0.6159421249758452
+      },
+      "rows": 100
+    },
+    "fast_accurate": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 0.2827487864938121,
+        "max_abs": 0.2827487864938121,
+        "mean": 0.021590805212001102,
+        "median": 0.007905810868180652,
+        "min": 0.0001524365881095946
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 0.00041287910151943663,
+        "max_abs": 0.00041287910151943663,
+        "mean": 1.882422698088193e-05,
+        "median": 4.0246693111256615e-06,
+        "min": 3.1401241273876224e-08
+      },
+      "converged": 100,
+      "fast_stage_converged": 100,
+      "full_correction_converged": 31,
+      "full_correction_state_vector_convergence": {
+        "max": 15.162670389200695,
+        "max_abs": 15.162670389200695,
+        "mean": 2.0264540872755936,
+        "median": 1.3103770078913501,
+        "min": 0.21716566228430856
+      },
+      "retrieval_s": {
+        "max": 1.5783097920939326,
+        "max_abs": 1.5783097920939326,
+        "mean": 1.3039848899678328,
+        "median": 1.3204825625289232,
+        "min": 0.9224708750844002
       },
       "rows": 100
     },
@@ -42,16 +76,76 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.2429030418861657,
-        "max_abs": 2.2429030418861657,
-        "mean": 1.7583462359034456,
-        "median": 1.813645604532212,
-        "min": 0.8791551250033081
+        "max": 2.2659831661731005,
+        "max_abs": 2.2659831661731005,
+        "mean": 1.7464284862345085,
+        "median": 1.7927006665850058,
+        "min": 0.8901533749885857
       },
       "rows": 100
     }
   },
   "canonical_command": "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py",
+  "fast_accurate_minus_fast": {
+    "aerosol_mid_pressure_abs_error_improvement_hpa": {
+      "max": 5.270020006838763,
+      "max_abs": 5.270020006838763,
+      "mean": 0.8159288594627953,
+      "median": 0.3696811945917773,
+      "min": -0.08461263877018155
+    },
+    "aerosol_mid_pressure_delta_hpa": {
+      "max": 5.270020006838763,
+      "max_abs": 5.270020006838763,
+      "mean": 0.7224162187080384,
+      "median": 0.3626108711048346,
+      "min": -1.9184314862668543
+    },
+    "aerosol_optical_depth_abs_error_improvement": {
+      "max": 0.006979329377754917,
+      "max_abs": 0.006979329377754917,
+      "mean": 0.0009249208406066454,
+      "median": 0.0005570041649429758,
+      "min": -1.1996363917798902e-06
+    },
+    "aerosol_optical_depth_delta": {
+      "max": 0.006979329377754917,
+      "max_abs": 0.006979329377754917,
+      "mean": -0.00025028850888206446,
+      "median": -0.0003008581122466991,
+      "min": -0.0059391060645508365
+    },
+    "retrieval_extra_s": {
+      "max": 0.5139525011181831,
+      "max_abs": 0.5139525011181831,
+      "mean": 0.38461620499147103,
+      "median": 0.38917149999178946,
+      "min": 0.24135400005616248
+    }
+  },
+  "fast_accurate_minus_reference": {
+    "aerosol_mid_pressure_delta_hpa": {
+      "max": 0.09001037000768974,
+      "max_abs": 0.2720859955818469,
+      "mean": -0.008499047264216984,
+      "median": -0.004968695266057921,
+      "min": -0.2720859955818469
+    },
+    "aerosol_optical_depth_delta": {
+      "max": 0.00030977620297772956,
+      "max_abs": 0.0004149151518080263,
+      "mean": 1.2711187320546546e-06,
+      "median": 2.0983077489988844e-06,
+      "min": -0.0004149151518080263
+    },
+    "retrieval_speedup_s": {
+      "max": 0.8489367910660803,
+      "max_abs": 0.8489367910660803,
+      "mean": 0.44244359626667573,
+      "median": 0.4778470625169575,
+      "min": -0.032317500095814466
+    }
+  },
   "fast_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
       "max": 2.0065110261959944,
@@ -68,16 +162,20 @@
       "min": -0.007394244529562943
     },
     "retrieval_speedup_s": {
-      "max": 1.1612756249960512,
-      "max_abs": 1.1612756249960512,
-      "mean": 0.8278961633984,
-      "median": 0.8665199582464993,
-      "min": 0.230275500100106
+      "max": 1.228569291299209,
+      "max_abs": 1.228569291299209,
+      "mean": 0.8270598012581467,
+      "median": 0.8591762083815411,
+      "min": 0.2341354580130428
     }
   },
   "fast_mode": {
+    "fast_accurate_correction_window_nm": [
+      762.0,
+      768.0
+    ],
     "method": "O2AInput.with_fast_mode()",
-    "note": "Reference rows and fast rows use the same deterministic zdisamar O2 A optimal-estimation sweep cases, measurement vectors, priors, and initial states. Fast rows apply O2AInput.with_fast_mode().",
+    "note": "Reference, fast, and fast-accurate rows use the same deterministic zdisamar O2 A optimal-estimation sweep cases, measurement vectors, priors, and initial states. Fast rows apply O2AInput.with_fast_mode(). Fast-accurate rows solve the fast-mode OE problem to convergence, then apply one full-physics OE correction over the retained correction window.",
     "overrides": {
       "adaptive_reference_grid": {
         "points_per_fwhm": 28,
@@ -94,6 +192,14 @@
         "threshold_doubl": 3e-05
       }
     }
+  },
+  "latency_position": {
+    "fast_accurate_median_s": 1.3204825625289232,
+    "fast_accurate_position_between_fast_and_reference": 0.44436819165757485,
+    "fast_median_s": 0.942824729019776,
+    "fast_reference_gap_s": 0.8498759375652298,
+    "note": "0.0 equals fast median latency and 1.0 equals full reference median latency; values below 0.5 are closer to fast mode than full reference mode.",
+    "reference_median_s": 1.7927006665850058
   },
   "outputs": {
     "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",

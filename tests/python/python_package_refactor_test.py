@@ -4,7 +4,7 @@ import math
 import os
 import sys
 import tempfile
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -130,7 +130,7 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
 
 def assert_optimal_estimation_result_dataclass() -> None:
 
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+    from zdisamar.inverse_method.optimal_estimation.retrieval import FastCorrection, Result
     from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 
     first = cast(RtmEvaluation, object())
@@ -160,6 +160,17 @@ def assert_optimal_estimation_result_dataclass() -> None:
         (),
     )
     assert positional.initial_state is None
+    assert positional.fast_correction is None
+
+    correction = FastCorrection(
+        fast_iterations=2,
+        fast_converged=True,
+        fast_state=(0.4,),
+        full_correction=None,
+        full_correction_converged=False,
+        full_correction_state_vector_convergence=1.5,
+    )
+    assert replace(positional, fast_correction=correction).fast_correction is correction
 
 
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
@@ -444,6 +455,172 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     ]
 
 
+def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Iteration,
+        Measurement,
+        Result,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.rtm.session_cache import SessionCache
+
+    @dataclass(frozen=True)
+    class Parameter:
+        name: str
+        initial: float
+        prior: float
+        variance: float
+        lower: float | None = None
+        upper: float | None = None
+
+        def write_to(self, target: object, value: float) -> None:
+
+            del target, value
+
+    fast_case = SimpleNamespace(scene_id="fast")
+
+    class ReferenceCase(SimpleNamespace):
+        def with_fast_mode(self):
+
+            return fast_case
+
+    reference_case = ReferenceCase(scene_id="reference")
+    correction_case = SimpleNamespace(scene_id="correction")
+    correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), (1.0, 1.0))
+    measurement = Measurement((), (), ())
+    state_vector = StateVector(
+        (
+            Parameter("aerosol_optical_depth", 0.2, 0.3, 0.8),
+            Parameter("aerosol_layer_mid_pressure_hpa", 800.0, 820.0, 100.0),
+        )
+    )
+    controls = RetrievalControls(
+        max_iterations=6,
+        state_vector_convergence_threshold=0.7,
+        max_change_transformed_state=0.4,
+    )
+    fast_result = Result(
+        state_names=state_vector.names,
+        state=(0.31, 760.0),
+        iterations=4,
+        converged=True,
+        history=(
+            Iteration(1, (0.25, 780.0), 4.0, 3.0, 1.0, 4.0, True),
+            Iteration(4, (0.31, 760.0), 1.8, 1.0, 0.8, 0.4, True),
+        ),
+        posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+        averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
+        measurement=measurement,
+        initial_state=state_vector.initial_state(),
+    )
+    final_evaluation_calls = 0
+
+    def unexpected_final_evaluation():
+
+        nonlocal final_evaluation_calls
+        final_evaluation_calls += 1
+
+        raise AssertionError("fast-accurate combine forced lazy final evaluation")
+
+    full_result = Result(
+        state_names=state_vector.names,
+        state=(0.305, 761.5),
+        iterations=1,
+        converged=False,
+        history=(Iteration(1, (0.305, 761.5), 0.7, 0.4, 0.3, 1.4, True),),
+        posterior_covariance=((0.2, 0.0), (0.0, 0.2)),
+        averaging_kernel=((0.9, 0.0), (0.0, 0.9)),
+        measurement=measurement,
+        initial_state=(0.31, 760.0),
+        _final_evaluation_factory=unexpected_final_evaluation,
+    )
+    calls: list[dict[str, object]] = []
+    correction_calls: list[tuple[object, RetrievalControls]] = []
+    loads: list[tuple[object, bool]] = []
+
+    def fake_disamar_oe(**kwargs):
+
+        calls.append(kwargs)
+
+        return fast_result
+
+    class Cache:
+        class Handle:
+            def optimal_estimation_correction(self, *, measurement, state_vector, controls):
+
+                del measurement
+                correction_calls.append((state_vector, controls))
+
+                return {"state_count": len(state_vector.parameters)}
+
+        _handle = Handle()
+
+        def has_loaded_case(self, case) -> bool:
+
+            assert case is fast_case
+
+            return False
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            loads.append((case, copy_case))
+
+    with (
+        patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe),
+        patch.object(o2a_oe, "case_for_state", return_value=correction_case) as case_for_state,
+        patch.object(
+            o2a_oe,
+            "full_correction_measurement",
+            return_value=correction_measurement,
+        ) as correction_measurement_builder,
+        patch.object(
+            o2a_oe,
+            "full_correction_case",
+            return_value=correction_case,
+        ) as correction_case_builder,
+        patch.object(o2a_oe, "_result_from_native", return_value=full_result),
+        patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
+    ):
+        result = o2a_oe.disamar_oe_fast(
+            case=cast(O2AInput, reference_case),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+            cache=cast(SessionCache, Cache()),
+        )
+
+    assert calls[0]["case"] is fast_case
+    assert calls[0]["controls"] is controls
+    assert calls[0]["load_case"] is False
+    assert len(calls) == 1
+    case_for_state.assert_called_once_with(reference_case, fast_result.state, state_vector)
+    correction_measurement_builder.assert_called_once_with(measurement)
+    correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
+    assert loads == [(fast_case, False), (correction_case, False)]
+    assert len(correction_calls) == 1
+    corrected_state_vector = cast(StateVector, correction_calls[0][0])
+    correction_controls = correction_calls[0][1]
+    assert correction_controls is controls
+    assert corrected_state_vector.initial_state() == (0.31, 760.0)
+    assert corrected_state_vector.prior_state() == (0.3, 820.0)
+    assert result.state == full_result.state
+    assert result.converged is True
+    assert result.iterations == 5
+    assert result.history[-1].index == 5
+    assert result.posterior_covariance == full_result.posterior_covariance
+    assert result.fast_correction is not None
+    assert result.fast_correction.fast_iterations == 4
+    assert result.fast_correction.fast_converged is True
+    assert result.fast_correction.fast_state == fast_result.state
+    assert result.fast_correction.full_correction_converged is False
+    assert result.fast_correction.full_correction_state_vector_convergence == 1.4
+    assert final_evaluation_calls == 0
+
+
 def assert_native_oe_marshaling_bounds() -> None:
 
     from zdisamar.bindings.handles import RtmHandle
@@ -576,6 +753,13 @@ def assert_native_oe_runs_after_default_prepare() -> None:
         )
         assert result["iteration_count"] == 1
         assert result["state_count"] == 1
+        correction = handle.optimal_estimation_correction(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=10),
+        )
+        assert correction["iteration_count"] == 1
+        assert correction["state_count"] == 1
     finally:
         handle.close()
 
@@ -734,6 +918,7 @@ def main() -> int:
     assert_deprecated_python_input_fields_rejected()
     assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
+    assert_disamar_oe_fast_runs_fast_then_single_full_correction()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()
