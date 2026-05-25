@@ -72,7 +72,7 @@ const AerosolSublayers = union(enum) {
     fn singleScatterAlbedo(self: AerosolSublayers, context: *const Context) f64 {
         return switch (self) {
             .scalar => context.scene.aerosol.single_scatter_albedo,
-            .profile => |profile| profileMeanSingleScatterAlbedo(profile),
+            .profile => |profile| profileMeanSingleScatterAlbedo(context, profile),
         };
     }
 
@@ -545,12 +545,33 @@ fn buildAerosolProfileSublayerProperties(
     return properties;
 }
 
-fn profileMeanSingleScatterAlbedo(aerosol_sublayers: []const AerosolSublayerProperties) f64 {
+fn profileScatteringAtMidpoint(context: *const Context, property: AerosolSublayerProperties) f64 {
+    if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
+    const optical_depth = ParticleProfiles.scaleOpticalDepth(
+        property.optical_depth,
+        property.reference_wavelength_nm,
+        property.angstrom_exponent,
+        context.midpoint_nm,
+    );
+    return optical_depth * property.single_scatter_albedo;
+}
+
+fn profileMeanSingleScatterAlbedo(
+    context: *const Context,
+    aerosol_sublayers: []const AerosolSublayerProperties,
+) f64 {
     var optical_depth: f64 = 0.0;
     var scattering: f64 = 0.0;
     for (aerosol_sublayers) |property| {
-        optical_depth += property.optical_depth;
-        scattering += property.optical_depth * property.single_scatter_albedo;
+        if (property.optical_depth <= 0.0) continue;
+        const scaled_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            property.optical_depth,
+            property.reference_wavelength_nm,
+            property.angstrom_exponent,
+            context.midpoint_nm,
+        );
+        optical_depth += scaled_optical_depth;
+        scattering += scaled_optical_depth * property.single_scatter_albedo;
     }
     return if (optical_depth > 0.0)
         std.math.clamp(scattering / optical_depth, 0.0, 1.0)
@@ -565,7 +586,7 @@ fn profileEquivalentPhaseCoefficients(
     var scattering: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
     for (aerosol_sublayers) |property| {
-        const sublayer_scattering = property.optical_depth * property.single_scatter_albedo;
+        const sublayer_scattering = profileScatteringAtMidpoint(context, property);
         if (sublayer_scattering <= 0.0) continue;
         scattering += sublayer_scattering;
         asymmetry_sum += sublayer_scattering * property.asymmetry_factor;

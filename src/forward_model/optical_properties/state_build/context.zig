@@ -219,10 +219,13 @@ pub fn init(
         owned.deinit(allocator);
     };
 
-    var aerosol_fraction_control = try scene.aerosol.fraction.clone(allocator);
-    errdefer aerosol_fraction_control.deinitOwned(allocator);
     const aerosol_profile: AerosolModel.Profile = .{ .layers = inputs.aerosol_profile_layers };
     try aerosol_profile.validate();
+    var aerosol_fraction_control = if (aerosol_profile.enabled())
+        AtmosphereModel.FractionControl{}
+    else
+        try scene.aerosol.fraction.clone(allocator);
+    errdefer aerosol_fraction_control.deinitOwned(allocator);
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = if (operational_band_support.o2_operational_lut.enabled())
         try operational_band_support.o2_operational_lut.clone(allocator)

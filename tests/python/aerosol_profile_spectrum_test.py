@@ -1,6 +1,7 @@
 """Smoke coverage for multi-layer aerosol-profile spectra."""
 
 import math
+from unittest.mock import patch
 
 from zdisamar import rtm
 
@@ -31,8 +32,13 @@ def main() -> None:
         baseline = cache.spectrum()
         profiled = cache.aerosol_profile_spectrum(profile)
 
+        with patch.object(cache, "load", wraps=cache.load) as load_mock:
+            public_profiled = rtm.aerosol_profile_spectrum(case, profile, cache=cache)
+
     assert len(profiled.wavelength_nm) == len(baseline.wavelength_nm)
     assert len(profiled.reflectance) == len(baseline.reflectance)
+    assert len(public_profiled.reflectance) == len(profiled.reflectance)
+    assert load_mock.call_count == 0
     assert all(math.isfinite(value) for value in profiled.reflectance)
     max_delta = max(
         abs(a - b) for a, b in zip(profiled.reflectance, baseline.reflectance, strict=True)

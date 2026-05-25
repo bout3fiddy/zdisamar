@@ -57,6 +57,12 @@ def aerosol_profile_spectrum(
     """Run a forward spectrum with multiple pressure-bounded aerosol layers."""
 
     if cache is not None:
+        if cache.has_loaded_case(case) and not include_case:
+            return cache.aerosol_profile_spectrum(
+                layers,
+                include_case=include_case,
+            )
+
         return cache.aerosol_profile_spectrum(
             layers,
             case,
