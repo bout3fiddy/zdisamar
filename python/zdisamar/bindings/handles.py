@@ -29,6 +29,8 @@ from ..output.tables import (
 from .loader import load_library
 from .signatures import configure
 from .structures import (
+    CAerosolProfileLayer,
+    CAerosolProfileSpectrumRequest,
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
@@ -208,6 +210,89 @@ class RtmHandle:
 
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
+
+        return self._copied_spectrum(raw, include_case=include_case)
+
+    def aerosol_profile_spectrum(self, *, layers, include_case: bool = False) -> Spectrum:
+        """Run a forward spectrum with a caller-supplied pressure aerosol profile."""
+
+        copied_layers = [
+            (
+                float(layer.top_pressure_hpa),
+                float(layer.bottom_pressure_hpa),
+                float(layer.optical_depth),
+                float(layer.single_scatter_albedo),
+                float(layer.asymmetry_factor),
+                float(layer.angstrom_exponent),
+                float(layer.reference_wavelength_nm),
+            )
+            for layer in layers
+        ]
+
+        if not copied_layers:
+            raise ValueError("aerosol profile must contain at least one layer")
+
+        for (
+            top_pressure_hpa,
+            bottom_pressure_hpa,
+            optical_depth,
+            single_scatter_albedo,
+            asymmetry_factor,
+            angstrom_exponent,
+            reference_wavelength_nm,
+        ) in copied_layers:
+            if (
+                not math.isfinite(top_pressure_hpa)
+                or not math.isfinite(bottom_pressure_hpa)
+                or bottom_pressure_hpa <= top_pressure_hpa
+                or not math.isfinite(optical_depth)
+                or optical_depth < 0.0
+                or not math.isfinite(single_scatter_albedo)
+                or single_scatter_albedo < 0.0
+                or single_scatter_albedo > 1.0
+                or not math.isfinite(asymmetry_factor)
+                or asymmetry_factor < -1.0
+                or asymmetry_factor > 1.0
+                or not math.isfinite(angstrom_exponent)
+                or not math.isfinite(reference_wavelength_nm)
+                or reference_wavelength_nm <= 0.0
+            ):
+                raise ValueError("invalid aerosol profile layer")
+
+        layer_array = (CAerosolProfileLayer * len(copied_layers))(
+            *(
+                CAerosolProfileLayer(
+                    top_pressure_hpa=top_pressure_hpa,
+                    bottom_pressure_hpa=bottom_pressure_hpa,
+                    optical_depth=optical_depth,
+                    single_scatter_albedo=single_scatter_albedo,
+                    asymmetry_factor=asymmetry_factor,
+                    angstrom_exponent=angstrom_exponent,
+                    reference_wavelength_nm=reference_wavelength_nm,
+                )
+                for (
+                    top_pressure_hpa,
+                    bottom_pressure_hpa,
+                    optical_depth,
+                    single_scatter_albedo,
+                    asymmetry_factor,
+                    angstrom_exponent,
+                    reference_wavelength_nm,
+                ) in copied_layers
+            )
+        )
+        request = CAerosolProfileSpectrumRequest(
+            layer_count=len(layer_array),
+            layers=layer_array,
+        )
+        raw = CSpectrum()
+        self._check(
+            self._lib.zds_run_aerosol_profile_spectrum(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
 
         return self._copied_spectrum(raw, include_case=include_case)
 

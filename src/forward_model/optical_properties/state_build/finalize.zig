@@ -58,6 +58,7 @@ pub fn assemble(
         .cia_pair_path_factor_cm5 = means.cia_pair_path_factor_cm5,
         .aerosol_reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
         .aerosol_angstrom_exponent = scene.aerosol.angstrom_exponent,
+        .has_aerosol_profile_properties = context.aerosol_profile_layers.len != 0,
         .gas_optical_depth = means.gas_optical_depth,
         .cia_optical_depth = means.cia_optical_depth,
         .aerosol_optical_depth = means.aerosol_optical_depth,

@@ -4,6 +4,60 @@ const errors = @import("../common/errors.zig");
 const AtmosphereModel = @import("Atmosphere.zig");
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
+pub const max_profile_layers: usize = 256;
+
+pub const ProfileLayer = struct {
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
+    optical_depth: f64,
+    single_scatter_albedo: f64 = 0.93,
+    asymmetry_factor: f64 = 0.65,
+    angstrom_exponent: f64 = 1.3,
+    reference_wavelength_nm: f64 = 550.0,
+
+    pub fn validate(self: ProfileLayer) errors.Error!void {
+        if (!std.math.isFinite(self.top_pressure_hpa) or
+            !std.math.isFinite(self.bottom_pressure_hpa) or
+            !(self.top_pressure_hpa < self.bottom_pressure_hpa) or
+            self.top_pressure_hpa < 0.0)
+        {
+            return errors.Error.InvalidRequest;
+        }
+        if (!std.math.isFinite(self.optical_depth) or self.optical_depth < 0.0) {
+            return errors.Error.InvalidRequest;
+        }
+        if (!std.math.isFinite(self.single_scatter_albedo) or
+            self.single_scatter_albedo < 0.0 or
+            self.single_scatter_albedo > 1.0)
+        {
+            return errors.Error.InvalidRequest;
+        }
+        if (!std.math.isFinite(self.asymmetry_factor) or
+            self.asymmetry_factor < -1.0 or
+            self.asymmetry_factor > 1.0)
+        {
+            return errors.Error.InvalidRequest;
+        }
+        if (!std.math.isFinite(self.angstrom_exponent) or
+            !std.math.isFinite(self.reference_wavelength_nm) or
+            self.reference_wavelength_nm <= 0.0)
+        {
+            return errors.Error.InvalidRequest;
+        }
+    }
+};
+
+pub const Profile = struct {
+    layers: []const ProfileLayer = &.{},
+
+    pub fn enabled(self: Profile) bool {
+        return self.layers.len != 0;
+    }
+
+    pub fn validate(self: Profile) errors.Error!void {
+        for (self.layers) |layer| try layer.validate();
+    }
+};
 
 // layout(64-bit):
 //   size: 160 B, align: 8 B

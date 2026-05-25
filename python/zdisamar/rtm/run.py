@@ -47,6 +47,29 @@ def spectrum(
         )
 
 
+def aerosol_profile_spectrum(
+    case: O2AInput,
+    layers,
+    *,
+    cache: SessionCache | None = None,
+    include_case: bool = False,
+):
+    """Run a forward spectrum with multiple pressure-bounded aerosol layers."""
+
+    if cache is not None:
+        return cache.aerosol_profile_spectrum(
+            layers,
+            case,
+            include_case=include_case,
+        )
+
+    with _temporary_cache(case, copy_case=include_case) as temporary:
+        return temporary.aerosol_profile_spectrum(
+            layers,
+            include_case=include_case,
+        )
+
+
 def atmospheric_budget(
     case: O2AInput,
     wavelengths_nm,

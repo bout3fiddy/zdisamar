@@ -209,8 +209,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
             sublayer.aerosol_optical_depth,
             sublayer.aerosol_base_optical_depth,
-            self.aerosol_reference_wavelength_nm,
-            self.aerosol_angstrom_exponent,
+            if (self.has_aerosol_profile_properties) sublayer.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
+            if (self.has_aerosol_profile_properties) sublayer.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
             self.aerosol_fraction_control,
             wavelength_nm,
         );
