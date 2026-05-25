@@ -139,6 +139,16 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ],
         ctypes.c_int,
     )
+    bind(
+        lib,
+        "zds_run_o2a_optimal_estimation_correction",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(COptimalEstimationRequest),
+            ctypes.POINTER(COptimalEstimationResult),
+        ],
+        ctypes.c_int,
+    )
     bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
     bind(
         lib,

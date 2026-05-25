@@ -59,15 +59,19 @@ The validation tree is split by target:
   and
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`:
   retained fast-mode sweep comparison between zdisamar reference-threshold
-  retrievals and zdisamar fast-mode retrievals, with posterior one-sigma error
-  bars, fast-minus-reference retrieval deltas, and timing panels. Regenerate it
-  with `validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`.
+  retrievals, zdisamar fast-mode retrievals, and zdisamar fast-accurate
+  retrievals. Fast-accurate solves the fast-mode OE problem to convergence and
+  applies one full-physics correction. The plot includes posterior one-sigma
+  error bars, mode-minus-reference retrieval deltas, and timing panels.
+  Regenerate it with
+  `validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`.
 - `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: paired-style
   retrieved-state plot comparing zdisamar reference retrievals against zdisamar
-  fast-mode retrievals on the fast-mode sweep scenes.
+  fast-mode and fast-accurate retrievals on the fast-mode sweep scenes.
 - `outputs/optimal_estimation/paired_oe_latency.png`: latency plot refreshed by
   the fast-mode sweep. When the historical paired manifest is present, the plot
-  includes DISAMAR Fortran, zdisamar reference, and zdisamar-fast.
+  includes DISAMAR Fortran, zdisamar reference, zdisamar-fast, and
+  zdisamar-fast-accurate.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked
   paired-retrieval plot outputs kept as historical evidence.
