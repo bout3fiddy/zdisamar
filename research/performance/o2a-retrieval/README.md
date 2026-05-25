@@ -22,10 +22,25 @@ The result is not a different optimal-estimation shape. zdisamar is faster
 because it runs a narrow in-process O2 A path, reuses forward-session state
 inside the retrieval, and asks only for Jacobian columns in the state vector.
 
+The fast-accurate retrieval mode is a separate zdisamar-only multi-fidelity
+validation lane. It runs fast-mode OE to convergence, then applies one
+full-physics correction on a retained O2 A correction window. The retained
+100-case sweep reports:
+
+```text
+reference:      100/100 converged, median 1.887 s, mean 1.951 s
+fast:           100/100 converged, median 0.998 s, mean 1.019 s
+fast-accurate:  100/100 converged, median 1.408 s, mean 1.472 s
+```
+
+Fast-accurate stays closer to fast-mode latency than full-reference latency
+while reducing fast-mode state errors by more than an order of magnitude.
+
 Read these notes in order:
 
 - [Measurement provenance](measurement-provenance.md)
 - [Current retrieval elapsed time](current-retrieval-elapsed-time.md)
+- [Fast-accurate correction](fast-accurate-correction.md)
 - [Optimisation notes](optimisation-notes/)
 - [Session reuse](session-reuse.md)
 - [State-vector Jacobians](state-vector-jacobians.md)

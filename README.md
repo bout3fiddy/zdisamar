@@ -166,6 +166,26 @@ aerosol optical depth:       median +1.688e-08, mean -3.025e-07, range -3.703e-0
 aerosol mid pressure [hPa]:  median -0.0016,    mean -0.0020,    range -0.0522 to +0.0821
 ```
 
+Fast-mode retrieval is a separate zdisamar-only validation lane. It trades some
+RTM accuracy for lower latency, then `disamar_oe_fast` adds one full-physics
+correction over the retained 762-768 nm O2 A window. The correction uses the
+fast-mode result as the starting state and computes one exact full-physics
+forward model plus Jacobian on that clipped wavelength grid.
+
+```text
+zdisamar reference:      100/100 converged, median 1.887 s, mean 1.951 s
+zdisamar fast:           100/100 converged, median 0.998 s, mean 1.019 s
+zdisamar fast-accurate:  100/100 converged, median 1.408 s, mean 1.472 s
+```
+
+![Fast and fast-accurate optimal-estimation comparison](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png)
+
+The retained fast-accurate sweep stays closer to fast-mode latency than
+full-reference latency while keeping the maximum reference deltas within
+`4.149e-04` aerosol optical depth and `0.272 hPa` aerosol mid pressure.
+The technical note is
+[`research/performance/o2a-retrieval/fast-accurate-correction.md`](./research/performance/o2a-retrieval/fast-accurate-correction.md).
+
 The tracked summary is
 [`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
 The retrieval notes live in
