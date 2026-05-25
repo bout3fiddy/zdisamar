@@ -321,6 +321,48 @@ class RtmHandle:
     def optimal_estimation(self, *, measurement, state_vector, controls):
         """Run native O2 A optimal estimation for the loaded case."""
 
+        return self._run_optimal_estimation(
+            "zds_run_o2a_optimal_estimation",
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+
+    def optimal_estimation_correction(self, *, measurement, state_vector, controls):
+        """Run one native OE correction for the loaded prepared O2 A case."""
+
+        return self._run_optimal_estimation(
+            "zds_run_o2a_optimal_estimation_correction",
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+
+    def _run_optimal_estimation(self, runner_name: str, *, measurement, state_vector, controls):
+
+        request, buffers = self._optimal_estimation_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+        raw = COptimalEstimationResult()
+        runner = getattr(self._lib, runner_name)
+        self._check(
+            runner(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_result(raw)
+        finally:
+            del buffers
+            self._lib.zds_optimal_estimation_result_free(self._ctx, ctypes.byref(raw))
+
+    def _optimal_estimation_request(self, *, measurement, state_vector, controls):
+
         wavelength = double_array(measurement.wavelength_nm, "measurement wavelengths")
         reflectance = double_array(measurement.reflectance, "measurement reflectance")
         variance = double_array(measurement.variance, "measurement variance")
@@ -430,19 +472,9 @@ class RtmHandle:
                 max_change_transformed_state=float(controls.max_change_transformed_state),
             ),
         )
-        raw = COptimalEstimationResult()
-        self._check(
-            self._lib.zds_run_o2a_optimal_estimation(
-                self._ctx,
-                ctypes.byref(request),
-                ctypes.byref(raw),
-            )
-        )
+        buffers = (wavelength, reflectance, variance, state_spec_array, *state_buffers)
 
-        try:
-            return self._copied_optimal_estimation_result(raw)
-        finally:
-            self._lib.zds_optimal_estimation_result_free(self._ctx, ctypes.byref(raw))
+        return request, buffers
 
     def close(self) -> None:
         """Release the opaque Zig RTM handle."""

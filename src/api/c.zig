@@ -693,6 +693,159 @@ export fn zds_run_spectrum_jacobian_for_states(
     return runSpectrumJacobianForStateIds(ctx, out, state_ids, state_count);
 }
 
+// Borrowed measurement slices used only after C request validation.
+// layout(64-bit):
+//   size: 48 B, align: 8 B
+//   field storage: three slice descriptors at 16 B each; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: wavelength_nm, reflectance, and variance borrow caller-owned C buffers
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one stack value per native OE request
+//   footprint: per instance = 48 B (0.047 KiB); total also includes borrowed request buffers
+//   ABI: Zig-only normalized view, never passed across the C boundary
+//   ownership: no allocation; lifetime is bounded by the caller-owned request buffers
+const OptimalEstimationMeasurementSlices = struct {
+    wavelength_nm: []const f64,
+    reflectance: []const f64,
+    variance: []const f64,
+};
+
+// Request-scoped native state specs plus owned pressure-profile spline scratch.
+// layout(64-bit):
+//   size: 464 B, align: 8 B
+//   field storage: profiles=144 B, state_specs=312 B, state_count=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: pressure-profile second-derivative arrays are owned until the C call returns
+//   cache span: 8 cache line(s) at 64 B per line
+//   count: one stack value per native OE request
+//   footprint: per instance = 464 B (0.453 KiB); total also includes pressure-profile spline storage
+//   ABI: Zig-only normalized view, never passed across the C boundary
+//   ownership: deinit frees only pressure-profile spline storage allocated during request parsing
+const OptimalEstimationStateSpecs = struct {
+    profiles: [zdisamar.optimal_estimation.max_state_count]zdisamar.optimal_estimation.PressureAltitudeProfile =
+        [_]zdisamar.optimal_estimation.PressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count,
+    state_specs: [zdisamar.optimal_estimation.max_state_count]zdisamar.optimal_estimation.StateSpec = undefined,
+    state_count: usize = 0,
+
+    fn deinit(self: *OptimalEstimationStateSpecs) void {
+        for (&self.profiles) |*profile| {
+            if (profile.hasSamples()) {
+                zdisamar.optimal_estimation.freePressureProfile(allocator, profile.*);
+                profile.* = .{};
+            }
+        }
+    }
+
+    fn slice(self: *const OptimalEstimationStateSpecs) []const zdisamar.optimal_estimation.StateSpec {
+        return self.state_specs[0..self.state_count];
+    }
+};
+
+fn optimalEstimationMeasurementSlices(
+    resolved: *Context,
+    request: *const ZdsOptimalEstimationRequest,
+) ?OptimalEstimationMeasurementSlices {
+    const wavelengths_ptr = request.wavelength_nm orelse {
+        resolved.setError("null measurement wavelengths");
+        return null;
+    };
+    const reflectance_ptr = request.reflectance orelse {
+        resolved.setError("null measurement reflectance");
+        return null;
+    };
+    const variance_ptr = request.variance orelse {
+        resolved.setError("null measurement variance");
+        return null;
+    };
+    if (request.sample_count == 0) {
+        resolved.setError("empty measurement");
+        return null;
+    }
+    return .{
+        .wavelength_nm = wavelengths_ptr[0..request.sample_count],
+        .reflectance = reflectance_ptr[0..request.sample_count],
+        .variance = variance_ptr[0..request.sample_count],
+    };
+}
+
+fn optimalEstimationControls(
+    resolved: *Context,
+    request: *const ZdsOptimalEstimationRequest,
+) ?zdisamar.optimal_estimation.Controls {
+    if (request.controls.max_iterations == 0 or request.controls.max_iterations > zdisamar.optimal_estimation.max_iteration_count) {
+        resolved.setError("invalid optimal-estimation max_iterations");
+        return null;
+    }
+    return .{
+        .max_iterations = request.controls.max_iterations,
+        .state_vector_convergence_threshold = request.controls.state_vector_convergence_threshold,
+        .max_change_transformed_state = request.controls.max_change_transformed_state,
+    };
+}
+
+fn optimalEstimationStateSpecs(
+    resolved: *Context,
+    request: *const ZdsOptimalEstimationRequest,
+) !OptimalEstimationStateSpecs {
+    const state_specs_ptr = request.states orelse {
+        resolved.setError("null state specs");
+        return error.InvalidStateSpec;
+    };
+    if (request.state_count == 0 or request.state_count > zdisamar.optimal_estimation.max_state_count) {
+        resolved.setError("invalid state count");
+        return error.InvalidStateCount;
+    }
+
+    var parsed: OptimalEstimationStateSpecs = .{ .state_count = request.state_count };
+    errdefer parsed.deinit();
+
+    const raw_states = state_specs_ptr[0..request.state_count];
+    for (raw_states, 0..) |raw, index| {
+        const state = std.meta.intToEnum(zdisamar.RadiativeTransferJacobian.State, raw.state_id) catch |err| {
+            resolved.setError(@errorName(err));
+            return err;
+        };
+        if (state == .aerosol_layer_mid_pressure_hpa) {
+            const altitude_ptr = raw.pressure_profile_altitude_km orelse {
+                resolved.setError("missing pressure profile altitude");
+                return error.InvalidPressureProfile;
+            };
+            const pressure_ptr = raw.pressure_profile_pressure_hpa orelse {
+                resolved.setError("missing pressure profile pressure");
+                return error.InvalidPressureProfile;
+            };
+            parsed.profiles[index] = zdisamar.optimal_estimation.buildPressureProfile(
+                allocator,
+                altitude_ptr[0..raw.pressure_profile_count],
+                pressure_ptr[0..raw.pressure_profile_count],
+            ) catch |err| {
+                resolved.setError(@errorName(err));
+                return err;
+            };
+        }
+        if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
+            resolved.setError("invalid optimal-estimation lower bound");
+            return error.InvalidStateSpec;
+        }
+        if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
+            resolved.setError("invalid optimal-estimation upper bound");
+            return error.InvalidStateSpec;
+        }
+        parsed.state_specs[index] = .{
+            .state = state,
+            .initial = raw.initial,
+            .prior = raw.prior,
+            .variance = raw.variance,
+            .lower_bound = if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound,
+            .upper_bound = if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound,
+            .thickness_hpa = raw.thickness_hpa,
+            .interval_index_1based = raw.interval_index_1based,
+            .pressure_altitude_profile = parsed.profiles[index],
+        };
+    }
+    return parsed;
+}
+
 export fn zds_run_o2a_optimal_estimation(
     ctx: ?*Context,
     request: ?*const ZdsOptimalEstimationRequest,
@@ -718,85 +871,10 @@ export fn zds_run_o2a_optimal_estimation(
         default_input = zdisamar.defaultO2AInput();
         break :input &default_input;
     };
-    const wavelengths_ptr = resolved_request.wavelength_nm orelse {
-        resolved.setError("null measurement wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    const reflectance_ptr = resolved_request.reflectance orelse {
-        resolved.setError("null measurement reflectance");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    const variance_ptr = resolved_request.variance orelse {
-        resolved.setError("null measurement variance");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    const state_specs_ptr = resolved_request.states orelse {
-        resolved.setError("null state specs");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (resolved_request.sample_count == 0) {
-        resolved.setError("empty measurement");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved_request.state_count == 0 or resolved_request.state_count > zdisamar.optimal_estimation.max_state_count) {
-        resolved.setError("invalid state count");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    var profiles = [_]zdisamar.optimal_estimation.PressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count;
-    defer {
-        for (&profiles) |*profile| {
-            if (profile.hasSamples()) {
-                zdisamar.optimal_estimation.freePressureProfile(allocator, profile.*);
-                profile.* = .{};
-            }
-        }
-    }
-    var state_specs: [zdisamar.optimal_estimation.max_state_count]zdisamar.optimal_estimation.StateSpec = undefined;
-    const raw_states = state_specs_ptr[0..resolved_request.state_count];
-    for (raw_states, 0..) |raw, index| {
-        const state = std.meta.intToEnum(zdisamar.RadiativeTransferJacobian.State, raw.state_id) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-        if (state == .aerosol_layer_mid_pressure_hpa) {
-            const altitude_ptr = raw.pressure_profile_altitude_km orelse {
-                resolved.setError("missing pressure profile altitude");
-                return @intFromEnum(ZdsStatus.failure);
-            };
-            const pressure_ptr = raw.pressure_profile_pressure_hpa orelse {
-                resolved.setError("missing pressure profile pressure");
-                return @intFromEnum(ZdsStatus.failure);
-            };
-            profiles[index] = zdisamar.optimal_estimation.buildPressureProfile(
-                allocator,
-                altitude_ptr[0..raw.pressure_profile_count],
-                pressure_ptr[0..raw.pressure_profile_count],
-            ) catch |err| {
-                resolved.setError(@errorName(err));
-                return @intFromEnum(ZdsStatus.failure);
-            };
-        }
-        if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
-            resolved.setError("invalid optimal-estimation lower bound");
-            return @intFromEnum(ZdsStatus.failure);
-        }
-        if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
-            resolved.setError("invalid optimal-estimation upper bound");
-            return @intFromEnum(ZdsStatus.failure);
-        }
-        state_specs[index] = .{
-            .state = state,
-            .initial = raw.initial,
-            .prior = raw.prior,
-            .variance = raw.variance,
-            .lower_bound = if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound,
-            .upper_bound = if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound,
-            .thickness_hpa = raw.thickness_hpa,
-            .interval_index_1based = raw.interval_index_1based,
-            .pressure_altitude_profile = profiles[index],
-        };
-    }
+    const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const controls = optimalEstimationControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    var state_specs = optimalEstimationStateSpecs(resolved, resolved_request) catch return @intFromEnum(ZdsStatus.failure);
+    defer state_specs.deinit();
 
     const native = allocator.create(zdisamar.optimal_estimation.Result) catch |err| {
         resolved.setError(@errorName(err));
@@ -805,16 +883,65 @@ export fn zds_run_o2a_optimal_estimation(
     native.* = zdisamar.optimal_estimation.runO2A(
         allocator,
         input,
-        wavelengths_ptr[0..resolved_request.sample_count],
-        reflectance_ptr[0..resolved_request.sample_count],
-        variance_ptr[0..resolved_request.sample_count],
-        state_specs[0..resolved_request.state_count],
+        measurement.wavelength_nm,
+        measurement.reflectance,
+        measurement.variance,
+        state_specs.slice(),
         &resolved.o2a_session_storage,
-        .{
-            .max_iterations = resolved_request.controls.max_iterations,
-            .state_vector_convergence_threshold = resolved_request.controls.state_vector_convergence_threshold,
-            .max_change_transformed_state = resolved_request.controls.max_change_transformed_state,
-        },
+        controls,
+    ) catch |err| {
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.oe_results.append(allocator, native) catch |err| {
+        native.deinit(allocator);
+        allocator.destroy(native);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    resolved_out.* = optimalEstimationResultView(native);
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_run_o2a_optimal_estimation_correction(
+    ctx: ?*Context,
+    request: ?*const ZdsOptimalEstimationRequest,
+    out: ?*ZdsOptimalEstimationResult,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_request = request orelse {
+        resolved.setError("null optimal-estimation request");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const resolved_out = out orelse {
+        resolved.setError("null optimal-estimation result");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const loaded_prepared = resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const controls = optimalEstimationControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    var state_specs = optimalEstimationStateSpecs(resolved, resolved_request) catch return @intFromEnum(ZdsStatus.failure);
+    defer state_specs.deinit();
+
+    const native = allocator.create(zdisamar.optimal_estimation.Result) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    native.* = zdisamar.optimal_estimation.correctPreparedO2A(
+        allocator,
+        &loaded_prepared,
+        measurement.wavelength_nm,
+        measurement.reflectance,
+        measurement.variance,
+        state_specs.slice(),
+        &resolved.o2a_session_storage,
+        controls,
     ) catch |err| {
         allocator.destroy(native);
         resolved.setError(@errorName(err));

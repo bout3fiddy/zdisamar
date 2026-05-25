@@ -489,6 +489,8 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
             return fast_case
 
     reference_case = ReferenceCase(scene_id="reference")
+    correction_case = SimpleNamespace(scene_id="correction")
+    correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), (1.0, 1.0))
     measurement = Measurement((), (), ())
     state_vector = StateVector(
         (
@@ -537,15 +539,26 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
         _final_evaluation_factory=unexpected_final_evaluation,
     )
     calls: list[dict[str, object]] = []
+    correction_calls: list[tuple[object, RetrievalControls]] = []
     loads: list[tuple[object, bool]] = []
 
     def fake_disamar_oe(**kwargs):
 
         calls.append(kwargs)
 
-        return fast_result if len(calls) == 1 else full_result
+        return fast_result
 
     class Cache:
+        class Handle:
+            def optimal_estimation_correction(self, *, measurement, state_vector, controls):
+
+                del measurement
+                correction_calls.append((state_vector, controls))
+
+                return {"state_count": len(state_vector.parameters)}
+
+        _handle = Handle()
+
         def has_loaded_case(self, case) -> bool:
 
             assert case is fast_case
@@ -556,7 +569,22 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
 
             loads.append((case, copy_case))
 
-    with patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe):
+    with (
+        patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe),
+        patch.object(o2a_oe, "case_for_state", return_value=correction_case) as case_for_state,
+        patch.object(
+            o2a_oe,
+            "full_correction_measurement",
+            return_value=correction_measurement,
+        ) as correction_measurement_builder,
+        patch.object(
+            o2a_oe,
+            "full_correction_case",
+            return_value=correction_case,
+        ) as correction_case_builder,
+        patch.object(o2a_oe, "_result_from_native", return_value=full_result),
+        patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
+    ):
         result = o2a_oe.disamar_oe_fast(
             case=cast(O2AInput, reference_case),
             measurement=measurement,
@@ -568,14 +596,15 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
     assert calls[0]["case"] is fast_case
     assert calls[0]["controls"] is controls
     assert calls[0]["load_case"] is False
-    assert loads == [(fast_case, False), (reference_case, False)]
-    assert calls[1]["case"] is reference_case
-    assert calls[1]["load_case"] is False
-    correction_controls = cast(RetrievalControls, calls[1]["controls"])
-    assert correction_controls.max_iterations == 1
-    assert correction_controls.state_vector_convergence_threshold == 0.7
-    assert correction_controls.max_change_transformed_state == 0.4
-    corrected_state_vector = cast(StateVector, calls[1]["state_vector"])
+    assert len(calls) == 1
+    case_for_state.assert_called_once_with(reference_case, fast_result.state, state_vector)
+    correction_measurement_builder.assert_called_once_with(measurement)
+    correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
+    assert loads == [(fast_case, False), (correction_case, False)]
+    assert len(correction_calls) == 1
+    corrected_state_vector = cast(StateVector, correction_calls[0][0])
+    correction_controls = correction_calls[0][1]
+    assert correction_controls is controls
     assert corrected_state_vector.initial_state() == (0.31, 760.0)
     assert corrected_state_vector.prior_state() == (0.3, 820.0)
     assert result.state == full_result.state
@@ -724,6 +753,13 @@ def assert_native_oe_runs_after_default_prepare() -> None:
         )
         assert result["iteration_count"] == 1
         assert result["state_count"] == 1
+        correction = handle.optimal_estimation_correction(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=10),
+        )
+        assert correction["iteration_count"] == 1
+        assert correction["state_count"] == 1
     finally:
         handle.close()
 
