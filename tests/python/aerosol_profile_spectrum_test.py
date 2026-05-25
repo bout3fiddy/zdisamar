@@ -1,14 +1,43 @@
 """Smoke coverage for multi-layer aerosol-profile spectra."""
 
 import math
+from copy import deepcopy
 from unittest.mock import patch
 
 from zdisamar import rtm
+from zdisamar.inverse_method import optimal_estimation
 
 
 def main() -> None:
 
     case = rtm.o2a_reference_case()
+    assert len(case.aerosol.profile) == 1
+    assert b'"profile"' not in case.to_json_bytes()
+
+    one_layer = rtm.AerosolProfileLayer(
+        top_pressure_hpa=430.0,
+        bottom_pressure_hpa=510.0,
+        optical_depth=0.2,
+        single_scatter_albedo=0.96,
+        asymmetry_factor=0.72,
+        angstrom_exponent=0.4,
+    )
+    one_layer_case = deepcopy(case)
+    one_layer_case.set_aerosol_profile((one_layer,))
+    layer_view_case = deepcopy(case)
+    layer_view_case.aerosol_optical_depth_550_nm = one_layer.optical_depth
+    layer_view_case.aerosol.single_scatter_albedo = one_layer.single_scatter_albedo
+    layer_view_case.aerosol.asymmetry_factor = one_layer.asymmetry_factor
+    layer_view_case.aerosol.angstrom_exponent = one_layer.angstrom_exponent
+    layer_view_case.aerosol_layer.thickness_hpa = (
+        one_layer.bottom_pressure_hpa - one_layer.top_pressure_hpa
+    )
+    layer_view_case.aerosol_layer.mid_pressure_hpa = 0.5 * (
+        one_layer.top_pressure_hpa + one_layer.bottom_pressure_hpa
+    )
+    assert b'"profile"' not in one_layer_case.to_json_bytes()
+    assert one_layer_case.to_json_bytes() == layer_view_case.to_json_bytes()
+
     profile = (
         rtm.AerosolProfileLayer(
             top_pressure_hpa=430.0,
@@ -28,22 +57,59 @@ def main() -> None:
         ),
     )
 
-    with rtm.SessionCache(case) as cache:
-        baseline = cache.spectrum()
-        profiled = cache.aerosol_profile_spectrum(profile)
+    profile_case = deepcopy(case)
+    profile_case.set_aerosol_profile(profile)
+    assert b'"profile"' in profile_case.to_json_bytes()
+
+    baseline = rtm.spectrum(case)
+    one_layer_spectrum = rtm.spectrum(one_layer_case)
+    layer_view_spectrum = rtm.spectrum(layer_view_case)
+    one_layer_delta = max(
+        abs(a - b)
+        for a, b in zip(
+            one_layer_spectrum.reflectance,
+            layer_view_spectrum.reflectance,
+            strict=True,
+        )
+    )
+    assert one_layer_delta < 1.0e-12
+
+    with rtm.SessionCache(profile_case) as cache:
+        profiled = cache.spectrum()
 
         with patch.object(cache, "load", wraps=cache.load) as load_mock:
-            public_profiled = rtm.aerosol_profile_spectrum(case, profile, cache=cache)
+            cached_profiled = cache.spectrum(profile_case)
 
     assert len(profiled.wavelength_nm) == len(baseline.wavelength_nm)
     assert len(profiled.reflectance) == len(baseline.reflectance)
-    assert len(public_profiled.reflectance) == len(profiled.reflectance)
+    assert len(cached_profiled.reflectance) == len(profiled.reflectance)
     assert load_mock.call_count == 0
     assert all(math.isfinite(value) for value in profiled.reflectance)
+    assert not hasattr(cache, "aerosol_profile_spectrum")
+    assert not hasattr(rtm, "aerosol_profile_spectrum")
     max_delta = max(
         abs(a - b) for a, b in zip(profiled.reflectance, baseline.reflectance, strict=True)
     )
     assert max_delta > 1.0e-8
+
+    try:
+        optimal_estimation.disamar_oe(
+            case=profile_case,
+            measurement=optimal_estimation.Measurement((), (), ()),
+            state_vector=optimal_estimation.StateVector(
+                [
+                    optimal_estimation.AerosolOpticalDepth(
+                        initial=0.3,
+                        prior=0.3,
+                        variance=0.8,
+                    )
+                ]
+            ),
+        )
+    except ValueError as error:
+        assert "forward-simulation only" in str(error)
+    else:
+        raise AssertionError("multi-layer aerosol profile was accepted by retrieval")
 
     print("aerosol_profile_spectrum=ok")
 

@@ -464,6 +464,8 @@ fn sceneFromResolvedO2A(
     absorber_set: AbsorberModel.AbsorberSet,
     solar_spectrum: InstrumentModel.OperationalSolarSpectrum,
 ) Scene {
+    const aerosol = scalarAerosolView(resolved.aerosol);
+
     return .{
         .id = resolved.scene_id,
         .surface = .{
@@ -472,12 +474,12 @@ fn sceneFromResolvedO2A(
         },
         .aerosol = .{
             .enabled = true,
-            .optical_depth = resolved.aerosol.optical_depth,
-            .single_scatter_albedo = resolved.aerosol.single_scatter_albedo,
-            .asymmetry_factor = resolved.aerosol.asymmetry_factor,
-            .angstrom_exponent = resolved.aerosol.angstrom_exponent,
-            .reference_wavelength_nm = resolved.aerosol.reference_wavelength_nm,
-            .placement = resolved.aerosol.placement,
+            .optical_depth = aerosol.optical_depth,
+            .single_scatter_albedo = aerosol.single_scatter_albedo,
+            .asymmetry_factor = aerosol.asymmetry_factor,
+            .angstrom_exponent = aerosol.angstrom_exponent,
+            .reference_wavelength_nm = aerosol.reference_wavelength_nm,
+            .placement = aerosol.placement,
         },
         .geometry = .{
             .model = resolved.geometry.model,
@@ -507,6 +509,46 @@ fn sceneFromResolvedO2A(
         },
         .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
     };
+}
+
+const ScalarAerosolView = struct {
+    optical_depth: f64,
+    single_scatter_albedo: f64,
+    asymmetry_factor: f64,
+    angstrom_exponent: f64,
+    reference_wavelength_nm: f64,
+    placement: AtmosphereModel.IntervalPlacement,
+};
+
+fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
+    if (aerosol.profile.len == 1) {
+        const layer = aerosol.profile[0];
+        var placement = aerosol.placement;
+        placement.top_pressure_hpa = layer.top_pressure_hpa;
+        placement.bottom_pressure_hpa = layer.bottom_pressure_hpa;
+
+        return .{
+            .optical_depth = layer.optical_depth,
+            .single_scatter_albedo = layer.single_scatter_albedo,
+            .asymmetry_factor = layer.asymmetry_factor,
+            .angstrom_exponent = layer.angstrom_exponent,
+            .reference_wavelength_nm = layer.reference_wavelength_nm,
+            .placement = placement,
+        };
+    }
+
+    return .{
+        .optical_depth = aerosol.optical_depth,
+        .single_scatter_albedo = aerosol.single_scatter_albedo,
+        .asymmetry_factor = aerosol.asymmetry_factor,
+        .angstrom_exponent = aerosol.angstrom_exponent,
+        .reference_wavelength_nm = aerosol.reference_wavelength_nm,
+        .placement = aerosol.placement,
+    };
+}
+
+fn aerosolProfileLayersForOptics(aerosol: AerosolSpec) []const AerosolModel.ProfileLayer {
+    return if (aerosol.profile.len > 1) aerosol.profile else &.{};
 }
 
 fn attachResolvedIntervals(scene: *Scene, resolved: *const ResolvedVendorO2ACase) void {
@@ -620,6 +662,7 @@ pub fn prepareResolvedVendorO2ACase(
             .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
+            .aerosol_profile_layers = aerosolProfileLayersForOptics(resolved.aerosol),
         });
     };
     errdefer prepared.deinit(allocator);
@@ -735,6 +778,7 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
         &solar_rewindowed,
         null,
         .clone_input_tables,
+        aerosolProfileLayersForOptics(resolved.aerosol),
     );
     errdefer prepared.deinit(allocator);
 
@@ -759,6 +803,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
         solar_rewindowed,
         null,
         .clone_input_tables,
+        &.{},
     );
 }
 
@@ -778,6 +823,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
         solar_rewindowed,
         borrowed_profile_preparation,
         .clone_input_tables,
+        &.{},
     );
 }
 
@@ -799,27 +845,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
         solar_rewindowed,
         borrowed_profile_preparation,
         .borrow_input_tables,
-    );
-}
-
-pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCachesAndAerosolProfile(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
-    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        borrowed_profile_preparation,
-        .borrow_input_tables,
-        aerosol_profile_layers,
+        &.{},
     );
 }
 
@@ -836,6 +862,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
     solar_rewindowed: *bool,
     borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
     static_input_table_mode: StaticInputTableMode,
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
 ) !OpticsPrepare.PreparedOpticalState {
     return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
         allocator,
@@ -845,7 +872,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
         solar_rewindowed,
         borrowed_profile_preparation,
         static_input_table_mode,
-        &.{},
+        aerosol_profile_layers,
     );
 }
 

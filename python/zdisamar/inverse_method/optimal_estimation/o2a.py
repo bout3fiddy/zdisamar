@@ -61,6 +61,8 @@ def disamar_oe(
 ) -> Result:
     """Retrieve O2 A state-vector parameters with DISAMAR-style controls."""
 
+    _require_aerosol_retrieval_compatible(case)
+
     if cache is None:
         with rtm.SessionCache(case) as local_cache:
             return _disamar_oe(
@@ -93,6 +95,7 @@ def _disamar_oe(
 ) -> Result:
     """Bind the O2 A RTM relation to the generic OE solver."""
 
+    _require_aerosol_retrieval_compatible(case)
     final_evaluate_state = _lazy_final_evaluator(case, state_vector)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
 
@@ -110,6 +113,15 @@ def _disamar_oe(
         result,
         final_evaluate_state,
     )
+
+
+def _require_aerosol_retrieval_compatible(case: object) -> None:
+
+    aerosol = getattr(case, "aerosol", None)
+    checker = getattr(aerosol, "require_retrieval_compatible", None)
+
+    if checker is not None:
+        checker()
 
 
 def _lazy_final_evaluator(

@@ -2,7 +2,6 @@ const std = @import("std");
 const zdisamar = @import("zdisamar");
 
 const allocator = std.heap.smp_allocator;
-const max_aerosol_profile_request_layers = zdisamar.o2a.max_aerosol_profile_layers;
 
 pub const ZdsStatus = enum(c_int) {
     ok = 0,
@@ -27,21 +26,6 @@ pub const ZdsSpectrum = extern struct {
     jacobian: ?[*]const f64 = null,
     jacobian_state_count: usize = 0,
     result_handle: ?*anyopaque = null,
-};
-
-pub const ZdsAerosolProfileLayer = extern struct {
-    top_pressure_hpa: f64 = 0.0,
-    bottom_pressure_hpa: f64 = 0.0,
-    optical_depth: f64 = 0.0,
-    single_scatter_albedo: f64 = 0.93,
-    asymmetry_factor: f64 = 0.65,
-    angstrom_exponent: f64 = 1.3,
-    reference_wavelength_nm: f64 = 550.0,
-};
-
-pub const ZdsAerosolProfileSpectrumRequest = extern struct {
-    layer_count: usize = 0,
-    layers: ?[*]const ZdsAerosolProfileLayer = null,
 };
 
 // layout(64-bit):
@@ -372,7 +356,6 @@ pub const ZdsRadiativeTransferDiagnostics = extern struct {
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
-    aerosol_profile_session: ?zdisamar.o2a.AerosolProfileSpectrumSession = null,
     o2a_session_storage: zdisamar.O2ASessionStorage = .{},
     results: std.ArrayList(*zdisamar.Output) = .empty,
     oe_results: std.ArrayList(*zdisamar.optimal_estimation.Result) = .empty,
@@ -473,8 +456,6 @@ const Context = struct {
     }
 
     fn clearPrepared(self: *Context) void {
-        if (self.aerosol_profile_session) |*session| session.deinit(allocator);
-        self.aerosol_profile_session = null;
         if (self.prepared) |*prepared| prepared.deinit(allocator);
         self.prepared = null;
         if (self.parsed_input) |*parsed| parsed.deinit();
@@ -698,98 +679,6 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     return @intFromEnum(ZdsStatus.ok);
 }
 
-export fn zds_run_aerosol_profile_spectrum(
-    ctx: ?*Context,
-    request: ?*const ZdsAerosolProfileSpectrumRequest,
-    out: ?*ZdsSpectrum,
-) c_int {
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const resolved_request = request orelse {
-        resolved.setError("null aerosol-profile spectrum request");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    const output = out orelse {
-        resolved.setError("null spectrum output");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved_request.layer_count == 0) {
-        resolved.setError("empty aerosol profile");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved_request.layer_count > max_aerosol_profile_request_layers) {
-        resolved.setError("too many aerosol profile layers");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const raw_layers = resolved_request.layers orelse {
-        resolved.setError("null aerosol profile layers");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-
-    var profile_layer_buffer: [max_aerosol_profile_request_layers]zdisamar.o2a.AerosolProfileLayer = undefined;
-    const profile_layers = profile_layer_buffer[0..resolved_request.layer_count];
-    for (raw_layers[0..resolved_request.layer_count], profile_layers) |raw, *layer| {
-        layer.* = .{
-            .top_pressure_hpa = raw.top_pressure_hpa,
-            .bottom_pressure_hpa = raw.bottom_pressure_hpa,
-            .optical_depth = raw.optical_depth,
-            .single_scatter_albedo = raw.single_scatter_albedo,
-            .asymmetry_factor = raw.asymmetry_factor,
-            .angstrom_exponent = raw.angstrom_exponent,
-            .reference_wavelength_nm = raw.reference_wavelength_nm,
-        };
-    }
-
-    if (resolved.aerosol_profile_session == null) {
-        var default_input: zdisamar.O2AInput = undefined;
-        const input = if (resolved.parsed_input) |*parsed|
-            &parsed.value
-        else input: {
-            default_input = zdisamar.defaultO2AInput();
-            break :input &default_input;
-        };
-        resolved.aerosol_profile_session = zdisamar.o2a.AerosolProfileSpectrumSession.init(allocator, input) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-    }
-
-    const result = allocator.create(zdisamar.Output) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    result.* = resolved.aerosol_profile_session.?.run(
-        allocator,
-        &resolved.o2a_session_storage,
-        profile_layers,
-    ) catch |err| {
-        allocator.destroy(result);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    resolved.results.append(allocator, result) catch |err| {
-        result.deinit(allocator);
-        allocator.destroy(result);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    output.* = .{
-        .len = result.wavelengths.len,
-        .wavelength_nm = result.wavelengths.ptr,
-        .radiance = result.radiance.ptr,
-        .irradiance = result.irradiance.ptr,
-        .reflectance = result.reflectance.ptr,
-        .jacobian = null,
-        .jacobian_state_count = 0,
-        .result_handle = @ptrCast(result),
-    };
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
-}
-
 export fn zds_run_spectrum_jacobian(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     return runSpectrumJacobianForStateIds(ctx, out, null, 0);
 }
@@ -828,6 +717,10 @@ export fn zds_run_o2a_optimal_estimation(
         }
         default_input = zdisamar.defaultO2AInput();
         break :input &default_input;
+    };
+    zdisamar.o2a.requireRetrievalCompatibleAerosol(input) catch {
+        resolved.setError("multi-layer aerosol profiles are forward-simulation only");
+        return @intFromEnum(ZdsStatus.failure);
     };
     const wavelengths_ptr = resolved_request.wavelength_nm orelse {
         resolved.setError("null measurement wavelengths");

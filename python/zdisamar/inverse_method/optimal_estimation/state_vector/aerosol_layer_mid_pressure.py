@@ -25,6 +25,8 @@ class AerosolLayerMidPressure:
     def write_to(self, target, value: float) -> None:
         """Move the aerosol layer while preserving neighboring layer boundaries."""
 
+        target.aerosol.require_retrieval_compatible()
+
         if not self.thickness_hpa > 0.0:
             raise ValueError("aerosol layer pressure thickness must be positive")
 
@@ -34,6 +36,10 @@ class AerosolLayerMidPressure:
 
         target.aerosol.placement.top_pressure_hpa = top_pressure
         target.aerosol.placement.bottom_pressure_hpa = bottom_pressure
+        target.aerosol.replace_single_profile_layer(
+            top_pressure_hpa=top_pressure,
+            bottom_pressure_hpa=bottom_pressure,
+        )
 
         updated_fit_interval = False
 

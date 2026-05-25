@@ -46,7 +46,7 @@ class SessionCache:
     ):
         """Run the RTM using cached storage."""
 
-        if case is not None:
+        if case is not None and (include_case or not self.has_loaded_case(case)):
             self.load(case, copy_case=include_case)
         elif not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
@@ -54,25 +54,6 @@ class SessionCache:
         return self._handle.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
-            include_case=include_case,
-        )
-
-    def aerosol_profile_spectrum(
-        self,
-        layers,
-        case: O2AInput | None = None,
-        *,
-        include_case: bool = False,
-    ):
-        """Run forward spectra with multiple pressure-bounded aerosol layers."""
-
-        if case is not None:
-            self.load(case, copy_case=include_case)
-        elif not self._loaded:
-            raise RuntimeError("SessionCache has no loaded wavelength-band case")
-
-        return self._handle.aerosol_profile_spectrum(
-            layers=layers,
             include_case=include_case,
         )
 

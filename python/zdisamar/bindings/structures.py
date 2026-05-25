@@ -192,25 +192,6 @@ class CRadiativeTransferDiagnostics(ctypes.Structure):
     ]
 
 
-class CAerosolProfileLayer(ctypes.Structure):
-    _fields_ = [
-        ("top_pressure_hpa", ctypes.c_double),
-        ("bottom_pressure_hpa", ctypes.c_double),
-        ("optical_depth", ctypes.c_double),
-        ("single_scatter_albedo", ctypes.c_double),
-        ("asymmetry_factor", ctypes.c_double),
-        ("angstrom_exponent", ctypes.c_double),
-        ("reference_wavelength_nm", ctypes.c_double),
-    ]
-
-
-class CAerosolProfileSpectrumRequest(ctypes.Structure):
-    _fields_ = [
-        ("layer_count", ctypes.c_size_t),
-        ("layers", ctypes.POINTER(CAerosolProfileLayer)),
-    ]
-
-
 class COptimalEstimationStateSpec(ctypes.Structure):
     _fields_ = [
         ("state_id", ctypes.c_uint8),

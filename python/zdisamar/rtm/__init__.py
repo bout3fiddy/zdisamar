@@ -4,9 +4,8 @@
 from importlib import import_module
 
 _EXPORTS = {
-    "AerosolProfileLayer": ".aerosol_profile",
+    "AerosolProfileLayer": "..input.aerosol",
     "SessionCache": ".session_cache",
-    "aerosol_profile_spectrum": ".run",
     "atmospheric_budget": ".run",
     "collision_induced_absorption": ".run",
     "instrument_response": ".run",
@@ -39,7 +38,6 @@ def __getattr__(name: str):
 __all__ = [
     "AerosolProfileLayer",
     "SessionCache",
-    "aerosol_profile_spectrum",
     "atmospheric_budget",
     "collision_induced_absorption",
     "instrument_response",

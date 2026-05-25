@@ -2,8 +2,6 @@ const std = @import("std");
 const AerosolModel = @import("../Aerosol.zig");
 const AtmosphereModel = @import("../Atmosphere.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
-const OpticsPrepare = @import("../../forward_model/optical_properties/root.zig");
-const Scene = @import("../Scene.zig").Scene;
 const implementations = @import("../../forward_model/implementations/root.zig");
 const Jacobian = @import("../../forward_model/jacobian/root.zig");
 const metrics = @import("metrics.zig");
@@ -66,161 +64,6 @@ const default_intervals = [_]AtmosphereModel.VerticalInterval{
 };
 
 const default_isotopes = [_]u8{ 1, 2, 3 };
-
-const ProfilePreparationSession = struct {
-    borrowed: OpticsPrepare.BorrowedProfilePreparation = .{},
-    captured: bool = false,
-
-    fn borrowedPreparation(self: *const ProfilePreparationSession) ?*const OpticsPrepare.BorrowedProfilePreparation {
-        if (!self.captured) return null;
-        return &self.borrowed;
-    }
-
-    fn captureFromPrepared(self: *ProfilePreparationSession, prepared: *OpticsPrepare.PreparedOpticalState) void {
-        if (self.captured or prepared.spectroscopy_profile_altitudes_km.len == 0) return;
-        if (!prepared.owns_spectroscopy_profile_arrays) return;
-
-        self.borrowed.altitudes_km = prepared.spectroscopy_profile_altitudes_km;
-        self.borrowed.pressures_hpa = prepared.spectroscopy_profile_pressures_hpa;
-        self.borrowed.temperatures_k = prepared.spectroscopy_profile_temperatures_k;
-        prepared.spectroscopy_profile_altitudes_km = &.{};
-        prepared.spectroscopy_profile_pressures_hpa = &.{};
-        prepared.spectroscopy_profile_temperatures_k = &.{};
-        prepared.owns_spectroscopy_profile_arrays = false;
-
-        if (prepared.owns_spectroscopy_profile_strong_line_states) {
-            self.borrowed.strong_line_states = prepared.spectroscopy_profile_strong_line_states;
-            prepared.spectroscopy_profile_strong_line_states = null;
-            prepared.owns_spectroscopy_profile_strong_line_states = false;
-        }
-        if (prepared.owns_spectroscopy_profile_weak_line_states) {
-            self.borrowed.weak_line_states = prepared.spectroscopy_profile_weak_line_states;
-            prepared.spectroscopy_profile_weak_line_states = null;
-            prepared.owns_spectroscopy_profile_weak_line_states = false;
-        }
-        self.borrowed.spectroscopy_plan_key = prepared.spectroscopy_plan_key;
-        self.borrowed.spectroscopy_profile_cache_inputs_key = prepared.spectroscopy_profile_cache_inputs_key;
-        self.captured = true;
-    }
-
-    fn deinit(self: *ProfilePreparationSession, allocator: Allocator) void {
-        if (self.borrowed.strong_line_states) |states| {
-            for (states) |*state| state.deinit(allocator);
-            allocator.free(states);
-        }
-        if (self.borrowed.weak_line_states) |states| {
-            for (states) |*state| state.deinit(allocator);
-            allocator.free(states);
-        }
-        if (self.borrowed.altitudes_km.len != 0) allocator.free(self.borrowed.altitudes_km);
-        if (self.borrowed.pressures_hpa.len != 0) allocator.free(self.borrowed.pressures_hpa);
-        if (self.borrowed.temperatures_k.len != 0) allocator.free(self.borrowed.temperatures_k);
-        self.* = .{};
-    }
-};
-
-pub const AerosolProfileSpectrumSession = struct {
-    loaded_inputs: runtime.LoadedVendorO2AInputs,
-    scene: Scene,
-    route: reference_types.Route,
-    weak_cutoff_grid: runtime.WeakCutoffGridCache = .{},
-    solar_rewindowed: bool = false,
-    profile_preparation: ProfilePreparationSession = .{},
-    cached_profile_layers: [max_aerosol_profile_layers]AerosolProfileLayer = undefined,
-    cached_profile_layer_count: usize = 0,
-    cached_prepared: ?OpticsPrepare.PreparedOpticalState = null,
-
-    pub fn init(allocator: Allocator, input: *const O2AInput) !AerosolProfileSpectrumSession {
-        var loaded_inputs = try runtime.loadResolvedVendorO2AInputs(allocator, input);
-        errdefer loaded_inputs.deinit(allocator);
-
-        var scene = try runtime.buildResolvedVendorO2AScene(
-            allocator,
-            input,
-            loaded_inputs.raw_solar_spectrum,
-        );
-        errdefer scene.deinitOwned(allocator);
-
-        return .{
-            .loaded_inputs = loaded_inputs,
-            .scene = scene,
-            .route = try runtime.prepareResolvedVendorO2ARouteFromResolved(input),
-        };
-    }
-
-    pub fn deinit(self: *AerosolProfileSpectrumSession, allocator: Allocator) void {
-        if (self.cached_prepared) |*prepared| prepared.deinit(allocator);
-        self.profile_preparation.deinit(allocator);
-        self.weak_cutoff_grid.deinit(allocator);
-        self.scene.deinitOwned(allocator);
-        self.loaded_inputs.deinit(allocator);
-        self.* = undefined;
-    }
-
-    pub fn run(
-        self: *AerosolProfileSpectrumSession,
-        allocator: Allocator,
-        storage: *SessionStorage,
-        profile_layers: []const AerosolProfileLayer,
-    ) !Output {
-        if (profile_layers.len > max_aerosol_profile_layers) return error.InvalidRequest;
-
-        if (self.cached_prepared == null or !profileLayersEqual(self.cachedProfileLayers(), profile_layers)) {
-            if (self.cached_prepared) |*prepared| {
-                self.profile_preparation.captureFromPrepared(prepared);
-                prepared.deinit(allocator);
-                self.cached_prepared = null;
-            }
-            self.cached_profile_layer_count = 0;
-            var prepared = try runtime.prepareResolvedVendorO2AOpticalStateWithSceneSessionCachesAndAerosolProfile(
-                allocator,
-                &self.scene,
-                &self.loaded_inputs,
-                &self.weak_cutoff_grid,
-                &self.solar_rewindowed,
-                self.profile_preparation.borrowedPreparation(),
-                profile_layers,
-            );
-            errdefer prepared.deinit(allocator);
-            @memcpy(self.cached_profile_layers[0..profile_layers.len], profile_layers);
-            self.cached_profile_layer_count = profile_layers.len;
-            self.cached_prepared = prepared;
-        }
-
-        const prepared = &self.cached_prepared.?;
-
-        const view = try InstrumentGrid.simulateProductWithWorkspace(
-            allocator,
-            storage,
-            &self.scene,
-            self.route,
-            prepared,
-            implementations.exact(),
-        );
-        return view.toOwned(allocator);
-    }
-
-    fn cachedProfileLayers(self: *const AerosolProfileSpectrumSession) []const AerosolProfileLayer {
-        return self.cached_profile_layers[0..self.cached_profile_layer_count];
-    }
-};
-
-fn profileLayersEqual(left: []const AerosolProfileLayer, right: []const AerosolProfileLayer) bool {
-    if (left.len != right.len) return false;
-    for (left, right) |a, b| {
-        if (a.top_pressure_hpa != b.top_pressure_hpa or
-            a.bottom_pressure_hpa != b.bottom_pressure_hpa or
-            a.optical_depth != b.optical_depth or
-            a.single_scatter_albedo != b.single_scatter_albedo or
-            a.asymmetry_factor != b.asymmetry_factor or
-            a.angstrom_exponent != b.angstrom_exponent or
-            a.reference_wavelength_nm != b.reference_wavelength_nm)
-        {
-            return false;
-        }
-    }
-    return true;
-}
 
 pub fn defaultInput() O2AInput {
     return .{
@@ -472,7 +315,7 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.layer_count == 0 or input.sublayer_divisions == 0) return error.InvalidAtmosphere;
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
     for (input.intervals) |interval| try interval.validate();
-    try input.aerosol.placement.validate();
+    try validateAerosol(input);
     try input.plan.validate();
     try input.rtm_controls.validate();
     try requireAsset(input.inputs.atmosphere_profile);
@@ -485,6 +328,20 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.o2o2.enabled) {
         try requireAsset(input.o2o2.cia_asset orelse return error.MissingCollisionInducedAbsorptionAsset);
     }
+}
+
+pub fn hasMultiLayerAerosolProfile(input: *const O2AInput) bool {
+    return input.aerosol.profile.len > 1;
+}
+
+pub fn requireRetrievalCompatibleAerosol(input: *const O2AInput) !void {
+    if (hasMultiLayerAerosolProfile(input)) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
+}
+
+fn validateAerosol(input: *const O2AInput) !void {
+    try input.aerosol.placement.validate();
+    if (input.aerosol.profile.len > max_aerosol_profile_layers) return error.InvalidAerosolProfile;
+    for (input.aerosol.profile) |layer| try layer.validate();
 }
 
 fn requireAsset(value: reference_types.ExternalAsset) !void {

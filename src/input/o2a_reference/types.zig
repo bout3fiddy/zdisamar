@@ -1,5 +1,6 @@
 const std = @import("std");
 const AbsorberModel = @import("../../input/Absorber.zig");
+const AerosolModel = @import("../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
@@ -140,6 +141,7 @@ pub const AerosolSpec = struct {
     angstrom_exponent: f64,
     reference_wavelength_nm: f64,
     placement: AtmosphereModel.IntervalPlacement,
+    profile: []const AerosolModel.ProfileLayer = &.{},
 };
 
 // layout(64-bit):
