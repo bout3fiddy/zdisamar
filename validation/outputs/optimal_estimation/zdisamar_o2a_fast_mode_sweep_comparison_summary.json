@@ -92,7 +92,7 @@
         "fast_stage_sampling": {
           "enabled": true,
           "sample_count": 38,
-          "variance_scale": null,
+          "uncertainty_scale": null,
           "wavelengths_nm": [
             758.0,
             758.04,
@@ -152,7 +152,7 @@
         },
         "final_correction": {
           "enabled": true,
-          "variance_scale": null,
+          "uncertainty_scale": null,
           "wavelength_count": 12,
           "wavelength_window_nm": [
             765.2,

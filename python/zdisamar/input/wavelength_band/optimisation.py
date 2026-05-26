@@ -52,7 +52,7 @@ def finite_positive_optional_float(value: object, *, label: str) -> float | None
     parsed = optional_float(value)
 
     if parsed is not None and (not math.isfinite(parsed) or parsed <= 0.0):
-        raise ValueError(f"{label} variance scale must be finite and positive")
+        raise ValueError(f"{label} uncertainty scale must be finite and positive")
 
     return parsed
 
@@ -383,8 +383,8 @@ class FastModeFinalCorrection:
     it picks evenly spaced measured wavelengths inside the window.  Set
     `wavelength_count=None` to retain every measured wavelength in the window.
     `wavelengths_nm` overrides the window selector with explicit wavelengths;
-    each value must map to a unique measurement-grid sample.  `variance_scale`
-    overrides the default retained-fraction variance scaling for experiments
+    each value must map to a unique measurement-grid sample.  `uncertainty_scale`
+    overrides the default retained-fraction uncertainty scaling for experiments
     with sparse or weighted correction grids.
     """
 
@@ -392,7 +392,7 @@ class FastModeFinalCorrection:
     wavelength_window_nm: tuple[float, float] = (765.2, 768.0)
     wavelength_count: int | None = 12
     wavelengths_nm: tuple[float, ...] = ()
-    variance_scale: float | None = None
+    uncertainty_scale: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
@@ -402,7 +402,7 @@ class FastModeFinalCorrection:
             "wavelength_window_nm",
             "wavelength_count",
             "wavelengths_nm",
-            "variance_scale",
+            "uncertainty_scale",
         }
         reject_unknown_fields(data, allowed, "fastmode final-correction")
         defaults = cls()
@@ -421,8 +421,8 @@ class FastModeFinalCorrection:
             ),
             wavelength_count=optional_int(data.get("wavelength_count", defaults.wavelength_count)),
             wavelengths_nm=wavelengths,
-            variance_scale=finite_positive_optional_float(
-                data.get("variance_scale", defaults.variance_scale),
+            uncertainty_scale=finite_positive_optional_float(
+                data.get("uncertainty_scale", defaults.uncertainty_scale),
                 label="fastmode final-correction",
             ),
         )
@@ -457,7 +457,7 @@ class FastModeFinalCorrection:
             "wavelengths_nm": list(self.resolved_wavelengths(measurement_wavelengths_nm))
             if self.enabled
             else [],
-            "variance_scale": self.variance_scale,
+            "uncertainty_scale": self.uncertainty_scale,
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -467,7 +467,7 @@ class FastModeFinalCorrection:
             "wavelength_window_nm": list(self.wavelength_window_nm),
             "wavelength_count": self.wavelength_count,
             "wavelengths_nm": list(self.wavelengths_nm),
-            "variance_scale": self.variance_scale,
+            "uncertainty_scale": self.uncertainty_scale,
         }
 
 
@@ -482,8 +482,8 @@ class FastModeFastStageSampling:
 
     `windows` selects evenly spaced samples from one or more measured wavelength
     intervals.  `wavelengths_nm` overrides the window selector with explicit
-    measured wavelengths.  `variance_scale=None` applies retained-fraction
-    variance scaling so a sparse fast stage keeps comparable total weight.
+    measured wavelengths.  `uncertainty_scale=None` applies retained-fraction
+    uncertainty scaling so a sparse fast stage keeps comparable total weight.
     """
 
     enabled: bool = True
@@ -491,7 +491,7 @@ class FastModeFastStageSampling:
         default_factory=default_fast_stage_wavelength_windows
     )
     wavelengths_nm: tuple[float, ...] = ()
-    variance_scale: float | None = None
+    uncertainty_scale: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
@@ -500,7 +500,7 @@ class FastModeFastStageSampling:
             "enabled",
             "windows",
             "wavelengths_nm",
-            "variance_scale",
+            "uncertainty_scale",
         }
         reject_unknown_fields(data, allowed, "fastmode fast-stage sampling")
         defaults = cls()
@@ -522,8 +522,8 @@ class FastModeFastStageSampling:
                 for window in object_dict_list(windows_value)
             ),
             wavelengths_nm=wavelengths,
-            variance_scale=finite_positive_optional_float(
-                data.get("variance_scale", defaults.variance_scale),
+            uncertainty_scale=finite_positive_optional_float(
+                data.get("uncertainty_scale", defaults.uncertainty_scale),
                 label="fastmode fast-stage sampling",
             ),
         )
@@ -580,7 +580,7 @@ class FastModeFastStageSampling:
             "windows": [window.to_dict() for window in self.windows],
             "wavelengths_nm": list(wavelengths),
             "sample_count": len(wavelengths),
-            "variance_scale": self.variance_scale,
+            "uncertainty_scale": self.uncertainty_scale,
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -589,7 +589,7 @@ class FastModeFastStageSampling:
             "enabled": self.enabled,
             "windows": [window.to_dict() for window in self.windows],
             "wavelengths_nm": list(self.wavelengths_nm),
-            "variance_scale": self.variance_scale,
+            "uncertainty_scale": self.uncertainty_scale,
         }
 
 

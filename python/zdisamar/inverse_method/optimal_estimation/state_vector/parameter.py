@@ -13,7 +13,7 @@ class StateVectorParameter(Protocol):
     name: StateName
     initial: float
     prior: float
-    variance: float
+    uncertainty: float
     lower: float | None
     upper: float | None
 
@@ -23,7 +23,7 @@ class StateVectorParameter(Protocol):
 
 @dataclass(frozen=True)
 class StateVector:
-    """Ordered retrieval variables plus prior covariance terms."""
+    """Ordered retrieval variables plus prior uncertainty terms."""
 
     parameters: Sequence[StateVectorParameter]
 
@@ -84,7 +84,9 @@ class StateVector:
 
         return tuple(
             tuple(
-                float(parameter.variance) if row == column else 0.0
+                float(parameter.uncertainty) * float(parameter.uncertainty)
+                if row == column
+                else 0.0
                 for column, _ in enumerate(self.parameters)
             )
             for row, parameter in enumerate(self.parameters)

@@ -57,7 +57,7 @@ fastmode.oe.fast_stage_sampling.windows = (
     o2a.FastModeWavelengthWindow((755.0, 758.5), 16),
     o2a.FastModeWavelengthWindow((765.2, 768.0), 25),
 )
-fastmode.oe.fast_stage_sampling.variance_scale = None
+fastmode.oe.fast_stage_sampling.uncertainty_scale = None
 
 fastmode.oe.final_correction.enabled = True
 fastmode.oe.final_correction.wavelength_window_nm = (765.2, 768.0)
@@ -77,7 +77,7 @@ The OE controls decide when the fast retrieval stage stops.  The fast-stage
 sampling fields decide which measured wavelengths are passed to the fast solve.
 The final-correction fields decide whether zdisamar performs one sparse
 full-physics update, and which measured wavelengths are used for that update.
-`variance_scale=None` applies retained-fraction variance scaling for sparse
+`uncertainty_scale=None` applies retained-fraction uncertainty scaling for sparse
 measurement vectors.
 
 ## Algorithm
@@ -249,4 +249,4 @@ Open questions:
 - keep a held-out validation set so sparse defaults do not overfit the retained
   100 cases;
 - measure correction-only timing separately from fast-stage timing;
-- revisit variance scaling for sparse windows.
+- revisit uncertainty scaling for sparse windows.

@@ -231,7 +231,7 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
                     optimal_estimation.AerosolOpticalDepth(
                         initial=0.3,
                         prior=0.3,
-                        variance=0.8,
+                        uncertainty=math.sqrt(0.8),
                     )
                 ]
             ),
@@ -474,7 +474,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         name: str
         initial: float
         prior: float
-        variance: float
+        uncertainty: float
         lower: float | None = None
         upper: float | None = None
 
@@ -605,7 +605,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     correction_measurement_builder.assert_called_once_with(
         measurement,
         wavelengths_nm=(765.2, 766.0, 768.0),
-        variance_scale=None,
+        uncertainty_scale=None,
     )
     correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
     assert loads == [(reference_case, False), (correction_case, False)]
@@ -733,7 +733,7 @@ def assert_native_oe_marshaling_bounds() -> None:
     measurement = optimal_estimation.Measurement(
         wavelength_nm=[760.0],
         reflectance=[0.2],
-        variance=[1.0e-6],
+        uncertainty=[1.0e-3],
     )
     state_vector = SimpleNamespace(
         parameters=[
@@ -741,7 +741,7 @@ def assert_native_oe_marshaling_bounds() -> None:
                 name="aerosol_optical_depth",
                 initial=0.3,
                 prior=0.3,
-                variance=0.8,
+                uncertainty=math.sqrt(0.8),
                 lower=None,
                 upper=None,
                 interval_index_1based=0,
@@ -838,13 +838,16 @@ def assert_native_oe_runs_after_default_prepare() -> None:
 
     try:
         case = handle.default_o2a_case()
-        measurement = optimal_estimation.measurement_from_case(case, reflectance_variance=1.0e-6)
+        measurement = optimal_estimation.measurement_from_case(
+            case,
+            reflectance_uncertainty=1.0e-3,
+        )
         state_vector = optimal_estimation.StateVector(
             (
                 optimal_estimation.AerosolOpticalDepth(
                     initial=0.3,
                     prior=0.3,
-                    variance=0.8,
+                    uncertainty=math.sqrt(0.8),
                 ),
             )
         )

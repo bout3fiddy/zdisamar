@@ -177,7 +177,7 @@ def run_fastmode_oe(
     correction_measurement = full_correction_measurement(
         measurement,
         wavelengths_nm=correction_wavelengths_nm,
-        variance_scale=final_correction.variance_scale,
+        uncertainty_scale=final_correction.uncertainty_scale,
     )
     correction_case = full_correction_case(full_state_case, correction_measurement)
     full_result = run_full_physics_correction(
@@ -222,7 +222,7 @@ def fast_stage_measurement(
     return measurement_on_wavelengths(
         measurement,
         wavelengths_nm=wavelengths_nm,
-        variance_scale=sampling.variance_scale,
+        uncertainty_scale=sampling.uncertainty_scale,
         label="fastmode fast-stage wavelengths",
     )
 
@@ -265,7 +265,7 @@ def full_correction_measurement(
     measurement: Measurement,
     window_nm: tuple[float, float] = FULL_CORRECTION_WINDOW_NM,
     wavelengths_nm: Sequence[float] | None = None,
-    variance_scale: float | None = None,
+    uncertainty_scale: float | None = None,
 ) -> Measurement:
     """Retain the O2 A wavelengths used by the final full-physics correction."""
 
@@ -280,7 +280,7 @@ def full_correction_measurement(
     return measurement_on_wavelengths(
         measurement,
         wavelengths_nm=wavelengths_nm,
-        variance_scale=variance_scale,
+        uncertainty_scale=uncertainty_scale,
         label="full-physics correction wavelengths",
     )
 
@@ -289,10 +289,10 @@ def measurement_on_wavelengths(
     measurement: Measurement,
     *,
     wavelengths_nm: Sequence[float],
-    variance_scale: float | None,
+    uncertainty_scale: float | None,
     label: str,
 ) -> Measurement:
-    """Retain selected wavelengths and scale variances for sparse OE vectors."""
+    """Retain selected wavelengths and scale uncertainty for sparse OE vectors."""
 
     retained_indices = measurement_indices_for_wavelengths(
         measurement.wavelength_nm,
@@ -303,21 +303,24 @@ def measurement_on_wavelengths(
     if len(retained_indices) < 2:
         raise ValueError(f"{label} retained fewer than two wavelengths")
 
-    retained_weight = (
-        len(retained_indices) / len(measurement.wavelength_nm)
-        if variance_scale is None
-        else float(variance_scale)
+    retained_uncertainty_scale = (
+        math.sqrt(len(retained_indices) / len(measurement.wavelength_nm))
+        if uncertainty_scale is None
+        else float(uncertainty_scale)
     )
 
-    if not math.isfinite(retained_weight) or retained_weight <= 0.0:
-        raise ValueError(f"{label} variance scale must be finite and positive")
+    if not math.isfinite(retained_uncertainty_scale) or retained_uncertainty_scale <= 0.0:
+        raise ValueError(f"{label} uncertainty scale must be finite and positive")
 
     return Measurement(
         wavelength_nm=array("d", (measurement.wavelength_nm[index] for index in retained_indices)),
         reflectance=array("d", (measurement.reflectance[index] for index in retained_indices)),
-        variance=array(
+        uncertainty=array(
             "d",
-            (float(measurement.variance[index]) * retained_weight for index in retained_indices),
+            (
+                float(measurement.uncertainty[index]) * retained_uncertainty_scale
+                for index in retained_indices
+            ),
         ),
     )
 
@@ -563,7 +566,7 @@ def scale_reflectance_jacobian(
 def measurement_from_case(
     case: O2AInput,
     *,
-    reflectance_variance: float,
+    reflectance_uncertainty: float,
 ) -> Measurement:
     """Build a synthetic reflectance measurement from a truth case."""
 
@@ -572,7 +575,7 @@ def measurement_from_case(
     return Measurement(
         wavelength_nm=array("d", spectrum.wavelength_nm),
         reflectance=array("d", spectrum.reflectance),
-        variance=array("d", (float(reflectance_variance) for _ in spectrum.wavelength_nm)),
+        uncertainty=array("d", (float(reflectance_uncertainty) for _ in spectrum.wavelength_nm)),
     )
 
 
@@ -645,7 +648,7 @@ def measurement_from_sun_normalized_radiance_noise(
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,
-        variance=array("d", (value * value for value in reflectance_noise)),
+        uncertainty=reflectance_noise,
     )
 
 

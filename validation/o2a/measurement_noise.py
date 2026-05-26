@@ -1,4 +1,4 @@
-"""Retained O2 A baseline measurement-noise covariance helpers."""
+"""Retained O2 A baseline measurement-noise helpers."""
 
 from dataclasses import dataclass
 from functools import cache
@@ -15,7 +15,7 @@ MIN_REFLECTANCE_NOISE = 1.0e-12
 
 @dataclass(frozen=True)
 class O2ANoiseComponents:
-    """Wavelength-dependent SNR and reflectance covariance terms."""
+    """Wavelength-dependent SNR and reflectance uncertainty terms."""
 
     wavelength_nm: np.ndarray
     radiance_snr: np.ndarray
@@ -50,7 +50,7 @@ def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
     return optimal_estimation.Measurement(
         wavelength_nm=wavelength_nm.tolist(),
         reflectance=reflectance.tolist(),
-        variance=(noise.reflectance_noise**2).tolist(),
+        uncertainty=noise.reflectance_noise.tolist(),
     )
 
 

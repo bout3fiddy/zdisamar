@@ -10,17 +10,17 @@ from .state_vector import StateName
 
 @dataclass(frozen=True)
 class Measurement:
-    """Observed retrieval vector y and diagonal measurement covariance.
+    """Observed retrieval vector and per-sample reflectance uncertainty.
 
     The first implementation uses reflectance as the retrieval quantity because
     the current O2 A validation bundle is expressed as sun-normalized
-    radiance/reflectance.  `variance` is the diagonal of S_e; a full covariance
-    can be added later without changing the public meaning of this type.
+    radiance/reflectance.  The native OE request squares `uncertainty` into the
+    diagonal measurement covariance expected by the solver.
     """
 
     wavelength_nm: Sequence[float]
     reflectance: Sequence[float]
-    variance: Sequence[float]
+    uncertainty: Sequence[float]
 
 
 @dataclass(frozen=True)

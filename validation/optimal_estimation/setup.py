@@ -156,10 +156,10 @@ def aerosol_two_state_vector(
     surface_pressure_hpa: float,
     interval_index_1based: int = 2,
     thickness_hpa: float = oe_baseline.LAYER_THICKNESS_HPA,
-    aod_variance: float = 0.8,
+    aod_prior_uncertainty: float = math.sqrt(0.8),
     aod_lower: float = 0.02,
     aod_upper: float | None = 5.0,
-    mid_pressure_variance_hpa2: float = 150.0**2,
+    mid_pressure_prior_uncertainty: float = 150.0,
     mid_pressure_lower_hpa: float | None = 225.0,
     mid_pressure_upper_hpa: float | None = None,
 ) -> optimal_estimation.StateVector:
@@ -173,14 +173,14 @@ def aerosol_two_state_vector(
             optimal_estimation.AerosolOpticalDepth(
                 initial=initial["aerosol_optical_depth"],
                 prior=initial["aerosol_optical_depth"],
-                variance=aod_variance,
+                uncertainty=aod_prior_uncertainty,
                 lower=aod_lower,
                 upper=aod_upper,
             ),
             optimal_estimation.AerosolLayerMidPressure(
                 initial=initial["aerosol_mid_pressure_hpa"],
                 prior=initial["aerosol_mid_pressure_hpa"],
-                variance=mid_pressure_variance_hpa2,
+                uncertainty=mid_pressure_prior_uncertainty,
                 thickness_hpa=thickness_hpa,
                 interval_index_1based=interval_index_1based,
                 pressure_altitude_profile=profile,
@@ -212,10 +212,12 @@ def reference_two_state_vector(
         surface_pressure_hpa=case.surface.pressure_hpa,
         interval_index_1based=case.aerosol.placement.interval_index_1based,
         thickness_hpa=layer_thickness,
-        aod_variance=1.0,
+        aod_prior_uncertainty=1.0,
         aod_lower=0.0,
         aod_upper=None,
-        mid_pressure_variance_hpa2=float(prior["aerosol_layer_mid_pressure_variance_hpa2"]),
+        mid_pressure_prior_uncertainty=math.sqrt(
+            float(prior["aerosol_layer_mid_pressure_variance_hpa2"])
+        ),
         mid_pressure_lower_hpa=None,
         mid_pressure_upper_hpa=None,
     )
