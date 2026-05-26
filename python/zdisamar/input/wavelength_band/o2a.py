@@ -168,6 +168,7 @@ class O2AInput(NotebookDisplay):
             ),
             outputs=_object_list(data, "outputs"),
             validation=_object_dict(data, "validation"),
+            optimisation=O2AOptimisation.from_dict(object_dict(data.get("optimisation", {}))),
         )
 
     @classmethod
@@ -177,7 +178,15 @@ class O2AInput(NotebookDisplay):
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, object]:
-        """Return the O2 A scene shape expected by the zdisamar model."""
+        """Return the Python O2 A case shape, including optimisation controls."""
+
+        payload = self.to_native_dict()
+        payload["optimisation"] = self.optimisation.to_dict()
+
+        return payload
+
+    def to_native_dict(self) -> dict[str, object]:
+        """Return the O2 A scene shape expected by the native zdisamar model."""
 
         return {
             "metadata": self.metadata,
@@ -202,11 +211,18 @@ class O2AInput(NotebookDisplay):
         }
 
     def to_json_bytes(self) -> bytes:
-        """Encode the scene deterministically before the zdisamar model reads it."""
+        """Encode the Python case deterministically, including optimisation controls."""
 
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
+
+    def to_native_json_bytes(self) -> bytes:
+        """Encode the native scene without Python-only optimisation controls."""
+
+        return json.dumps(
+            json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
 
     def resolved_optimisation(self) -> dict[str, object]:
         """Return case optimisation settings with concrete derived values."""

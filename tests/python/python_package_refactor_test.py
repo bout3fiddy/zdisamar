@@ -831,6 +831,35 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert resolved_fastmode["radiative_transfer"]["fourier_order_cap"] == 5
             assert resolved_fastmode["oe"]["final_correction"]["wavelength_count"] == 12
             assert len(resolved_fastmode["oe"]["final_correction"]["wavelengths_nm"]) == 12
+            fast_case.optimisation.fastmode.oe.final_correction.wavelengths_nm = (
+                765.2,
+                766.0,
+                768.0,
+            )
+            fast_roundtrip = o2a.O2ACase.from_json(fast_case.to_json_bytes())
+            assert fast_roundtrip.optimisation.fastmode.enabled
+            assert fast_roundtrip.optimisation.fastmode.oe.final_correction.wavelengths_nm == (
+                765.2,
+                766.0,
+                768.0,
+            )
+            assert b'"optimisation"' in fast_case.to_json_bytes()
+            assert b'"optimisation"' not in fast_case.to_native_json_bytes()
+            invalid_optimisation_case = copy.deepcopy(fast_case.to_dict())
+            invalid_optimisation = cast(
+                dict[str, object],
+                invalid_optimisation_case["optimisation"],
+            )
+            invalid_fastmode = cast(dict[str, object], invalid_optimisation["fastmode"])
+            invalid_fastmode["ignored"] = True
+
+            try:
+                o2a.O2ACase.from_dict(invalid_optimisation_case)
+            except ValueError as exc:
+                assert "unsupported fastmode fields" in str(exc)
+            else:
+                raise AssertionError("unsupported fastmode optimisation control was accepted")
+
             assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap is None
             fast_rtm_case = fast_case.with_rtm_optimisation_applied()
             assert fast_rtm_case.optimisation.fastmode.enabled is False

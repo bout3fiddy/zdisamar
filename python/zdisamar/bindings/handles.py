@@ -142,7 +142,7 @@ class RtmHandle:
 
         rtm_case = case.with_rtm_optimisation_applied()
         resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
-        payload = resolved.to_json_bytes()
+        payload = resolved.to_native_json_bytes()
         self._check(
             self._lib.zds_prepare_o2a_json(
                 self._ctx,
@@ -169,7 +169,7 @@ class RtmHandle:
         rtm_case = case.with_rtm_optimisation_applied()
         resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
 
-        return resolved.to_json_bytes() == self._case_fingerprint
+        return resolved.to_native_json_bytes() == self._case_fingerprint
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
