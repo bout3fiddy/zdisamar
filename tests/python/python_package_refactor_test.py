@@ -793,6 +793,22 @@ def assert_native_oe_marshaling_bounds() -> None:
     else:
         raise AssertionError("non-integer max_iterations reached native OE marshaling")
 
+    for invalid_uncertainty in (0.0, -1.0e-3, math.inf, math.nan):
+        try:
+            handle.optimal_estimation(
+                measurement=optimal_estimation.Measurement(
+                    wavelength_nm=[760.0],
+                    reflectance=[0.2],
+                    uncertainty=[invalid_uncertainty],
+                ),
+                state_vector=state_vector,
+                controls=optimal_estimation.RetrievalControls(max_iterations=1),
+            )
+        except ValueError as error:
+            assert "measurement uncertainty" in str(error)
+        else:
+            raise AssertionError("invalid measurement uncertainty reached native OE marshaling")
+
     state_vector.parameters[0].interval_index_1based = 2**32
 
     try:

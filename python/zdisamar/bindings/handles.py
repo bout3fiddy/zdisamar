@@ -377,8 +377,8 @@ class RtmHandle:
         if len(wavelength) != len(reflectance) or len(wavelength) != len(uncertainty):
             raise ValueError("measurement arrays must have the same length")
 
-        if any(value <= 0.0 for value in uncertainty):
-            raise ValueError("measurement uncertainty values must be positive")
+        if any(not math.isfinite(value) or value <= 0.0 for value in uncertainty):
+            raise ValueError("measurement uncertainty values must be finite and positive")
 
         measurement_covariance = (ctypes.c_double * len(uncertainty))(
             *(value * value for value in uncertainty)
