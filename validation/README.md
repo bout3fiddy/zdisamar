@@ -12,6 +12,9 @@ under `out/`, not under this directory.
 The validation tree is split by target:
 
 - `spectra/`: forward reflectance and reflectance-Jacobian parity evidence.
+- `doas_spectrum/`: retained research validation for the DOAS-like O2 A
+  spectrum baseline, including residual, timing, and OE-output difference
+  analysis against the full-physics path.
 - `optimal_estimation/`: inverse-method retrieval evidence.
 - `o2a/`: shared O2 A scene, baseline, and measurement-noise helpers used by
   both spectra and inverse-method validation.
@@ -38,6 +41,17 @@ The validation tree is split by target:
   `outputs/spectra/o2a_fast_mode_spectra_metrics.json`: retained comparison of
   reference settings against the O2 A fastmode preset over several scene
   geometries.
+- `outputs/doas_spectrum/doas_spectrum_residuals.png`,
+  `outputs/doas_spectrum/doas_spectrum_residuals.csv`,
+  `outputs/doas_spectrum/doas_oe_comparison.png`,
+  `outputs/doas_spectrum/doas_oe_comparison_runs.csv`, and
+  `outputs/doas_spectrum/doas_baseline_summary.json`: retained research
+  baseline for the DOAS-like spectrum reconstruction. The validation uses
+  full-physics spectra as the reference, sparse support-wavelength spectra plus
+  a gas differential-optical-depth correction as the approximation, and a small
+  finite-difference OE loop to expose state-output differences before any
+  production wiring. Regenerate it with
+  `validation/doas_spectrum/validate_doas_baseline.py`.
 - `reference_data/spectra/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
   still consumed by older forward validation tests.
 - `reference_data/spectra/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
@@ -82,6 +96,7 @@ The validation tree is split by target:
 - `zig build test-validation-o2a-vendor`
 - `uv run validation/spectra/validate_spectra.py`
 - `uv run validation/spectra/validate_fast_mode_spectra.py`
+- `uv run validation/doas_spectrum/validate_doas_baseline.py`
 - `uv run validation/optimal_estimation/sweep_optimal_estimation.py`
 - `uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`
 

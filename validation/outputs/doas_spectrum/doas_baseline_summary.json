@@ -1,0 +1,265 @@
+{
+  "canonical_command": "uv run validation/doas_spectrum/validate_doas_baseline.py",
+  "method": {
+    "amf": "geometric 1/mu0 + 1/mu",
+    "oe_case_count": 2,
+    "oe_max_iterations": 5,
+    "oe_note": "The DOAS-like OE lane is a validation-side finite-difference solver. It is intended to expose state-output differences and residual structure before native Jacobian or production wiring work.",
+    "oe_support_max": 17,
+    "oe_wavelength_count": 81,
+    "optical_depth_proxy": "sum gas_absorption_optical_depth over positive-path atmospheric-budget rows; CIA is reported but not included in tau_diff",
+    "runtime_note": "runtime_proxy_s counts sparse full-physics support spectra plus algebraic reconstruction. diagnostic_total_s also includes the current Python budget query used to derive tau_diff; a production port would precompute or prepare this optical-depth input instead of treating the diagnostics query as the steady-state DOAS cost.",
+    "smooth_degree": 4,
+    "spectrum_support_max": 33
+  },
+  "optimal_estimation": {
+    "doas_like": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 334.44872704153784,
+        "max_abs": 334.44872704153784,
+        "mean": 278.63903081840385,
+        "median": 278.63903081840385,
+        "min": 222.82933459526987
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 0.3265369758201433,
+        "max_abs": 0.3265369758201433,
+        "mean": 0.20792999119855132,
+        "median": 0.20792999119855132,
+        "min": 0.08932300657695937
+      },
+      "converged": 1,
+      "retrieval_s": {
+        "max": 16.73893600003794,
+        "max_abs": 16.73893600003794,
+        "mean": 11.410127979586832,
+        "median": 11.410127979586832,
+        "min": 6.081319959135726
+      },
+      "rows": 2
+    },
+    "doas_minus_full_physics": {
+      "aerosol_mid_pressure_hpa": {
+        "max": 334.44832805902195,
+        "max_abs": 334.44832805902195,
+        "mean": 55.726311066948,
+        "median": 55.726311066948,
+        "min": -222.99570592512595
+      },
+      "aerosol_optical_depth": {
+        "max": 0.3265379699494093,
+        "max_abs": 0.3265379699494093,
+        "mean": 0.11861718638446508,
+        "median": 0.11861718638446508,
+        "min": -0.08930359718047916
+      },
+      "final_exact_spectrum_rmse_ratio": {
+        "max": 229951.14013335842,
+        "max_abs": 229951.14013335842,
+        "mean": 115280.92502413774,
+        "median": 115280.92502413774,
+        "min": 610.7099149170577
+      },
+      "retrieval_speedup_ratio": {
+        "max": 0.18130656788983912,
+        "max_abs": 0.18130656788983912,
+        "mean": 0.14486470950950392,
+        "median": 0.14486470950950392,
+        "min": 0.10842285112916873
+      },
+      "retrieval_speedup_s": {
+        "max": -4.978736709104851,
+        "max_abs": 14.924052834045142,
+        "mean": -9.951394771574996,
+        "median": -9.951394771574996,
+        "min": -14.924052834045142
+      }
+    },
+    "full_physics": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 0.1663713298560765,
+        "max_abs": 0.1663713298560765,
+        "mean": 0.08338515618598308,
+        "median": 0.08338515618598308,
+        "min": 0.0003989825158896565
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 1.9409396480207786e-05,
+        "max_abs": 1.9409396480207786e-05,
+        "mean": 1.0201762873113251e-05,
+        "median": 1.0201762873113251e-05,
+        "min": 9.941292660187173e-07
+      },
+      "converged": 2,
+      "retrieval_s": {
+        "max": 1.8148831659927964,
+        "max_abs": 1.8148831659927964,
+        "mean": 1.4587332080118358,
+        "median": 1.4587332080118358,
+        "min": 1.1025832500308752
+      },
+      "rows": 2
+    },
+    "per_scene_deltas": [
+      {
+        "doas_final_full_physics_rmse": 0.012932596204600477,
+        "doas_final_full_physics_rmse_over_reference": 229951.14013335842,
+        "doas_minus_reference_aerosol_mid_pressure_hpa": 334.44832805902195,
+        "doas_minus_reference_aerosol_optical_depth": 0.3265379699494093,
+        "doas_retrieval_speedup_ratio": 0.10842285112916873,
+        "doas_retrieval_speedup_s": -14.924052834045142,
+        "reference_final_full_physics_rmse": 5.624062658310942e-08,
+        "scene": 1
+      },
+      {
+        "doas_final_full_physics_rmse": 0.0006895664614583267,
+        "doas_final_full_physics_rmse_over_reference": 610.7099149170577,
+        "doas_minus_reference_aerosol_mid_pressure_hpa": -222.99570592512595,
+        "doas_minus_reference_aerosol_optical_depth": -0.08930359718047916,
+        "doas_retrieval_speedup_ratio": 0.18130656788983912,
+        "doas_retrieval_speedup_s": -4.978736709104851,
+        "reference_final_full_physics_rmse": 1.1291227547074926e-06,
+        "scene": 2
+      }
+    ]
+  },
+  "outputs": {
+    "oe_csv": "validation/outputs/doas_spectrum/doas_oe_comparison_runs.csv",
+    "oe_plot": "validation/outputs/doas_spectrum/doas_oe_comparison.png",
+    "spectrum_csv": "validation/outputs/doas_spectrum/doas_spectrum_residuals.csv",
+    "spectrum_plot": "validation/outputs/doas_spectrum/doas_spectrum_residuals.png",
+    "summary_json": "validation/outputs/doas_spectrum/doas_baseline_summary.json"
+  },
+  "schema_version": 1,
+  "spectrum": {
+    "diagnostic_total_speedup": {
+      "max": 0.4919913006700998,
+      "max_abs": 0.4919913006700998,
+      "mean": 0.4702943739522949,
+      "median": 0.4763475877041692,
+      "min": 0.44254423348261585
+    },
+    "max_abs_residual": {
+      "max": 6.548351070104738e+20,
+      "max_abs": 6.548351070104738e+20,
+      "mean": 2.21193419633379e+20,
+      "median": 8.744839044583135e+18,
+      "min": 312845080038713.2
+    },
+    "max_abs_residual_over_noise": {
+      "max": 2.4458516612172684e+24,
+      "max_abs": 2.4458516612172684e+24,
+      "mean": 8.222140311029262e+23,
+      "median": 2.0789511876051263e+22,
+      "min": 9.202154588042853e+17
+    },
+    "per_scene": [
+      {
+        "doas_diagnostic_total_s": 1.6802682089619339,
+        "doas_diagnostic_total_speedup": 0.4763475877041692,
+        "doas_runtime_proxy_s": 1.1224008339922875,
+        "doas_runtime_proxy_speedup": 0.7131068365194406,
+        "geometric_amf": 3.154700538379251,
+        "max_abs_residual": 6.548351070104738e+20,
+        "max_abs_residual_over_noise": 2.4458516612172684e+24,
+        "max_abs_residual_wavelength_nm": 763.16,
+        "max_cia_vertical_tau": 0.007037208689438286,
+        "max_gas_vertical_tau": 802.912303593386,
+        "mean_signed": 1.5737003692137535e+19,
+        "median_abs_residual_over_noise": 8741523.35403418,
+        "reference_spectrum_s": 0.800391708035022,
+        "rmse": 7.93872860891701e+19,
+        "scene": "baseline",
+        "scene_parameters": {
+          "aerosol_mid_pressure_hpa": 510.0,
+          "aerosol_optical_depth": 0.3,
+          "relative_azimuth_deg": 120.0,
+          "solar_zenith_deg": 60.0,
+          "surface_albedo": 0.2,
+          "surface_pressure_hpa": 1013.25,
+          "viewing_zenith_deg": 30.0
+        },
+        "support_source": "tau-diff zero crossings",
+        "support_wavelength_count": 33
+      },
+      {
+        "doas_diagnostic_total_s": 1.4781693750992417,
+        "doas_diagnostic_total_speedup": 0.44254423348261585,
+        "doas_runtime_proxy_s": 0.9373062502127141,
+        "doas_runtime_proxy_speedup": 0.6979099231572562,
+        "geometric_amf": 2.243115183626485,
+        "max_abs_residual": 312845080038713.2,
+        "max_abs_residual_over_noise": 9.202154588042853e+17,
+        "max_abs_residual_wavelength_nm": 763.56,
+        "max_cia_vertical_tau": 0.0070374093923554985,
+        "max_gas_vertical_tau": 802.9302531733201,
+        "mean_signed": 10257819430552.35,
+        "median_abs_residual_over_noise": 595242.5312948492,
+        "reference_spectrum_s": 0.6541553330607712,
+        "rmse": 43677555969728.78,
+        "scene": "bright surface",
+        "scene_parameters": {
+          "aerosol_mid_pressure_hpa": 720.0,
+          "aerosol_optical_depth": 0.12,
+          "relative_azimuth_deg": 150.0,
+          "solar_zenith_deg": 35.0,
+          "surface_albedo": 0.55,
+          "surface_pressure_hpa": 1013.25,
+          "viewing_zenith_deg": 12.0
+        },
+        "support_source": "tau-diff zero crossings",
+        "support_wavelength_count": 33
+      },
+      {
+        "doas_diagnostic_total_s": 1.8198777919169515,
+        "doas_diagnostic_total_speedup": 0.4919913006700998,
+        "doas_runtime_proxy_s": 1.2831501250620931,
+        "doas_runtime_proxy_speedup": 0.6977858821176691,
+        "geometric_amf": 3.123699869623411,
+        "max_abs_residual": 8.744839044583135e+18,
+        "max_abs_residual_over_noise": 2.0789511876051263e+22,
+        "max_abs_residual_wavelength_nm": 763.56,
+        "max_cia_vertical_tau": 0.005622820343458883,
+        "max_gas_vertical_tau": 755.139943200928,
+        "mean_signed": 2.407280400797269e+17,
+        "median_abs_residual_over_noise": 4025453.0370526435,
+        "reference_spectrum_s": 0.8953640419058502,
+        "rmse": 1.144209896455438e+18,
+        "scene": "oblique aerosol",
+        "scene_parameters": {
+          "aerosol_mid_pressure_hpa": 329.192074869615,
+          "aerosol_optical_depth": 1.9681905891962788,
+          "relative_azimuth_deg": 7.0232796692031245,
+          "solar_zenith_deg": 53.76029607719826,
+          "surface_albedo": 0.19528921533381227,
+          "surface_pressure_hpa": 896.819424951348,
+          "viewing_zenith_deg": 45.71214389158657
+        },
+        "support_source": "tau-diff zero crossings",
+        "support_wavelength_count": 33
+      }
+    ],
+    "rmse": {
+      "max": 7.93872860891701e+19,
+      "max_abs": 7.93872860891701e+19,
+      "mean": 2.6843846554393833e+19,
+      "median": 1.144209896455438e+18,
+      "min": 43677555969728.78
+    },
+    "runtime_proxy_speedup": {
+      "max": 0.7131068365194406,
+      "max_abs": 0.7131068365194406,
+      "mean": 0.7029342139314553,
+      "median": 0.6979099231572562,
+      "min": 0.6977858821176691
+    },
+    "scene_count": 3,
+    "support_wavelength_count": {
+      "max": 33.0,
+      "max_abs": 33.0,
+      "mean": 33.0,
+      "median": 33.0,
+      "min": 33.0
+    }
+  }
+}
