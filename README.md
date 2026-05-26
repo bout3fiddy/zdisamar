@@ -119,6 +119,12 @@ shortcut-accelerated DISAMAR run.
 The benchmark evidence covers RTM timing and
 optimal-estimation retrieval timing.
 
+The timings in this section were recorded on the local benchmark machine: Mac
+mini `Mac16,10`, Apple M4, 10 CPU cores (4 performance, 6 efficiency), 24 GB
+RAM. Treat the absolute seconds as machine-specific wall-clock measurements; the
+linked validation artifacts are the source for the reported case counts,
+retrieved-state deltas, and timing summaries.
+
 ### RTM
 
 The RTM benchmark calculates one O2 A spectrum over 755-776 nm. The
@@ -148,7 +154,7 @@ The detailed performance notes live in
 
 The paired optimal-estimation sweep compares DISAMAR Fortran and `zdisamar`
 using the same scene and a-priori sampling. Each system retrieves its own
-synthetic spectrum, which keeps the retrieval problem aligned while measuring
+simulated spectrum, which keeps the retrieval problem aligned while measuring
 the two systems separately.
 
 ```text
@@ -169,28 +175,33 @@ aerosol mid pressure [hPa]:  median -0.0016,    mean -0.0020,    range -0.0522 t
 Fastmode retrieval is a zdisamar-only optimisation lane on the same O2 A case.
 The normal case remains the full-physics reference. Enabling
 `case.optimisation.fastmode.enabled` resolves inspectable RTM, adaptive-grid,
-OE, and final-correction defaults before execution. The corrected fastmode path
-uses the fastmode result as the starting state for one sparse full-physics
-forward model plus Jacobian update.
+OE, sparse fast-stage wavelength sampling, and final-correction defaults before
+execution. The shipped fastmode path solves the fast stage on the sparse
+measurement grid, then uses that result as the starting state for one sparse
+full-physics forward model plus Jacobian update.
 
 ```text
-zdisamar reference:          100/100 converged, median 1.790 s, mean 1.741 s
-zdisamar fast:               100/100 converged, median 0.954 s, mean 0.919 s
-zdisamar fastmode corrected: 100/100 converged, median 1.140 s, mean 1.115 s
+zdisamar fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
+zdisamar fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
 ```
 
-![Fastmode optimal-estimation comparison](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png)
+![Fastmode retrieved-state comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 
-The retained corrected fastmode sweep stays closer to fastmode latency than
-full-reference latency: median speedup versus reference is `+0.653 s`, and the
-correction adds median `+0.194 s` over fastmode alone. The maximum
-corrected-minus-reference deltas are `4.864e-04` aerosol optical depth and
-`0.215 hPa` aerosol mid pressure.
+The retained fastmode sweep uses 38 fast-stage wavelengths and 12 full-physics
+correction wavelengths on the validation measurement grid. Median speedup versus
+fullmode is `+1.416 s`. The maximum fastmode-minus-fullmode deltas are
+`5.285e-04` aerosol optical depth and `0.668 hPa` aerosol mid pressure.
+These timings are wall-clock durations around the public retrieval call. They
+include session/cache creation, native case load and preparation, native OE work,
+and the sparse full-physics correction; they do not include scene construction,
+simulated measurement construction, CSV writing, or plot rendering.
 The technical note is
 [`research/performance/o2a-retrieval/fastmode-final-correction.md`](./research/performance/o2a-retrieval/fastmode-final-correction.md).
 
-The tracked summary is
+The tracked paired DISAMAR/zdisamar summary is
 [`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
+The tracked fastmode summary is
+[`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json).
 The retrieval notes live in
 [`research/performance/o2a-retrieval/`](./research/performance/o2a-retrieval/).
 
@@ -216,100 +227,150 @@ accumulation, and phase-matrix construction. The detailed timing and operation
 counts are in
 [`research/performance/o2a-forward/remaining-bottlenecks.md`](./research/performance/o2a-forward/remaining-bottlenecks.md).
 
-## Production Status And Next Work
+## Python Package
 
-The stable implementation today is the O2 A RTM: typed inputs, bundled
-reference data, the Zig library and CLI helpers, Python wrapper demos, spectra
-validation, and benchmark artifacts.
-
-The optimal-estimation retrieval code currently supports the aerosol-only
-two-state retrieval case used by the benchmark evidence. The stable API remains
-centered on the RTM.
-
-The next work is to reduce the cost of repeated reflectance and derivative
-calculations during retrievals, while preserving the full O2 A result, and to
-decide which retrieval functions should become part of the stable API.
-
-[Nanda et al. (2019)](https://doi.org/10.5194/amt-12-6619-2019) describes an
-operational neural-network approach that uses a trained replacement for repeated
-online radiative-transfer calculations. `zdisamar` keeps the online full-physics
-calculation explicit, measurable, and available for validation and further
-optimization.
-
-## Repository Layout
-
-| Path | Purpose |
-| --- | --- |
-| `src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
-| `src/forward_model/` | RTM internals: optical properties, radiative transfer, instrument-grid calculation, and implementations |
-| `src/output/` | diagnostic reports and spectrum serialization |
-| `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
-| `data/` | tracked O2 A bundles and reference assets |
-| `tests/` | O2 A executable checks |
-| `validation/` | O2 A compatibility, benchmark, and reference evidence |
-| `research/performance/` | performance provenance, current benchmark notes, and bottleneck analysis |
-| `scripts/demo/` | executable Python-facing demo notebooks |
-| `docs/` | DISAMAR context, O2 A runtime, and reference-data boundary |
-
-## Build And Verification
-
-Prerequisites:
-
-- Zig `0.15.2` or newer. The repo declares `minimum_zig_version = "0.15.2"` in
-  [`build.zig.zon`](./build.zig.zon).
-- [`uv`](https://docs.astral.sh/uv/) for Python-based helpers.
-
-Build the library and CLI:
+Use `uv` to download the published Python package into an isolated environment.
+The wheel includes the native RTM library and bundled O2 A reference data, and
+the package has no third-party runtime dependencies:
 
 ```bash
-zig build
+uv run --with zdisamar python
 ```
 
-This produces the CLI helpers at `./zig-out/bin/zdisamar` and
-`./zig-out/bin/zdisamar-o2a-plot-spectrum`.
+The public API is intentionally small: build a simulated O2 A case, run the
+native RTM, and pass the same case into optimal estimation when you want a
+retrieval.
 
-Run the fast local verification loop:
-
-```bash
-zig build check
+```python
+from zdisamar import rtm
+from zdisamar.inverse_method import optimal_estimation as oe
+from zdisamar.rtm import SessionCache
+from zdisamar.wavelength_bands import o2a
 ```
 
-Run the broader fast presubmit:
+Build a complete simulated O2 A scene without preparing an external DISAMAR
+input file. The wheel carries the native library and the reference assets.
 
-```bash
-zig build test-fast
+```python
+case = o2a.reference_case()
+case.aerosol_optical_depth_550_nm = 0.32
+case.aerosol_layer.mid_pressure_hpa = 760.0
 ```
 
-Run the full verification baseline:
+Run the forward model and get normal Python arrays for the instrument wavelength
+grid, radiance, irradiance, reflectance, and optional Jacobians.
 
-```bash
-zig build test
+```python
+spectrum = rtm.spectrum(case)
+jacobian_spectrum = rtm.spectrum(
+    case,
+    jacobian=True,
+    jacobian_state_names=("aerosol_optical_depth",),
+)
 ```
 
-Regenerate the tracked O2 A comparison bundle after changing the O2 A RTM or
-Jacobian validation outputs:
+Aerosol profiles can be explicit vertical distributions for forward simulations,
+not only one scalar aerosol layer.
 
-```bash
-uv run validation/spectra/validate_spectra.py
+```python
+case.set_aerosol_profile(
+    (
+        o2a.AerosolProfileLayer(
+            top_pressure_hpa=620.0,
+            bottom_pressure_hpa=700.0,
+            optical_depth=0.10,
+            single_scatter_albedo=0.94,
+            asymmetry_factor=0.66,
+        ),
+        o2a.AerosolProfileLayer(
+            top_pressure_hpa=700.0,
+            bottom_pressure_hpa=820.0,
+            optical_depth=0.22,
+            single_scatter_albedo=0.92,
+            asymmetry_factor=0.63,
+        ),
+    )
+)
 ```
 
-For temporary Zig caches, use the ephemeral wrapper:
+Fastmode is a case-owned optimisation mode. Its RTM, adaptive-grid, OE, and
+sparse wavelength choices are inspectable and tuneable.
 
-```bash
-./scripts/zig-build-ephemeral.sh check
-./scripts/zig-build-ephemeral.sh test-fast --summary all
+```python
+case = o2a.reference_case().with_fast_mode()
+fastmode = case.optimisation.fastmode
+
+fastmode.radiative_transfer.fourier_order_cap = 5
+fastmode.radiative_transfer.threshold_doubl = 3.0e-5
+
+fastmode.adaptive_reference_grid.points_per_fwhm = 28
+fastmode.adaptive_reference_grid.strong_line_max_divisions = 22
+
+fastmode.oe.controls.max_iterations = 10
+fastmode.oe.fast_stage_sampling.windows = (
+    o2a.FastModeWavelengthWindow((755.0, 758.5), 16),
+    o2a.FastModeWavelengthWindow((765.2, 768.0), 25),
+)
+fastmode.oe.final_correction.wavelength_count = 12
+
+resolved_fastmode = case.resolved_optimisation()["fastmode"]
 ```
 
-To reclaim space from prior runs:
+The OE path uses the same case object. A `SessionCache` keeps prepared native RTM
+state alive across the repeated forward-model and Jacobian evaluations.
 
-```bash
-./scripts/clean-zig-caches.sh
+```python
+truth = o2a.reference_case()
+measurement = oe.measurement_from_case(truth, reflectance_uncertainty=1.0e-4)
+
+case = o2a.reference_case().with_fast_mode()
+profile = oe.pressure_altitude_profile_from_case(case)
+state_vector = oe.StateVector(
+    (
+        oe.AerosolOpticalDepth(
+            initial=0.18,
+            prior=0.18,
+            uncertainty=0.5,
+            lower=0.0,
+        ),
+        oe.AerosolLayerMidPressure(
+            initial=820.0,
+            prior=820.0,
+            uncertainty=80.0,
+            thickness_hpa=case.aerosol_layer.thickness_hpa,
+            interval_index_1based=case.aerosol.placement.interval_index_1based,
+            pressure_altitude_profile=profile,
+        ),
+    )
+)
+
+with SessionCache() as cache:
+    result = oe.disamar_oe(
+        case=case,
+        measurement=measurement,
+        state_vector=state_vector,
+        cache=cache,
+    )
 ```
 
-## Recommended Reading
+Retrieval results stay in physical coordinates and include convergence history,
+the averaging kernel, and lazy final-state diagnostics.
 
-- [`docs/disamar-overview.md`](./docs/disamar-overview.md)
-- [`docs/o2a-rtm.md`](./docs/o2a-rtm.md)
-- [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
-- [`research/performance/README.md`](./research/performance/README.md)
-- [`validation/README.md`](./validation/README.md)
+```python
+retrieved_aod = result.value("aerosol_optical_depth")
+retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
+iteration_history = result.history
+```
+
+The package also ships dependency-free SVG plotting accessors for common O2 A
+diagnostics, so notebooks do not need Pandas or Matplotlib for the standard
+views.
+
+```python
+reflectance_plot = spectrum.plot.reflectance()
+jacobian_plot = jacobian_spectrum.plot.jacobian("aerosol_optical_depth")
+
+convergence_plot = result.plot.convergence()
+measurement_fit_plot = result.plot.measurement_fit()
+retrieval_jacobian_plot = result.plot.jacobian()
+```

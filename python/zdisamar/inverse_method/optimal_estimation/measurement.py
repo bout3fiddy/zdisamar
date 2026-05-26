@@ -17,7 +17,7 @@ class MeasurementArrays:
 
     wavelength_nm: array
     reflectance: array
-    variance: array
+    covariance_diagonal: array
 
 
 def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
@@ -25,13 +25,13 @@ def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
 
     wavelength_nm = array("d", (float(value) for value in measurement.wavelength_nm))
     reflectance = array("d", (float(value) for value in measurement.reflectance))
-    variance = array("d", (float(value) for value in measurement.variance))
+    uncertainty = array("d", (float(value) for value in measurement.uncertainty))
 
     if not wavelength_nm:
         raise ValueError("measurement must contain at least one sample")
 
-    if len(wavelength_nm) != len(reflectance) or len(wavelength_nm) != len(variance):
-        raise ValueError("measurement wavelength, reflectance, and variance shapes must match")
+    if len(wavelength_nm) != len(reflectance) or len(wavelength_nm) != len(uncertainty):
+        raise ValueError("measurement wavelength, reflectance, and uncertainty shapes must match")
 
     if any(not math.isfinite(value) for value in wavelength_nm):
         raise ValueError("measurement wavelength and reflectance values must be finite")
@@ -39,8 +39,8 @@ def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
     if any(not math.isfinite(value) for value in reflectance):
         raise ValueError("measurement wavelength and reflectance values must be finite")
 
-    if any(not math.isfinite(value) or value <= 0.0 for value in variance):
-        raise ValueError("measurement variance values must be finite and positive")
+    if any(not math.isfinite(value) or value <= 0.0 for value in uncertainty):
+        raise ValueError("measurement uncertainty values must be finite and positive")
 
     if any(upper <= lower for lower, upper in zip(wavelength_nm, wavelength_nm[1:], strict=False)):
         raise ValueError("measurement wavelength grid must be strictly increasing")
@@ -48,7 +48,7 @@ def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
     return MeasurementArrays(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
-        variance=variance,
+        covariance_diagonal=array("d", (value * value for value in uncertainty)),
     )
 
 

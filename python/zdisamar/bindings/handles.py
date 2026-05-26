@@ -372,10 +372,17 @@ class RtmHandle:
 
         wavelength = double_array(measurement.wavelength_nm, "measurement wavelengths")
         reflectance = double_array(measurement.reflectance, "measurement reflectance")
-        variance = double_array(measurement.variance, "measurement variance")
+        uncertainty = double_array(measurement.uncertainty, "measurement uncertainty")
 
-        if len(wavelength) != len(reflectance) or len(wavelength) != len(variance):
+        if len(wavelength) != len(reflectance) or len(wavelength) != len(uncertainty):
             raise ValueError("measurement arrays must have the same length")
+
+        if any(not math.isfinite(value) or value <= 0.0 for value in uncertainty):
+            raise ValueError("measurement uncertainty values must be finite and positive")
+
+        measurement_covariance = (ctypes.c_double * len(uncertainty))(
+            *(value * value for value in uncertainty)
+        )
 
         state_buffers = []
         state_specs = []
@@ -442,6 +449,13 @@ class RtmHandle:
             if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
                 raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")
 
+            uncertainty = float(parameter.uncertainty)
+
+            if not math.isfinite(uncertainty) or uncertainty <= 0.0:
+                raise ValueError(
+                    "optimal-estimation state uncertainty values must be finite and positive"
+                )
+
             state_specs.append(
                 COptimalEstimationStateSpec(
                     state_id=state_id,
@@ -450,7 +464,7 @@ class RtmHandle:
                     interval_index_1based=interval_index_1based,
                     initial=float(parameter.initial),
                     prior=float(parameter.prior),
-                    variance=float(parameter.variance),
+                    variance=uncertainty * uncertainty,
                     lower=0.0 if lower is None else float(lower),
                     upper=0.0 if upper is None else float(upper),
                     thickness_hpa=float(getattr(parameter, "thickness_hpa", 0.0)),
@@ -468,7 +482,7 @@ class RtmHandle:
             sample_count=len(wavelength),
             wavelength_nm=wavelength,
             reflectance=reflectance,
-            variance=variance,
+            variance=measurement_covariance,
             state_count=len(state_specs),
             states=state_spec_array,
             controls=COptimalEstimationControls(
@@ -479,7 +493,13 @@ class RtmHandle:
                 max_change_transformed_state=float(controls.max_change_transformed_state),
             ),
         )
-        buffers = (wavelength, reflectance, variance, state_spec_array, *state_buffers)
+        buffers = (
+            wavelength,
+            reflectance,
+            measurement_covariance,
+            state_spec_array,
+            *state_buffers,
+        )
 
         return request, buffers
 

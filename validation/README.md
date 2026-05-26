@@ -58,20 +58,20 @@ The validation tree is split by target:
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv`,
   and
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`:
-  retained fastmode sweep comparison between zdisamar reference-threshold
-  retrievals, zdisamar fastmode retrievals, and corrected zdisamar fastmode
-  retrievals. Corrected fastmode solves the fastmode OE problem to convergence
-  and applies one sparse full-physics correction. The plot includes posterior one-sigma
-  error bars, mode-minus-reference retrieval deltas, and timing panels.
+  retained fastmode sweep comparison between zdisamar fullmode retrievals and
+  shipped fastmode retrievals. Fastmode solves the fast OE stage on sparse
+  measured wavelengths and applies one sparse full-physics correction. The plot
+  includes posterior one-sigma error bars, fastmode-minus-fullmode retrieval
+  deltas, and timing panels.
   Regenerate it with
   `validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`.
-- `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: paired-style
-  retrieved-state plot comparing zdisamar reference retrievals against zdisamar
-  fastmode and corrected fastmode retrievals on the fastmode sweep scenes.
+- `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: retained
+  retrieved-state-versus-truth plot comparing zdisamar fullmode retrievals
+  against shipped fastmode retrievals on the fastmode sweep scenes. It uses the
+  same layout as `paired_oe_retrieved_scatter.png`.
 - `outputs/optimal_estimation/paired_oe_latency.png`: latency plot refreshed by
   the fastmode sweep. When the historical paired manifest is present, the plot
-  includes DISAMAR Fortran, zdisamar reference, zdisamar-fast, and
-  zdisamar-fastmode-corrected.
+  includes DISAMAR Fortran, zdisamar fullmode, and zdisamar fastmode.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked
   paired-retrieval plot outputs kept as historical evidence.

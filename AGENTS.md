@@ -16,7 +16,6 @@
 - Benchmarks: [benchmark/AGENTS.md](benchmark/AGENTS.md).
 - Data assets: [data/AGENTS.md](data/AGENTS.md).
 - Scripts: [scripts/AGENTS.md](scripts/AGENTS.md).
-- Deep context index: [.agents/repo-context/index.md](.agents/repo-context/index.md).
 
 ## Commands
 

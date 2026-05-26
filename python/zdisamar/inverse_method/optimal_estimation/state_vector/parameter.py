@@ -1,5 +1,6 @@
 """Generic state-vector composition."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -13,7 +14,7 @@ class StateVectorParameter(Protocol):
     name: StateName
     initial: float
     prior: float
-    variance: float
+    uncertainty: float
     lower: float | None
     upper: float | None
 
@@ -23,7 +24,7 @@ class StateVectorParameter(Protocol):
 
 @dataclass(frozen=True)
 class StateVector:
-    """Ordered retrieval variables plus prior covariance terms."""
+    """Ordered retrieval variables plus prior uncertainty terms."""
 
     parameters: Sequence[StateVectorParameter]
 
@@ -38,6 +39,12 @@ class StateVector:
 
         if len(set(names)) != len(names):
             raise ValueError("state vector parameter names must be unique")
+
+        for parameter in parameters:
+            uncertainty = float(parameter.uncertainty)
+
+            if not math.isfinite(uncertainty) or uncertainty <= 0.0:
+                raise ValueError("state vector uncertainty values must be finite and positive")
 
         object.__setattr__(self, "parameters", parameters)
 
@@ -84,7 +91,9 @@ class StateVector:
 
         return tuple(
             tuple(
-                float(parameter.variance) if row == column else 0.0
+                float(parameter.uncertainty) * float(parameter.uncertainty)
+                if row == column
+                else 0.0
                 for column, _ in enumerate(self.parameters)
             )
             for row, parameter in enumerate(self.parameters)

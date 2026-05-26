@@ -140,7 +140,7 @@ def main() -> None:
                     optimal_estimation.AerosolOpticalDepth(
                         initial=0.3,
                         prior=0.3,
-                        variance=0.8,
+                        uncertainty=math.sqrt(0.8),
                     )
                 ]
             ),
@@ -192,7 +192,7 @@ def expect_profile_oe_correction_rejected(case, spectrum) -> None:
                         optimal_estimation.AerosolOpticalDepth(
                             initial=0.3,
                             prior=0.3,
-                            variance=0.8,
+                            uncertainty=math.sqrt(0.8),
                         )
                     ]
                 ),

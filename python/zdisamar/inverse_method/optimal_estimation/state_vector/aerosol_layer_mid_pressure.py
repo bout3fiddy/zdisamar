@@ -13,7 +13,7 @@ class AerosolLayerMidPressure:
 
     initial: float
     prior: float
-    variance: float
+    uncertainty: float
     thickness_hpa: float
     interval_index_1based: int
     pressure_altitude_profile: PressureAltitudeProfile
