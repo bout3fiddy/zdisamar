@@ -1,5 +1,6 @@
 """Generic state-vector composition."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -38,6 +39,12 @@ class StateVector:
 
         if len(set(names)) != len(names):
             raise ValueError("state vector parameter names must be unique")
+
+        for parameter in parameters:
+            uncertainty = float(parameter.uncertainty)
+
+            if not math.isfinite(uncertainty) or uncertainty <= 0.0:
+                raise ValueError("state vector uncertainty values must be finite and positive")
 
         object.__setattr__(self, "parameters", parameters)
 

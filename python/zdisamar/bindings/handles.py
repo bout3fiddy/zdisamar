@@ -449,6 +449,13 @@ class RtmHandle:
             if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
                 raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")
 
+            uncertainty = float(parameter.uncertainty)
+
+            if not math.isfinite(uncertainty) or uncertainty <= 0.0:
+                raise ValueError(
+                    "optimal-estimation state uncertainty values must be finite and positive"
+                )
+
             state_specs.append(
                 COptimalEstimationStateSpec(
                     state_id=state_id,
@@ -457,7 +464,7 @@ class RtmHandle:
                     interval_index_1based=interval_index_1based,
                     initial=float(parameter.initial),
                     prior=float(parameter.prior),
-                    variance=float(parameter.uncertainty) * float(parameter.uncertainty),
+                    variance=uncertainty * uncertainty,
                     lower=0.0 if lower is None else float(lower),
                     upper=0.0 if upper is None else float(upper),
                     thickness_hpa=float(getattr(parameter, "thickness_hpa", 0.0)),

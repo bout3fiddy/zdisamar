@@ -243,6 +243,27 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
     assert observed_solar_zenith == [original_solar_zenith]
 
 
+def assert_state_vector_uncertainty_rejected() -> None:
+
+    from zdisamar.inverse_method import optimal_estimation
+
+    for uncertainty in (-1.0, 0.0, math.inf, math.nan):
+        try:
+            optimal_estimation.StateVector(
+                (
+                    optimal_estimation.AerosolOpticalDepth(
+                        initial=0.3,
+                        prior=0.3,
+                        uncertainty=uncertainty,
+                    ),
+                )
+            )
+        except ValueError as error:
+            assert "uncertainty" in str(error)
+        else:
+            raise AssertionError("invalid state-vector uncertainty was accepted")
+
+
 def assert_o2a_case_aerosol_state_properties() -> None:
 
     from zdisamar.wavelength_bands import o2a
@@ -799,6 +820,20 @@ def assert_native_oe_marshaling_bounds() -> None:
         raise AssertionError("non-integer interval index reached native OE marshaling")
 
     state_vector.parameters[0].interval_index_1based = 0
+    state_vector.parameters[0].uncertainty = -1.0
+
+    try:
+        handle.optimal_estimation(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=optimal_estimation.RetrievalControls(max_iterations=1),
+        )
+    except ValueError as error:
+        assert "uncertainty" in str(error)
+    else:
+        raise AssertionError("negative uncertainty reached native OE marshaling")
+
+    state_vector.parameters[0].uncertainty = math.sqrt(0.8)
     state_vector.parameters[0].name = "log_aerosol_optical_depth"
     state_vector.parameters[0].jacobian_name = "aerosol_optical_depth"
 
@@ -1116,6 +1151,7 @@ def main() -> int:
     assert_optimal_estimation_result_dataclass()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
+    assert_state_vector_uncertainty_rejected()
     assert_o2a_case_aerosol_state_properties()
     assert_deprecated_python_input_fields_rejected()
     assert_native_oe_loads_requested_case_into_supplied_cache()
