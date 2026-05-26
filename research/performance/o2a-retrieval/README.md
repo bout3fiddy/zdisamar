@@ -23,23 +23,25 @@ because it runs a narrow in-process O2 A path, reuses forward-session state
 inside the retrieval, and asks only for Jacobian columns in the state vector.
 
 Fastmode is a case-owned zdisamar optimisation lane. It runs OE with resolved
-fastmode RTM controls, and the corrected variant applies one sparse full-physics
-OE update after fastmode convergence. The retained 100-case sweep reports:
+fastmode RTM controls, sparse fast-stage wavelength sampling, and one sparse
+full-physics OE update after fastmode convergence. The retained 100-case sweep
+reports:
 
 ```text
-reference:          100/100 converged, median 1.790 s, mean 1.741 s
-fast:               100/100 converged, median 0.954 s, mean 0.919 s
-fastmode corrected: 100/100 converged, median 1.140 s, mean 1.115 s
+fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
+fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
 ```
 
-Corrected fastmode stays closer to fastmode latency than full-reference latency
-while reducing fastmode state errors by more than an order of magnitude.
+The retained fastmode default uses 38 fast-stage wavelengths and 12
+full-physics correction wavelengths in the validation sweep. It keeps median
+speedup at `+1.416 s` versus fullmode while staying within `5.285e-04` AOD and
+`0.668 hPa` pressure maximum retrieved-state deltas.
 
 Read these notes in order:
 
 - [Measurement provenance](measurement-provenance.md)
 - [Current retrieval elapsed time](current-retrieval-elapsed-time.md)
-- [Fastmode final correction](fastmode-final-correction.md)
+- [Fastmode sampling and final correction](fastmode-final-correction.md)
 - [Optimisation notes](optimisation-notes/)
 - [Session reuse](session-reuse.md)
 - [State-vector Jacobians](state-vector-jacobians.md)

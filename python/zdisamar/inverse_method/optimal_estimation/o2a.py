@@ -9,7 +9,10 @@ from dataclasses import replace
 from ... import rtm
 from ...input.instrument import SpectralGrid
 from ...input.wavelength_band.o2a import O2AInput
-from ...input.wavelength_band.optimisation import measurement_indices_for_wavelengths
+from ...input.wavelength_band.optimisation import (
+    FastModeFastStageSampling,
+    measurement_indices_for_wavelengths,
+)
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
@@ -69,23 +72,29 @@ def disamar_oe(
     active_controls = retrieval_controls_for_case(case, controls)
 
     if case.optimisation.fastmode.enabled:
+        fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
+
         if cache is None:
-            with rtm.SessionCache(case) as local_cache:
+            with rtm.SessionCache(fast_case) as local_cache:
                 return run_fastmode_oe(
                     case=case,
                     measurement=measurement,
+                    fast_case=fast_case,
+                    fast_measurement=fast_measurement,
                     state_vector=state_vector,
                     controls=active_controls,
                     cache=local_cache,
                     fast_case_loaded=True,
                 )
 
-        if not cache.has_loaded_case(case):
-            cache.load(case, copy_case=False)
+        if not cache.has_loaded_case(fast_case):
+            cache.load(fast_case, copy_case=False)
 
         return run_fastmode_oe(
             case=case,
             measurement=measurement,
+            fast_case=fast_case,
+            fast_measurement=fast_measurement,
             state_vector=state_vector,
             controls=active_controls,
             cache=cache,
@@ -138,6 +147,8 @@ def run_fastmode_oe(
     *,
     case: O2AInput,
     measurement: Measurement,
+    fast_case: O2AInput,
+    fast_measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
     cache: rtm.SessionCache,
@@ -146,8 +157,8 @@ def run_fastmode_oe(
     """Run an O2 A fastmode retrieval in one session cache."""
 
     fast_result = _disamar_oe(
-        case=case,
-        measurement=measurement,
+        case=fast_case,
+        measurement=fast_measurement,
         state_vector=state_vector,
         controls=controls,
         cache=cache,
@@ -180,6 +191,40 @@ def run_fastmode_oe(
     )
 
     return combine_fastmode_correction_result(fast_result, full_result)
+
+
+def fast_stage_retrieval_inputs(
+    case: O2AInput,
+    measurement: Measurement,
+) -> tuple[O2AInput, Measurement]:
+    """Return the case and measurement used by the fast OE stage."""
+
+    sampling = case.optimisation.fastmode.oe.fast_stage_sampling
+
+    if not sampling.enabled:
+        return case, measurement
+
+    fast_measurement = fast_stage_measurement(measurement, sampling=sampling)
+    fast_case = case_on_measurement_grid(case, fast_measurement)
+
+    return fast_case, fast_measurement
+
+
+def fast_stage_measurement(
+    measurement: Measurement,
+    *,
+    sampling: FastModeFastStageSampling,
+) -> Measurement:
+    """Apply the case-owned sparse wavelength selection to the fast OE vector."""
+
+    wavelengths_nm = sampling.resolved_wavelengths(measurement.wavelength_nm)
+
+    return measurement_on_wavelengths(
+        measurement,
+        wavelengths_nm=wavelengths_nm,
+        variance_scale=sampling.variance_scale,
+        label="fastmode fast-stage wavelengths",
+    )
 
 
 def run_full_physics_correction(
@@ -226,19 +271,37 @@ def full_correction_measurement(
 
     if wavelengths_nm is None:
         start_nm, end_nm = window_nm
-        retained_indices = [
-            index
-            for index, wavelength_nm in enumerate(measurement.wavelength_nm)
+        wavelengths_nm = tuple(
+            float(wavelength_nm)
+            for wavelength_nm in measurement.wavelength_nm
             if start_nm <= float(wavelength_nm) <= end_nm
-        ]
-    else:
-        retained_indices = measurement_indices_for_wavelengths(
-            measurement.wavelength_nm,
-            wavelengths_nm,
         )
 
+    return measurement_on_wavelengths(
+        measurement,
+        wavelengths_nm=wavelengths_nm,
+        variance_scale=variance_scale,
+        label="full-physics correction wavelengths",
+    )
+
+
+def measurement_on_wavelengths(
+    measurement: Measurement,
+    *,
+    wavelengths_nm: Sequence[float],
+    variance_scale: float | None,
+    label: str,
+) -> Measurement:
+    """Retain selected wavelengths and scale variances for sparse OE vectors."""
+
+    retained_indices = measurement_indices_for_wavelengths(
+        measurement.wavelength_nm,
+        wavelengths_nm,
+        label=label,
+    )
+
     if len(retained_indices) < 2:
-        raise ValueError("full-physics correction window retained fewer than two wavelengths")
+        raise ValueError(f"{label} retained fewer than two wavelengths")
 
     retained_weight = (
         len(retained_indices) / len(measurement.wavelength_nm)
@@ -247,7 +310,7 @@ def full_correction_measurement(
     )
 
     if not math.isfinite(retained_weight) or retained_weight <= 0.0:
-        raise ValueError("full-physics correction variance scale must be finite and positive")
+        raise ValueError(f"{label} variance scale must be finite and positive")
 
     return Measurement(
         wavelength_nm=array("d", (measurement.wavelength_nm[index] for index in retained_indices)),
@@ -261,6 +324,12 @@ def full_correction_measurement(
 
 def full_correction_case(case: O2AInput, measurement: Measurement) -> O2AInput:
     """Use full physics on the correction window instead of the whole O2 A band."""
+
+    return case_on_measurement_grid(case, measurement)
+
+
+def case_on_measurement_grid(case: O2AInput, measurement: Measurement) -> O2AInput:
+    """Return the same case sampled on a selected measured wavelength grid."""
 
     correction_case = copy.copy(case)
     correction_case.instrument_response = copy.copy(case.instrument_response)

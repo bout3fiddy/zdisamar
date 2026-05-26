@@ -9,11 +9,13 @@ from .radiative_transfer import RadiativeTransferControls, RadiativeTransferPerf
 from .spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
 from .wavelength_band import (
     FastModeAdaptiveReferenceGrid,
+    FastModeFastStageSampling,
     FastModeFinalCorrection,
     FastModeOe,
     FastModeOeControls,
     FastModeOptimisation,
     FastModeRadiativeTransfer,
+    FastModeWavelengthWindow,
     O2AInput,
     O2AOptimisation,
 )
@@ -24,11 +26,13 @@ __all__ = [
     "AerosolProfileLayer",
     "Atmosphere",
     "FastModeAdaptiveReferenceGrid",
+    "FastModeFastStageSampling",
     "FastModeFinalCorrection",
     "FastModeOe",
     "FastModeOeControls",
     "FastModeOptimisation",
     "FastModeRadiativeTransfer",
+    "FastModeWavelengthWindow",
     "Geometry",
     "InstrumentResponse",
     "O2AInput",

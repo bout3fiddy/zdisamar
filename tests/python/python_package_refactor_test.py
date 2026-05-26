@@ -484,6 +484,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
     optimisation = O2AOptimisation.defaults()
     optimisation.fastmode.enabled = True
+    optimisation.fastmode.oe.fast_stage_sampling.enabled = False
     reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
     full_case = SimpleNamespace(scene_id="full")
     correction_case = SimpleNamespace(scene_id="correction")
@@ -626,6 +627,101 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     assert result.fast_correction.full_correction_converged is False
     assert result.fast_correction.full_correction_state_vector_convergence == 1.4
     assert final_evaluation_calls == 0
+
+
+def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
+
+    from zdisamar.input.instrument import SpectralGrid
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Measurement,
+        Result,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.rtm.session_cache import SessionCache
+
+    optimisation = O2AOptimisation.defaults()
+    optimisation.fastmode.enabled = True
+    optimisation.fastmode.oe.final_correction.enabled = False
+    wavelengths = tuple(
+        round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
+    )
+    measurement = Measurement(
+        wavelengths,
+        tuple(0.1 + 0.001 * index for index in range(len(wavelengths))),
+        tuple(1.0 for _ in wavelengths),
+    )
+    reference_case = SimpleNamespace(
+        scene_id="reference",
+        optimisation=optimisation,
+        spectral_grid=SpectralGrid(
+            start_nm=wavelengths[0],
+            end_nm=wavelengths[-1],
+            sample_count=len(wavelengths),
+        ),
+        instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
+    )
+    state_vector = cast(StateVector, SimpleNamespace(parameters=(), names=()))
+    controls = RetrievalControls(max_iterations=2)
+    calls: list[dict[str, object]] = []
+    loads: list[tuple[object, bool]] = []
+
+    def fake_disamar_oe(**kwargs):
+
+        calls.append(kwargs)
+
+        return Result(
+            state_names=(),
+            state=(),
+            iterations=1,
+            converged=True,
+            history=(),
+            posterior_covariance=(),
+            averaging_kernel=(),
+            measurement=kwargs["measurement"],
+            initial_state=(),
+        )
+
+    class Cache:
+        _handle = SimpleNamespace()
+
+        def has_loaded_case(self, case) -> bool:
+
+            del case
+
+            return False
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            loads.append((case, copy_case))
+
+    with patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe):
+        result = o2a_oe.disamar_oe(
+            case=cast(O2AInput, reference_case),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+            cache=cast(SessionCache, Cache()),
+        )
+
+    assert result is not None
+    assert len(calls) == 1
+    fast_case = cast(O2AInput, calls[0]["case"])
+    fast_measurement = cast(Measurement, calls[0]["measurement"])
+    expected_wavelengths = optimisation.fastmode.oe.fast_stage_sampling.resolved_wavelengths(
+        measurement.wavelength_nm
+    )
+    assert tuple(fast_measurement.wavelength_nm) == expected_wavelengths
+    assert len(fast_measurement.wavelength_nm) < len(measurement.wavelength_nm)
+    assert fast_case is loads[0][0]
+    assert fast_case is not reference_case
+    assert fast_case.spectral_grid.sample_count == len(fast_measurement.wavelength_nm)
+    assert tuple(fast_case.instrument_response.measured_wavelengths_nm) == expected_wavelengths
+    assert calls[0]["load_case"] is False
+    assert loads == [(fast_case, False)]
 
 
 def assert_native_oe_marshaling_bounds() -> None:
@@ -827,10 +923,33 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert fast_case is not case
             assert fast_case.optimisation.fastmode.enabled
             assert not case.optimisation.fastmode.enabled
-            resolved_fastmode = fast_case.resolved_optimisation()["fastmode"]
-            assert resolved_fastmode["radiative_transfer"]["fourier_order_cap"] == 5
-            assert resolved_fastmode["oe"]["final_correction"]["wavelength_count"] == 12
-            assert len(resolved_fastmode["oe"]["final_correction"]["wavelengths_nm"]) == 12
+            resolved_fastmode = cast(
+                dict[str, object], fast_case.resolved_optimisation()["fastmode"]
+            )
+            fastmode_radiative_transfer = cast(
+                dict[str, object],
+                resolved_fastmode["radiative_transfer"],
+            )
+            assert fastmode_radiative_transfer["fourier_order_cap"] == 5
+            fastmode_oe = cast(dict[str, object], resolved_fastmode["oe"])
+            fast_sampling = cast(dict[str, object], fastmode_oe["fast_stage_sampling"])
+            fast_sampling_wavelengths = cast(list[float], fast_sampling["wavelengths_nm"])
+            fast_sampling_count = cast(int, fast_sampling["sample_count"])
+            assert fast_sampling["enabled"]
+            assert fast_sampling_count == len(fast_sampling_wavelengths)
+            assert fast_sampling_count < len(fast_case.measurement_wavelengths_nm)
+            assert fast_sampling["windows"] == [
+                {"wavelength_window_nm": [755.0, 758.5], "wavelength_count": 16},
+                {"wavelength_window_nm": [765.2, 768.0], "wavelength_count": 25},
+            ]
+            final_correction = cast(dict[str, object], fastmode_oe["final_correction"])
+            final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
+            assert final_correction["wavelength_count"] == 12
+            assert len(final_correction_wavelengths) == 12
+            fast_case.optimisation.fastmode.oe.fast_stage_sampling.windows = (
+                o2a.FastModeWavelengthWindow((759.7, 762.5), 10),
+                o2a.FastModeWavelengthWindow((765.2, 768.0), 10),
+            )
             fast_case.optimisation.fastmode.oe.final_correction.wavelengths_nm = (
                 765.2,
                 766.0,
@@ -838,6 +957,10 @@ def assert_reference_data_and_rtm_tables() -> None:
             )
             fast_roundtrip = o2a.O2ACase.from_json(fast_case.to_json_bytes())
             assert fast_roundtrip.optimisation.fastmode.enabled
+            assert fast_roundtrip.optimisation.fastmode.oe.fast_stage_sampling.windows == (
+                o2a.FastModeWavelengthWindow((759.7, 762.5), 10),
+                o2a.FastModeWavelengthWindow((765.2, 768.0), 10),
+            )
             assert fast_roundtrip.optimisation.fastmode.oe.final_correction.wavelengths_nm == (
                 765.2,
                 766.0,
@@ -860,6 +983,26 @@ def assert_reference_data_and_rtm_tables() -> None:
             else:
                 raise AssertionError("unsupported fastmode optimisation control was accepted")
 
+            invalid_sampling_case = copy.deepcopy(fast_case.to_dict())
+            invalid_sampling_optimisation = cast(
+                dict[str, object],
+                invalid_sampling_case["optimisation"],
+            )
+            invalid_sampling_fastmode = cast(
+                dict[str, object],
+                invalid_sampling_optimisation["fastmode"],
+            )
+            invalid_sampling_oe = cast(dict[str, object], invalid_sampling_fastmode["oe"])
+            invalid_sampling = cast(dict[str, object], invalid_sampling_oe["fast_stage_sampling"])
+            invalid_sampling["ignored"] = True
+
+            try:
+                o2a.O2ACase.from_dict(invalid_sampling_case)
+            except ValueError as exc:
+                assert "unsupported fastmode fast-stage sampling fields" in str(exc)
+            else:
+                raise AssertionError("unsupported fast-stage sampling control was accepted")
+
             assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap is None
             fast_rtm_case = fast_case.with_rtm_optimisation_applied()
             assert fast_rtm_case.optimisation.fastmode.enabled is False
@@ -878,14 +1021,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert not fast_thresholds.qzero_td_product_suppression
             fast_grid = fast_rtm_case.instrument_response.adaptive_reference_grid
             assert fast_grid["points_per_fwhm"] == 28
-            assert (
-                fast_grid["strong_line_min_divisions"]
-                == 6
-            )
-            assert (
-                fast_grid["strong_line_max_divisions"]
-                == 22
-            )
+            assert fast_grid["strong_line_min_divisions"] == 6
+            assert fast_grid["strong_line_max_divisions"] == 22
             assert (
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
@@ -962,6 +1099,7 @@ def main() -> int:
     assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
     assert_fastmode_oe_runs_single_full_correction()
+    assert_fastmode_oe_uses_sparse_fast_stage_sampling()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()

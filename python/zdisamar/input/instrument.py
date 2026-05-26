@@ -107,6 +107,7 @@ def measured_wavelength_tuple(values: object) -> tuple[float, ...]:
     for index, wavelength_nm in enumerate(wavelengths):
         if not math.isfinite(wavelength_nm):
             raise ValueError("measured_wavelengths_nm must be finite")
+
         if index != 0 and wavelength_nm <= wavelengths[index - 1]:
             raise ValueError("measured_wavelengths_nm must be strictly increasing")
 

@@ -169,28 +169,29 @@ aerosol mid pressure [hPa]:  median -0.0016,    mean -0.0020,    range -0.0522 t
 Fastmode retrieval is a zdisamar-only optimisation lane on the same O2 A case.
 The normal case remains the full-physics reference. Enabling
 `case.optimisation.fastmode.enabled` resolves inspectable RTM, adaptive-grid,
-OE, and final-correction defaults before execution. The corrected fastmode path
-uses the fastmode result as the starting state for one sparse full-physics
-forward model plus Jacobian update.
+OE, sparse fast-stage wavelength sampling, and final-correction defaults before
+execution. The shipped fastmode path solves the fast stage on the sparse
+measurement grid, then uses that result as the starting state for one sparse
+full-physics forward model plus Jacobian update.
 
 ```text
-zdisamar reference:          100/100 converged, median 1.790 s, mean 1.741 s
-zdisamar fast:               100/100 converged, median 0.954 s, mean 0.919 s
-zdisamar fastmode corrected: 100/100 converged, median 1.140 s, mean 1.115 s
+zdisamar fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
+zdisamar fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
 ```
 
 ![Fastmode optimal-estimation comparison](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png)
 
-The retained corrected fastmode sweep stays closer to fastmode latency than
-full-reference latency: median speedup versus reference is `+0.653 s`, and the
-correction adds median `+0.194 s` over fastmode alone. The maximum
-corrected-minus-reference deltas are `4.864e-04` aerosol optical depth and
-`0.215 hPa` aerosol mid pressure.
+The retained fastmode sweep uses 38 fast-stage wavelengths and 12 full-physics
+correction wavelengths on the validation measurement grid. Median speedup versus
+fullmode is `+1.416 s`. The maximum fastmode-minus-fullmode deltas are
+`5.285e-04` aerosol optical depth and `0.668 hPa` aerosol mid pressure.
 The technical note is
 [`research/performance/o2a-retrieval/fastmode-final-correction.md`](./research/performance/o2a-retrieval/fastmode-final-correction.md).
 
-The tracked summary is
+The tracked paired DISAMAR/zdisamar summary is
 [`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
+The tracked fastmode summary is
+[`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json).
 The retrieval notes live in
 [`research/performance/o2a-retrieval/`](./research/performance/o2a-retrieval/).
 

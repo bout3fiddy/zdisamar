@@ -4,8 +4,27 @@ import math
 from bisect import bisect_left
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Protocol, Self
 
-from ..shared import object_dict, to_bool, to_float, to_int
+from ..shared import object_dict, object_dict_list, to_bool, to_float, to_int
+
+
+class RadiativeTransferCaseSection(Protocol):
+    @property
+    def performance_thresholds(self) -> object: ...
+
+
+class InstrumentResponseCaseSection(Protocol):
+    @property
+    def adaptive_reference_grid(self) -> dict[str, int]: ...
+
+
+class FastModeApplicationCase(Protocol):
+    @property
+    def radiative_transfer(self) -> RadiativeTransferCaseSection: ...
+
+    @property
+    def instrument_response(self) -> InstrumentResponseCaseSection: ...
 
 
 def reject_unknown_fields(data: dict[str, object], allowed: set[str], label: str) -> None:
@@ -28,12 +47,12 @@ def optional_float(value: object) -> float | None:
     return None if value is None else to_float(value)
 
 
-def finite_positive_optional_float(value: object) -> float | None:
+def finite_positive_optional_float(value: object, *, label: str) -> float | None:
 
     parsed = optional_float(value)
 
     if parsed is not None and (not math.isfinite(parsed) or parsed <= 0.0):
-        raise ValueError("fastmode final-correction variance scale must be finite and positive")
+        raise ValueError(f"{label} variance scale must be finite and positive")
 
     return parsed
 
@@ -46,19 +65,104 @@ def float_sequence(value: object, *, label: str) -> tuple[float, ...]:
     return tuple(to_float(item) for item in value)
 
 
-def wavelength_window(value: object) -> tuple[float, float]:
+def wavelength_window(value: object, *, label: str) -> tuple[float, float]:
 
-    values = float_sequence(value, label="fastmode final-correction wavelength window")
+    values = float_sequence(value, label=f"{label} wavelength window")
 
     if len(values) != 2:
-        raise ValueError("fastmode final-correction wavelength window must contain two values")
+        raise ValueError(f"{label} wavelength window must contain two values")
 
     start_nm, end_nm = values
 
     if not math.isfinite(start_nm) or not math.isfinite(end_nm) or end_nm <= start_nm:
-        raise ValueError("fastmode final-correction wavelength window is invalid")
+        raise ValueError(f"{label} wavelength window is invalid")
 
     return start_nm, end_nm
+
+
+def selected_window_wavelengths(
+    measurement_wavelengths_nm: Sequence[float],
+    *,
+    wavelength_window_nm: tuple[float, float],
+    wavelength_count: int | None,
+    label: str,
+) -> tuple[float, ...]:
+    """Select measured wavelengths from one configured wavelength window."""
+
+    axis = measured_wavelength_tuple(measurement_wavelengths_nm)
+    start_nm, end_nm = wavelength_window_nm
+    window = tuple(value for value in axis if start_nm <= value <= end_nm)
+
+    if len(window) < 2:
+        raise ValueError(f"{label} wavelength window retained fewer than two samples")
+
+    if wavelength_count is None:
+        return window
+
+    count = int(wavelength_count)
+
+    if count < 2:
+        raise ValueError(f"{label} wavelength count must be at least two")
+
+    if len(window) <= count:
+        return window
+
+    step = (len(window) - 1) / float(count - 1)
+    indices = sorted({round(index * step) for index in range(count)})
+
+    return tuple(window[index] for index in indices)
+
+
+@dataclass(frozen=True)
+class FastModeWavelengthWindow:
+    """Evenly sampled measured wavelengths from one physical wavelength interval."""
+
+    wavelength_window_nm: tuple[float, float]
+    wavelength_count: int | None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object], *, label: str) -> Self:
+
+        allowed = {"wavelength_window_nm", "wavelength_count"}
+        reject_unknown_fields(data, allowed, label)
+
+        return cls(
+            wavelength_window_nm=wavelength_window(
+                data.get("wavelength_window_nm"),
+                label=label,
+            ),
+            wavelength_count=optional_int(data.get("wavelength_count")),
+        )
+
+    def resolved_wavelengths(
+        self,
+        measurement_wavelengths_nm: Sequence[float],
+        *,
+        label: str,
+    ) -> tuple[float, ...]:
+
+        return selected_window_wavelengths(
+            measurement_wavelengths_nm,
+            wavelength_window_nm=self.wavelength_window_nm,
+            wavelength_count=self.wavelength_count,
+            label=label,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+
+        return {
+            "wavelength_window_nm": list(self.wavelength_window_nm),
+            "wavelength_count": self.wavelength_count,
+        }
+
+
+def default_fast_stage_wavelength_windows() -> tuple[FastModeWavelengthWindow, ...]:
+    """Return the tuned sparse fast-stage O2 A windows used by fastmode."""
+
+    return (
+        FastModeWavelengthWindow((755.0, 758.5), 16),
+        FastModeWavelengthWindow((765.2, 768.0), 25),
+    )
 
 
 @dataclass
@@ -90,7 +194,7 @@ class FastModeRadiativeTransfer:
     qzero_td_product_suppression: bool = False
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeRadiativeTransfer:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {
             "fourier_order_cap",
@@ -144,6 +248,7 @@ class FastModeRadiativeTransfer:
         for key, value in self.to_dict().items():
             if not hasattr(thresholds, key):
                 raise ValueError(f"unknown fastmode radiative-transfer knob: {key}")
+
             setattr(thresholds, key, value)
 
     def to_dict(self) -> dict[str, float | int | bool | None]:
@@ -178,7 +283,7 @@ class FastModeAdaptiveReferenceGrid:
     strong_line_max_divisions: int = 22
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeAdaptiveReferenceGrid:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {
             "points_per_fwhm",
@@ -204,6 +309,7 @@ class FastModeAdaptiveReferenceGrid:
         for key, value in self.to_dict().items():
             if key not in grid:
                 raise ValueError(f"unknown fastmode adaptive-grid knob: {key}")
+
             grid[key] = int(value)
 
     def to_dict(self) -> dict[str, int]:
@@ -232,7 +338,7 @@ class FastModeOeControls:
     max_change_transformed_state: float = 1.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeOeControls:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {
             "max_iterations",
@@ -289,7 +395,7 @@ class FastModeFinalCorrection:
     variance_scale: float | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeFinalCorrection:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {
             "enabled",
@@ -310,12 +416,14 @@ class FastModeFinalCorrection:
         return cls(
             enabled=to_bool(data.get("enabled", defaults.enabled)),
             wavelength_window_nm=wavelength_window(
-                data.get("wavelength_window_nm", defaults.wavelength_window_nm)
+                data.get("wavelength_window_nm", defaults.wavelength_window_nm),
+                label="fastmode final-correction",
             ),
             wavelength_count=optional_int(data.get("wavelength_count", defaults.wavelength_count)),
             wavelengths_nm=wavelengths,
             variance_scale=finite_positive_optional_float(
-                data.get("variance_scale", defaults.variance_scale)
+                data.get("variance_scale", defaults.variance_scale),
+                label="fastmode final-correction",
             ),
         )
 
@@ -329,33 +437,15 @@ class FastModeFinalCorrection:
 
         if self.wavelengths_nm:
             indices = measurement_indices_for_wavelengths(axis, self.wavelengths_nm)
+
             return tuple(axis[index] for index in indices)
 
-        start_nm, end_nm = self.wavelength_window_nm
-
-        if not math.isfinite(start_nm) or not math.isfinite(end_nm) or end_nm <= start_nm:
-            raise ValueError("fastmode final-correction wavelength window is invalid")
-
-        window = tuple(value for value in axis if start_nm <= value <= end_nm)
-
-        if len(window) < 2:
-            raise ValueError("fastmode final correction retained fewer than two wavelengths")
-
-        if self.wavelength_count is None:
-            return window
-
-        count = int(self.wavelength_count)
-
-        if count < 2:
-            raise ValueError("fastmode final-correction wavelength count must be at least two")
-
-        if len(window) <= count:
-            return window
-
-        step = (len(window) - 1) / float(count - 1)
-        indices = sorted({round(index * step) for index in range(count)})
-
-        return tuple(window[index] for index in indices)
+        return selected_window_wavelengths(
+            axis,
+            wavelength_window_nm=self.wavelength_window_nm,
+            wavelength_count=self.wavelength_count,
+            label="fastmode final-correction",
+        )
 
     def resolved_dict(self, measurement_wavelengths_nm: Sequence[float]) -> dict[str, object]:
         """Return the executed correction settings with explicit wavelengths."""
@@ -382,35 +472,163 @@ class FastModeFinalCorrection:
 
 
 @dataclass
+class FastModeFastStageSampling:
+    """Sparse measurement selection used by the fast OE solve.
+
+    Fastmode can trade retrieval speed against information content only through
+    this explicit OE setting.  The default keeps a blue continuum window plus
+    sparse samples across the O2 A P branch, then the final-correction settings
+    run one full-physics update on their own sparse wavelength set.
+
+    `windows` selects evenly spaced samples from one or more measured wavelength
+    intervals.  `wavelengths_nm` overrides the window selector with explicit
+    measured wavelengths.  `variance_scale=None` applies retained-fraction
+    variance scaling so a sparse fast stage keeps comparable total weight.
+    """
+
+    enabled: bool = True
+    windows: tuple[FastModeWavelengthWindow, ...] = field(
+        default_factory=default_fast_stage_wavelength_windows
+    )
+    wavelengths_nm: tuple[float, ...] = ()
+    variance_scale: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> Self:
+
+        allowed = {
+            "enabled",
+            "windows",
+            "wavelengths_nm",
+            "variance_scale",
+        }
+        reject_unknown_fields(data, allowed, "fastmode fast-stage sampling")
+        defaults = cls()
+        windows_value = data.get("windows", [window.to_dict() for window in defaults.windows])
+        wavelengths_value = data.get("wavelengths_nm", defaults.wavelengths_nm)
+        wavelengths = (
+            measured_wavelength_tuple(float_sequence(wavelengths_value, label="wavelengths_nm"))
+            if wavelengths_value
+            else ()
+        )
+
+        return cls(
+            enabled=to_bool(data.get("enabled", defaults.enabled)),
+            windows=tuple(
+                FastModeWavelengthWindow.from_dict(
+                    window,
+                    label="fastmode fast-stage sampling window",
+                )
+                for window in object_dict_list(windows_value)
+            ),
+            wavelengths_nm=wavelengths,
+            variance_scale=finite_positive_optional_float(
+                data.get("variance_scale", defaults.variance_scale),
+                label="fastmode fast-stage sampling",
+            ),
+        )
+
+    def resolved_wavelengths(
+        self,
+        measurement_wavelengths_nm: Sequence[float],
+    ) -> tuple[float, ...]:
+        """Return concrete fast-stage wavelengths on the measurement grid."""
+
+        axis = measured_wavelength_tuple(measurement_wavelengths_nm)
+
+        if not self.enabled:
+            return axis
+
+        if self.wavelengths_nm:
+            indices = measurement_indices_for_wavelengths(
+                axis,
+                self.wavelengths_nm,
+                label="fastmode fast-stage wavelengths",
+            )
+
+            return tuple(axis[index] for index in indices)
+
+        if not self.windows:
+            raise ValueError(
+                "fastmode fast-stage sampling needs at least one window or explicit wavelengths"
+            )
+
+        selected: set[float] = set()
+
+        for window in self.windows:
+            selected.update(
+                window.resolved_wavelengths(
+                    axis,
+                    label="fastmode fast-stage sampling",
+                )
+            )
+
+        wavelengths = tuple(sorted(selected))
+
+        if len(wavelengths) < 2:
+            raise ValueError("fastmode fast-stage sampling retained fewer than two wavelengths")
+
+        return wavelengths
+
+    def resolved_dict(self, measurement_wavelengths_nm: Sequence[float]) -> dict[str, object]:
+        """Return the executed fast-stage sampling with explicit wavelengths."""
+
+        wavelengths = self.resolved_wavelengths(measurement_wavelengths_nm)
+
+        return {
+            "enabled": self.enabled,
+            "windows": [window.to_dict() for window in self.windows],
+            "wavelengths_nm": list(wavelengths) if self.enabled else [],
+            "sample_count": len(wavelengths),
+            "variance_scale": self.variance_scale,
+        }
+
+    def to_dict(self) -> dict[str, object]:
+
+        return {
+            "enabled": self.enabled,
+            "windows": [window.to_dict() for window in self.windows],
+            "wavelengths_nm": list(self.wavelengths_nm),
+            "variance_scale": self.variance_scale,
+        }
+
+
+@dataclass
 class FastModeOe:
     """OE-specific fastmode settings.
 
-    `controls` apply to the fast retrieval stage.  `final_correction` controls
-    the optional sparse full-physics update that is applied after fastmode
-    convergence.
+    `controls` apply to the fast retrieval stage.  `fast_stage_sampling`
+    selects the measured wavelengths passed to that fast solve.  `final_correction`
+    controls the optional sparse full-physics update that is applied after
+    fastmode convergence.
     """
 
     controls: FastModeOeControls
+    fast_stage_sampling: FastModeFastStageSampling
     final_correction: FastModeFinalCorrection
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeOe:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
-        allowed = {"controls", "final_correction"}
+        allowed = {"controls", "fast_stage_sampling", "final_correction"}
         reject_unknown_fields(data, allowed, "fastmode OE")
 
         return cls(
             controls=FastModeOeControls.from_dict(object_dict(data.get("controls", {}))),
+            fast_stage_sampling=FastModeFastStageSampling.from_dict(
+                object_dict(data.get("fast_stage_sampling", {}))
+            ),
             final_correction=FastModeFinalCorrection.from_dict(
                 object_dict(data.get("final_correction", {}))
             ),
         )
 
     @classmethod
-    def defaults(cls) -> FastModeOe:
+    def defaults(cls) -> Self:
 
         return cls(
             controls=FastModeOeControls(),
+            fast_stage_sampling=FastModeFastStageSampling(),
             final_correction=FastModeFinalCorrection(),
         )
 
@@ -418,6 +636,9 @@ class FastModeOe:
 
         return {
             "controls": self.controls.to_dict(),
+            "fast_stage_sampling": self.fast_stage_sampling.resolved_dict(
+                measurement_wavelengths_nm
+            ),
             "final_correction": self.final_correction.resolved_dict(measurement_wavelengths_nm),
         }
 
@@ -425,6 +646,7 @@ class FastModeOe:
 
         return {
             "controls": self.controls.to_dict(),
+            "fast_stage_sampling": self.fast_stage_sampling.to_dict(),
             "final_correction": self.final_correction.to_dict(),
         }
 
@@ -440,16 +662,14 @@ class FastModeOptimisation:
     """
 
     enabled: bool = False
-    radiative_transfer: FastModeRadiativeTransfer = field(
-        default_factory=FastModeRadiativeTransfer
-    )
+    radiative_transfer: FastModeRadiativeTransfer = field(default_factory=FastModeRadiativeTransfer)
     adaptive_reference_grid: FastModeAdaptiveReferenceGrid = field(
         default_factory=FastModeAdaptiveReferenceGrid
     )
     oe: FastModeOe = field(default_factory=FastModeOe.defaults)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> FastModeOptimisation:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {
             "enabled",
@@ -470,7 +690,7 @@ class FastModeOptimisation:
             oe=FastModeOe.from_dict(object_dict(data.get("oe", {}))),
         )
 
-    def apply_to_case(self, case: object) -> None:
+    def apply_to_case(self, case: FastModeApplicationCase) -> None:
         """Apply fastmode RTM controls to a copied wavelength-band case."""
 
         self.radiative_transfer.apply_to(case.radiative_transfer.performance_thresholds)
@@ -509,7 +729,7 @@ class O2AOptimisation:
     fastmode: FastModeOptimisation
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> O2AOptimisation:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {"fastmode"}
         reject_unknown_fields(data, allowed, "O2 A optimisation")
@@ -517,7 +737,7 @@ class O2AOptimisation:
         return cls(fastmode=FastModeOptimisation.from_dict(object_dict(data.get("fastmode", {}))))
 
     @classmethod
-    def defaults(cls) -> O2AOptimisation:
+    def defaults(cls) -> Self:
 
         return cls(fastmode=FastModeOptimisation())
 
@@ -534,6 +754,7 @@ def measured_wavelength_tuple(values: Sequence[float]) -> tuple[float, ...]:
     for index, wavelength_nm in enumerate(wavelengths):
         if not math.isfinite(wavelength_nm):
             raise ValueError("wavelengths must be finite")
+
         if index != 0 and wavelength_nm <= wavelengths[index - 1]:
             raise ValueError("wavelengths must be strictly increasing")
 
@@ -543,14 +764,16 @@ def measured_wavelength_tuple(values: Sequence[float]) -> tuple[float, ...]:
 def measurement_indices_for_wavelengths(
     measurement_wavelengths_nm: Sequence[float],
     requested_wavelengths_nm: Sequence[float],
+    *,
+    label: str = "correction wavelengths",
 ) -> list[int]:
-    """Map requested correction wavelengths onto the measured retrieval grid."""
+    """Map requested wavelengths onto the measured retrieval grid."""
 
     measurement_axis = measured_wavelength_tuple(measurement_wavelengths_nm)
     requested_axis = measured_wavelength_tuple(requested_wavelengths_nm)
 
     if len(requested_axis) < 2:
-        raise ValueError("correction wavelengths must contain at least two samples")
+        raise ValueError(f"{label} must contain at least two samples")
 
     tolerance = wavelength_match_tolerance(measurement_axis)
     retained_indices: list[int] = []
@@ -562,17 +785,20 @@ def measurement_indices_for_wavelengths(
 
         if insertion < len(measurement_axis):
             candidates.append(insertion)
+
         if insertion != 0:
             candidates.append(insertion - 1)
+
         if not candidates:
-            raise ValueError("correction wavelengths must overlap the measurement grid")
+            raise ValueError(f"{label} must overlap the measurement grid")
 
         index = min(candidates, key=lambda candidate: abs(measurement_axis[candidate] - requested))
 
         if abs(measurement_axis[index] - requested) > tolerance:
-            raise ValueError("correction wavelengths must lie on the measurement grid")
+            raise ValueError(f"{label} must lie on the measurement grid")
+
         if index <= previous_index:
-            raise ValueError("correction wavelengths must map to unique increasing samples")
+            raise ValueError(f"{label} must map to unique increasing samples")
 
         previous_index = index
         retained_indices.append(index)
