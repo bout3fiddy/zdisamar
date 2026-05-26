@@ -36,6 +36,9 @@ The retained fastmode default uses 38 fast-stage wavelengths and 12
 full-physics correction wavelengths in the validation sweep. It keeps median
 speedup at `+1.416 s` versus fullmode while staying within `5.285e-04` AOD and
 `0.668 hPa` pressure maximum retrieved-state deltas.
+The reported fullmode and fastmode durations are wall-clock timings around the
+public retrieval call, including session/cache creation, native case load and
+preparation, native OE work, and the sparse full-physics correction.
 
 Read these notes in order:
 

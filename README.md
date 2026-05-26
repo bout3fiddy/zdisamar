@@ -179,12 +179,16 @@ zdisamar fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
 zdisamar fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
 ```
 
-![Fastmode optimal-estimation comparison](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png)
+![Fastmode retrieved-state comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 
 The retained fastmode sweep uses 38 fast-stage wavelengths and 12 full-physics
 correction wavelengths on the validation measurement grid. Median speedup versus
 fullmode is `+1.416 s`. The maximum fastmode-minus-fullmode deltas are
 `5.285e-04` aerosol optical depth and `0.668 hPa` aerosol mid pressure.
+These timings are wall-clock durations around the public retrieval call. They
+include session/cache creation, native case load and preparation, native OE work,
+and the sparse full-physics correction; they do not include scene construction,
+synthetic measurement construction, CSV writing, or plot rendering.
 The technical note is
 [`research/performance/o2a-retrieval/fastmode-final-correction.md`](./research/performance/o2a-retrieval/fastmode-final-correction.md).
 
@@ -217,100 +221,82 @@ accumulation, and phase-matrix construction. The detailed timing and operation
 counts are in
 [`research/performance/o2a-forward/remaining-bottlenecks.md`](./research/performance/o2a-forward/remaining-bottlenecks.md).
 
-## Production Status And Next Work
+## Python Package
 
-The stable implementation today is the O2 A RTM: typed inputs, bundled
-reference data, the Zig library and CLI helpers, Python wrapper demos, spectra
-validation, and benchmark artifacts.
-
-The optimal-estimation retrieval code currently supports the aerosol-only
-two-state retrieval case used by the benchmark evidence. The stable API remains
-centered on the RTM.
-
-The next work is to reduce the cost of repeated reflectance and derivative
-calculations during retrievals, while preserving the full O2 A result, and to
-decide which retrieval functions should become part of the stable API.
-
-[Nanda et al. (2019)](https://doi.org/10.5194/amt-12-6619-2019) describes an
-operational neural-network approach that uses a trained replacement for repeated
-online radiative-transfer calculations. `zdisamar` keeps the online full-physics
-calculation explicit, measurable, and available for validation and further
-optimization.
-
-## Repository Layout
-
-| Path | Purpose |
-| --- | --- |
-| `src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
-| `src/forward_model/` | RTM internals: optical properties, radiative transfer, instrument-grid calculation, and implementations |
-| `src/output/` | diagnostic reports and spectrum serialization |
-| `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
-| `data/` | tracked O2 A bundles and reference assets |
-| `tests/` | O2 A executable checks |
-| `validation/` | O2 A compatibility, benchmark, and reference evidence |
-| `research/performance/` | performance provenance, current benchmark notes, and bottleneck analysis |
-| `scripts/demo/` | executable Python-facing demo notebooks |
-| `docs/` | DISAMAR context, O2 A runtime, and reference-data boundary |
-
-## Build And Verification
-
-Prerequisites:
-
-- Zig `0.15.2` or newer. The repo declares `minimum_zig_version = "0.15.2"` in
-  [`build.zig.zon`](./build.zig.zon).
-- [`uv`](https://docs.astral.sh/uv/) for Python-based helpers.
-
-Build the library and CLI:
+Use `uv` to download the published Python package into an isolated environment.
+The wheel includes the native RTM library and bundled O2 A reference data, and
+the package has no third-party runtime dependencies:
 
 ```bash
-zig build
+uv run --with zdisamar python
 ```
 
-This produces the CLI helpers at `./zig-out/bin/zdisamar` and
-`./zig-out/bin/zdisamar-o2a-plot-spectrum`.
-
-Run the fast local verification loop:
+For a one-file toy run, let `uv` create the environment and execute the script:
 
 ```bash
-zig build check
+uv run --with zdisamar python - <<'PY'
+from zdisamar import rtm
+from zdisamar.inverse_method import optimal_estimation as oe
+from zdisamar.rtm import SessionCache
+from zdisamar.wavelength_bands import o2a
+
+
+truth = o2a.reference_case()
+truth.aerosol_optical_depth_550_nm = 0.32
+truth.aerosol_layer.mid_pressure_hpa = 760.0
+
+spectrum = rtm.spectrum(truth)
+print(
+    "forward:",
+    len(spectrum.wavelength_nm),
+    "wavelengths, first reflectance",
+    f"{spectrum.reflectance[0]:.6f}",
+)
+
+measurement = oe.Measurement(
+    wavelength_nm=spectrum.wavelength_nm,
+    reflectance=spectrum.reflectance,
+    variance=[1.0e-8] * len(spectrum.wavelength_nm),
+)
+
+case = o2a.reference_case().with_fast_mode()
+case.aerosol_optical_depth_550_nm = 0.18
+case.aerosol_layer.mid_pressure_hpa = 820.0
+
+profile = oe.pressure_altitude_profile_from_case(case)
+state_vector = oe.StateVector(
+    (
+        oe.AerosolOpticalDepth(
+            initial=0.18,
+            prior=0.18,
+            variance=0.25,
+            lower=0.0,
+        ),
+        oe.AerosolLayerMidPressure(
+            initial=820.0,
+            prior=820.0,
+            variance=80.0**2,
+            thickness_hpa=case.aerosol_layer.thickness_hpa,
+            interval_index_1based=case.aerosol.placement.interval_index_1based,
+            pressure_altitude_profile=profile,
+        ),
+    )
+)
+
+with SessionCache() as cache:
+    result = oe.disamar_oe(
+        case=case,
+        measurement=measurement,
+        state_vector=state_vector,
+        cache=cache,
+    )
+
+print("fastmode OE converged:", result.converged, "iterations:", result.iterations)
+print("retrieved AOD:", f"{result.value('aerosol_optical_depth'):.4f}")
+print(
+    "retrieved aerosol mid-pressure:",
+    f"{result.value('aerosol_layer_mid_pressure_hpa'):.2f}",
+    "hPa",
+)
+PY
 ```
-
-Run the broader fast presubmit:
-
-```bash
-zig build test-fast
-```
-
-Run the full verification baseline:
-
-```bash
-zig build test
-```
-
-Regenerate the tracked O2 A comparison bundle after changing the O2 A RTM or
-Jacobian validation outputs:
-
-```bash
-uv run validation/spectra/validate_spectra.py
-```
-
-For temporary Zig caches, use the ephemeral wrapper:
-
-```bash
-./scripts/zig-build-ephemeral.sh check
-./scripts/zig-build-ephemeral.sh test-fast --summary all
-```
-
-To reclaim space from prior runs:
-
-```bash
-./scripts/clean-zig-caches.sh
-```
-
-## Recommended Reading
-
-- [`docs/disamar-overview.md`](./docs/disamar-overview.md)
-- [`docs/o2a-rtm.md`](./docs/o2a-rtm.md)
-- [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
-- [`research/performance/README.md`](./research/performance/README.md)
-- [`validation/README.md`](./validation/README.md)

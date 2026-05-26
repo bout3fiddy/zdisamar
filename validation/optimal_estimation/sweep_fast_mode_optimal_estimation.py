@@ -3,6 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #   "altair>=5.5",
+#   "matplotlib>=3.10",
 #   "vl-convert-python>=1.7",
 #   "numpy>=2.2",
 #   "pandas>=2.2",
@@ -16,6 +17,7 @@ import math
 import sys
 import time
 from collections.abc import Sequence
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +70,10 @@ MODE_COLORS = {
 MODE_MARKERS = {
     "reference": "o",
     "fastmode": "diamond",
+}
+MATPLOTLIB_MODE_MARKERS = {
+    "reference": "o",
+    "fastmode": "x",
 }
 LATENCY_MODE_LABELS = {
     "disamar_fortran": "DISAMAR Fortran",
@@ -595,73 +601,100 @@ def _extent(values: list[float]) -> tuple[float, float]:
     return lower - padding, upper + padding
 
 
-def scatter_chart(data: pd.DataFrame, *, parameter: str, title: str):
+def matplotlib_modules() -> tuple[Any, Any]:
+
+    return import_module("matplotlib.pyplot"), import_module("matplotlib.ticker").MaxNLocator
+
+
+def set_matplotlib_style(plt: Any) -> None:
+
+    plt.rcParams.update(
+        {
+            "font.family": "monospace",
+            "font.monospace": [
+                "Menlo",
+                "Monaco",
+                "Consolas",
+                "Liberation Mono",
+                "DejaVu Sans Mono",
+                "monospace",
+            ],
+            "axes.grid": True,
+            "grid.color": PLOT.colors["grid"],
+            "grid.alpha": 0.25,
+        }
+    )
+
+
+def scatter_panel(
+    ax,
+    data: pd.DataFrame,
+    *,
+    parameter: str,
+    title: str,
+) -> None:
 
     subset = data[data["parameter"] == parameter]
-    lower, upper = _extent(
-        subset["truth"].astype(float).to_list() + subset["retrieved"].astype(float).to_list()
-    )
-    points = (
-        alt.Chart(subset)
-        .mark_point(filled=True, size=48, opacity=0.78)
-        .encode(
-            x=alt.X("truth:Q", title="True value", scale=alt.Scale(domain=[lower, upper])),
-            y=alt.Y(
-                "retrieved:Q",
-                title="Retrieved value",
-                scale=alt.Scale(domain=[lower, upper]),
-            ),
-            color=_mode_color(),
-            shape=alt.Shape("mode_label:N", title=None),
-            tooltip=[
-                alt.Tooltip("scene:O", title="Scene"),
-                alt.Tooltip("mode_label:N", title="Mode"),
-                alt.Tooltip("truth:Q", title="Truth", format=".6g"),
-                alt.Tooltip("retrieved:Q", title="Retrieved", format=".6g"),
-            ],
+
+    for mode in MODE_LABELS:
+        mode_subset = subset[subset["mode"] == mode]
+        ax.scatter(
+            mode_subset["truth"].to_list(),
+            mode_subset["retrieved"].to_list(),
+            s=34,
+            alpha=0.78,
+            label=MODE_LABELS[mode],
+            color=MODE_COLORS[mode],
+            marker=MATPLOTLIB_MODE_MARKERS[mode],
         )
+
+    truth_min = float(subset["truth"].min())
+    retrieved_min = float(subset["retrieved"].min())
+    truth_max = float(subset["truth"].max())
+    retrieved_max = float(subset["retrieved"].max())
+    min_value = min(truth_min, retrieved_min)
+    max_value = max(truth_max, retrieved_max)
+    pad = max((max_value - min_value) * 0.04, np.finfo(np.float64).eps)
+    lower = min_value - pad
+    upper = max_value + pad
+    ax.plot(
+        [lower, upper],
+        [lower, upper],
+        color="black",
+        linestyle=(0, (4, 3)),
+        linewidth=1,
     )
+    ax.set_xlim(lower, upper)
+    ax.set_ylim(lower, upper)
+    ax.set_title(title, fontsize=20, pad=16)
+    ax.set_xlabel("True value", fontsize=15, labelpad=14)
+    ax.set_ylabel("Retrieved value", fontsize=15, labelpad=12, fontweight="bold")
+    ax.tick_params(labelsize=12, pad=6)
 
-    return alt.layer(_identity_line(lower, upper), points).properties(
-        width=530, height=330, title=title
-    )
 
-
-def histogram_chart(
+def histogram_panel(
+    ax,
     data: pd.DataFrame,
     *,
     parameter: str,
     title: str,
     subtitle: str,
     xlabel: str,
-):
+    max_n_locator: Any,
+    bins: int = 45,
+) -> None:
 
     subset = data[data["parameter"] == parameter]
-    histogram = (
-        alt.Chart(subset)
-        .mark_bar(opacity=0.62)
-        .encode(
-            x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=xlabel),
-            y=alt.Y("count():Q", title="Count"),
-            color=_mode_color(),
-            tooltip=[
-                alt.Tooltip("count():Q", title="Count"),
-                alt.Tooltip("mode_label:N", title="Mode"),
-                alt.Tooltip("difference:Q", title="Difference", format=".6g"),
-            ],
-        )
-    )
-    zero = (
-        alt.Chart(pd.DataFrame({"zero": [0.0]}))
-        .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=1)
-        .encode(x="zero:Q")
-    )
-
-    return alt.layer(histogram, zero).properties(
-        width=530,
-        height=300,
-        title={"text": title, "subtitle": subtitle},
-    )
+    ax.hist(subset["difference"].to_list(), bins=bins, color=MODE_COLORS["fastmode"], alpha=0.78)
+    ax.axvline(0.0, color="black", linestyle=(0, (4, 3)), linewidth=1)
+    ax.set_title(f"{title}\n{subtitle}", fontsize=16, pad=16)
+    ax.set_xlabel(xlabel, fontsize=15, labelpad=16, fontweight="bold")
+    ax.set_ylabel("Count", fontsize=15, labelpad=12, fontweight="bold")
+    ax.tick_params(labelsize=12, pad=6)
+    ax.xaxis.set_major_locator(max_n_locator(nbins=5))
+    ax.yaxis.set_major_locator(max_n_locator(nbins=6, integer=True))
+    ax.minorticks_off()
+    ax.grid(True, which="major", axis="both", alpha=0.25)
 
 
 def create_paired_style_retrieved_fast_scatter(
@@ -669,54 +702,83 @@ def create_paired_style_retrieved_fast_scatter(
     output_path: Path,
 ) -> None:
 
+    plt, max_n_locator = matplotlib_modules()
+    set_matplotlib_style(plt)
     retrieved = fast_retrieved_rows(data)
     differences = fast_difference_rows(data)
-    top = alt.hconcat(
-        scatter_chart(
-            retrieved,
-            parameter="Aerosol mid pressure",
-            title="Aerosol mid pressure",
-        ),
-        scatter_chart(
-            retrieved,
-            parameter="Aerosol optical depth",
-            title="Aerosol optical depth",
-        ),
-        spacing=32,
-    )
     aod_diff = differences[differences["parameter"] == "Aerosol optical depth"]["difference"]
     pressure_diff = differences[differences["parameter"] == "Aerosol mid pressure [hPa]"][
         "difference"
     ]
-    bottom = alt.hconcat(
-        histogram_chart(
-            differences,
-            parameter="Aerosol optical depth",
-            title="Aerosol optical depth",
-            subtitle=difference_subtitle(aod_diff, ".3e"),
-            xlabel="mode - zdisamar reference",
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=180)
+    fig.suptitle("Retrieved State Versus Truth", fontsize=24, y=0.982)
+    fig.text(
+        0.5,
+        0.948,
+        (
+            "Top: each mode retrieval against known synthetic truth. "
+            "\nBottom: paired retrieval difference per scene "
+            "(fastmode - fullmode)."
         ),
-        histogram_chart(
-            differences,
-            parameter="Aerosol mid pressure [hPa]",
-            title="Aerosol mid pressure [hPa]",
-            subtitle=difference_subtitle(pressure_diff, ".4f", "hPa"),
-            xlabel="mode - zdisamar reference [hPa]",
-        ),
-        spacing=32,
+        ha="center",
+        va="top",
+        fontsize=11,
+        family="monospace",
     )
-    chart = alt.vconcat(top, bottom, spacing=42).properties(
-        title={
-            "text": "Retrieved State Versus Truth",
-            "subtitle": (
-                "Top: zdisamar fullmode and fastmode retrievals against "
-                "known synthetic truth. Bottom: paired retrieval difference per scene "
-                "relative to zdisamar fullmode."
-            ),
-        }
+    scatter_panel(
+        axes[0, 0],
+        retrieved,
+        parameter="Aerosol mid pressure",
+        title="Aerosol mid pressure",
+    )
+    scatter_panel(
+        axes[0, 1],
+        retrieved,
+        parameter="Aerosol optical depth",
+        title="Aerosol optical depth",
+    )
+    histogram_panel(
+        axes[1, 0],
+        differences,
+        parameter="Aerosol optical depth",
+        title="Aerosol optical depth",
+        subtitle=difference_subtitle(aod_diff, ".3e"),
+        xlabel="fastmode retrieved - fullmode retrieved",
+        max_n_locator=max_n_locator,
+    )
+    histogram_panel(
+        axes[1, 1],
+        differences,
+        parameter="Aerosol mid pressure [hPa]",
+        title="Aerosol mid pressure [hPa]",
+        subtitle=difference_subtitle(pressure_diff, ".4f", "hPa"),
+        xlabel="fastmode retrieved - fullmode retrieved [hPa]",
+        max_n_locator=max_n_locator,
+    )
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    legend = fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.902),
+        ncols=2,
+        frameon=True,
+        fontsize=12,
+    )
+    legend.get_frame().set_edgecolor("#cccccc")
+    legend.get_frame().set_facecolor("white")
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.985,
+        top=0.77,
+        bottom=0.085,
+        hspace=0.64,
+        wspace=0.32,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    chart.save(output_path, scale_factor=4.0)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
 
 
 def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:

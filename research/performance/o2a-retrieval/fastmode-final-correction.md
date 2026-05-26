@@ -154,9 +154,10 @@ number of retrieved state dimensions.
 
 ## Timing Boundary
 
-The retained sweep records `retrieval_s` around the public retrieval call.  It
-does not include scene construction, measurement construction, plotting, or the
-lazy final-state spectrum evaluation.  It does include:
+The retained sweep records `retrieval_s` as wall-clock time around the public
+retrieval call.  It does not include scene construction, measurement
+construction, plotting, or the lazy final-state spectrum evaluation.  It does
+include:
 
 - the fastmode OE retrieval call;
 - native case load/prepare for the sparse fast-stage case;
@@ -205,6 +206,7 @@ The sweep compares:
 
 The tracked outputs are:
 
+- [`validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`](../../../validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 - [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png)
 - [`validation/outputs/optimal_estimation/paired_oe_latency.png`](../../../validation/outputs/optimal_estimation/paired_oe_latency.png)
 - [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json)
