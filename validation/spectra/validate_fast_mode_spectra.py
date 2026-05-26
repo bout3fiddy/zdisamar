@@ -205,7 +205,7 @@ def fast_mode_overrides() -> dict[str, object]:
     oe_baseline.configure_case(base)
     fast_case = copy.deepcopy(base)
     fast_case.optimisation.fastmode.enabled = True
-    resolved = fast_case.resolved_optimisation()["fastmode"]
+    resolved = fast_case.optimisation.fastmode.resolved_dict(fast_case.measurement_wavelengths_nm)
 
     return {
         "radiative_transfer": resolved["radiative_transfer"],

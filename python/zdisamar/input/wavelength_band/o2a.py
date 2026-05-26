@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
-from ...display import NotebookDisplay, PrettyMapping
+from ...display import NotebookDisplay
 from ..aerosol import Aerosol, AerosolProfileLayer, coerce_profile_layers
 from ..assets import ReferenceAssets
 from ..atmosphere import Atmosphere
@@ -223,14 +223,6 @@ class O2AInput(NotebookDisplay):
         return json.dumps(
             json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
-
-    def resolved_optimisation(self) -> PrettyMapping:
-        """Return case optimisation settings with concrete derived values."""
-
-        return PrettyMapping(
-            "O2AOptimisationSummary",
-            {"fastmode": self.optimisation.fastmode.resolved_dict(self.measurement_wavelengths_nm)},
-        )
 
     def set_aerosol_profile(self, layers: object) -> None:
         """Install a case-owned aerosol profile for forward simulations."""

@@ -264,6 +264,28 @@ def assert_state_vector_uncertainty_rejected() -> None:
             raise AssertionError("invalid state-vector uncertainty was accepted")
 
 
+def assert_measurement_accepts_scientific_numeric_scalars() -> None:
+
+    import numpy as np
+    from zdisamar.inverse_method import optimal_estimation
+
+    measurement = optimal_estimation.Measurement(
+        wavelength_nm=(cast(float, np.float64(760.0)), cast(float, np.float64(760.1))),
+        reflectance=(cast(float, np.float64(0.2)), cast(float, np.float64(0.21))),
+        signal_to_noise=(cast(float, np.float64(1000.0)), cast(float, np.float64(900.0))),
+    )
+
+    assert measurement.signal_to_noise == (1000.0, 900.0)
+
+    from_uncertainty = optimal_estimation.Measurement.from_reflectance_uncertainty(
+        wavelength_nm=(cast(float, np.float64(760.0)),),
+        reflectance=(cast(float, np.float64(0.0)),),
+        reflectance_uncertainty=(cast(float, np.float64(1.0e-12)),),
+    )
+
+    assert math.isclose(from_uncertainty.reflectance_uncertainty[0], 1.0e-12)
+
+
 def assert_o2a_case_aerosol_state_properties() -> None:
 
     from zdisamar.wavelength_bands import o2a
@@ -287,7 +309,7 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     assert case.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
     assert case.atmosphere.intervals[2].top_pressure_hpa == 925.0
 
-    legacy = cast(dict[str, object], copy.deepcopy(serialized_aerosol))
+    legacy = copy.deepcopy(serialized_aerosol)
     legacy["layer_center_km"] = 5.4
 
     try:
@@ -337,7 +359,7 @@ def assert_deprecated_python_input_fields_rejected() -> None:
 
     case = o2a.reference_case()
 
-    observation = cast(dict[str, object], copy.deepcopy(case.instrument_response.to_dict()))
+    observation = copy.deepcopy(case.instrument_response.to_dict())
     observation["noise_model"] = {"enabled": True}
 
     try:
@@ -978,8 +1000,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert fast_case is not case
             assert fast_case.optimisation.fastmode.enabled
             assert not case.optimisation.fastmode.enabled
-            resolved_fastmode = cast(
-                dict[str, object], fast_case.resolved_optimisation()["fastmode"]
+            resolved_fastmode = fast_case.optimisation.fastmode.resolved_dict(
+                fast_case.measurement_wavelengths_nm
             )
             fastmode_radiative_transfer = cast(
                 dict[str, object],
@@ -1002,9 +1024,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert final_correction["wavelength_count"] == 12
             assert len(final_correction_wavelengths) == 12
             fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
-            disabled_fastmode = cast(
-                dict[str, object],
-                fast_case.resolved_optimisation()["fastmode"],
+            disabled_fastmode = fast_case.optimisation.fastmode.resolved_dict(
+                fast_case.measurement_wavelengths_nm
             )
             disabled_fastmode_oe = cast(dict[str, object], disabled_fastmode["oe"])
             disabled_fast_sampling = cast(
@@ -1168,6 +1189,7 @@ def main() -> int:
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
     assert_state_vector_uncertainty_rejected()
+    assert_measurement_accepts_scientific_numeric_scalars()
     assert_o2a_case_aerosol_state_properties()
     assert_deprecated_python_input_fields_rejected()
     assert_native_oe_loads_requested_case_into_supplied_cache()

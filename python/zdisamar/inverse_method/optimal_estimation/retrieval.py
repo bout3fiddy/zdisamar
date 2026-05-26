@@ -16,7 +16,7 @@ MIN_SIGNAL_FOR_SNR = 1.0e-300
 def measurement_float(value: object, *, label: str) -> float:
     """Convert one public measurement scalar with a typed failure."""
 
-    if isinstance(value, bool) or not isinstance(value, str | int | float):
+    if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError(f"{label} must contain only numeric values")
 
     return float(value)

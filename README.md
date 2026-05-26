@@ -325,8 +325,6 @@ fastmode.oe.fast_stage_sampling.windows = (
     o2a.FastModeWavelengthWindow((765.2, 768.0), 25),
 )
 fastmode.oe.final_correction.wavelength_count = 12
-
-fast_case.resolved_optimisation()
 ```
 
 ### Optimal Estimation

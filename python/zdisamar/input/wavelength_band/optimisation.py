@@ -721,9 +721,8 @@ class O2AOptimisation:
     """Case-owned optimisation modes for O2 A workflows.
 
     The public flow remains one O2 A case and one OE entrypoint.  Optimisation
-    settings live beside the physical inputs so they can be serialized,
-    inspected with `resolved_optimisation()`, and rejected if unknown fields are
-    parsed.
+    settings live beside the physical inputs so they can be serialized and
+    rejected if unknown fields are parsed.
     """
 
     fastmode: FastModeOptimisation

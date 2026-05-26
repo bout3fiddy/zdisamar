@@ -143,7 +143,9 @@ def build_rows() -> list[dict[str, Any]]:
             thresholds = fast_settings_case.radiative_transfer.performance_thresholds
             adaptive_grid = fast_settings_case.instrument_response.adaptive_reference_grid
             resolved_fastmode = (
-                retrieval_case.resolved_optimisation()["fastmode"]
+                retrieval_case.optimisation.fastmode.resolved_dict(
+                    retrieval_case.measurement_wavelengths_nm
+                )
                 if retrieval_case.optimisation.fastmode.enabled
                 else None
             )
@@ -328,7 +330,7 @@ def fastmode_defaults() -> dict[str, object]:
     oe_baseline.configure_case(base)
     fast_case = fastmode_case(base)
 
-    return fast_case.resolved_optimisation()["fastmode"]
+    return fast_case.optimisation.fastmode.resolved_dict(fast_case.measurement_wavelengths_nm)
 
 
 def build_summary(data: pd.DataFrame) -> dict[str, Any]:
