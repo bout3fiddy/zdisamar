@@ -26,6 +26,47 @@ The default fastmode configuration changes:
 - OE final correction: one full-physics state update after fastmode
   convergence.
 
+## API Knobs
+
+Fastmode is configured by editing fields under `case.optimisation.fastmode`.
+The defaults are intended to be usable directly, but the fields are ordinary case
+data and can be changed before calling `disamar_oe`.
+
+```python
+case.optimisation.fastmode.enabled = True
+fastmode = case.optimisation.fastmode
+
+fastmode.radiative_transfer.fourier_order_cap = 5
+fastmode.radiative_transfer.aerosol_tangent_order_cap = 11
+fastmode.radiative_transfer.fourier_tail_reflectance_epsilon = 1.0e-11
+fastmode.radiative_transfer.threshold_doubl = 3.0e-5
+
+fastmode.adaptive_reference_grid.points_per_fwhm = 28
+fastmode.adaptive_reference_grid.strong_line_min_divisions = 6
+fastmode.adaptive_reference_grid.strong_line_max_divisions = 22
+
+fastmode.oe.controls.max_iterations = 10
+fastmode.oe.controls.state_vector_convergence_threshold = 1.0
+fastmode.oe.controls.max_change_transformed_state = 1.0
+
+fastmode.oe.final_correction.enabled = True
+fastmode.oe.final_correction.wavelength_window_nm = (765.2, 768.0)
+fastmode.oe.final_correction.wavelength_count = 12
+```
+
+The RTM fields reduce work in the native forward model.  Fourier caps skip high
+azimuthal orders; the Fourier-tail threshold stops the series once the
+reflectance tail is small; `threshold_doubl` relaxes layer-doubling work.  These
+are speed/accuracy controls, not physical-scene controls.
+
+The adaptive-reference-grid fields reduce high-resolution O2 line sampling
+before instrument convolution.  Lower values are faster but can under-resolve
+strong line cores.
+
+The OE controls decide when the fast retrieval stage stops.  The final
+correction fields decide whether zdisamar performs one sparse full-physics
+update, and which measured wavelengths are used for that update.
+
 ## Algorithm
 
 The retained OE path uses one public `disamar_oe` call:

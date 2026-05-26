@@ -63,7 +63,23 @@ def wavelength_window(value: object) -> tuple[float, float]:
 
 @dataclass
 class FastModeRadiativeTransfer:
-    """Radiative-transfer controls changed when O2 A fastmode is enabled."""
+    """RTM work-reduction controls applied when O2 A fastmode is enabled.
+
+    These fields are a case-owned view onto the LABOS performance thresholds.
+    They do not change the physical scene, measurement grid, aerosol state, or
+    instrument model.  They change how much radiative-transfer work is done
+    before a term is treated as small enough to skip.
+
+    `fourier_order_cap` skips whole azimuthal Fourier orders above the cap.
+    `aerosol_tangent_order_cap` does the same for AOD/pressure tangent
+    weighting functions when the general Fourier cap is relaxed.
+    `fourier_tail_reflectance_epsilon` lets the solver stop the Fourier series
+    after the retained floor order once the reflectance tail is small.
+    `threshold_doubl` relaxes the layer-doubling start threshold, reducing
+    doubling work at the cost of a stronger transport approximation.
+    The `qzero_*_product_suppression` flags are experimental downstream matrix
+    product skips; retained fastmode defaults keep them disabled.
+    """
 
     fourier_order_cap: int | None = 5
     aerosol_tangent_order_cap: int | None = 11
@@ -145,7 +161,17 @@ class FastModeRadiativeTransfer:
 
 @dataclass
 class FastModeAdaptiveReferenceGrid:
-    """High-resolution line-sampling controls changed by O2 A fastmode."""
+    """High-resolution O2 line-grid controls changed by fastmode.
+
+    These knobs reduce work before convolution to the instrument grid.  Lower
+    values produce fewer high-resolution samples around O2 A lines, so they can
+    speed up the forward model but may under-resolve narrow line structure.
+
+    `points_per_fwhm` controls the nominal high-resolution sampling density per
+    instrument-line FWHM.  `strong_line_min_divisions` and
+    `strong_line_max_divisions` bound the extra subdivisions around strong line
+    cores, where most of the O2 A information lives.
+    """
 
     points_per_fwhm: int = 28
     strong_line_min_divisions: int = 6
@@ -191,7 +217,15 @@ class FastModeAdaptiveReferenceGrid:
 
 @dataclass
 class FastModeOeControls:
-    """Optimal-estimation convergence controls used by fastmode by default."""
+    """Fast-stage optimal-estimation iteration controls.
+
+    `max_iterations` is the hard stop for the fastmode solve before any final
+    correction.  `state_vector_convergence_threshold` is compared with the
+    posterior-weighted state update metric; lower values require a smaller
+    state step before convergence is accepted.  `max_change_transformed_state`
+    limits each update in the transformed OE state basis and activates the
+    signal-to-noise safeguard when the proposed step is too large.
+    """
 
     max_iterations: int = 10
     state_vector_convergence_threshold: float = 1.0
@@ -232,7 +266,21 @@ class FastModeOeControls:
 
 @dataclass
 class FastModeFinalCorrection:
-    """One full-physics OE update after fastmode convergence."""
+    """One sparse full-physics OE update after fastmode convergence.
+
+    When enabled, fastmode first solves the full measurement vector with the
+    fast RTM settings, then computes one full-physics forward model and
+    Jacobian on a smaller correction wavelength set.  The correction reuses the
+    same retrieval session and updates only the retrieved state vector.
+
+    `wavelength_window_nm` plus `wavelength_count` is the convenient selector:
+    it picks evenly spaced measured wavelengths inside the window.  Set
+    `wavelength_count=None` to retain every measured wavelength in the window.
+    `wavelengths_nm` overrides the window selector with explicit wavelengths;
+    each value must map to a unique measurement-grid sample.  `variance_scale`
+    overrides the default retained-fraction variance scaling for experiments
+    with sparse or weighted correction grids.
+    """
 
     enabled: bool = True
     wavelength_window_nm: tuple[float, float] = (765.2, 768.0)
@@ -335,7 +383,12 @@ class FastModeFinalCorrection:
 
 @dataclass
 class FastModeOe:
-    """OE-specific fastmode settings."""
+    """OE-specific fastmode settings.
+
+    `controls` apply to the fast retrieval stage.  `final_correction` controls
+    the optional sparse full-physics update that is applied after fastmode
+    convergence.
+    """
 
     controls: FastModeOeControls
     final_correction: FastModeFinalCorrection
@@ -378,7 +431,13 @@ class FastModeOe:
 
 @dataclass
 class FastModeOptimisation:
-    """Inspectable O2 A fastmode settings owned by the case."""
+    """Inspectable O2 A fastmode settings owned by the case.
+
+    Enabling this section does not mutate the physical case immediately.  The
+    RTM and adaptive-grid overrides are applied to a copied native case at load
+    time, while OE controls and final-correction settings stay on the Python
+    case so `disamar_oe` can run the complete fastmode retrieval in one session.
+    """
 
     enabled: bool = False
     radiative_transfer: FastModeRadiativeTransfer = field(
@@ -439,7 +498,13 @@ class FastModeOptimisation:
 
 @dataclass
 class O2AOptimisation:
-    """Case-owned optimisation modes for O2 A workflows."""
+    """Case-owned optimisation modes for O2 A workflows.
+
+    The public flow remains one O2 A case and one OE entrypoint.  Optimisation
+    settings live beside the physical inputs so they can be serialized,
+    inspected with `resolved_optimisation()`, and rejected if unknown fields are
+    parsed.
+    """
 
     fastmode: FastModeOptimisation
 

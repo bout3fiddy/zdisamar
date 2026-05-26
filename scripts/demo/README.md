@@ -27,4 +27,5 @@ zig build
 - `optimal_estimation_demo.ipynb`: demonstrates a two-state O2 A
   optimal-estimation flow using aerosol optical depth and aerosol layer
   mid-pressure, with convergence, measurement-fit, residual, and Jacobian plots in
-  separate cells.
+  separate cells. The notebook also points to the case-owned fastmode switch and
+  `resolved_optimisation()` inspection path for trying the fastmode OE lane.
