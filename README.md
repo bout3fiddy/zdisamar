@@ -231,38 +231,76 @@ the package has no third-party runtime dependencies:
 uv run --with zdisamar python
 ```
 
-For a one-file toy run, let `uv` create the environment and execute the script:
+The snippets below are one Python session. They show the main things that make
+`zdisamar` useful for O2 A experiments: the package carries the native RTM and
+reference assets, the case object is a real physical scene, fastmode is an
+optimisation setting on that same case, and optimal estimation reuses a native
+session while it evaluates repeated spectra and Jacobians.
 
-```bash
-uv run --with zdisamar python - <<'PY'
+Start with the small public API surface: wavelength-band cases, radiative
+transfer, optimal estimation, and a reusable native session cache.
+
+```python
 from zdisamar import rtm
 from zdisamar.inverse_method import optimal_estimation as oe
 from zdisamar.rtm import SessionCache
 from zdisamar.wavelength_bands import o2a
+```
 
+`reference_case()` builds a complete O2 A scene: atmosphere, surface, geometry,
+spectroscopy, instrument sampling, aerosol placement, and bundled reference-data
+paths. There is no external DISAMAR input file to prepare for this toy run.
 
+```python
 truth = o2a.reference_case()
 truth.aerosol_optical_depth_550_nm = 0.32
 truth.aerosol_layer.mid_pressure_hpa = 760.0
+```
 
+The forward model runs the native Zig RTM and returns Python arrays for the
+instrument wavelength grid and spectral channels. This call is the same physical
+calculation used inside retrievals.
+
+```python
 spectrum = rtm.spectrum(truth)
-print(
-    "forward:",
-    len(spectrum.wavelength_nm),
-    "wavelengths, first reflectance",
-    f"{spectrum.reflectance[0]:.6f}",
-)
 
+len(spectrum.wavelength_nm), spectrum.reflectance[0]
+```
+
+For the toy inverse problem, use the synthetic truth spectrum as the measurement.
+In a real retrieval, this object would hold the observed reflectance and its
+measurement variance.
+
+```python
 measurement = oe.Measurement(
     wavelength_nm=spectrum.wavelength_nm,
     reflectance=spectrum.reflectance,
     variance=[1.0e-8] * len(spectrum.wavelength_nm),
 )
+```
 
+Now make an inverse case with a deliberately wrong starting state. Fastmode is
+enabled on the case, not through a separate retrieval API. The resolved settings
+are inspectable; the default fastmode OE path uses sparse fast-stage wavelengths
+and one sparse full-physics correction.
+
+```python
 case = o2a.reference_case().with_fast_mode()
 case.aerosol_optical_depth_550_nm = 0.18
 case.aerosol_layer.mid_pressure_hpa = 820.0
 
+fastmode_oe = case.resolved_optimisation()["fastmode"]["oe"]
+
+fastmode_oe["fast_stage_sampling"]["sample_count"], len(
+    fastmode_oe["final_correction"]["wavelengths_nm"]
+)
+```
+
+The state vector says which physical quantities OE may move. Here it retrieves
+aerosol optical depth and aerosol layer mid-pressure while keeping the aerosol
+layer thickness fixed.
+
+```python
 profile = oe.pressure_altitude_profile_from_case(case)
 state_vector = oe.StateVector(
     (
@@ -282,7 +320,13 @@ state_vector = oe.StateVector(
         ),
     )
 )
+```
 
+Run the retrieval in a `SessionCache`. That keeps prepared native RTM state alive
+across the repeated forward-model and Jacobian evaluations that happen during
+optimal estimation.
+
+```python
 with SessionCache() as cache:
     result = oe.disamar_oe(
         case=case,
@@ -290,13 +334,19 @@ with SessionCache() as cache:
         state_vector=state_vector,
         cache=cache,
     )
-
-print("fastmode OE converged:", result.converged, "iterations:", result.iterations)
-print("retrieved AOD:", f"{result.value('aerosol_optical_depth'):.4f}")
-print(
-    "retrieved aerosol mid-pressure:",
-    f"{result.value('aerosol_layer_mid_pressure_hpa'):.2f}",
-    "hPa",
-)
-PY
 ```
+
+The result is returned in physical coordinates. In this toy case, the truth was
+`0.32` AOD and `760 hPa` aerosol mid-pressure.
+
+```python
+(
+    result.converged,
+    result.iterations,
+    result.value("aerosol_optical_depth"),
+    result.value("aerosol_layer_mid_pressure_hpa"),
+)
+```
+
+In a notebook, `spectrum.plot.reflectance()` and `result.plot.convergence()`
+produce dependency-free SVG diagnostics from the returned objects.
