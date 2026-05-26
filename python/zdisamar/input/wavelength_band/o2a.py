@@ -3,7 +3,7 @@
 import json
 import math
 from copy import copy, deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
@@ -16,6 +16,7 @@ from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
 from ..shared import json_value, object_dict, object_dict_list, to_float
 from ..spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
+from .optimisation import O2AOptimisation
 
 
 def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
@@ -47,12 +48,7 @@ class O2AInput(NotebookDisplay):
     radiative_transfer: RadiativeTransferControls
     outputs: list[dict[str, object]]
     validation: dict[str, object]
-
-    FAST_ADAPTIVE_REFERENCE_GRID = {
-        "points_per_fwhm": 28,
-        "strong_line_min_divisions": 6,
-        "strong_line_max_divisions": 22,
-    }
+    optimisation: O2AOptimisation = field(default_factory=O2AOptimisation.defaults)
 
     @property
     def aerosol_optical_depth_550_nm(self) -> float:
@@ -81,6 +77,25 @@ class O2AInput(NotebookDisplay):
         """Return the coupled aerosol-layer placement view."""
 
         return AerosolLayer(self)
+
+    @property
+    def measurement_wavelengths_nm(self) -> tuple[float, ...]:
+        """Return the nominal measurement axis for the case."""
+
+        measured_wavelengths = self.instrument_response.measured_wavelengths_nm
+
+        if measured_wavelengths:
+            return measured_wavelengths
+
+        sample_count = int(self.spectral_grid.sample_count)
+
+        if sample_count < 2:
+            raise ValueError("spectral grid must contain at least two samples")
+
+        start_nm = float(self.spectral_grid.start_nm)
+        step_nm = (float(self.spectral_grid.end_nm) - start_nm) / float(sample_count - 1)
+
+        return tuple(start_nm + (step_nm * index) for index in range(sample_count))
 
     def __repr__(self) -> str:
 
@@ -153,6 +168,7 @@ class O2AInput(NotebookDisplay):
             ),
             outputs=_object_list(data, "outputs"),
             validation=_object_dict(data, "validation"),
+            optimisation=O2AOptimisation.from_dict(object_dict(data.get("optimisation", {}))),
         )
 
     @classmethod
@@ -162,7 +178,15 @@ class O2AInput(NotebookDisplay):
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, object]:
-        """Return the O2 A scene shape expected by the zdisamar model."""
+        """Return the Python O2 A case shape, including optimisation controls."""
+
+        payload = self.to_native_dict()
+        payload["optimisation"] = self.optimisation.to_dict()
+
+        return payload
+
+    def to_native_dict(self) -> dict[str, object]:
+        """Return the O2 A scene shape expected by the native zdisamar model."""
 
         return {
             "metadata": self.metadata,
@@ -187,11 +211,25 @@ class O2AInput(NotebookDisplay):
         }
 
     def to_json_bytes(self) -> bytes:
-        """Encode the scene deterministically before the zdisamar model reads it."""
+        """Encode the Python case deterministically, including optimisation controls."""
 
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
+
+    def to_native_json_bytes(self) -> bytes:
+        """Encode the native scene without Python-only optimisation controls."""
+
+        return json.dumps(
+            json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+
+    def resolved_optimisation(self) -> dict[str, object]:
+        """Return case optimisation settings with concrete derived values."""
+
+        return {
+            "fastmode": self.optimisation.fastmode.resolved_dict(self.measurement_wavelengths_nm)
+        }
 
     def set_aerosol_profile(self, layers: object) -> None:
         """Install a case-owned aerosol profile for forward simulations."""
@@ -230,23 +268,23 @@ class O2AInput(NotebookDisplay):
         self.aerosol.set_profile_layers((layer,))
 
     def with_fast_mode(self) -> Self:
-        """Return a copy with the validated O2 A fast-mode preset applied.
+        """Return a copy with case-owned O2 A fastmode enabled."""
 
-        The preset combines radiative-transfer performance thresholds with a
-        modestly thinner adaptive reference grid.  The grid part is O2 A
-        specific: it reduces high-resolution line sampling work while preserving
-        the output wavelength grid seen by callers.
-        """
         fast = deepcopy(self)
-        fast.radiative_transfer.performance_thresholds = (
-            fast.radiative_transfer.performance_thresholds.with_fast_mode()
-        )
-        fast.instrument_response.adaptive_reference_grid = {
-            **fast.instrument_response.adaptive_reference_grid,
-            **self.FAST_ADAPTIVE_REFERENCE_GRID,
-        }
+        fast.optimisation.fastmode.enabled = True
 
         return fast
+
+    def with_rtm_optimisation_applied(self) -> Self:
+        """Return the native RTM case after applying enabled optimisation modes."""
+
+        resolved = deepcopy(self)
+
+        if resolved.optimisation.fastmode.enabled:
+            resolved.optimisation.fastmode.apply_to_case(resolved)
+            resolved.optimisation.fastmode.enabled = False
+
+        return resolved
 
     def with_resolved_asset_paths(self, base: str | Path) -> Self:
         """Resolve relative reference-data files from one directory."""

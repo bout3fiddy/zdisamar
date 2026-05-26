@@ -196,24 +196,16 @@ def residual_over_noise(residual: np.ndarray, noise: np.ndarray) -> np.ndarray:
     return residual / np.maximum(noise, np.finfo(np.float64).tiny)
 
 
-def fast_mode_overrides() -> dict[str, dict[str, float | int | bool | None]]:
+def fast_mode_overrides() -> dict[str, object]:
 
-    fast = o2a.RadiativeTransferPerformanceThresholds.fast()
-    adaptive_grid: dict[str, float | int | bool | None] = dict(
-        o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID
-    )
+    base = build_o2a_case(o2a)
+    oe_baseline.configure_case(base)
+    fast_case = base.with_fast_mode()
+    resolved = fast_case.resolved_optimisation()["fastmode"]
 
     return {
-        "radiative_transfer": {
-            "fourier_order_cap": fast.fourier_order_cap,
-            "aerosol_tangent_order_cap": fast.aerosol_tangent_order_cap,
-            "fourier_tail_reflectance_epsilon": fast.fourier_tail_reflectance_epsilon,
-            "threshold_doubl": fast.threshold_doubl,
-            "qzero_rd_product_suppression": fast.qzero_rd_product_suppression,
-            "qzero_tu_product_suppression": fast.qzero_tu_product_suppression,
-            "qzero_td_product_suppression": fast.qzero_td_product_suppression,
-        },
-        "adaptive_reference_grid": adaptive_grid,
+        "radiative_transfer": resolved["radiative_transfer"],
+        "adaptive_reference_grid": resolved["adaptive_reference_grid"],
     }
 
 
@@ -421,7 +413,7 @@ def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
         "schema_version": 1,
         "canonical_command": CANONICAL_COMMAND,
         "fast_mode": {
-            "method": "O2ACase.with_fast_mode()",
+            "method": "case.optimisation.fastmode.enabled = True",
             "overrides": fast_mode_overrides(),
             "note": (
                 "Fast mode preserves each case's physical scene and output wavelength grid, "

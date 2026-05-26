@@ -506,6 +506,7 @@ fn sceneFromResolvedO2A(
             .integration_mode = .disamar_hr_grid,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
             .operational_solar_spectrum = solar_spectrum,
+            .measured_wavelengths_nm = resolved.observation.measured_wavelengths_nm,
         },
         .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
     };

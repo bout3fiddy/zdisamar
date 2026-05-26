@@ -2,7 +2,7 @@
 
 This directory stores tracked O2 A output-validation evidence that is
 intentionally kept in git. The scripts compare zdisamar outputs against DISAMAR
-reference outputs, zdisamar normal-mode outputs against fast-mode outputs, and
+reference outputs, zdisamar normal-mode outputs against fastmode outputs, and
 Python optimal-estimation retrieval outputs against retained reference cases.
 Disposable validation traces, scratch runs, and exploratory analysis belong
 under `out/`, not under this directory.
@@ -36,7 +36,7 @@ The validation tree is split by target:
 - `outputs/spectra/o2a_fast_mode_spectra.png`,
   `outputs/spectra/o2a_fast_mode_spectra_data.csv`, and
   `outputs/spectra/o2a_fast_mode_spectra_metrics.json`: retained comparison of
-  reference settings against the O2 A fast-mode preset over several scene
+  reference settings against the O2 A fastmode preset over several scene
   geometries.
 - `reference_data/spectra/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
   still consumed by older forward validation tests.
@@ -49,7 +49,7 @@ The validation tree is split by target:
   paired-retrieval plots.
 - `reference_data/optimal_estimation/disamar_oe_sweep_cases.json`: shared
   deterministic OE sweep-case manifest used by the normal zdisamar OE sweep and
-  the fast-mode zdisamar OE sweep.
+  the fastmode zdisamar OE sweep.
 - `outputs/optimal_estimation/zdisamar_o2a_sweep_runs.csv` and
   `outputs/optimal_estimation/zdisamar_o2a_sweep_summary.json`: retained
   slow-mode zdisamar OE sweep outputs from
@@ -58,20 +58,20 @@ The validation tree is split by target:
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv`,
   and
   `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`:
-  retained fast-mode sweep comparison between zdisamar reference-threshold
-  retrievals, zdisamar fast-mode retrievals, and zdisamar fast-accurate
-  retrievals. Fast-accurate solves the fast-mode OE problem to convergence and
-  applies one full-physics correction. The plot includes posterior one-sigma
+  retained fastmode sweep comparison between zdisamar reference-threshold
+  retrievals, zdisamar fastmode retrievals, and corrected zdisamar fastmode
+  retrievals. Corrected fastmode solves the fastmode OE problem to convergence
+  and applies one sparse full-physics correction. The plot includes posterior one-sigma
   error bars, mode-minus-reference retrieval deltas, and timing panels.
   Regenerate it with
   `validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`.
 - `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: paired-style
   retrieved-state plot comparing zdisamar reference retrievals against zdisamar
-  fast-mode and fast-accurate retrievals on the fast-mode sweep scenes.
+  fastmode and corrected fastmode retrievals on the fastmode sweep scenes.
 - `outputs/optimal_estimation/paired_oe_latency.png`: latency plot refreshed by
-  the fast-mode sweep. When the historical paired manifest is present, the plot
+  the fastmode sweep. When the historical paired manifest is present, the plot
   includes DISAMAR Fortran, zdisamar reference, zdisamar-fast, and
-  zdisamar-fast-accurate.
+  zdisamar-fastmode-corrected.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked
   paired-retrieval plot outputs kept as historical evidence.
