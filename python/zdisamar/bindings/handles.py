@@ -140,7 +140,8 @@ class RtmHandle:
     def load_o2a_case(self, case: O2AInput, *, copy_case: bool = True) -> None:
         """Load one O2 A wavelength-band case into the RTM handle."""
 
-        resolved = case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+        rtm_case = case.with_rtm_optimisation_applied()
+        resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
         payload = resolved.to_json_bytes()
         self._check(
             self._lib.zds_prepare_o2a_json(
@@ -149,10 +150,10 @@ class RtmHandle:
                 len(payload),
             )
         )
-        self._case = copy.deepcopy(case) if copy_case else None
+        self._case = copy.deepcopy(rtm_case) if copy_case else None
         self._case_fingerprint = payload
-        self._loaded_has_multi_layer_aerosol_profile = len(case.aerosol.profile) > 1
-        self._solar_mu0 = case.geometry.solar_mu0
+        self._loaded_has_multi_layer_aerosol_profile = len(rtm_case.aerosol.profile) > 1
+        self._solar_mu0 = rtm_case.geometry.solar_mu0
 
     def loaded_o2a_case_matches(self, case: O2AInput) -> bool:
         """Return whether the native handle already owns this prepared case.
@@ -165,7 +166,8 @@ class RtmHandle:
         if self._case_fingerprint is None:
             return False
 
-        resolved = case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+        rtm_case = case.with_rtm_optimisation_applied()
+        resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
 
         return resolved.to_json_bytes() == self._case_fingerprint
 

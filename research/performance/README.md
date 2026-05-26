@@ -7,7 +7,7 @@ artifacts are not mixed with historical checkpoint numbers.
 ## Documents
 
 - [O2 A forward performance](o2a-forward/): current forward elapsed time, historical optimization path, detailed optimisation notes, remaining LABOS bottlenecks, and rejected ideas.
-- [O2 A retrieval performance](o2a-retrieval/): session reuse, state-vector Jacobians, paired DISAMAR/zdisamar validation, fast-accurate correction, optimisation notes, and current retrieval elapsed time.
+- [O2 A retrieval performance](o2a-retrieval/): session reuse, state-vector Jacobians, paired DISAMAR/zdisamar validation, fastmode final correction, optimisation notes, and current retrieval elapsed time.
 - [Performance cases](cases/): case provenance for original reference measurements, current baseline config, slow OE case, and paired sweep scenes.
 - [O2 A calculation demo](o2a-calculation-demo.ipynb): Jupyter notebook that isolates the measured O2 A counts and the small LABOS matrix calculations behind the elapsed time.
 

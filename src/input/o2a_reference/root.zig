@@ -312,6 +312,19 @@ pub fn warmO2ASessionStorage(
 pub fn validateInput(input: *const O2AInput) !void {
     if (input.spectral_grid.sample_count < 2) return error.InvalidSpectralGrid;
     if (!(input.spectral_grid.end_nm > input.spectral_grid.start_nm)) return error.InvalidSpectralGrid;
+    if (input.observation.measured_wavelengths_nm.len != 0) {
+        if (input.observation.measured_wavelengths_nm.len != input.spectral_grid.sample_count) {
+            return error.InvalidSpectralGrid;
+        }
+        var previous: ?f64 = null;
+        for (input.observation.measured_wavelengths_nm) |wavelength_nm| {
+            if (!std.math.isFinite(wavelength_nm)) return error.InvalidSpectralGrid;
+            if (previous) |earlier| {
+                if (wavelength_nm <= earlier) return error.InvalidSpectralGrid;
+            }
+            previous = wavelength_nm;
+        }
+    }
     if (input.layer_count == 0 or input.sublayer_divisions == 0) return error.InvalidAtmosphere;
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
     for (input.intervals) |interval| try interval.validate();

@@ -63,7 +63,7 @@ class Iteration:
 
 @dataclass(frozen=True)
 class FastCorrection:
-    """Diagnostics for a fast-mode retrieval finalized by one full-physics update."""
+    """Diagnostics for a fastmode retrieval finalized by one full-physics update."""
 
     fast_iterations: int
     fast_converged: bool

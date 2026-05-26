@@ -7,16 +7,32 @@ from .geometry import Geometry, Surface
 from .instrument import InstrumentResponse, SpectralGrid
 from .radiative_transfer import RadiativeTransferControls, RadiativeTransferPerformanceThresholds
 from .spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
-from .wavelength_band import O2AInput
+from .wavelength_band import (
+    FastModeAdaptiveReferenceGrid,
+    FastModeFinalCorrection,
+    FastModeOe,
+    FastModeOeControls,
+    FastModeOptimisation,
+    FastModeRadiativeTransfer,
+    O2AInput,
+    O2AOptimisation,
+)
 
 __all__ = [
     "Aerosol",
     "AerosolPlacement",
     "AerosolProfileLayer",
     "Atmosphere",
+    "FastModeAdaptiveReferenceGrid",
+    "FastModeFinalCorrection",
+    "FastModeOe",
+    "FastModeOeControls",
+    "FastModeOptimisation",
+    "FastModeRadiativeTransfer",
     "Geometry",
     "InstrumentResponse",
     "O2AInput",
+    "O2AOptimisation",
     "O2LineByLine",
     "OxygenCollisionInducedAbsorption",
     "RadiativeTransferControls",

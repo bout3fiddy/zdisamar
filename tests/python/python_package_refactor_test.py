@@ -455,9 +455,10 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     ]
 
 
-def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
+def assert_fastmode_oe_runs_single_full_correction() -> None:
 
     from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Iteration,
@@ -481,17 +482,17 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
 
             del target, value
 
-    fast_case = SimpleNamespace(scene_id="fast")
-
-    class ReferenceCase(SimpleNamespace):
-        def with_fast_mode(self):
-
-            return fast_case
-
-    reference_case = ReferenceCase(scene_id="reference")
+    optimisation = O2AOptimisation.defaults()
+    optimisation.fastmode.enabled = True
+    reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
+    full_case = SimpleNamespace(scene_id="full")
     correction_case = SimpleNamespace(scene_id="correction")
     correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), (1.0, 1.0))
-    measurement = Measurement((), (), ())
+    measurement = Measurement(
+        (765.2, 766.0, 768.0),
+        (0.1, 0.2, 0.3),
+        (1.0, 1.0, 1.0),
+    )
     state_vector = StateVector(
         (
             Parameter("aerosol_optical_depth", 0.2, 0.3, 0.8),
@@ -524,7 +525,7 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
         nonlocal final_evaluation_calls
         final_evaluation_calls += 1
 
-        raise AssertionError("fast-accurate combine forced lazy final evaluation")
+        raise AssertionError("fastmode correction combine forced lazy final evaluation")
 
     full_result = Result(
         state_names=state_vector.names,
@@ -561,7 +562,7 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
 
         def has_loaded_case(self, case) -> bool:
 
-            assert case is fast_case
+            assert case is reference_case
 
             return False
 
@@ -571,6 +572,7 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
 
     with (
         patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe),
+        patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
         patch.object(o2a_oe, "case_for_state", return_value=correction_case) as case_for_state,
         patch.object(
             o2a_oe,
@@ -585,7 +587,7 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
         patch.object(o2a_oe, "_result_from_native", return_value=full_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
-        result = o2a_oe.disamar_oe_fast(
+        result = o2a_oe.disamar_oe(
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
@@ -593,14 +595,19 @@ def assert_disamar_oe_fast_runs_fast_then_single_full_correction() -> None:
             cache=cast(SessionCache, Cache()),
         )
 
-    assert calls[0]["case"] is fast_case
+    assert calls[0]["case"] is reference_case
     assert calls[0]["controls"] is controls
     assert calls[0]["load_case"] is False
     assert len(calls) == 1
-    case_for_state.assert_called_once_with(reference_case, fast_result.state, state_vector)
-    correction_measurement_builder.assert_called_once_with(measurement)
+    full_physics_case.assert_called_once_with(reference_case)
+    case_for_state.assert_called_once_with(full_case, fast_result.state, state_vector)
+    correction_measurement_builder.assert_called_once_with(
+        measurement,
+        wavelengths_nm=(765.2, 766.0, 768.0),
+        variance_scale=None,
+    )
     correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
-    assert loads == [(fast_case, False), (correction_case, False)]
+    assert loads == [(reference_case, False), (correction_case, False)]
     assert len(correction_calls) == 1
     corrected_state_vector = cast(StateVector, correction_calls[0][0])
     correction_controls = correction_calls[0][1]
@@ -818,35 +825,42 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert not validation_fast_thresholds.qzero_td_product_suppression
             fast_case = case.with_fast_mode()
             assert fast_case is not case
-            assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap == 5
+            assert fast_case.optimisation.fastmode.enabled
+            assert not case.optimisation.fastmode.enabled
+            resolved_fastmode = fast_case.resolved_optimisation()["fastmode"]
+            assert resolved_fastmode["radiative_transfer"]["fourier_order_cap"] == 5
+            assert resolved_fastmode["oe"]["final_correction"]["wavelength_count"] == 12
+            assert len(resolved_fastmode["oe"]["final_correction"]["wavelengths_nm"]) == 12
+            assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap is None
+            fast_rtm_case = fast_case.with_rtm_optimisation_applied()
+            assert fast_rtm_case.optimisation.fastmode.enabled is False
+            assert fast_rtm_case.radiative_transfer.performance_thresholds.fourier_order_cap == 5
             assert (
-                fast_case.radiative_transfer.performance_thresholds.aerosol_tangent_order_cap == 11
+                fast_rtm_case.radiative_transfer.performance_thresholds.aerosol_tangent_order_cap
+                == 11
             )
             assert math.isclose(
-                fast_case.radiative_transfer.performance_thresholds.threshold_doubl,
+                fast_rtm_case.radiative_transfer.performance_thresholds.threshold_doubl,
                 3.0e-5,
             )
+            fast_thresholds = fast_rtm_case.radiative_transfer.performance_thresholds
+            assert not fast_thresholds.qzero_rd_product_suppression
+            assert not fast_thresholds.qzero_tu_product_suppression
+            assert not fast_thresholds.qzero_td_product_suppression
+            fast_grid = fast_rtm_case.instrument_response.adaptive_reference_grid
+            assert fast_grid["points_per_fwhm"] == 28
             assert (
-                not fast_case.radiative_transfer.performance_thresholds.qzero_rd_product_suppression
-            )
-            assert (
-                not fast_case.radiative_transfer.performance_thresholds.qzero_tu_product_suppression
-            )
-            assert (
-                not fast_case.radiative_transfer.performance_thresholds.qzero_td_product_suppression
-            )
-            assert fast_case.instrument_response.adaptive_reference_grid["points_per_fwhm"] == 28
-            assert (
-                fast_case.instrument_response.adaptive_reference_grid["strong_line_min_divisions"]
+                fast_grid["strong_line_min_divisions"]
                 == 6
             )
             assert (
-                fast_case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"]
+                fast_grid["strong_line_max_divisions"]
                 == 22
             )
             assert (
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
+            assert o2a.reference_case(fastmode=True).optimisation.fastmode.enabled
             nominal_wavelengths = rtm.nominal_wavelengths(case)
             assert nominal_wavelengths[0] == case.spectral_grid.start_nm
             assert nominal_wavelengths[-1] == case.spectral_grid.end_nm
@@ -918,7 +932,7 @@ def main() -> int:
     assert_deprecated_python_input_fields_rejected()
     assert_native_oe_loads_requested_case_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
-    assert_disamar_oe_fast_runs_fast_then_single_full_correction()
+    assert_fastmode_oe_runs_single_full_correction()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()

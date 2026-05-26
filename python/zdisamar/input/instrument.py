@@ -1,5 +1,7 @@
 """Instrument-response input objects."""
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Self
 
@@ -45,6 +47,7 @@ class InstrumentResponse:
     high_resolution_half_span_nm: float
     adaptive_reference_grid: dict[str, int]
     solar_reference_asset_id: str
+    measured_wavelengths_nm: tuple[float, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
@@ -54,6 +57,8 @@ class InstrumentResponse:
         if legacy_keys:
             joined = ", ".join(sorted(legacy_keys))
             raise ValueError(f"unsupported observation fields: {joined}")
+
+        measured_wavelengths = measured_wavelength_tuple(data.get("measured_wavelengths_nm", ()))
 
         return cls(
             instrument_name=str(data["instrument_name"]),
@@ -65,11 +70,12 @@ class InstrumentResponse:
             high_resolution_half_span_nm=to_float(data["high_resolution_half_span_nm"]),
             adaptive_reference_grid=int_dict(data["adaptive_reference_grid"]),
             solar_reference_asset_id=str(data["solar_reference_asset_id"]),
+            measured_wavelengths_nm=measured_wavelengths,
         )
 
-    def to_dict(self) -> dict[str, float | str | dict[str, int]]:
+    def to_dict(self) -> dict[str, object]:
 
-        return {
+        payload: dict[str, object] = {
             "instrument_name": self.instrument_name,
             "regime": self.regime,
             "sampling": self.sampling,
@@ -80,3 +86,28 @@ class InstrumentResponse:
             "adaptive_reference_grid": self.adaptive_reference_grid,
             "solar_reference_asset_id": self.solar_reference_asset_id,
         }
+
+        if self.measured_wavelengths_nm:
+            payload["measured_wavelengths_nm"] = list(self.measured_wavelengths_nm)
+
+        return payload
+
+
+def measured_wavelength_tuple(values: object) -> tuple[float, ...]:
+    """Return a strictly increasing explicit measured-wavelength axis."""
+
+    if values is None:
+        return ()
+
+    if not isinstance(values, Sequence) or isinstance(values, str | bytes):
+        raise TypeError("measured_wavelengths_nm must be a numeric sequence")
+
+    wavelengths = tuple(to_float(value) for value in values)
+
+    for index, wavelength_nm in enumerate(wavelengths):
+        if not math.isfinite(wavelength_nm):
+            raise ValueError("measured_wavelengths_nm must be finite")
+        if index != 0 and wavelength_nm <= wavelengths[index - 1]:
+            raise ValueError("measured_wavelengths_nm must be strictly increasing")
+
+    return wavelengths

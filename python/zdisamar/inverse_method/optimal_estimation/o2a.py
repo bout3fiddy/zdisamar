@@ -9,6 +9,7 @@ from dataclasses import replace
 from ... import rtm
 from ...input.instrument import SpectralGrid
 from ...input.wavelength_band.o2a import O2AInput
+from ...input.wavelength_band.optimisation import measurement_indices_for_wavelengths
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
@@ -65,6 +66,31 @@ def disamar_oe(
     """Retrieve O2 A state-vector parameters with DISAMAR-style controls."""
 
     _require_aerosol_retrieval_compatible(case)
+    active_controls = retrieval_controls_for_case(case, controls)
+
+    if case.optimisation.fastmode.enabled:
+        if cache is None:
+            with rtm.SessionCache(case) as local_cache:
+                return run_fastmode_oe(
+                    case=case,
+                    measurement=measurement,
+                    state_vector=state_vector,
+                    controls=active_controls,
+                    cache=local_cache,
+                    fast_case_loaded=True,
+                )
+
+        if not cache.has_loaded_case(case):
+            cache.load(case, copy_case=False)
+
+        return run_fastmode_oe(
+            case=case,
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=active_controls,
+            cache=cache,
+            fast_case_loaded=True,
+        )
 
     if cache is None:
         with rtm.SessionCache(case) as local_cache:
@@ -72,7 +98,7 @@ def disamar_oe(
                 case=case,
                 measurement=measurement,
                 state_vector=state_vector,
-                controls=controls,
+                controls=active_controls,
                 cache=local_cache,
                 load_case=False,
             )
@@ -81,74 +107,67 @@ def disamar_oe(
         case=case,
         measurement=measurement,
         state_vector=state_vector,
-        controls=controls,
+        controls=active_controls,
         cache=cache,
         load_case=True,
     )
 
 
-def disamar_oe_fast(
-    *,
+def retrieval_controls_for_case(
     case: O2AInput,
-    measurement: Measurement,
-    state_vector: StateVector,
-    controls: RetrievalControls | None = None,
-    cache: rtm.SessionCache | None = None,
-) -> Result:
-    """Retrieve with fast-mode convergence followed by one full-physics correction."""
+    controls: RetrievalControls | None,
+) -> RetrievalControls:
+    """Return caller controls or the active case-owned OE defaults."""
 
-    fast_case = case.with_fast_mode()
-    active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
+    if controls is not None:
+        return controls
 
-    if cache is None:
-        with rtm.SessionCache(fast_case) as local_cache:
-            return run_fast_accurate_oe(
-                case=case,
-                fast_case=fast_case,
-                measurement=measurement,
-                state_vector=state_vector,
-                controls=active_controls,
-                cache=local_cache,
-                fast_case_loaded=True,
-            )
+    if not case.optimisation.fastmode.enabled:
+        return RetrievalControls.from_disamar_retrieval_specs()
 
-    if not cache.has_loaded_case(fast_case):
-        cache.load(fast_case, copy_case=False)
+    fastmode_controls = case.optimisation.fastmode.oe.controls
 
-    return run_fast_accurate_oe(
-        case=case,
-        fast_case=fast_case,
-        measurement=measurement,
-        state_vector=state_vector,
-        controls=active_controls,
-        cache=cache,
-        fast_case_loaded=True,
+    return RetrievalControls(
+        max_iterations=fastmode_controls.max_iterations,
+        state_vector_convergence_threshold=fastmode_controls.state_vector_convergence_threshold,
+        max_change_transformed_state=fastmode_controls.max_change_transformed_state,
     )
 
 
-def run_fast_accurate_oe(
+def run_fastmode_oe(
     *,
     case: O2AInput,
-    fast_case: O2AInput,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
     cache: rtm.SessionCache,
     fast_case_loaded: bool,
 ) -> Result:
-    """Run the two-stage fast-accurate O2 A retrieval in one cache."""
+    """Run an O2 A fastmode retrieval in one session cache."""
 
     fast_result = _disamar_oe(
-        case=fast_case,
+        case=case,
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
         cache=cache,
         load_case=not fast_case_loaded,
     )
+
+    final_correction = case.optimisation.fastmode.oe.final_correction
+
+    if not final_correction.enabled:
+        return fast_result
+
     corrected_state_vector = state_vector_with_initial(state_vector, fast_result.state)
-    full_state_case = case_for_state(case, fast_result.state, state_vector)
-    correction_measurement = full_correction_measurement(measurement)
+    full_case = full_physics_case(case)
+    full_state_case = case_for_state(full_case, fast_result.state, state_vector)
+    correction_wavelengths_nm = final_correction.resolved_wavelengths(measurement.wavelength_nm)
+    correction_measurement = full_correction_measurement(
+        measurement,
+        wavelengths_nm=correction_wavelengths_nm,
+        variance_scale=final_correction.variance_scale,
+    )
     correction_case = full_correction_case(full_state_case, correction_measurement)
     full_result = run_full_physics_correction(
         case=correction_case,
@@ -157,10 +176,10 @@ def run_fast_accurate_oe(
         controls=controls,
         cache=cache,
         result_measurement=measurement,
-        final_evaluation_case=case,
+        final_evaluation_case=full_case,
     )
 
-    return combine_fast_accurate_result(fast_result, full_result)
+    return combine_fastmode_correction_result(fast_result, full_result)
 
 
 def run_full_physics_correction(
@@ -188,23 +207,47 @@ def run_full_physics_correction(
     )
 
 
+def full_physics_case(case: O2AInput) -> O2AInput:
+    """Return the same physical case with fastmode disabled."""
+
+    full_case = copy.deepcopy(case)
+    full_case.optimisation.fastmode.enabled = False
+
+    return full_case
+
+
 def full_correction_measurement(
     measurement: Measurement,
     window_nm: tuple[float, float] = FULL_CORRECTION_WINDOW_NM,
+    wavelengths_nm: Sequence[float] | None = None,
+    variance_scale: float | None = None,
 ) -> Measurement:
     """Retain the O2 A wavelengths used by the final full-physics correction."""
 
-    start_nm, end_nm = window_nm
-    retained_indices = [
-        index
-        for index, wavelength_nm in enumerate(measurement.wavelength_nm)
-        if start_nm <= float(wavelength_nm) <= end_nm
-    ]
+    if wavelengths_nm is None:
+        start_nm, end_nm = window_nm
+        retained_indices = [
+            index
+            for index, wavelength_nm in enumerate(measurement.wavelength_nm)
+            if start_nm <= float(wavelength_nm) <= end_nm
+        ]
+    else:
+        retained_indices = measurement_indices_for_wavelengths(
+            measurement.wavelength_nm,
+            wavelengths_nm,
+        )
 
     if len(retained_indices) < 2:
         raise ValueError("full-physics correction window retained fewer than two wavelengths")
 
-    retained_weight = len(retained_indices) / len(measurement.wavelength_nm)
+    retained_weight = (
+        len(retained_indices) / len(measurement.wavelength_nm)
+        if variance_scale is None
+        else float(variance_scale)
+    )
+
+    if not math.isfinite(retained_weight) or retained_weight <= 0.0:
+        raise ValueError("full-physics correction variance scale must be finite and positive")
 
     return Measurement(
         wavelength_nm=array("d", (measurement.wavelength_nm[index] for index in retained_indices)),
@@ -220,10 +263,14 @@ def full_correction_case(case: O2AInput, measurement: Measurement) -> O2AInput:
     """Use full physics on the correction window instead of the whole O2 A band."""
 
     correction_case = copy.copy(case)
+    correction_case.instrument_response = copy.copy(case.instrument_response)
     correction_case.spectral_grid = SpectralGrid(
         start_nm=float(measurement.wavelength_nm[0]),
         end_nm=float(measurement.wavelength_nm[-1]),
         sample_count=len(measurement.wavelength_nm),
+    )
+    correction_case.instrument_response.measured_wavelengths_nm = tuple(
+        float(wavelength_nm) for wavelength_nm in measurement.wavelength_nm
     )
 
     return correction_case
@@ -248,7 +295,7 @@ def state_vector_with_initial(
     return StateVector(tuple(parameters))
 
 
-def combine_fast_accurate_result(fast_result: Result, full_result: Result) -> Result:
+def combine_fastmode_correction_result(fast_result: Result, full_result: Result) -> Result:
     """Expose the full-physics corrected state with fast-stage convergence semantics."""
 
     full_correction = None

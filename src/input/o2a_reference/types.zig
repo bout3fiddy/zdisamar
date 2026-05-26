@@ -145,13 +145,13 @@ pub const AerosolSpec = struct {
 };
 
 // layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 65 B across 9 fields; largest: instrument_name=16 B, solar_reference_asset_id=16 B, instrument_line_fwhm_nm=8 B; padding: 7 B (56 bits)
+//   size: 88 B, align: 8 B
+//   field storage: 81 B across 10 fields; largest: instrument_name=16 B, measured_wavelengths_nm=16 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: instrument_name, solar_reference_asset_id carry references/descriptors; referenced storage is not included in size
+//   out-of-line: instrument_name, solar_reference_asset_id, measured_wavelengths_nm carry references/descriptors; referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
+//   footprint: per instance = 88 B (0.086 KiB); total also includes referenced storage above
 pub const ObservationSpec = struct {
     instrument_name: []const u8,
     regime: ObservationModel.ObservationRegime,
@@ -162,6 +162,7 @@ pub const ObservationSpec = struct {
     high_resolution_half_span_nm: f64,
     adaptive_reference_grid: InstrumentModel.AdaptiveReferenceGrid,
     solar_reference_asset_id: []const u8,
+    measured_wavelengths_nm: []const f64 = &.{},
 };
 
 // layout(64-bit):
