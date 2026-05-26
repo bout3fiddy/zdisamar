@@ -84,6 +84,7 @@ pub const forward_model = struct {
     pub const perturbation_sensitivity = @import("forward_model/perturbation_sensitivity.zig");
     pub const performance_trace = @import("forward_model/performance_trace.zig");
     pub const work_partition = @import("forward_model/work_partition.zig");
+    pub const doas_spectrum = @import("forward_model/doas_spectrum/root.zig");
 
     // layout(64-bit):
     //   size: 0 B, align: 1 B
