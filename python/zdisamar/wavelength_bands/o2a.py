@@ -3,6 +3,7 @@
 from ..input import (
     Aerosol,
     AerosolPlacement,
+    AerosolProfileLayer,
     Atmosphere,
     FastModeAdaptiveReferenceGrid,
     FastModeFastStageSampling,
@@ -28,20 +29,18 @@ from ..input import (
 from ..input.wavelength_band.o2a import O2AInput as O2ACase
 
 
-def reference_case(*, fastmode: bool = False) -> O2ACase:
+def reference_case() -> O2ACase:
     """Return the packaged DISAMAR-family O2 A reference case."""
 
     from ..rtm.run import o2a_reference_case
 
-    case = o2a_reference_case()
-    case.optimisation.fastmode.enabled = bool(fastmode)
-
-    return case
+    return o2a_reference_case()
 
 
 __all__ = [
     "Aerosol",
     "AerosolPlacement",
+    "AerosolProfileLayer",
     "Atmosphere",
     "FastModeAdaptiveReferenceGrid",
     "FastModeFastStageSampling",

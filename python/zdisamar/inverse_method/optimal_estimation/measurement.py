@@ -25,13 +25,13 @@ def measurement_arrays(measurement: Measurement) -> MeasurementArrays:
 
     wavelength_nm = array("d", (float(value) for value in measurement.wavelength_nm))
     reflectance = array("d", (float(value) for value in measurement.reflectance))
-    uncertainty = array("d", (float(value) for value in measurement.uncertainty))
+    uncertainty = array("d", (float(value) for value in measurement.reflectance_uncertainty))
 
     if not wavelength_nm:
         raise ValueError("measurement must contain at least one sample")
 
     if len(wavelength_nm) != len(reflectance) or len(wavelength_nm) != len(uncertainty):
-        raise ValueError("measurement wavelength, reflectance, and uncertainty shapes must match")
+        raise ValueError("measurement wavelength, reflectance, and SNR shapes must match")
 
     if any(not math.isfinite(value) for value in wavelength_nm):
         raise ValueError("measurement wavelength and reflectance values must be finite")

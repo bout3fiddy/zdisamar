@@ -152,10 +152,7 @@ def retrieval_controls() -> optimal_estimation.RetrievalControls:
 def aerosol_two_state_vector(
     *,
     initial: dict[str, float],
-    profile: optimal_estimation.PressureAltitudeProfile,
     surface_pressure_hpa: float,
-    interval_index_1based: int = 2,
-    thickness_hpa: float = oe_baseline.LAYER_THICKNESS_HPA,
     aod_prior_uncertainty: float = math.sqrt(0.8),
     aod_lower: float = 0.02,
     aod_upper: float | None = 5.0,
@@ -173,17 +170,14 @@ def aerosol_two_state_vector(
             optimal_estimation.AerosolOpticalDepth(
                 initial=initial["aerosol_optical_depth"],
                 prior=initial["aerosol_optical_depth"],
-                uncertainty=aod_prior_uncertainty,
+                prior_uncertainty=aod_prior_uncertainty,
                 lower=aod_lower,
                 upper=aod_upper,
             ),
             optimal_estimation.AerosolLayerMidPressure(
                 initial=initial["aerosol_mid_pressure_hpa"],
                 prior=initial["aerosol_mid_pressure_hpa"],
-                uncertainty=mid_pressure_prior_uncertainty,
-                thickness_hpa=thickness_hpa,
-                interval_index_1based=interval_index_1based,
-                pressure_altitude_profile=profile,
+                prior_uncertainty=mid_pressure_prior_uncertainty,
                 lower=mid_pressure_lower_hpa,
                 upper=upper,
             ),
@@ -195,23 +189,16 @@ def reference_two_state_vector(
     *,
     case: Any,
     reference: dict[str, Any],
-    profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
 
     prior = reference["a_priori"]
-    layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
-    )
 
     return aerosol_two_state_vector(
         initial={
             "aerosol_optical_depth": float(prior["aerosol_optical_depth"]),
             "aerosol_mid_pressure_hpa": float(prior["aerosol_layer_mid_pressure_hpa"]),
         },
-        profile=profile,
         surface_pressure_hpa=case.surface.pressure_hpa,
-        interval_index_1based=case.aerosol.placement.interval_index_1based,
-        thickness_hpa=layer_thickness,
         aod_prior_uncertainty=1.0,
         aod_lower=0.0,
         aod_upper=None,

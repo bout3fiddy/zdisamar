@@ -47,16 +47,13 @@ def retrieve_scene(
 ):
 
     measurement = measurement_from_o2a_baseline_noise(case)
-    profile = o2a_oe.pressure_altitude_profile_from_case(case)
-
     state_vector = oe_setup.aerosol_two_state_vector(
         initial=initial,
-        profile=profile,
         surface_pressure_hpa=truth["surface_pressure_hpa"],
     )
 
     with rtm.SessionCache(case) as cache:
-        return o2a_oe.disamar_oe(
+        return o2a_oe.retrieve(
             case=case,
             measurement=measurement,
             state_vector=state_vector,

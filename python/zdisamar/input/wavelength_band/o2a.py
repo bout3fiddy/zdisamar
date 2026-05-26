@@ -224,13 +224,6 @@ class O2AInput(NotebookDisplay):
             json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
 
-    def resolved_optimisation(self) -> dict[str, object]:
-        """Return case optimisation settings with concrete derived values."""
-
-        return {
-            "fastmode": self.optimisation.fastmode.resolved_dict(self.measurement_wavelengths_nm)
-        }
-
     def set_aerosol_profile(self, layers: object) -> None:
         """Install a case-owned aerosol profile for forward simulations."""
 
@@ -266,14 +259,6 @@ class O2AInput(NotebookDisplay):
             bottom_pressure_hpa=layer.bottom_pressure_hpa,
         )
         self.aerosol.set_profile_layers((layer,))
-
-    def with_fast_mode(self) -> Self:
-        """Return a copy with case-owned O2 A fastmode enabled."""
-
-        fast = deepcopy(self)
-        fast.optimisation.fastmode.enabled = True
-
-        return fast
 
     def with_rtm_optimisation_applied(self) -> Self:
         """Return the native RTM case after applying enabled optimisation modes."""

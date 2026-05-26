@@ -89,7 +89,7 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 
     start = time.perf_counter()
     controls = oe_setup.retrieval_controls()
-    result = o2a_oe.disamar_oe(
+    result = o2a_oe.retrieve(
         case=case,
         measurement=measurement,
         state_vector=state_vector,
@@ -125,11 +125,8 @@ def build_rows() -> list[dict[str, Any]]:
         initial = oe_cases.initial_from_row(row)
 
         measurement = measurement_from_o2a_baseline_noise(reference_case)
-        profile = o2a_oe.pressure_altitude_profile_from_case(reference_case)
-
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
-            profile=profile,
             surface_pressure_hpa=truth["surface_pressure_hpa"],
         )
 
@@ -146,7 +143,9 @@ def build_rows() -> list[dict[str, Any]]:
             thresholds = fast_settings_case.radiative_transfer.performance_thresholds
             adaptive_grid = fast_settings_case.instrument_response.adaptive_reference_grid
             resolved_fastmode = (
-                retrieval_case.resolved_optimisation()["fastmode"]
+                retrieval_case.optimisation.fastmode.resolved_dict(
+                    retrieval_case.measurement_wavelengths_nm
+                )
                 if retrieval_case.optimisation.fastmode.enabled
                 else None
             )
@@ -331,7 +330,7 @@ def fastmode_defaults() -> dict[str, object]:
     oe_baseline.configure_case(base)
     fast_case = fastmode_case(base)
 
-    return fast_case.resolved_optimisation()["fastmode"]
+    return fast_case.optimisation.fastmode.resolved_dict(fast_case.measurement_wavelengths_nm)
 
 
 def build_summary(data: pd.DataFrame) -> dict[str, Any]:

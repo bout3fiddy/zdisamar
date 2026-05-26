@@ -136,7 +136,10 @@ def make_case(base: Any, spec: SceneSpec, index: int) -> Any:
 
 def with_fast_thresholds(case: Any) -> Any:
 
-    return copy.deepcopy(case).with_fast_mode()
+    fast_case = copy.deepcopy(case)
+    fast_case.optimisation.fastmode.enabled = True
+
+    return fast_case
 
 
 def evaluate_spectrum(case: Any) -> SpectrumRun:
@@ -200,8 +203,9 @@ def fast_mode_overrides() -> dict[str, object]:
 
     base = build_o2a_case(o2a)
     oe_baseline.configure_case(base)
-    fast_case = base.with_fast_mode()
-    resolved = fast_case.resolved_optimisation()["fastmode"]
+    fast_case = copy.deepcopy(base)
+    fast_case.optimisation.fastmode.enabled = True
+    resolved = fast_case.optimisation.fastmode.resolved_dict(fast_case.measurement_wavelengths_nm)
 
     return {
         "radiative_transfer": resolved["radiative_transfer"],

@@ -658,7 +658,7 @@ class FastModeOptimisation:
     Enabling this section does not mutate the physical case immediately.  The
     RTM and adaptive-grid overrides are applied to a copied native case at load
     time, while OE controls and final-correction settings stay on the Python
-    case so `disamar_oe` can run the complete fastmode retrieval in one session.
+    case so `retrieve` can run the complete fastmode retrieval in one session.
     """
 
     enabled: bool = False
@@ -721,9 +721,8 @@ class O2AOptimisation:
     """Case-owned optimisation modes for O2 A workflows.
 
     The public flow remains one O2 A case and one OE entrypoint.  Optimisation
-    settings live beside the physical inputs so they can be serialized,
-    inspected with `resolved_optimisation()`, and rejected if unknown fields are
-    parsed.
+    settings live beside the physical inputs so they can be serialized and
+    rejected if unknown fields are parsed.
     """
 
     fastmode: FastModeOptimisation

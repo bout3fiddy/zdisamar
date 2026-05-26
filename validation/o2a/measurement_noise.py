@@ -47,10 +47,10 @@ def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
         reflectance=reflectance,
     )
 
-    return optimal_estimation.Measurement(
+    return optimal_estimation.Measurement.from_reflectance_uncertainty(
         wavelength_nm=wavelength_nm.tolist(),
         reflectance=reflectance.tolist(),
-        uncertainty=noise.reflectance_noise.tolist(),
+        reflectance_uncertainty=noise.reflectance_noise.tolist(),
     )
 
 

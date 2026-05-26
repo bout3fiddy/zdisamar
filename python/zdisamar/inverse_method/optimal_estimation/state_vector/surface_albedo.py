@@ -11,7 +11,7 @@ class SurfaceAlbedo:
 
     initial: float
     prior: float
-    uncertainty: float
+    prior_uncertainty: float
     lower: float | None = 0.0
     upper: float | None = 1.0
     name: str = SURFACE_ALBEDO

@@ -28,5 +28,5 @@ zig build
   optimal-estimation flow using aerosol optical depth and aerosol layer
   mid-pressure, with convergence, measurement-fit, residual, and Jacobian plots in
   separate cells. The notebook also points to the case-owned fastmode switch and
-  `resolved_optimisation()` inspection path for trying the fastmode OE lane and
-  its sparse wavelength defaults.
+  the main fastmode control knobs for trying the fastmode OE lane and its sparse
+  wavelength defaults.
