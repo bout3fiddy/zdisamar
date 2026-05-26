@@ -946,6 +946,25 @@ def assert_reference_data_and_rtm_tables() -> None:
             final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
             assert final_correction["wavelength_count"] == 12
             assert len(final_correction_wavelengths) == 12
+            fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
+            disabled_fastmode = cast(
+                dict[str, object],
+                fast_case.resolved_optimisation()["fastmode"],
+            )
+            disabled_fastmode_oe = cast(dict[str, object], disabled_fastmode["oe"])
+            disabled_fast_sampling = cast(
+                dict[str, object],
+                disabled_fastmode_oe["fast_stage_sampling"],
+            )
+            disabled_sampling_wavelengths = cast(
+                list[float],
+                disabled_fast_sampling["wavelengths_nm"],
+            )
+            disabled_sampling_count = cast(int, disabled_fast_sampling["sample_count"])
+            assert not disabled_fast_sampling["enabled"]
+            assert disabled_sampling_count == len(fast_case.measurement_wavelengths_nm)
+            assert disabled_sampling_count == len(disabled_sampling_wavelengths)
+            fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = True
             fast_case.optimisation.fastmode.oe.fast_stage_sampling.windows = (
                 o2a.FastModeWavelengthWindow((759.7, 762.5), 10),
                 o2a.FastModeWavelengthWindow((765.2, 768.0), 10),

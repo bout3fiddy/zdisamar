@@ -578,7 +578,7 @@ class FastModeFastStageSampling:
         return {
             "enabled": self.enabled,
             "windows": [window.to_dict() for window in self.windows],
-            "wavelengths_nm": list(wavelengths) if self.enabled else [],
+            "wavelengths_nm": list(wavelengths),
             "sample_count": len(wavelengths),
             "variance_scale": self.variance_scale,
         }

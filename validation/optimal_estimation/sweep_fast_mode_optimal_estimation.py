@@ -50,8 +50,10 @@ SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.js
 
 CANONICAL_COMMAND = "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py"
 RUN_COUNT = oe_cases.run_count()
-FASTMODE_REFERENCE_MAX_ABS_AOD_DELTA = 6.0e-4
-FASTMODE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 0.8
+# Retained pbranch25_cont16 gate.  The limits are just above the refreshed
+# 100-case max deltas: 5.285e-4 AOD and 0.668 hPa aerosol mid pressure.
+FASTMODE_REFERENCE_MAX_ABS_AOD_DELTA = 5.5e-4
+FASTMODE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 0.7
 FASTMODE_FAST_STAGE_SAMPLE_COUNT = 38
 FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT = 12
 
@@ -452,23 +454,29 @@ def validate_summary(summary: dict[str, Any]) -> None:
             f"fastmode fast-stage converged={fastmode['fast_stage_converged']} expected={RUN_COUNT}"
         )
 
-    if (
-        int(float(fastmode["fast_stage_sample_count"]["median"]))
-        != FASTMODE_FAST_STAGE_SAMPLE_COUNT
+    fast_stage_count = fastmode["fast_stage_sample_count"]
+
+    if any(
+        int(float(fast_stage_count[key])) != FASTMODE_FAST_STAGE_SAMPLE_COUNT
+        for key in ("min", "median", "max")
     ):
         failures.append(
-            "fastmode fast-stage median sample count="
-            f"{fastmode['fast_stage_sample_count']['median']} expected="
+            "fastmode fast-stage sample count min/median/max="
+            f"{fast_stage_count['min']}/{fast_stage_count['median']}/{fast_stage_count['max']} "
+            "expected all "
             f"{FASTMODE_FAST_STAGE_SAMPLE_COUNT}"
         )
 
-    if (
-        int(float(fastmode["final_correction_sample_count"]["median"]))
-        != FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT
+    final_correction_count = fastmode["final_correction_sample_count"]
+
+    if any(
+        int(float(final_correction_count[key])) != FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT
+        for key in ("min", "median", "max")
     ):
         failures.append(
-            "fastmode final-correction median sample count="
-            f"{fastmode['final_correction_sample_count']['median']} expected="
+            "fastmode final-correction sample count min/median/max="
+            f"{final_correction_count['min']}/{final_correction_count['median']}/"
+            f"{final_correction_count['max']} expected all "
             f"{FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT}"
         )
 
@@ -990,9 +998,7 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
         spacing=34,
     ).properties(
         title={
-            "text": (
-                "O2A Optimal-Estimation Sweep: zdisamar Reference, Fast, and Fastmode-Corrected"
-            ),
+            "text": "O2A Optimal-Estimation Sweep: zdisamar Fullmode and Fastmode",
             "subtitle": (
                 "Each paired scene uses identical measurements, priors, and initial states; "
                 "error bars are posterior 1-sigma for retrieved states and combined "
