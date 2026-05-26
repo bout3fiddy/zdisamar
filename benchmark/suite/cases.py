@@ -115,7 +115,10 @@ def sweep_cases() -> list[SweepCase]:
 
 def fast_case(case: Any) -> Any:
 
-    return copy.deepcopy(case).with_fast_mode()
+    copied = copy.deepcopy(case)
+    copied.optimisation.fastmode.enabled = True
+
+    return copied
 
 
 def scene_specs() -> list[SceneSpec]:

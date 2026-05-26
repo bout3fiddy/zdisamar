@@ -372,7 +372,10 @@ class RtmHandle:
 
         wavelength = double_array(measurement.wavelength_nm, "measurement wavelengths")
         reflectance = double_array(measurement.reflectance, "measurement reflectance")
-        uncertainty = double_array(measurement.uncertainty, "measurement uncertainty")
+        uncertainty = double_array(
+            measurement.reflectance_uncertainty,
+            "measurement reflectance uncertainty",
+        )
 
         if len(wavelength) != len(reflectance) or len(wavelength) != len(uncertainty):
             raise ValueError("measurement arrays must have the same length")
@@ -449,11 +452,11 @@ class RtmHandle:
             if interval_index_1based < 0 or interval_index_1based > _MAX_UINT32:
                 raise ValueError("optimal-estimation interval_index_1based is out of uint32 range")
 
-            uncertainty = float(parameter.uncertainty)
+            uncertainty = float(parameter.prior_uncertainty)
 
             if not math.isfinite(uncertainty) or uncertainty <= 0.0:
                 raise ValueError(
-                    "optimal-estimation state uncertainty values must be finite and positive"
+                    "optimal-estimation state prior_uncertainty values must be finite and positive"
                 )
 
             state_specs.append(

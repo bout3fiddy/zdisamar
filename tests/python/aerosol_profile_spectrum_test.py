@@ -132,15 +132,15 @@ def main() -> None:
     assert max_delta > 1.0e-8
 
     try:
-        optimal_estimation.disamar_oe(
+        optimal_estimation.retrieve(
             case=profile_case,
-            measurement=optimal_estimation.Measurement((), (), ()),
+            measurement=optimal_estimation.Measurement((760.0,), (0.2,), signal_to_noise=100.0),
             state_vector=optimal_estimation.StateVector(
                 [
                     optimal_estimation.AerosolOpticalDepth(
                         initial=0.3,
                         prior=0.3,
-                        uncertainty=math.sqrt(0.8),
+                        prior_uncertainty=math.sqrt(0.8),
                     )
                 ]
             ),
@@ -178,7 +178,7 @@ def expect_profile_oe_correction_rejected(case, spectrum) -> None:
     measurement = optimal_estimation.Measurement(
         spectrum.wavelength_nm[:2],
         spectrum.reflectance[:2],
-        (1.0, 1.0),
+        signal_to_noise=(100.0, 100.0),
     )
 
     with RtmHandle() as handle:
@@ -192,7 +192,7 @@ def expect_profile_oe_correction_rejected(case, spectrum) -> None:
                         optimal_estimation.AerosolOpticalDepth(
                             initial=0.3,
                             prior=0.3,
-                            uncertainty=math.sqrt(0.8),
+                            prior_uncertainty=math.sqrt(0.8),
                         )
                     ]
                 ),

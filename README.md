@@ -229,17 +229,16 @@ counts are in
 
 ## Python Package
 
-Use `uv` to download the published Python package into an isolated environment.
-The wheel includes the native RTM library and bundled O2 A reference data, and
-the package has no third-party runtime dependencies:
+Use `uv` to download the published package into an isolated environment. The
+wheel includes the native RTM library and bundled O2 A reference data. The
+Python package has no third-party runtime dependencies.
 
 ```bash
 uv run --with zdisamar python
 ```
 
-The public API is intentionally small: build a simulated O2 A case, run the
-native RTM, and pass the same case into optimal estimation when you want a
-retrieval.
+The public flow is one case object: configure the simulated O2 A scene, pass it
+to the RTM, and pass it to optimal estimation when you want a retrieval.
 
 ```python
 from zdisamar import rtm
@@ -248,8 +247,9 @@ from zdisamar.rtm import SessionCache
 from zdisamar.wavelength_bands import o2a
 ```
 
-Build a complete simulated O2 A scene without preparing an external DISAMAR
-input file. The wheel carries the native library and the reference assets.
+### Simulated Scene
+
+Start from the packaged O2 A reference case and set the aerosol state directly.
 
 ```python
 case = o2a.reference_case()
@@ -257,49 +257,62 @@ case.aerosol_optical_depth_550_nm = 0.32
 case.aerosol_layer.mid_pressure_hpa = 760.0
 ```
 
-Run the forward model and get normal Python arrays for the instrument wavelength
-grid, radiance, irradiance, reflectance, and optional Jacobians.
+### Forward Model
+
+Run the native forward model on the case. The result exposes wavelength,
+radiance, irradiance, reflectance, optional Jacobians, and dependency-free SVG
+plot accessors.
 
 ```python
 spectrum = rtm.spectrum(case)
+spectrum.plot.reflectance()
+
 jacobian_spectrum = rtm.spectrum(
     case,
     jacobian=True,
     jacobian_state_names=("aerosol_optical_depth",),
 )
+jacobian_spectrum.plot.jacobian("aerosol_optical_depth")
 ```
 
-Aerosol profiles can be explicit vertical distributions for forward simulations,
-not only one scalar aerosol layer.
+### Aerosol Profiles
+
+Forward simulations can use an explicit aerosol profile instead of one scalar
+layer.
 
 ```python
-case.set_aerosol_profile(
-    (
-        o2a.AerosolProfileLayer(
-            top_pressure_hpa=620.0,
-            bottom_pressure_hpa=700.0,
-            optical_depth=0.10,
-            single_scatter_albedo=0.94,
-            asymmetry_factor=0.66,
-        ),
-        o2a.AerosolProfileLayer(
-            top_pressure_hpa=700.0,
-            bottom_pressure_hpa=820.0,
-            optical_depth=0.22,
-            single_scatter_albedo=0.92,
-            asymmetry_factor=0.63,
-        ),
-    )
+profile_case = o2a.reference_case()
+profile_case.aerosol_profile = (
+    o2a.AerosolProfileLayer(
+        top_pressure_hpa=620.0,
+        bottom_pressure_hpa=700.0,
+        optical_depth=0.10,
+        single_scatter_albedo=0.94,
+        asymmetry_factor=0.66,
+    ),
+    o2a.AerosolProfileLayer(
+        top_pressure_hpa=700.0,
+        bottom_pressure_hpa=820.0,
+        optical_depth=0.22,
+        single_scatter_albedo=0.92,
+        asymmetry_factor=0.63,
+    ),
 )
+
+profile_spectrum = rtm.spectrum(profile_case)
 ```
 
-Fastmode is a case-owned optimisation mode. Its RTM, adaptive-grid, OE, and
-sparse wavelength choices are inspectable and tuneable.
+### Fastmode Controls
+
+Fastmode is a case-owned optimisation mode. The case keeps the physical scene
+and exposes the RTM, adaptive-grid, OE, sparse fast-stage, and final-correction
+controls in one place.
 
 ```python
-case = o2a.reference_case().with_fast_mode()
-fastmode = case.optimisation.fastmode
+fast_case = o2a.reference_case()
+fast_case.optimisation.fastmode.enabled = True
 
+fastmode = fast_case.optimisation.fastmode
 fastmode.radiative_transfer.fourier_order_cap = 5
 fastmode.radiative_transfer.threshold_doubl = 3.0e-5
 
@@ -313,40 +326,58 @@ fastmode.oe.fast_stage_sampling.windows = (
 )
 fastmode.oe.final_correction.wavelength_count = 12
 
-resolved_fastmode = case.resolved_optimisation()["fastmode"]
+fast_case.resolved_optimisation()
 ```
 
-The OE path uses the same case object. A `SessionCache` keeps prepared native RTM
-state alive across the repeated forward-model and Jacobian evaluations.
+### Optimal Estimation
+
+Create a simulated measurement from a truth case. Public measurement noise is
+expressed as signal-to-noise ratio; pass one scalar SNR or one value per
+wavelength. State-vector prior uncertainty is the one-sigma prior spread in the
+same units as the state value.
 
 ```python
 truth = o2a.reference_case()
-measurement = oe.measurement_from_case(truth, reflectance_uncertainty=1.0e-4)
+truth.aerosol_optical_depth_550_nm = 0.18
+truth.aerosol_layer.mid_pressure_hpa = 820.0
 
-case = o2a.reference_case().with_fast_mode()
-profile = oe.pressure_altitude_profile_from_case(case)
+measurement = oe.simulate_measurement(truth, signal_to_noise=1000.0)
+
 state_vector = oe.StateVector(
     (
         oe.AerosolOpticalDepth(
             initial=0.18,
             prior=0.18,
-            uncertainty=0.5,
+            prior_uncertainty=0.5,
             lower=0.0,
         ),
         oe.AerosolLayerMidPressure(
             initial=820.0,
             prior=820.0,
-            uncertainty=80.0,
-            thickness_hpa=case.aerosol_layer.thickness_hpa,
-            interval_index_1based=case.aerosol.placement.interval_index_1based,
-            pressure_altitude_profile=profile,
+            prior_uncertainty=80.0,
         ),
     )
 )
+```
 
-with SessionCache() as cache:
-    result = oe.disamar_oe(
-        case=case,
+Run the same retrieval in full mode and fastmode. Fastmode keeps the session
+flow but runs the tuned fast RTM stage and one sparse full-physics correction.
+
+```python
+full_case = o2a.reference_case()
+with SessionCache(full_case) as cache:
+    full_result = oe.retrieve(
+        case=full_case,
+        measurement=measurement,
+        state_vector=state_vector,
+        cache=cache,
+    )
+
+fast_case = o2a.reference_case()
+fast_case.optimisation.fastmode.enabled = True
+with SessionCache(fast_case) as cache:
+    fast_result = oe.retrieve(
+        case=fast_case,
         measurement=measurement,
         state_vector=state_vector,
         cache=cache,
@@ -354,23 +385,17 @@ with SessionCache() as cache:
 ```
 
 Retrieval results stay in physical coordinates and include convergence history,
-the averaging kernel, and lazy final-state diagnostics.
+posterior uncertainty, averaging kernel, lazy final-state diagnostics, compact
+notebook summaries, and plot accessors.
 
 ```python
-retrieved_aod = result.value("aerosol_optical_depth")
-retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
-iteration_history = result.history
-```
+fast_result.summary()
 
-The package also ships dependency-free SVG plotting accessors for common O2 A
-diagnostics, so notebooks do not need Pandas or Matplotlib for the standard
-views.
+retrieved_aod = fast_result.value("aerosol_optical_depth")
+retrieved_mid_pressure = fast_result.value("aerosol_layer_mid_pressure_hpa")
+retrieved_aod_sigma = fast_result.posterior_uncertainty("aerosol_optical_depth")
 
-```python
-reflectance_plot = spectrum.plot.reflectance()
-jacobian_plot = jacobian_spectrum.plot.jacobian("aerosol_optical_depth")
-
-convergence_plot = result.plot.convergence()
-measurement_fit_plot = result.plot.measurement_fit()
-retrieval_jacobian_plot = result.plot.jacobian()
+fast_result.plot.convergence()
+fast_result.plot.measurement_fit()
+fast_result.plot.jacobian()
 ```

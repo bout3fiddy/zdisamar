@@ -85,7 +85,8 @@ def main() -> int:
             assert "array(" not in spectrum_repr
             assert reference_spectrum.plot.reflectance() is not None
 
-            case = o2a.reference_case().with_fast_mode()
+            case = o2a.reference_case()
+            case.optimisation.fastmode.enabled = True
             assert int(case.spectral_grid.sample_count) > 0
             wavelengths = [760.76]
             budget = rtm.atmospheric_budget(case, wavelengths)

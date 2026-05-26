@@ -4,12 +4,11 @@ from .measurement import WavelengthGridMismatchError
 from .o2a import (
     attach_final_evaluation,
     case_for_state,
-    disamar_oe,
     evaluate_reflectance,
     evaluate_state,
-    measurement_from_case,
     measurement_from_sun_normalized_radiance_noise,
-    pressure_altitude_profile_from_case,
+    retrieve,
+    simulate_measurement,
 )
 from .retrieval import (
     FastCorrection,
@@ -25,7 +24,6 @@ from .state_vector import (
     SURFACE_ALBEDO,
     AerosolLayerMidPressure,
     AerosolOpticalDepth,
-    PressureAltitudeProfile,
     StateVector,
     StateVectorParameter,
     SurfaceAlbedo,
@@ -41,7 +39,6 @@ __all__ = [
     "RtmEvaluation",
     "Iteration",
     "Measurement",
-    "PressureAltitudeProfile",
     "RetrievalControls",
     "Result",
     "StateVector",
@@ -50,10 +47,9 @@ __all__ = [
     "WavelengthGridMismatchError",
     "attach_final_evaluation",
     "case_for_state",
-    "disamar_oe",
     "evaluate_reflectance",
     "evaluate_state",
-    "measurement_from_case",
     "measurement_from_sun_normalized_radiance_noise",
-    "pressure_altitude_profile_from_case",
+    "retrieve",
+    "simulate_measurement",
 ]

@@ -14,7 +14,7 @@ class StateVectorParameter(Protocol):
     name: StateName
     initial: float
     prior: float
-    uncertainty: float
+    prior_uncertainty: float
     lower: float | None
     upper: float | None
 
@@ -41,10 +41,12 @@ class StateVector:
             raise ValueError("state vector parameter names must be unique")
 
         for parameter in parameters:
-            uncertainty = float(parameter.uncertainty)
+            uncertainty = float(parameter.prior_uncertainty)
 
             if not math.isfinite(uncertainty) or uncertainty <= 0.0:
-                raise ValueError("state vector uncertainty values must be finite and positive")
+                raise ValueError(
+                    "state vector prior_uncertainty values must be finite and positive"
+                )
 
         object.__setattr__(self, "parameters", parameters)
 
@@ -91,7 +93,7 @@ class StateVector:
 
         return tuple(
             tuple(
-                float(parameter.uncertainty) * float(parameter.uncertainty)
+                float(parameter.prior_uncertainty) * float(parameter.prior_uncertainty)
                 if row == column
                 else 0.0
                 for column, _ in enumerate(self.parameters)

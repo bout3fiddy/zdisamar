@@ -28,11 +28,9 @@ def run_single_case(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[st
     phase = "retrieval/single"
     progress.log(phase, f"start {config.RETRIEVAL_REPEATS} repeats")
     case, reference = cases.retrieval_case()
-    profile = band_retrieval.pressure_altitude_profile_from_case(case)
     state_vector = setup.reference_two_state_vector(
         case=case,
         reference=reference,
-        profile=profile,
     )
     measurement = measurement_from_o2a_baseline_noise(case)
     session_runs = [
@@ -102,10 +100,8 @@ def run_sweep(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any
 
     for item in sweep_cases:
         measurement = measurement_from_o2a_baseline_noise(item.case)
-        profile = band_retrieval.pressure_altitude_profile_from_case(item.case)
         state_vector = setup.aerosol_two_state_vector(
             initial=item.initial,
-            profile=profile,
             surface_pressure_hpa=item.truth["surface_pressure_hpa"],
         )
         session = run_once(
@@ -169,7 +165,7 @@ def run_once(
     with rtm.SessionCache(case) as cache:
         setup_timing = elapsed_since(setup_start)
         retrieval_start = timing_start()
-        result = band_retrieval.disamar_oe(
+        result = band_retrieval.retrieve(
             case=case,
             measurement=measurement,
             state_vector=state_vector,

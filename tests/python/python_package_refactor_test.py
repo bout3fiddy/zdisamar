@@ -231,7 +231,7 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
                     optimal_estimation.AerosolOpticalDepth(
                         initial=0.3,
                         prior=0.3,
-                        uncertainty=math.sqrt(0.8),
+                        prior_uncertainty=math.sqrt(0.8),
                     )
                 ]
             ),
@@ -254,7 +254,7 @@ def assert_state_vector_uncertainty_rejected() -> None:
                     optimal_estimation.AerosolOpticalDepth(
                         initial=0.3,
                         prior=0.3,
-                        uncertainty=uncertainty,
+                        prior_uncertainty=uncertainty,
                     ),
                 )
             )
@@ -373,7 +373,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
-    measurement = Measurement((), (), ())
+    measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
     state_vector = SimpleNamespace(parameters=())
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
@@ -402,7 +402,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
-        result = o2a_oe._disamar_oe(  # noqa: SLF001
+        result = o2a_oe.run_native_retrieval(
             case=cast(O2AInput, requested_case),
             measurement=measurement,
             state_vector=cast(StateVector, state_vector),
@@ -432,7 +432,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
-    measurement = Measurement((), (), ())
+    measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
     state_vector = SimpleNamespace(parameters=())
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
@@ -461,7 +461,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
-        result = o2a_oe._disamar_oe(  # noqa: SLF001
+        result = o2a_oe.run_native_retrieval(
             case=cast(O2AInput, requested_case),
             measurement=measurement,
             state_vector=cast(StateVector, state_vector),
@@ -495,7 +495,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         name: str
         initial: float
         prior: float
-        uncertainty: float
+        prior_uncertainty: float
         lower: float | None = None
         upper: float | None = None
 
@@ -509,11 +509,11 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
     full_case = SimpleNamespace(scene_id="full")
     correction_case = SimpleNamespace(scene_id="correction")
-    correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), (1.0, 1.0))
+    correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), signal_to_noise=100.0)
     measurement = Measurement(
         (765.2, 766.0, 768.0),
         (0.1, 0.2, 0.3),
-        (1.0, 1.0, 1.0),
+        signal_to_noise=100.0,
     )
     state_vector = StateVector(
         (
@@ -565,7 +565,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     correction_calls: list[tuple[object, RetrievalControls]] = []
     loads: list[tuple[object, bool]] = []
 
-    def fake_disamar_oe(**kwargs):
+    def fake_native_retrieval(**kwargs):
 
         calls.append(kwargs)
 
@@ -593,7 +593,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
             loads.append((case, copy_case))
 
     with (
-        patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe),
+        patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
         patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
         patch.object(o2a_oe, "case_for_state", return_value=correction_case) as case_for_state,
         patch.object(
@@ -609,7 +609,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         patch.object(o2a_oe, "_result_from_native", return_value=full_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
-        result = o2a_oe.disamar_oe(
+        result = o2a_oe.retrieve(
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
@@ -673,7 +673,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     measurement = Measurement(
         wavelengths,
         tuple(0.1 + 0.001 * index for index in range(len(wavelengths))),
-        tuple(1.0 for _ in wavelengths),
+        signal_to_noise=100.0,
     )
     reference_case = SimpleNamespace(
         scene_id="reference",
@@ -690,7 +690,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     calls: list[dict[str, object]] = []
     loads: list[tuple[object, bool]] = []
 
-    def fake_disamar_oe(**kwargs):
+    def fake_native_retrieval(**kwargs):
 
         calls.append(kwargs)
 
@@ -719,8 +719,8 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
             loads.append((case, copy_case))
 
-    with patch.object(o2a_oe, "_disamar_oe", side_effect=fake_disamar_oe):
-        result = o2a_oe.disamar_oe(
+    with patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval):
+        result = o2a_oe.retrieve(
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
@@ -754,7 +754,7 @@ def assert_native_oe_marshaling_bounds() -> None:
     measurement = optimal_estimation.Measurement(
         wavelength_nm=[760.0],
         reflectance=[0.2],
-        uncertainty=[1.0e-3],
+        signal_to_noise=100.0,
     )
     state_vector = SimpleNamespace(
         parameters=[
@@ -762,7 +762,7 @@ def assert_native_oe_marshaling_bounds() -> None:
                 name="aerosol_optical_depth",
                 initial=0.3,
                 prior=0.3,
-                uncertainty=math.sqrt(0.8),
+                prior_uncertainty=math.sqrt(0.8),
                 lower=None,
                 upper=None,
                 interval_index_1based=0,
@@ -793,21 +793,21 @@ def assert_native_oe_marshaling_bounds() -> None:
     else:
         raise AssertionError("non-integer max_iterations reached native OE marshaling")
 
-    for invalid_uncertainty in (0.0, -1.0e-3, math.inf, math.nan):
+    for invalid_signal_to_noise in (0.0, -1.0e-3, math.inf, math.nan):
         try:
             handle.optimal_estimation(
                 measurement=optimal_estimation.Measurement(
                     wavelength_nm=[760.0],
                     reflectance=[0.2],
-                    uncertainty=[invalid_uncertainty],
+                    signal_to_noise=invalid_signal_to_noise,
                 ),
                 state_vector=state_vector,
                 controls=optimal_estimation.RetrievalControls(max_iterations=1),
             )
         except ValueError as error:
-            assert "measurement uncertainty" in str(error)
+            assert "signal-to-noise" in str(error)
         else:
-            raise AssertionError("invalid measurement uncertainty reached native OE marshaling")
+            raise AssertionError("invalid measurement SNR reached native OE marshaling")
 
     state_vector.parameters[0].interval_index_1based = 2**32
 
@@ -836,7 +836,7 @@ def assert_native_oe_marshaling_bounds() -> None:
         raise AssertionError("non-integer interval index reached native OE marshaling")
 
     state_vector.parameters[0].interval_index_1based = 0
-    state_vector.parameters[0].uncertainty = -1.0
+    state_vector.parameters[0].prior_uncertainty = -1.0
 
     try:
         handle.optimal_estimation(
@@ -849,7 +849,7 @@ def assert_native_oe_marshaling_bounds() -> None:
     else:
         raise AssertionError("negative uncertainty reached native OE marshaling")
 
-    state_vector.parameters[0].uncertainty = math.sqrt(0.8)
+    state_vector.parameters[0].prior_uncertainty = math.sqrt(0.8)
     state_vector.parameters[0].name = "log_aerosol_optical_depth"
     state_vector.parameters[0].jacobian_name = "aerosol_optical_depth"
 
@@ -866,7 +866,7 @@ def assert_native_oe_marshaling_bounds() -> None:
 
     state_vector.parameters[0].name = "aerosol_optical_depth"
     state_vector.parameters[0].jacobian_name = "aerosol_optical_depth"
-    state_vector.parameters[0].jacobian_scale = lambda _value: 2.0
+    state_vector.parameters[0].jacobian_scale = lambda value: 2.0
 
     try:
         handle.optimal_estimation(
@@ -889,16 +889,16 @@ def assert_native_oe_runs_after_default_prepare() -> None:
 
     try:
         case = handle.default_o2a_case()
-        measurement = optimal_estimation.measurement_from_case(
+        measurement = optimal_estimation.simulate_measurement(
             case,
-            reflectance_uncertainty=1.0e-3,
+            signal_to_noise=100.0,
         )
         state_vector = optimal_estimation.StateVector(
             (
                 optimal_estimation.AerosolOpticalDepth(
                     initial=0.3,
                     prior=0.3,
-                    uncertainty=math.sqrt(0.8),
+                    prior_uncertainty=math.sqrt(0.8),
                 ),
             )
         )
@@ -973,7 +973,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert not validation_fast_thresholds.qzero_rd_product_suppression
             assert not validation_fast_thresholds.qzero_tu_product_suppression
             assert not validation_fast_thresholds.qzero_td_product_suppression
-            fast_case = case.with_fast_mode()
+            fast_case = copy.deepcopy(case)
+            fast_case.optimisation.fastmode.enabled = True
             assert fast_case is not case
             assert fast_case.optimisation.fastmode.enabled
             assert not case.optimisation.fastmode.enabled
@@ -1099,7 +1100,6 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert (
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
-            assert o2a.reference_case(fastmode=True).optimisation.fastmode.enabled
             nominal_wavelengths = rtm.nominal_wavelengths(case)
             assert nominal_wavelengths[0] == case.spectral_grid.start_nm
             assert nominal_wavelengths[-1] == case.spectral_grid.end_nm

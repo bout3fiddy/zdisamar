@@ -11,7 +11,7 @@ class AerosolOpticalDepth:
 
     initial: float
     prior: float
-    uncertainty: float
+    prior_uncertainty: float
     lower: float | None = 0.0
     upper: float | None = None
     name: str = AEROSOL_OPTICAL_DEPTH

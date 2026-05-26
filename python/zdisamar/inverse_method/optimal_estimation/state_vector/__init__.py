@@ -6,7 +6,6 @@ from .aerosol_layer_mid_pressure import (
 )
 from .aerosol_optical_depth import AEROSOL_OPTICAL_DEPTH, AerosolOpticalDepth
 from .parameter import StateName, StateVector, StateVectorParameter
-from .pressure_altitude_profile import PressureAltitudeProfile
 from .surface_albedo import SURFACE_ALBEDO, SurfaceAlbedo
 
 __all__ = [
@@ -15,7 +14,6 @@ __all__ = [
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
-    "PressureAltitudeProfile",
     "StateName",
     "StateVector",
     "StateVectorParameter",

@@ -89,7 +89,7 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 
     start = time.perf_counter()
     controls = oe_setup.retrieval_controls()
-    result = o2a_oe.disamar_oe(
+    result = o2a_oe.retrieve(
         case=case,
         measurement=measurement,
         state_vector=state_vector,
@@ -125,11 +125,8 @@ def build_rows() -> list[dict[str, Any]]:
         initial = oe_cases.initial_from_row(row)
 
         measurement = measurement_from_o2a_baseline_noise(reference_case)
-        profile = o2a_oe.pressure_altitude_profile_from_case(reference_case)
-
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
-            profile=profile,
             surface_pressure_hpa=truth["surface_pressure_hpa"],
         )
 

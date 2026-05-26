@@ -56,7 +56,7 @@ def build_result() -> Result:
         measurement=Measurement(
             wavelength_nm=(755.0, 756.0, 757.0),
             reflectance=(0.1, 0.2, 0.3),
-            uncertainty=(1.0, 1.0, 1.0),
+            signal_to_noise=(100.0, 100.0, 100.0),
         ),
         final_evaluation=RtmEvaluation(
             wavelength_nm=(755.0, 756.0, 757.0),

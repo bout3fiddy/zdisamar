@@ -658,7 +658,7 @@ class FastModeOptimisation:
     Enabling this section does not mutate the physical case immediately.  The
     RTM and adaptive-grid overrides are applied to a copied native case at load
     time, while OE controls and final-correction settings stay on the Python
-    case so `disamar_oe` can run the complete fastmode retrieval in one session.
+    case so `retrieve` can run the complete fastmode retrieval in one session.
     """
 
     enabled: bool = False

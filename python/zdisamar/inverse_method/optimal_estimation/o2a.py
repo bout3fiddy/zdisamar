@@ -16,7 +16,8 @@ from ...input.wavelength_band.optimisation import (
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
-from .state_vector import PressureAltitudeProfile, StateVector
+from .state_vector import StateVector
+from .state_vector.pressure_altitude_profile import PressureAltitudeProfile
 
 FULL_CORRECTION_WINDOW_NM = (762.0, 768.0)
 
@@ -48,17 +49,18 @@ def evaluate_state(
 ) -> RtmEvaluation:
     """Evaluate reflectance and Jacobians for one retrieval state."""
 
-    case = case_for_state(template, state, state_vector)
+    resolved_state_vector = resolved_state_vector_for_case(template, state_vector)
+    case = case_for_state(template, state, resolved_state_vector)
     evaluation = evaluate_reflectance(
         case,
-        state_vector.jacobian_names,
+        resolved_state_vector.jacobian_names,
         cache=cache,
     )
 
-    return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
+    return scale_reflectance_jacobian(evaluation, resolved_state_vector.jacobian_scales(state))
 
 
-def disamar_oe(
+def retrieve(
     *,
     case: O2AInput,
     measurement: Measurement,
@@ -66,10 +68,11 @@ def disamar_oe(
     controls: RetrievalControls | None = None,
     cache: rtm.SessionCache | None = None,
 ) -> Result:
-    """Retrieve O2 A state-vector parameters with DISAMAR-style controls."""
+    """Retrieve O2 A state-vector parameters."""
 
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
+    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if case.optimisation.fastmode.enabled:
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
@@ -81,7 +84,7 @@ def disamar_oe(
                     measurement=measurement,
                     fast_case=fast_case,
                     fast_measurement=fast_measurement,
-                    state_vector=state_vector,
+                    state_vector=resolved_state_vector,
                     controls=active_controls,
                     cache=local_cache,
                     fast_case_loaded=True,
@@ -95,7 +98,7 @@ def disamar_oe(
             measurement=measurement,
             fast_case=fast_case,
             fast_measurement=fast_measurement,
-            state_vector=state_vector,
+            state_vector=resolved_state_vector,
             controls=active_controls,
             cache=cache,
             fast_case_loaded=True,
@@ -103,19 +106,19 @@ def disamar_oe(
 
     if cache is None:
         with rtm.SessionCache(case) as local_cache:
-            return _disamar_oe(
+            return run_native_retrieval(
                 case=case,
                 measurement=measurement,
-                state_vector=state_vector,
+                state_vector=resolved_state_vector,
                 controls=active_controls,
                 cache=local_cache,
                 load_case=False,
             )
 
-    return _disamar_oe(
+    return run_native_retrieval(
         case=case,
         measurement=measurement,
-        state_vector=state_vector,
+        state_vector=resolved_state_vector,
         controls=active_controls,
         cache=cache,
         load_case=True,
@@ -156,7 +159,7 @@ def run_fastmode_oe(
 ) -> Result:
     """Run an O2 A fastmode retrieval in one session cache."""
 
-    fast_result = _disamar_oe(
+    fast_result = run_native_retrieval(
         case=fast_case,
         measurement=fast_measurement,
         state_vector=state_vector,
@@ -292,7 +295,7 @@ def measurement_on_wavelengths(
     uncertainty_scale: float | None,
     label: str,
 ) -> Measurement:
-    """Retain selected wavelengths and scale uncertainty for sparse OE vectors."""
+    """Retain selected wavelengths and scale SNR for sparse OE vectors."""
 
     retained_indices = measurement_indices_for_wavelengths(
         measurement.wavelength_nm,
@@ -315,10 +318,10 @@ def measurement_on_wavelengths(
     return Measurement(
         wavelength_nm=array("d", (measurement.wavelength_nm[index] for index in retained_indices)),
         reflectance=array("d", (measurement.reflectance[index] for index in retained_indices)),
-        uncertainty=array(
+        signal_to_noise=array(
             "d",
             (
-                float(measurement.uncertainty[index]) * retained_uncertainty_scale
+                float(measurement.signal_to_noise[index]) / retained_uncertainty_scale
                 for index in retained_indices
             ),
         ),
@@ -413,7 +416,7 @@ def combine_fastmode_correction_result(fast_result: Result, full_result: Result)
     )
 
 
-def _disamar_oe(
+def run_native_retrieval(
     *,
     case: O2AInput,
     measurement: Measurement,
@@ -425,7 +428,8 @@ def _disamar_oe(
     """Bind the O2 A RTM relation to the generic OE solver."""
 
     _require_aerosol_retrieval_compatible(case)
-    final_evaluate_state = _lazy_final_evaluator(case, state_vector)
+    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
+    final_evaluate_state = _lazy_final_evaluator(case, resolved_state_vector)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
 
     if load_case and not cache.has_loaded_case(case):
@@ -433,15 +437,42 @@ def _disamar_oe(
 
     raw = cache._handle.optimal_estimation(  # noqa: SLF001
         measurement=measurement,
-        state_vector=state_vector,
+        state_vector=resolved_state_vector,
         controls=active_controls,
     )
-    result = _result_from_native(raw, state_vector, measurement)
+    result = _result_from_native(raw, resolved_state_vector, measurement)
 
     return attach_final_evaluation(
         result,
         final_evaluate_state,
     )
+
+
+def resolved_state_vector_for_case(case: O2AInput, state_vector: StateVector) -> StateVector:
+    """Attach case-owned pressure metadata before native OE sees the state vector."""
+
+    parameters = []
+    pressure_altitude_profile = None
+    changed = False
+
+    for parameter in state_vector.parameters:
+        resolver = getattr(parameter, "resolve_for_case", None)
+
+        if resolver is None:
+            parameters.append(parameter)
+
+            continue
+
+        if pressure_altitude_profile is None:
+            pressure_altitude_profile = pressure_altitude_profile_from_case(case)
+
+        parameters.append(resolver(case, pressure_altitude_profile))
+        changed = True
+
+    if not changed:
+        return state_vector
+
+    return StateVector(tuple(parameters))
 
 
 def _require_aerosol_retrieval_compatible(case: object) -> None:
@@ -563,19 +594,19 @@ def scale_reflectance_jacobian(
     )
 
 
-def measurement_from_case(
+def simulate_measurement(
     case: O2AInput,
     *,
-    reflectance_uncertainty: float,
+    signal_to_noise: float | Sequence[float],
 ) -> Measurement:
-    """Build a synthetic reflectance measurement from a truth case."""
+    """Simulate a reflectance measurement from a truth case."""
 
     spectrum = rtm.spectrum(case)
 
     return Measurement(
         wavelength_nm=array("d", spectrum.wavelength_nm),
         reflectance=array("d", spectrum.reflectance),
-        uncertainty=array("d", (float(reflectance_uncertainty) for _ in spectrum.wavelength_nm)),
+        signal_to_noise=signal_to_noise,
     )
 
 
@@ -648,7 +679,10 @@ def measurement_from_sun_normalized_radiance_noise(
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,
-        uncertainty=reflectance_noise,
+        signal_to_noise=tuple(
+            max(abs(reflectance_value), 1.0e-300) / noise
+            for reflectance_value, noise in zip(reflectance, reflectance_noise, strict=True)
+        ),
     )
 
 
