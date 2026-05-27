@@ -676,7 +676,10 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     from zdisamar.input.instrument import SpectralGrid
     from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.input.wavelength_band.optimisation import (
+        FastModeWavelengthWindow,
+        O2AOptimisation,
+    )
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -765,6 +768,17 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     assert tuple(fast_case.instrument_response.measured_wavelengths_nm) == expected_wavelengths
     assert calls[0]["load_case"] is False
     assert loads == [(fast_case, False)]
+
+    optimisation.fastmode.oe.fast_stage_sampling.windows = (
+        FastModeWavelengthWindow((755.0, 755.2), 1),
+    )
+
+    try:
+        optimisation.fastmode.oe.fast_stage_sampling.resolved_wavelengths(measurement.wavelength_nm)
+    except ValueError as error:
+        assert "wavelength count must be at least two" in str(error)
+    else:
+        raise AssertionError("single-sample fast-stage window count was accepted")
 
 
 def assert_native_oe_marshaling_bounds() -> None:

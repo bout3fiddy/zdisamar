@@ -105,8 +105,8 @@ def selected_window_wavelengths(
 
     count = int(wavelength_count)
 
-    if count < minimum_samples:
-        raise ValueError(f"{label} wavelength count must be at least {minimum_samples}")
+    if count < 2:
+        raise ValueError(f"{label} wavelength count must be at least two")
 
     if len(window) <= count:
         return window
