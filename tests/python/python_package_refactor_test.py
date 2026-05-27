@@ -690,7 +690,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
     wavelengths = tuple(
-        round(755.0 + index * 0.04, 10) for index in range(int(round((768.0 - 755.0) / 0.04)) + 1)
+        round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
     )
     measurement = Measurement(
         wavelengths,

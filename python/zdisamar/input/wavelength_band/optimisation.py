@@ -86,23 +86,27 @@ def selected_window_wavelengths(
     wavelength_window_nm: tuple[float, float],
     wavelength_count: int | None,
     label: str,
+    minimum_samples: int = 2,
 ) -> tuple[float, ...]:
     """Select measured wavelengths from one configured wavelength window."""
+
+    if minimum_samples < 1:
+        raise ValueError(f"{label} minimum sample count must be at least one")
 
     axis = measured_wavelength_tuple(measurement_wavelengths_nm)
     start_nm, end_nm = wavelength_window_nm
     window = tuple(value for value in axis if start_nm <= value <= end_nm)
 
-    if len(window) < 2:
-        raise ValueError(f"{label} wavelength window retained fewer than two samples")
+    if len(window) < minimum_samples:
+        raise ValueError(f"{label} wavelength window retained fewer than {minimum_samples} samples")
 
     if wavelength_count is None:
         return window
 
     count = int(wavelength_count)
 
-    if count < 2:
-        raise ValueError(f"{label} wavelength count must be at least two")
+    if count < minimum_samples:
+        raise ValueError(f"{label} wavelength count must be at least {minimum_samples}")
 
     if len(window) <= count:
         return window
@@ -139,6 +143,7 @@ class FastModeWavelengthWindow:
         measurement_wavelengths_nm: Sequence[float],
         *,
         label: str,
+        minimum_samples: int = 2,
     ) -> tuple[float, ...]:
 
         return selected_window_wavelengths(
@@ -146,6 +151,7 @@ class FastModeWavelengthWindow:
             wavelength_window_nm=self.wavelength_window_nm,
             wavelength_count=self.wavelength_count,
             label=label,
+            minimum_samples=minimum_samples,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -564,6 +570,7 @@ class FastModeFastStageSampling:
                 window.resolved_wavelengths(
                     axis,
                     label="fastmode fast-stage sampling",
+                    minimum_samples=1,
                 )
             )
 
