@@ -502,15 +502,13 @@ def run_native_retrieval(
 def resolved_state_vector_for_case(
     case: O2AInput,
     state_vector: StateVector,
-    *,
-    cache: rtm.SessionCache | None = None,
 ) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
 
     return resolved_state_vector_from_profile(
         case,
         state_vector,
-        lambda: pressure_altitude_profile_from_case(case, cache=cache),
+        lambda: pressure_altitude_profile_from_case(case),
     )
 
 
@@ -694,18 +692,10 @@ def simulate_measurement(
     )
 
 
-def pressure_altitude_profile_from_case(
-    case: O2AInput,
-    *,
-    cache: rtm.SessionCache | None = None,
-) -> PressureAltitudeProfile:
+def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfile:
     """Read the pressure-altitude relation from the RTM atmospheric grid."""
 
-    budget = (
-        cache.atmospheric_budget([case.spectral_grid.start_nm])
-        if cache is not None and cache.has_loaded_case(case)
-        else rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
-    )
+    budget = rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
 
     return pressure_altitude_profile_from_budget(budget)
 
