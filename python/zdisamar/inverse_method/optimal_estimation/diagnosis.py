@@ -161,7 +161,7 @@ def diagnose_retrieval(
 def diagnosis_batch_worker_count(start_count: int) -> int:
     """Choose a bounded native start-worker count for a same-scene diagnosis."""
 
-    return min(start_count, max(1, min(5, native_worker_ceiling())))
+    return min(start_count, max(1, min(3, native_worker_ceiling())))
 
 
 def native_worker_ceiling() -> int:

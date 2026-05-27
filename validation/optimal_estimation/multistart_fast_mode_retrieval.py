@@ -30,7 +30,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 NATIVE_WORKER_LIMIT_ENV = "ZDISAMAR_WORKER_LIMIT"
-DEFAULT_NATIVE_WORKER_LIMIT = min(5, os.cpu_count() or 1)
+DEFAULT_NATIVE_WORKER_LIMIT = os.cpu_count() or 1
 os.environ.setdefault(NATIVE_WORKER_LIMIT_ENV, str(DEFAULT_NATIVE_WORKER_LIMIT))
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 

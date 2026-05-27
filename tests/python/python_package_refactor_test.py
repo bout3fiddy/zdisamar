@@ -348,8 +348,8 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
             start_count=9,
         )
 
-    assert diagnosis.batch_workers == 5
-    assert calls[0]["batch_workers"] == 5
+    assert diagnosis.batch_workers == 3
+    assert calls[0]["batch_workers"] == 3
 
     calls.clear()
 

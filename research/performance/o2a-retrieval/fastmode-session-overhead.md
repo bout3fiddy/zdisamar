@@ -203,3 +203,41 @@ after cleanup,  batch_workers=3: 8.480 s
 Interpretation: this is not the large native-session win.  The larger win still
 requires a fused fastmode/correction session or reusable correction session that
 owns the worker storage used by the actual batch starts.
+
+## 2026-05-27 Native Prefetch Worker Policy
+
+The native forward path already uses `ZDISAMAR_WORKER_LIMIT` for the
+high-resolution forward-miss prefetch loop.  The multi-start diagnosis should
+therefore not silently cap that native prefetch setting below the host CPU
+count in validation tooling, and it should keep automatic start-level workers
+small enough that nested prefetch pools do not dominate scheduling.
+
+Scene-008, 25-start checks on the same noisy machine:
+
+```text
+native_worker_limit=2,  batch_workers=1: 22.504 s
+native_worker_limit=2,  batch_workers=2: 14.947 s
+native_worker_limit=2,  batch_workers=3: 12.337 s
+native_worker_limit=2,  batch_workers=4: 10.753 s
+native_worker_limit=5,  batch_workers=3:  8.907 s
+native_worker_limit=5,  batch_workers=4:  9.022 s
+native_worker_limit=8,  batch_workers=3:  8.824 s
+native_worker_limit=8,  batch_workers=4:  8.943 s
+native_worker_limit=10, batch_workers=3:  8.731 s
+native_worker_limit=10, batch_workers=4:  8.763 s
+```
+
+Scene-008, 100-start checks:
+
+```text
+native_worker_limit=10, batch_workers=1: 36.873 s
+native_worker_limit=10, batch_workers=3: 33.216 s
+native_worker_limit=10, batch_workers=5: 34.034 s
+native_worker_limit=10, batch_workers=10: 34.302 s
+```
+
+Accepted cleanup: use the host CPU count as the validation script's default
+native prefetch worker cap, matching the native runtime default when the
+environment is unset.  Cap automatic diagnosis start workers at `3`, which was
+the best observed shape for the 100-start boundary and avoids turning a
+10-worker native prefetch run into a 5x nested worker fanout by default.
