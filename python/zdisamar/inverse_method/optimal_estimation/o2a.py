@@ -32,6 +32,10 @@ class BatchResult:
     iterations: tuple[int, ...]
     converged: tuple[bool, ...]
     measurement: Measurement
+    fast_stage_iterations: tuple[int, ...] | None = None
+    fast_stage_converged: tuple[bool, ...] | None = None
+    full_correction_iterations: tuple[int, ...] | None = None
+    full_correction_converged: tuple[bool, ...] | None = None
 
     def value(self, name: str) -> tuple[float, ...]:
         """Return one retrieved state column by name."""
@@ -215,13 +219,6 @@ def retrieve_many(
 
     if case.optimisation.fastmode.enabled:
         final_correction = case.optimisation.fastmode.oe.final_correction
-
-        if final_correction.enabled:
-            raise NotImplementedError(
-                "batched fastmode final correction is not implemented; disable "
-                "case.optimisation.fastmode.oe.final_correction for batched fast-stage retrievals"
-            )
-
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
 
         if cache is None:
@@ -232,7 +229,7 @@ def retrieve_many(
                     local_cache,
                 )
 
-                return run_native_retrieval_batch(
+                fast_batch = run_native_retrieval_batch(
                     case=fast_case,
                     measurement=fast_measurement,
                     state_vectors=state_vector_batch,
@@ -240,6 +237,18 @@ def retrieve_many(
                     controls=active_controls,
                     cache=local_cache,
                     load_case=False,
+                    batch_workers=batch_workers,
+                )
+
+                if not final_correction.enabled:
+                    return fast_batch
+
+                return run_fastmode_correction_batch(
+                    case=case,
+                    measurement=measurement,
+                    state_vectors=state_vector_batch,
+                    fast_batch=fast_batch,
+                    controls=active_controls,
                     batch_workers=batch_workers,
                 )
 
@@ -253,7 +262,7 @@ def retrieve_many(
             cache,
         )
 
-        return run_native_retrieval_batch(
+        fast_batch = run_native_retrieval_batch(
             case=fast_case,
             measurement=fast_measurement,
             state_vectors=state_vector_batch,
@@ -261,6 +270,18 @@ def retrieve_many(
             controls=active_controls,
             cache=cache,
             load_case=False,
+            batch_workers=batch_workers,
+        )
+
+        if not final_correction.enabled:
+            return fast_batch
+
+        return run_fastmode_correction_batch(
+            case=case,
+            measurement=measurement,
+            state_vectors=state_vector_batch,
+            fast_batch=fast_batch,
+            controls=active_controls,
             batch_workers=batch_workers,
         )
 
@@ -374,6 +395,69 @@ def run_fastmode_oe(
         )
 
     return combine_fastmode_correction_result(fast_result, full_result)
+
+
+def run_fastmode_correction_batch(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vectors: Sequence[StateVector],
+    fast_batch: BatchResult,
+    controls: RetrievalControls,
+    batch_workers: int,
+) -> BatchResult:
+    """Apply the sparse full-physics correction to a native fast-stage batch."""
+
+    final_correction = case.optimisation.fastmode.oe.final_correction
+    full_case = full_physics_case(case)
+    correction_wavelengths_nm = final_correction.resolved_wavelengths(measurement.wavelength_nm)
+    correction_measurement = full_correction_measurement(
+        measurement,
+        wavelengths_nm=correction_wavelengths_nm,
+        uncertainty_scale=final_correction.uncertainty_scale,
+    )
+    correction_case = full_correction_case(full_case, correction_measurement)
+    corrected_state_vectors = tuple(
+        state_vector_with_initial(state_vector, fast_state)
+        for state_vector, fast_state in zip(state_vectors, fast_batch.state, strict=True)
+    )
+    correction_controls = replace(controls, max_iterations=1)
+
+    with rtm.SessionCache(correction_case) as correction_cache:
+        correction_template = resolved_state_vector_for_loaded_case(
+            correction_case,
+            corrected_state_vectors[0],
+            correction_cache,
+        )
+        correction_batch = run_native_retrieval_batch(
+            case=correction_case,
+            measurement=correction_measurement,
+            state_vectors=corrected_state_vectors,
+            resolved_template=correction_template,
+            controls=correction_controls,
+            cache=correction_cache,
+            load_case=False,
+            batch_workers=batch_workers,
+        )
+
+    return BatchResult(
+        state_names=correction_batch.state_names,
+        state=correction_batch.state,
+        iterations=tuple(
+            fast_iterations + correction_iterations
+            for fast_iterations, correction_iterations in zip(
+                fast_batch.iterations,
+                correction_batch.iterations,
+                strict=True,
+            )
+        ),
+        converged=fast_batch.converged,
+        measurement=measurement,
+        fast_stage_iterations=fast_batch.iterations,
+        fast_stage_converged=fast_batch.converged,
+        full_correction_iterations=correction_batch.iterations,
+        full_correction_converged=correction_batch.converged,
+    )
 
 
 def fast_stage_retrieval_inputs(
@@ -841,10 +925,6 @@ def attach_diagnosis(
     """Attach a lazy multi-start diagnosis runner to one retrieval result."""
 
     diagnosis_case = copy.deepcopy(case)
-
-    if diagnosis_case.optimisation.fastmode.enabled:
-        diagnosis_case.optimisation.fastmode.oe.final_correction.enabled = False
-
     diagnosis_measurement = copy.deepcopy(measurement)
     diagnosis_state_vector = copy.deepcopy(state_vector)
     result_state = tuple(float(value) for value in result.state)

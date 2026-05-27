@@ -283,7 +283,7 @@ def run_scene(
 
         return rows
 
-    if fast_stage_only:
+    if case.optimisation.fastmode.enabled:
         retrieval_start = time.perf_counter()
         state_vectors = [
             multistart_state_vector(
@@ -293,6 +293,7 @@ def run_scene(
             )
             for _, start in pending
         ]
+        retrieval_mode = "native_batch_fast_stage" if fast_stage_only else "native_batch_fastmode"
 
         try:
             with rtm.SessionCache() as cache:
@@ -309,6 +310,9 @@ def run_scene(
             retrieval_s = batch_s / len(pending)
             aod_values = result.value("aerosol_optical_depth")
             pressure_values = result.value("aerosol_layer_mid_pressure_hpa")
+            fast_stage_iterations = result.fast_stage_iterations or result.iterations
+            fast_stage_converged = result.fast_stage_converged or result.converged
+            full_correction_converged = result.full_correction_converged
 
             for offset, ((start_index, start), converged, iterations) in enumerate(
                 zip(pending, result.converged, result.iterations, strict=True)
@@ -320,16 +324,20 @@ def run_scene(
                     error="",
                     converged=converged,
                     iterations=iterations,
-                    fast_stage_iterations=iterations,
-                    fast_stage_converged=converged,
-                    full_correction_converged=math.nan,
+                    fast_stage_iterations=fast_stage_iterations[offset],
+                    fast_stage_converged=fast_stage_converged[offset],
+                    full_correction_converged=(
+                        math.nan
+                        if full_correction_converged is None
+                        else full_correction_converged[offset]
+                    ),
                     full_correction_state_vector_convergence=math.nan,
                     retrieval_s=retrieval_s,
                     truth=truth,
                     start=start,
                     retrieved_aod=aod_values[offset],
                     retrieved_pressure=pressure_values[offset],
-                    retrieval_mode="native_batch_fast_stage",
+                    retrieval_mode=retrieval_mode,
                     batch_wall_s=batch_s,
                 )
                 rows.append(row)
@@ -357,7 +365,7 @@ def run_scene(
                     start=start,
                     retrieved_aod=math.nan,
                     retrieved_pressure=math.nan,
-                    retrieval_mode="native_batch_fast_stage",
+                    retrieval_mode=retrieval_mode,
                     batch_wall_s=batch_s,
                 )
                 rows.append(row)
