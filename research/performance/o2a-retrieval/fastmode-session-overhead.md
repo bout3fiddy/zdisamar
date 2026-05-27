@@ -273,3 +273,50 @@ Interpretation: the fused handoff is semantically cleaner and removes a Python
 boundary, but it is not the single-digit sweep win.  The realistic 100-start
 boundary is still dominated by the native RTM/Jacobian evaluations themselves;
 the Python fast-stage-to-correction copy was not a material cost at this scale.
+
+## 2026-05-27 Multi-Start Native Boundary Rechecks
+
+Scene-008 still spends almost all time in native model evaluations.  The
+100-start fastmode diagnosis has 450 fast-stage RTM/Jacobian evaluations plus
+100 sparse full-physics correction evaluations:
+
+```text
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+full fastmode+correction: 33.633 s, avg 0.336 s/start
+fast stage only:          23.220 s, avg 0.232 s/start
+fast-stage iteration histogram: {2: 1, 3: 13, 4: 33, 5: 43, 6: 9, 8: 1}
+```
+
+Changing outer start workers cannot replace the native forward-prefetch worker
+path.  On the same 25-start scene-008 boundary, the many-start-worker shapes
+were slower than keeping native prefetch at the host-core cap:
+
+```text
+native_worker_limit=1,  batch_workers=10: 11.120 s
+native_worker_limit=1,  batch_workers=5:  13.528 s
+native_worker_limit=2,  batch_workers=8:   9.936 s
+native_worker_limit=3,  batch_workers=6:   9.239 s
+native_worker_limit=5,  batch_workers=3:   9.058 s
+native_worker_limit=10, batch_workers=1:   9.487 s
+native_worker_limit=10, batch_workers=3:   8.495 s
+```
+
+Rejected for this pass:
+
+- Per-worker fused fast-stage plus correction execution.  It matched the old
+  two-batch path exactly (`max_state_delta=0`, identical iteration and
+  convergence arrays), but timing stayed flat: 10 starts `3.568 s` versus
+  `3.575 s` for the old path, 25 starts `8.494 s`, and 100 starts `33.633 s`.
+- Directly merging `codex/zig-oe-performance`.  The branch carries real RTM
+  hot-path work, but a whole-branch merge conflicts with old input-model files,
+  benchmark artifacts, validation outputs, and most touched RTM files.  It needs
+  source-level extraction, not a blind merge.
+- The standalone fixed 12x10 q-series pivot patch from
+  `codex/labos-qseries-rowswap`.  It builds and preserves the scene-008
+  25-start boundary (`8.495 s`), but does not move this fastmode workload; the
+  fast benchmark also drifted slightly slower within noise.
+
+Current conclusion: the remaining single-digit target needs fewer OE
+RTM/Jacobian evaluations or a real per-evaluation RTM/Jacobian speedup.  Session
+handoff cleanup, Python object churn, and outer-worker policy are already below
+the dominant cost for this scene.
