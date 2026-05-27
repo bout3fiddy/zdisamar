@@ -37,6 +37,10 @@ sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
+from zdisamar.inverse_method.optimal_estimation.diagnosis import (  # noqa: E402
+    diagnose_retrieval,
+    diagnosis_batch_worker_count_for_limit,
+)
 from zdisamar.plot.properties import PLOT  # noqa: E402
 from zdisamar.wavelength_bands import o2a  # noqa: E402
 
@@ -85,10 +89,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-workers",
         type=int,
-        default=1,
+        default=None,
         help=(
-            "Native start-level workers for one scene batch. Use with "
-            "--native-worker-limit 1 to avoid nested RTM worker oversubscription."
+            "Native start-level workers for one scene batch. Defaults to the "
+            "same bounded auto policy used by Result.diagnose()."
         ),
     )
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -297,13 +301,24 @@ def run_scene(
 
         try:
             with rtm.SessionCache() as cache:
-                result = o2a_oe.retrieve_many(
+                state_template = state_vectors[0]
+                result = diagnose_retrieval(
                     case=case,
                     measurement=measurement,
-                    state_vectors=state_vectors,
+                    state_vector=state_template,
+                    result_state=state_template.initial_state(),
+                    result_initial_state=state_template.initial_state(),
                     controls=oe_setup.retrieval_controls(),
                     cache=cache,
+                    start_count=len(pending),
                     batch_workers=batch_workers,
+                    start_rows=tuple(
+                        (
+                            start["aerosol_optical_depth"],
+                            start["aerosol_mid_pressure_hpa"],
+                        )
+                        for _, start in pending
+                    ),
                 )
 
             batch_s = time.perf_counter() - retrieval_start
@@ -1208,10 +1223,15 @@ def main() -> None:
     if args.native_worker_limit <= 0:
         raise SystemExit("--native-worker-limit must be positive")
 
-    if args.batch_workers <= 0:
+    if args.batch_workers is not None and args.batch_workers <= 0:
         raise SystemExit("--batch-workers must be positive")
 
     os.environ[NATIVE_WORKER_LIMIT_ENV] = str(args.native_worker_limit)
+    batch_workers = (
+        diagnosis_batch_worker_count_for_limit(args.start_count, args.native_worker_limit)
+        if args.batch_workers is None
+        else args.batch_workers
+    )
     scene_rows = selected_scene_rows(args)
     output_dir = resolve_output_dir(args, scene_rows=scene_rows)
     start = time.perf_counter()
@@ -1235,7 +1255,7 @@ def main() -> None:
             start_count=args.start_count,
             workers=args.workers,
             fast_stage_only=args.fast_stage_only,
-            batch_workers=args.batch_workers,
+            batch_workers=batch_workers,
             existing_rows=existing_rows,
             checkpoint_path=runs_path if args.workers == 1 else None,
         )
@@ -1252,7 +1272,7 @@ def main() -> None:
         workers=args.workers,
         fast_stage_only=args.fast_stage_only,
         native_worker_limit=args.native_worker_limit,
-        batch_workers=args.batch_workers,
+        batch_workers=batch_workers,
         elapsed_s=elapsed_s,
         reused_runs=reused_runs,
     )

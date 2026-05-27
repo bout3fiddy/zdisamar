@@ -326,17 +326,24 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     )
     calls: list[dict[str, object]] = []
 
-    def retrieve_many(**kwargs):
+    def diagnosis_batch(**kwargs):
 
         calls.append(kwargs)
 
         return batch
 
+    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+
+    banned_batch_api = "retrieve" + "_many"
+    assert not hasattr(optimal_estimation, banned_batch_api)
+    assert not hasattr(o2a_oe, banned_batch_api)
+
     with (
         patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
         patch(
-            "zdisamar.inverse_method.optimal_estimation.o2a.retrieve_many",
-            side_effect=retrieve_many,
+            "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+            side_effect=diagnosis_batch,
         ),
     ):
         diagnosis = diagnose_retrieval(
@@ -356,8 +363,8 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     calls.clear()
 
     with patch(
-        "zdisamar.inverse_method.optimal_estimation.o2a.retrieve_many",
-        side_effect=retrieve_many,
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=diagnosis_batch,
     ):
         explicit = diagnose_retrieval(
             case=cast(O2AInput, object()),

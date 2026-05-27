@@ -29,6 +29,10 @@ class RetrievalDiagnosis(NotebookDisplay):
     result_state: tuple[float, ...]
     result_initial_state: tuple[float, ...] | None
     batch_workers: int
+    fast_stage_iterations: tuple[int, ...] | None = None
+    fast_stage_converged: tuple[bool, ...] | None = None
+    full_correction_iterations: tuple[int, ...] | None = None
+    full_correction_converged: tuple[bool, ...] | None = None
     native_worker_limit: int | None = None
     elapsed_s: float = 0.0
 
@@ -112,15 +116,27 @@ def diagnose_retrieval(
     batch_workers: int | None = None,
     bounds: Mapping[StateName, tuple[float, float]] | None = None,
     cache: rtm.SessionCache | None = None,
+    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> RetrievalDiagnosis:
     """Run a same-scene multi-start sweep using the native batch path."""
 
     if start_count <= 0:
         raise ValueError("start_count must be positive")
 
+    axes = diagnosis_bounds(state_vector, bounds or {})
+    active_start_rows = (
+        tuple(tuple(float(value) for value in row) for row in start_rows)
+        if start_rows is not None
+        else diagnosis_start_grid(axes, start_count)
+    )
+
+    if not active_start_rows:
+        raise ValueError("start_rows must not be empty")
+
+    active_start_count = len(active_start_rows)
     native_worker_limit = native_worker_ceiling()
     active_batch_workers = (
-        diagnosis_batch_worker_count_for_limit(start_count, native_worker_limit)
+        diagnosis_batch_worker_count_for_limit(active_start_count, native_worker_limit)
         if batch_workers is None
         else batch_workers
     )
@@ -128,14 +144,12 @@ def diagnose_retrieval(
     if active_batch_workers <= 0:
         raise ValueError("batch_workers must be positive")
 
-    axes = diagnosis_bounds(state_vector, bounds or {})
-    start_rows = diagnosis_start_grid(axes, start_count)
-    start_vectors = tuple(state_vector_for_start(state_vector, row) for row in start_rows)
+    start_vectors = tuple(state_vector_for_start(state_vector, row) for row in active_start_rows)
 
     from . import o2a as o2a_oe
 
     start_s = time.perf_counter()
-    batch = o2a_oe.retrieve_many(
+    batch = o2a_oe.diagnosis_batch(
         case=case,
         measurement=measurement,
         state_vectors=start_vectors,
@@ -147,7 +161,7 @@ def diagnose_retrieval(
 
     return RetrievalDiagnosis(
         state_names=state_vector.names,
-        start_state=start_rows,
+        start_state=active_start_rows,
         retrieved_state=batch.state,
         iterations=batch.iterations,
         converged=batch.converged,
@@ -159,6 +173,10 @@ def diagnose_retrieval(
             else tuple(float(value) for value in result_initial_state)
         ),
         batch_workers=active_batch_workers,
+        fast_stage_iterations=batch.fast_stage_iterations,
+        fast_stage_converged=batch.fast_stage_converged,
+        full_correction_iterations=batch.full_correction_iterations,
+        full_correction_converged=batch.full_correction_converged,
         native_worker_limit=native_worker_limit,
         elapsed_s=elapsed_s,
     )

@@ -10,7 +10,6 @@ from .o2a import (
     evaluate_state,
     measurement_from_sun_normalized_radiance_noise,
     retrieve,
-    retrieve_many,
     simulate_measurement,
 )
 from .retrieval import (
@@ -56,6 +55,5 @@ __all__ = [
     "evaluate_state",
     "measurement_from_sun_normalized_radiance_noise",
     "retrieve",
-    "retrieve_many",
     "simulate_measurement",
 ]

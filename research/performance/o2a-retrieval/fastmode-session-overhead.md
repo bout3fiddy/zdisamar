@@ -372,3 +372,26 @@ Two narrow prefetch scheduling probes were rejected:
 Conclusion: keep the current native prefetch policy.  The speed problem is not
 an omitted worker cap or a simple queue/chunk setting; the remaining cost is the
 number and price of the RTM/Jacobian evaluations.
+
+## 2026-05-27 Diagnosis Driver Worker Default
+
+Finding: the validation multi-start script defaulted `--batch-workers` to `1`,
+which bypassed the bounded worker policy used by `Result.diagnose()`.  On
+scene 008 this selected a pathological same-scene batch shape:
+
+```text
+Debug-synced binding, batch_workers=1, 10 starts: 90.058 s
+ReleaseFast binding, batch_workers=3, 10 starts: 3.666 s
+```
+
+Change: the validation driver now resolves omitted `--batch-workers` through
+`diagnosis_batch_worker_count_for_limit(...)`, matching the public diagnosis
+path.  The default no longer silently takes the single-worker path.
+
+Timing evidence with the packaged binding rebuilt by
+`zig build -Doptimize=ReleaseFast sync-python-package`:
+
+```text
+scene 008, 10 starts, native_worker_limit=10, auto batch_workers=3: 3.586 s
+scene 008, 25 starts, native_worker_limit=10, auto batch_workers=3: 8.469 s
+```

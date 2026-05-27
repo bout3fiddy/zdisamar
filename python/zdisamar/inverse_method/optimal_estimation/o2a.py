@@ -205,7 +205,7 @@ def retrieve(
     )
 
 
-def retrieve_many(
+def diagnosis_batch(
     *,
     case: O2AInput,
     measurement: Measurement,
@@ -214,7 +214,7 @@ def retrieve_many(
     cache: rtm.SessionCache | None = None,
     batch_workers: int = 1,
 ) -> BatchResult:
-    """Retrieve many O2 A starts while reusing one native prepared session."""
+    """Run the native same-scene batch used by Result.diagnose()."""
 
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
@@ -891,15 +891,13 @@ def batch_state_rows(
 def resolved_state_vector_for_case(
     case: O2AInput,
     state_vector: StateVector,
-    *,
-    cache: rtm.SessionCache | None = None,
 ) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
 
     return resolved_state_vector_from_profile(
         case,
         state_vector,
-        lambda: pressure_altitude_profile_from_case(case, cache=cache),
+        lambda: pressure_altitude_profile_from_case(case),
     )
 
 
@@ -1131,18 +1129,10 @@ def simulate_measurement(
     )
 
 
-def pressure_altitude_profile_from_case(
-    case: O2AInput,
-    *,
-    cache: rtm.SessionCache | None = None,
-) -> PressureAltitudeProfile:
+def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfile:
     """Read the pressure-altitude relation from the RTM atmospheric grid."""
 
-    budget = (
-        cache.atmospheric_budget([case.spectral_grid.start_nm])
-        if cache is not None and cache.has_loaded_case(case)
-        else rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
-    )
+    budget = rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
 
     return pressure_altitude_profile_from_budget(budget)
 
