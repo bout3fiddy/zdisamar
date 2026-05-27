@@ -711,6 +711,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     optimisation = O2AOptimisation.defaults()
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
+    optimisation.fastmode.oe.controls.max_iterations = 3
     wavelengths = tuple(
         round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
     )
@@ -730,7 +731,6 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
     )
     state_vector = cast(StateVector, SimpleNamespace(parameters=(), names=()))
-    controls = RetrievalControls(max_iterations=2)
     calls: list[dict[str, object]] = []
     loads: list[tuple[object, bool]] = []
 
@@ -768,7 +768,6 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
-            controls=controls,
             cache=cast(SessionCache, Cache()),
         )
 
@@ -786,6 +785,8 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     assert fast_case.spectral_grid.sample_count == len(fast_measurement.wavelength_nm)
     assert tuple(fast_case.instrument_response.measured_wavelengths_nm) == expected_wavelengths
     assert calls[0]["load_case"] is False
+    active_controls = cast(RetrievalControls, calls[0]["controls"])
+    assert active_controls.max_iterations == 3
     assert loads == [(fast_case, False)]
 
     optimisation.fastmode.oe.fast_stage_sampling.windows = (
@@ -857,6 +858,7 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     optimisation = O2AOptimisation.defaults()
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
+    optimisation.fastmode.oe.controls.max_iterations = 4
     wavelengths = tuple(
         round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
     )
@@ -876,8 +878,8 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
     )
     state_vector = StateVector((PressureParameter(),))
-    controls = RetrievalControls(max_iterations=2)
     loads: list[tuple[object, bool]] = []
+    match_checks: list[object] = []
     profile_calls: list[tuple[object, object]] = []
     retrieval_calls: list[dict[str, object]] = []
 
@@ -886,13 +888,15 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
 
         def has_loaded_case(self, case) -> bool:
 
+            match_checks.append(case)
+
             return bool(loads and loads[-1][0] is case)
 
         def load(self, case, *, copy_case: bool = True) -> None:
 
             loads.append((case, copy_case))
 
-    def fake_pressure_profile(case, *, cache=None):
+    def fake_pressure_profile(case, cache):
 
         profile_calls.append((case, cache))
 
@@ -919,7 +923,7 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     with (
         patch.object(
             o2a_oe,
-            "pressure_altitude_profile_from_case",
+            "pressure_altitude_profile_from_loaded_cache",
             side_effect=fake_pressure_profile,
         ),
         patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
@@ -928,7 +932,6 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
             case=cast(O2AInput, reference_case),
             measurement=measurement,
             state_vector=state_vector,
-            controls=controls,
             cache=cast(SessionCache, cache),
         )
 
@@ -937,8 +940,11 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     fast_case = cast(O2AInput, loads[0][0])
     assert fast_case is not reference_case
     assert fast_case.spectral_grid.sample_count < reference_case.spectral_grid.sample_count
+    assert match_checks == [fast_case]
     assert profile_calls == [(fast_case, cache)]
     assert len(retrieval_calls) == 1
+    active_controls = cast(RetrievalControls, retrieval_calls[0]["controls"])
+    assert active_controls.max_iterations == 4
     resolved_state_vector = cast(StateVector, retrieval_calls[0]["state_vector"])
     assert isinstance(resolved_state_vector.parameters[0], ResolvedParameter)
 

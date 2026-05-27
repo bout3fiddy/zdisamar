@@ -13,6 +13,7 @@ from ...input.wavelength_band.optimisation import (
     FastModeFastStageSampling,
     measurement_indices_for_wavelengths,
 )
+from ...output.tables import AtmosphericBudget
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
@@ -78,10 +79,10 @@ def retrieve(
 
         if cache is None:
             with rtm.SessionCache(fast_case) as local_cache:
-                resolved_state_vector = resolved_state_vector_for_case(
+                resolved_state_vector = resolved_state_vector_for_loaded_case(
                     fast_case,
                     state_vector,
-                    cache=local_cache,
+                    local_cache,
                 )
 
                 return run_fastmode_oe(
@@ -99,10 +100,10 @@ def retrieve(
         if not cache.has_loaded_case(fast_case):
             cache.load(fast_case, copy_case=False)
 
-        resolved_state_vector = resolved_state_vector_for_case(
+        resolved_state_vector = resolved_state_vector_for_loaded_case(
             fast_case,
             state_vector,
-            cache=cache,
+            cache,
         )
 
         return run_fastmode_oe(
@@ -506,6 +507,34 @@ def resolved_state_vector_for_case(
 ) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
 
+    return resolved_state_vector_from_profile(
+        case,
+        state_vector,
+        lambda: pressure_altitude_profile_from_case(case, cache=cache),
+    )
+
+
+def resolved_state_vector_for_loaded_case(
+    case: O2AInput,
+    state_vector: StateVector,
+    cache: rtm.SessionCache,
+) -> StateVector:
+    """Attach pressure metadata from a cache already matched to this case."""
+
+    return resolved_state_vector_from_profile(
+        case,
+        state_vector,
+        lambda: pressure_altitude_profile_from_loaded_cache(case, cache),
+    )
+
+
+def resolved_state_vector_from_profile(
+    case: O2AInput,
+    state_vector: StateVector,
+    pressure_profile: Callable[[], PressureAltitudeProfile],
+) -> StateVector:
+    """Resolve state-vector parameters that need case-owned pressure metadata."""
+
     parameters = []
     pressure_altitude_profile = None
     changed = False
@@ -519,7 +548,7 @@ def resolved_state_vector_for_case(
             continue
 
         if pressure_altitude_profile is None:
-            pressure_altitude_profile = pressure_altitude_profile_from_case(case, cache=cache)
+            pressure_altitude_profile = pressure_profile()
 
         parameters.append(resolver(case, pressure_altitude_profile))
         changed = True
@@ -677,15 +706,33 @@ def pressure_altitude_profile_from_case(
         if cache is not None and cache.has_loaded_case(case)
         else rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
     )
+
+    return pressure_altitude_profile_from_budget(budget)
+
+
+def pressure_altitude_profile_from_loaded_cache(
+    case: O2AInput,
+    cache: rtm.SessionCache,
+) -> PressureAltitudeProfile:
+    """Read pressure-altitude metadata from a cache already matched to this case."""
+
+    return pressure_altitude_profile_from_budget(
+        cache.atmospheric_budget([case.spectral_grid.start_nm])
+    )
+
+
+def pressure_altitude_profile_from_budget(budget: AtmosphericBudget) -> PressureAltitudeProfile:
+    """Build the pressure-altitude relation from RTM atmospheric budget rows."""
+
     table = budget.table
     levels_by_pressure: dict[float, float] = {}
 
     for row in table:
-        levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
-            row["top_altitude_km"]
+        levels_by_pressure[round(budget_row_float(row, "top_pressure_hpa"), 12)] = budget_row_float(
+            row, "top_altitude_km"
         )
-        levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
-            row["bottom_altitude_km"]
+        levels_by_pressure[round(budget_row_float(row, "bottom_pressure_hpa"), 12)] = (
+            budget_row_float(row, "bottom_altitude_km")
         )
 
     levels = sorted((altitude, pressure) for pressure, altitude in levels_by_pressure.items())
@@ -694,6 +741,17 @@ def pressure_altitude_profile_from_case(
         altitude_km=tuple(altitude for altitude, _pressure in levels),
         pressure_hpa=tuple(pressure for _altitude, pressure in levels),
     )
+
+
+def budget_row_float(row: Mapping[str, object], key: str) -> float:
+    """Read a numeric atmospheric-budget value from copied RTM table rows."""
+
+    value = row[key]
+
+    if not isinstance(value, int | float):
+        raise TypeError(f"atmospheric budget field {key} is not numeric")
+
+    return float(value)
 
 
 def measurement_from_sun_normalized_radiance_noise(

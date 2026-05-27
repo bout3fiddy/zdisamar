@@ -24,14 +24,12 @@ The Python path passes a session cache into the inverse method:
 
 ```python
 from zdisamar import rtm
-from zdisamar.inverse_method import optimal_estimation
 
 with rtm.SessionCache(case) as cache:
     result = o2a_oe.disamar_oe(
         case=case,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls(),
         cache=cache,
         ...
     )

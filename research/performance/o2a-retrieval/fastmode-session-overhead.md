@@ -79,11 +79,98 @@ converged: true
 Accepted: preserves the warmed sparse fast-stage session across repeated calls
 without changing the returned state.
 
+## 2026-05-27 Case-Owned Controls And Repeated Starts
+
+The canonical repeated-start shape keeps controls in the case and passes only
+the varying state vector through the public retrieval call:
+
+```python
+with rtm.SessionCache() as cache:
+    for start in starting_values:
+        result = o2a.retrieve(
+            case=case,
+            measurement=measurement,
+            state_vector=state_vector_for(start),
+            cache=cache,
+        )
+```
+
+Fastmode resolves `controls=None` from
+`case.optimisation.fastmode.oe.controls`.  Non-fastmode keeps the existing
+DISAMAR-style default controls.  Focused Python coverage checks the omitted
+controls path so callers do not need to construct `RetrievalControls` for the
+repeated-retrieval fastmode path.
+
+Repeated-start timing with one caller-owned empty `SessionCache()`, five
+different initial states, and no explicit controls:
+
+```text
+retrieval times: [252.639, 196.693, 193.307, 223.627, 196.890] ms
+median: 196.890 ms
+iterations: [5, 5, 5, 6, 5]
+converged: [true, true, true, true, true]
+```
+
+The first call pays the initial sparse fast-stage load/warm cost.  Later calls
+reuse the same fast-stage cache; the final correction does not replace it.
+
+## 2026-05-27 Duplicate Cache-Match Checks
+
+Finding: after `retrieve()` had already established that the supplied cache held
+the sparse fast-stage case, pressure-profile resolution called the generic
+`has_loaded_case` path again.  That path fingerprints the case by rebuilding the
+native JSON payload.
+
+Change: use a loaded-cache pressure-profile path once stale-cache protection has
+already run at the retrieval boundary.  The caller-supplied cache still performs
+one `has_loaded_case(fast_case)` check per retrieval so case or measurement
+changes reload the cache correctly.
+
+Timing evidence from the repeated-start probe:
+
+```text
+cache-match calls: 4 for 5 starts
+total cache-match time: 1.607 ms
+mean matched-call time: 0.402 ms
+```
+
+Accepted: removes one redundant fingerprint check from each already-loaded
+pressure-profile resolution.  This is a sub-millisecond repeated-call win, not a
+large latency change.
+
+## 2026-05-27 Correction Prepare Investigation
+
+The 4-sample full-physics correction load was split inside the Python binding:
+
+```text
+load samples_4.fast_False:
+  apply_rtm_optimisation: 0.084 ms
+  resolve_assets:         0.216 ms
+  json_payload:           0.071 ms
+  native_prepare:         7.572 ms
+  python_bookkeeping:     0.006 ms
+```
+
+The current correction C entrypoint consumes a fully prepared `PreparedO2A`.
+`correctPreparedO2A` copies that prepared case, switches derivative mode, and
+simulates the RTM/Jacobian from `prepared.scene` and `prepared.prepared`.
+It does not apply the correction initial state to a base scene and rebuild
+state-dependent optical properties.
+
+Rejected for this pass: simply keeping a prepared correction case alive in
+Python.  That would reuse optics prepared at the wrong aerosol optical depth or
+layer pressure for later starts.
+
+Safe native direction: add a correction session that owns the sparse
+full-physics correction inputs, route, weak-grid/profile preparation caches, and
+workspace, then applies each fast-stage state and refreshes state-dependent
+optics before the one-step correction.  That is the same semantic class as the
+native multi-start session work and is too large for this wrapper-overhead PR.
+
 ## Remaining Overhead
 
 The clean remaining per-call overhead target is the 4-sample full-physics
-correction prepare, about `7 ms` in the current boundary. Removing it safely
-requires a native correction path that applies the corrected state without
-reparsing and repreparing the correction case, or a richer prepared correction
-session. A Python cache reshuffle alone would not remove the state-dependent
-optical preparation required by the correction.
+correction prepare, about `7-8 ms` in the current boundary.  The measured Python
+payload work is below `0.4 ms`; the recoverable cost is in native preparation.
+Removing it safely requires native correction-session state rather than another
+Python cache reshuffle.
