@@ -157,11 +157,15 @@ class FastModeWavelengthWindow:
 
 
 def default_fast_stage_wavelength_windows() -> tuple[FastModeWavelengthWindow, ...]:
-    """Return the tuned sparse fast-stage O2 A windows used by fastmode."""
+    """Return the tuned sparse fast-stage O2 A row selectors used by fastmode."""
 
     return (
-        FastModeWavelengthWindow((755.0, 758.5), 16),
-        FastModeWavelengthWindow((765.2, 768.0), 25),
+        FastModeWavelengthWindow((758.0, 758.08), 2),
+        FastModeWavelengthWindow((758.2, 758.28), 2),
+        FastModeWavelengthWindow((758.36, 758.48), 2),
+        FastModeWavelengthWindow((765.2, 765.32), 2),
+        FastModeWavelengthWindow((765.44, 765.68), 2),
+        FastModeWavelengthWindow((766.24, 766.84), 2),
     )
 
 

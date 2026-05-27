@@ -690,7 +690,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
     wavelengths = tuple(
-        round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
+        round(755.0 + index * 0.04, 10) for index in range(int(round((768.0 - 755.0) / 0.04)) + 1)
     )
     measurement = Measurement(
         wavelengths,
@@ -1016,9 +1016,14 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert fast_sampling_count == len(fast_sampling_wavelengths)
             assert fast_sampling_count < len(fast_case.measurement_wavelengths_nm)
             assert fast_sampling["windows"] == [
-                {"wavelength_window_nm": [755.0, 758.5], "wavelength_count": 16},
-                {"wavelength_window_nm": [765.2, 768.0], "wavelength_count": 25},
+                {"wavelength_window_nm": [758.0, 758.08], "wavelength_count": 2},
+                {"wavelength_window_nm": [758.2, 758.28], "wavelength_count": 2},
+                {"wavelength_window_nm": [758.36, 758.48], "wavelength_count": 2},
+                {"wavelength_window_nm": [765.2, 765.32], "wavelength_count": 2},
+                {"wavelength_window_nm": [765.44, 765.68], "wavelength_count": 2},
+                {"wavelength_window_nm": [766.24, 766.84], "wavelength_count": 2},
             ]
+            assert fast_sampling_count == 12
             final_correction = cast(dict[str, object], fastmode_oe["final_correction"])
             final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
             assert final_correction["wavelength_count"] == 4
