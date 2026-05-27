@@ -676,7 +676,10 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     from zdisamar.input.instrument import SpectralGrid
     from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.input.wavelength_band.optimisation import (
+        FastModeWavelengthWindow,
+        O2AOptimisation,
+    )
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -765,6 +768,17 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     assert tuple(fast_case.instrument_response.measured_wavelengths_nm) == expected_wavelengths
     assert calls[0]["load_case"] is False
     assert loads == [(fast_case, False)]
+
+    optimisation.fastmode.oe.fast_stage_sampling.windows = (
+        FastModeWavelengthWindow((755.0, 755.2), 1),
+    )
+
+    try:
+        optimisation.fastmode.oe.fast_stage_sampling.resolved_wavelengths(measurement.wavelength_nm)
+    except ValueError as error:
+        assert "wavelength count must be at least two" in str(error)
+    else:
+        raise AssertionError("single-sample fast-stage window count was accepted")
 
 
 def assert_native_oe_marshaling_bounds() -> None:
@@ -1016,13 +1030,18 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert fast_sampling_count == len(fast_sampling_wavelengths)
             assert fast_sampling_count < len(fast_case.measurement_wavelengths_nm)
             assert fast_sampling["windows"] == [
-                {"wavelength_window_nm": [755.0, 758.5], "wavelength_count": 16},
-                {"wavelength_window_nm": [765.2, 768.0], "wavelength_count": 25},
+                {"wavelength_window_nm": [758.0, 758.08], "wavelength_count": 2},
+                {"wavelength_window_nm": [758.2, 758.28], "wavelength_count": 2},
+                {"wavelength_window_nm": [758.36, 758.48], "wavelength_count": 2},
+                {"wavelength_window_nm": [765.2, 765.32], "wavelength_count": 2},
+                {"wavelength_window_nm": [765.44, 765.68], "wavelength_count": 2},
+                {"wavelength_window_nm": [766.24, 766.84], "wavelength_count": 2},
             ]
+            assert fast_sampling_count == 12
             final_correction = cast(dict[str, object], fastmode_oe["final_correction"])
             final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
-            assert final_correction["wavelength_count"] == 12
-            assert len(final_correction_wavelengths) == 12
+            assert final_correction["wavelength_count"] == 4
+            assert len(final_correction_wavelengths) == 4
             fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
             disabled_fastmode = fast_case.optimisation.fastmode.resolved_dict(
                 fast_case.measurement_wavelengths_nm

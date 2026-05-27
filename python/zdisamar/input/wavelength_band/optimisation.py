@@ -86,15 +86,19 @@ def selected_window_wavelengths(
     wavelength_window_nm: tuple[float, float],
     wavelength_count: int | None,
     label: str,
+    minimum_samples: int = 2,
 ) -> tuple[float, ...]:
     """Select measured wavelengths from one configured wavelength window."""
+
+    if minimum_samples < 1:
+        raise ValueError(f"{label} minimum sample count must be at least one")
 
     axis = measured_wavelength_tuple(measurement_wavelengths_nm)
     start_nm, end_nm = wavelength_window_nm
     window = tuple(value for value in axis if start_nm <= value <= end_nm)
 
-    if len(window) < 2:
-        raise ValueError(f"{label} wavelength window retained fewer than two samples")
+    if len(window) < minimum_samples:
+        raise ValueError(f"{label} wavelength window retained fewer than {minimum_samples} samples")
 
     if wavelength_count is None:
         return window
@@ -139,6 +143,7 @@ class FastModeWavelengthWindow:
         measurement_wavelengths_nm: Sequence[float],
         *,
         label: str,
+        minimum_samples: int = 2,
     ) -> tuple[float, ...]:
 
         return selected_window_wavelengths(
@@ -146,6 +151,7 @@ class FastModeWavelengthWindow:
             wavelength_window_nm=self.wavelength_window_nm,
             wavelength_count=self.wavelength_count,
             label=label,
+            minimum_samples=minimum_samples,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -157,11 +163,15 @@ class FastModeWavelengthWindow:
 
 
 def default_fast_stage_wavelength_windows() -> tuple[FastModeWavelengthWindow, ...]:
-    """Return the tuned sparse fast-stage O2 A windows used by fastmode."""
+    """Return the tuned sparse fast-stage O2 A row selectors used by fastmode."""
 
     return (
-        FastModeWavelengthWindow((755.0, 758.5), 16),
-        FastModeWavelengthWindow((765.2, 768.0), 25),
+        FastModeWavelengthWindow((758.0, 758.08), 2),
+        FastModeWavelengthWindow((758.2, 758.28), 2),
+        FastModeWavelengthWindow((758.36, 758.48), 2),
+        FastModeWavelengthWindow((765.2, 765.32), 2),
+        FastModeWavelengthWindow((765.44, 765.68), 2),
+        FastModeWavelengthWindow((766.24, 766.84), 2),
     )
 
 
@@ -390,7 +400,7 @@ class FastModeFinalCorrection:
 
     enabled: bool = True
     wavelength_window_nm: tuple[float, float] = (765.2, 768.0)
-    wavelength_count: int | None = 12
+    wavelength_count: int | None = 4
     wavelengths_nm: tuple[float, ...] = ()
     uncertainty_scale: float | None = None
 
@@ -560,6 +570,7 @@ class FastModeFastStageSampling:
                 window.resolved_wavelengths(
                     axis,
                     label="fastmode fast-stage sampling",
+                    minimum_samples=1,
                 )
             )
 

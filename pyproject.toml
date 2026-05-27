@@ -1,6 +1,6 @@
 [project]
 name = "zdisamar"
-version = "0.0.15"
+version = "0.0.16"
 description = "Oxygen A-band radiative-transfer model with Python bindings"
 readme = "README.md"
 requires-python = ">=3.11"

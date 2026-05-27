@@ -54,14 +54,18 @@ fastmode.oe.controls.max_change_transformed_state = 1.0
 
 fastmode.oe.fast_stage_sampling.enabled = True
 fastmode.oe.fast_stage_sampling.windows = (
-    o2a.FastModeWavelengthWindow((755.0, 758.5), 16),
-    o2a.FastModeWavelengthWindow((765.2, 768.0), 25),
+    o2a.FastModeWavelengthWindow((758.0, 758.08), 2),
+    o2a.FastModeWavelengthWindow((758.2, 758.28), 2),
+    o2a.FastModeWavelengthWindow((758.36, 758.48), 2),
+    o2a.FastModeWavelengthWindow((765.2, 765.32), 2),
+    o2a.FastModeWavelengthWindow((765.44, 765.68), 2),
+    o2a.FastModeWavelengthWindow((766.24, 766.84), 2),
 )
 fastmode.oe.fast_stage_sampling.uncertainty_scale = None
 
 fastmode.oe.final_correction.enabled = True
 fastmode.oe.final_correction.wavelength_window_nm = (765.2, 768.0)
-fastmode.oe.final_correction.wavelength_count = 12
+fastmode.oe.final_correction.wavelength_count = 4
 ```
 
 The RTM fields reduce work in the native forward model.  Fourier caps skip high
@@ -103,11 +107,15 @@ wavelengths on the case sampling:
 
 ```text
 fast stage:
-  wavelength_window_nm = 755.0-758.5, wavelength_count = 16
-  wavelength_window_nm = 765.2-768.0, wavelength_count = 25
+  wavelength_window_nm = 758.0-758.08, wavelength_count = 2
+  wavelength_window_nm = 758.2-758.28, wavelength_count = 2
+  wavelength_window_nm = 758.36-758.48, wavelength_count = 2
+  wavelength_window_nm = 765.2-765.32, wavelength_count = 2
+  wavelength_window_nm = 765.44-765.68, wavelength_count = 2
+  wavelength_window_nm = 766.24-766.84, wavelength_count = 2
 
 final correction:
-  wavelength_window_nm = 765.2-768.0, wavelength_count = 12
+  wavelength_window_nm = 765.2-768.0, wavelength_count = 4
 ```
 
 Users can replace the default by assigning explicit wavelengths:
@@ -182,20 +190,20 @@ Summary from
 [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json):
 
 ```text
-fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
-fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
+fullmode: 100/100 converged, median 1.807 s, mean 1.763 s
+fastmode: 100/100 converged, median 0.420 s, mean 0.411 s
 ```
 
-The validation sweep resolves 38 fast-stage wavelengths and 12 final-correction
+The validation sweep resolves 12 fast-stage wavelengths and 4 final-correction
 wavelengths for every scene.  Fastmode median speedup against the same-run
-fullmode reference is `+1.416 s`; mean speedup is `+1.371 s`.
+fullmode reference is `+1.393 s`; mean speedup is `+1.352 s`.
 
 Accuracy against the full-physics reference retrieval stayed inside the retained
 gate:
 
 ```text
-fastmode max AOD delta vs fullmode:          5.285e-04
-fastmode max mid-pressure delta vs fullmode: 0.668 hPa
+fastmode max AOD delta vs fullmode:          4.182e-04
+fastmode max mid-pressure delta vs fullmode: 0.551 hPa
 ```
 
 The sweep compares:
@@ -212,7 +220,7 @@ The tracked outputs are:
 - [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json)
 
 The validation gate requires fastmode to beat full-reference median latency,
-retain the 38/12 wavelength shape, and stay inside the retained AOD and
+retain the 12/4 wavelength shape, and stay inside the retained AOD and
 aerosol-pressure delta limits.
 
 ## Why This Works

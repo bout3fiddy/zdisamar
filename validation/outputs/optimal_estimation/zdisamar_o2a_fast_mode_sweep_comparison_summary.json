@@ -2,49 +2,49 @@
   "by_mode": {
     "fastmode": {
       "aerosol_mid_pressure_abs_error_hpa": {
-        "max": 0.9396147567105686,
-        "max_abs": 0.9396147567105686,
-        "mean": 0.05459567247407898,
-        "median": 0.01894011793257275,
-        "min": 0.0004079986082388
+        "max": 0.5684813213017605,
+        "max_abs": 0.5684813213017605,
+        "mean": 0.05962271385057761,
+        "median": 0.024242966724102644,
+        "min": 0.00010959518749587005
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.0004787533077466,
-        "max_abs": 0.0004787533077466,
-        "mean": 3.125947092967583e-05,
-        "median": 5.081326687528254e-06,
-        "min": 1.6396835444965063e-08
+        "max": 0.0003911229114034187,
+        "max_abs": 0.0003911229114034187,
+        "mean": 3.7701576263501067e-05,
+        "median": 7.017592618285828e-06,
+        "min": 3.048020447149469e-08
       },
       "converged": 100,
       "fast_stage_converged": 100,
       "fast_stage_sample_count": {
-        "max": 38.0,
-        "max_abs": 38.0,
-        "mean": 38.0,
-        "median": 38.0,
-        "min": 38.0
-      },
-      "final_correction_sample_count": {
         "max": 12.0,
         "max_abs": 12.0,
         "mean": 12.0,
         "median": 12.0,
         "min": 12.0
       },
-      "full_correction_converged": 15,
+      "final_correction_sample_count": {
+        "max": 4.0,
+        "max_abs": 4.0,
+        "mean": 4.0,
+        "median": 4.0,
+        "min": 4.0
+      },
+      "full_correction_converged": 2,
       "full_correction_state_vector_convergence": {
-        "max": 9.32702640404769,
-        "max_abs": 9.32702640404769,
-        "mean": 2.1003231664457114,
-        "median": 1.880970127146142,
-        "min": 0.3054900427795896
+        "max": 14.686035193022244,
+        "max_abs": 14.686035193022244,
+        "mean": 4.8316340943490275,
+        "median": 4.601517768019498,
+        "min": 0.8387905521166391
       },
       "retrieval_s": {
-        "max": 0.7281708749942482,
-        "max_abs": 0.7281708749942482,
-        "mean": 0.5284860428911634,
-        "median": 0.5384249375201762,
-        "min": 0.3218361248727888
+        "max": 0.5462199579924345,
+        "max_abs": 0.5462199579924345,
+        "mean": 0.4113817687542178,
+        "median": 0.42012308293487877,
+        "min": 0.254149500047788
       },
       "rows": 100
     },
@@ -52,24 +52,24 @@
       "aerosol_mid_pressure_abs_error_hpa": {
         "max": 0.2717610722959307,
         "max_abs": 0.2717610722959307,
-        "mean": 0.010103960984987408,
-        "median": 0.00194960571852215,
+        "mean": 0.010103960959292523,
+        "median": 0.001949605718522207,
         "min": 5.0009920073534886e-05
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.0001521198873327,
-        "max_abs": 0.0001521198873327,
-        "mean": 6.510986607688352e-06,
+        "max": 0.0001521198873327967,
+        "max_abs": 0.0001521198873327967,
+        "mean": 6.5109865598445e-06,
         "median": 8.034164403758481e-07,
-        "min": 1.5020904298168606e-08
+        "min": 1.5020904298168603e-08
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.9134694170206785,
-        "max_abs": 2.9134694170206785,
-        "mean": 1.8991539557860233,
-        "median": 1.944492666516453,
-        "min": 0.8961943751201034
+        "max": 2.3752687501255423,
+        "max_abs": 2.3752687501255423,
+        "mean": 1.762955591697246,
+        "median": 1.8074781046016142,
+        "min": 0.9079124159179628
       },
       "rows": 100
     }
@@ -91,61 +91,63 @@
         },
         "fast_stage_sampling": {
           "enabled": true,
-          "sample_count": 38,
+          "sample_count": 12,
           "uncertainty_scale": null,
           "wavelengths_nm": [
             758.0,
-            758.04,
             758.08,
-            758.12,
-            758.16,
             758.2,
-            758.24,
             758.28,
-            758.32,
             758.36,
-            758.4,
-            758.44,
             758.48,
             765.2,
             765.32,
             765.44,
-            765.56,
             765.68,
-            765.8,
-            765.92,
-            766.0,
-            766.12,
             766.24,
-            766.36,
-            766.48,
-            766.6,
-            766.72,
-            766.84,
-            766.96,
-            767.08,
-            767.2,
-            767.28,
-            767.4,
-            767.52,
-            767.64,
-            767.76,
-            767.88,
-            768.0
+            766.84
           ],
           "windows": [
             {
-              "wavelength_count": 16,
+              "wavelength_count": 2,
               "wavelength_window_nm": [
-                755.0,
-                758.5
+                758.0,
+                758.08
               ]
             },
             {
-              "wavelength_count": 25,
+              "wavelength_count": 2,
+              "wavelength_window_nm": [
+                758.2,
+                758.28
+              ]
+            },
+            {
+              "wavelength_count": 2,
+              "wavelength_window_nm": [
+                758.36,
+                758.48
+              ]
+            },
+            {
+              "wavelength_count": 2,
               "wavelength_window_nm": [
                 765.2,
-                768.0
+                765.32
+              ]
+            },
+            {
+              "wavelength_count": 2,
+              "wavelength_window_nm": [
+                765.44,
+                765.68
+              ]
+            },
+            {
+              "wavelength_count": 2,
+              "wavelength_window_nm": [
+                766.24,
+                766.84
               ]
             }
           ]
@@ -153,23 +155,15 @@
         "final_correction": {
           "enabled": true,
           "uncertainty_scale": null,
-          "wavelength_count": 12,
+          "wavelength_count": 4,
           "wavelength_window_nm": [
             765.2,
             768.0
           ],
           "wavelengths_nm": [
             765.2,
-            765.44,
-            765.72,
-            765.96,
-            766.2,
-            766.48,
-            766.72,
-            767.0,
-            767.24,
-            767.48,
-            767.76,
+            766.12,
+            767.08,
             768.0
           ]
         }
@@ -189,32 +183,32 @@
   },
   "fastmode_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
-      "max": 0.6678536844146379,
-      "max_abs": 0.6678536844146379,
-      "mean": -0.017228424009010722,
-      "median": -0.013393870975107802,
-      "min": -0.26878612756001985
+      "max": 0.37432221438382385,
+      "max_abs": 0.5508002842668702,
+      "mean": -0.03691951118203235,
+      "median": -0.016837212999064377,
+      "min": -0.5508002842668702
     },
     "aerosol_optical_depth_delta": {
-      "max": 0.0005284810296529996,
-      "max_abs": 0.0005284810296529996,
-      "mean": 1.3249135615791552e-05,
-      "median": 1.4096002071140035e-07,
-      "min": -0.00016868543538189895
+      "max": 0.0004181641194220542,
+      "max_abs": 0.0004181641194220542,
+      "mean": 6.0532040428859515e-06,
+      "median": 2.5891302639358127e-07,
+      "min": -0.00023283426228870585
     },
     "retrieval_speedup_s": {
-      "max": 2.1852985420264304,
-      "max_abs": 2.1852985420264304,
-      "mean": 1.37066791289486,
-      "median": 1.416388500481844,
-      "min": 0.5223176251165569
+      "max": 1.8290487921331078,
+      "max_abs": 1.8290487921331078,
+      "mean": 1.351573822943028,
+      "median": 1.3929523959523067,
+      "min": 0.6084672908764333
     }
   },
   "latency_position": {
-    "fastmode_median_s": 0.5384249375201762,
-    "fastmode_reference_speedup_s": 1.4060677289962769,
+    "fastmode_median_s": 0.42012308293487877,
+    "fastmode_reference_speedup_s": 1.3873550216667354,
     "note": "Fastmode should stay below full-reference median latency while preserving the retained sparse fast-stage and final-correction sample counts.",
-    "reference_median_s": 1.944492666516453
+    "reference_median_s": 1.8074781046016142
   },
   "outputs": {
     "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",
