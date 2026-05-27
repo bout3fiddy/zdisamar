@@ -349,3 +349,26 @@ Current conclusion: the remaining single-digit target needs fewer OE
 RTM/Jacobian evaluations or a real per-evaluation RTM/Jacobian speedup.  Session
 handoff cleanup, Python object churn, and outer-worker policy are already below
 the dominant cost for this scene.
+
+## 2026-05-27 Native Prefetch Retest
+
+The relevant native prefetch knob is `ZDISAMAR_WORKER_LIMIT`; the multi-start
+validation script now defaults that cap to the host CPU count, and the focused
+scene-008 timings above use `ZDISAMAR_WORKER_LIMIT=10`.  The retained benchmark
+canary intentionally uses a smaller two-worker cap, so it is not the right
+boundary for judging the 10-core multi-start diagnosis timing.
+
+Two narrow prefetch scheduling probes were rejected:
+
+- Increasing the reused-session pooled forward-prefetch chunk from `8` to `16`
+  misses was slower on the same scene-008 boundary: 10 starts `3.633 s` versus
+  the current `3.575 s` check, and 25 starts `8.827 s` versus the current
+  `~8.48 s` range.
+- Replacing the thread-pool prefetch queue with static per-worker ranges was
+  visibly worse on the 10-start scene-008 smoke and was stopped before
+  completion.  The pooled workers are already warm; the queue is still useful
+  for balancing variable LABOS miss costs in this boundary.
+
+Conclusion: keep the current native prefetch policy.  The speed problem is not
+an omitted worker cap or a simple queue/chunk setting; the remaining cost is the
+number and price of the RTM/Jacobian evaluations.

@@ -271,6 +271,7 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     )
     payload = sweep.to_dict()
     assert payload["runs"] == 2
+    assert payload["native_worker_limit"] is None
     figure = sweep.plot(cells=25)
     figure_payload = figure.to_dict()
     assert figure_payload["runs"] == 2
@@ -349,6 +350,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         )
 
     assert diagnosis.batch_workers == 3
+    assert diagnosis.native_worker_limit == 10
     assert calls[0]["batch_workers"] == 3
 
     calls.clear()

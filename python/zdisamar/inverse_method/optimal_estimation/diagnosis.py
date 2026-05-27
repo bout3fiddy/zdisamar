@@ -29,6 +29,7 @@ class RetrievalDiagnosis(NotebookDisplay):
     result_state: tuple[float, ...]
     result_initial_state: tuple[float, ...] | None
     batch_workers: int
+    native_worker_limit: int | None = None
     elapsed_s: float = 0.0
 
     def value(self, name: StateName) -> tuple[float, ...]:
@@ -67,6 +68,7 @@ class RetrievalDiagnosis(NotebookDisplay):
             "runs": len(self.start_state),
             "converged": sum(1 for value in self.converged if value),
             "batch_workers": self.batch_workers,
+            "native_worker_limit": self.native_worker_limit,
             "elapsed_s": self.elapsed_s,
             "retrievals_per_s": (
                 len(self.start_state) / self.elapsed_s if self.elapsed_s > 0.0 else math.nan
@@ -116,8 +118,11 @@ def diagnose_retrieval(
     if start_count <= 0:
         raise ValueError("start_count must be positive")
 
+    native_worker_limit = native_worker_ceiling()
     active_batch_workers = (
-        diagnosis_batch_worker_count(start_count) if batch_workers is None else batch_workers
+        diagnosis_batch_worker_count_for_limit(start_count, native_worker_limit)
+        if batch_workers is None
+        else batch_workers
     )
 
     if active_batch_workers <= 0:
@@ -154,6 +159,7 @@ def diagnose_retrieval(
             else tuple(float(value) for value in result_initial_state)
         ),
         batch_workers=active_batch_workers,
+        native_worker_limit=native_worker_limit,
         elapsed_s=elapsed_s,
     )
 
@@ -161,7 +167,13 @@ def diagnose_retrieval(
 def diagnosis_batch_worker_count(start_count: int) -> int:
     """Choose a bounded native start-worker count for a same-scene diagnosis."""
 
-    return min(start_count, max(1, min(3, native_worker_ceiling())))
+    return diagnosis_batch_worker_count_for_limit(start_count, native_worker_ceiling())
+
+
+def diagnosis_batch_worker_count_for_limit(start_count: int, native_worker_limit: int) -> int:
+    """Choose start-level workers without hiding the native prefetch pool."""
+
+    return min(start_count, max(1, min(3, native_worker_limit)))
 
 
 def native_worker_ceiling() -> int:
