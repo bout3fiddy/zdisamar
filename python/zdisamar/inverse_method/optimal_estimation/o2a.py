@@ -13,6 +13,7 @@ from ...input.wavelength_band.optimisation import (
     FastModeFastStageSampling,
     measurement_indices_for_wavelengths,
 )
+from ...output.tables import AtmosphericBudget
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
@@ -72,13 +73,18 @@ def retrieve(
 
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
-    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if case.optimisation.fastmode.enabled:
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
 
         if cache is None:
             with rtm.SessionCache(fast_case) as local_cache:
+                resolved_state_vector = resolved_state_vector_for_loaded_case(
+                    fast_case,
+                    state_vector,
+                    local_cache,
+                )
+
                 return run_fastmode_oe(
                     case=case,
                     measurement=measurement,
@@ -88,10 +94,17 @@ def retrieve(
                     controls=active_controls,
                     cache=local_cache,
                     fast_case_loaded=True,
+                    preserve_fast_cache=False,
                 )
 
         if not cache.has_loaded_case(fast_case):
             cache.load(fast_case, copy_case=False)
+
+        resolved_state_vector = resolved_state_vector_for_loaded_case(
+            fast_case,
+            state_vector,
+            cache,
+        )
 
         return run_fastmode_oe(
             case=case,
@@ -102,7 +115,10 @@ def retrieve(
             controls=active_controls,
             cache=cache,
             fast_case_loaded=True,
+            preserve_fast_cache=True,
         )
+
+    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if cache is None:
         with rtm.SessionCache(case) as local_cache:
@@ -156,6 +172,7 @@ def run_fastmode_oe(
     controls: RetrievalControls,
     cache: rtm.SessionCache,
     fast_case_loaded: bool,
+    preserve_fast_cache: bool = False,
 ) -> Result:
     """Run an O2 A fastmode retrieval in one session cache."""
 
@@ -183,15 +200,26 @@ def run_fastmode_oe(
         uncertainty_scale=final_correction.uncertainty_scale,
     )
     correction_case = full_correction_case(full_state_case, correction_measurement)
-    full_result = run_full_physics_correction(
-        case=correction_case,
-        measurement=correction_measurement,
-        state_vector=corrected_state_vector,
-        controls=controls,
-        cache=cache,
-        result_measurement=measurement,
-        final_evaluation_case=full_case,
-    )
+
+    if preserve_fast_cache:
+        full_result = run_full_physics_correction_in_temporary_cache(
+            case=correction_case,
+            measurement=correction_measurement,
+            state_vector=corrected_state_vector,
+            controls=controls,
+            result_measurement=measurement,
+            final_evaluation_case=full_case,
+        )
+    else:
+        full_result = run_full_physics_correction(
+            case=correction_case,
+            measurement=correction_measurement,
+            state_vector=corrected_state_vector,
+            controls=controls,
+            cache=cache,
+            result_measurement=measurement,
+            final_evaluation_case=full_case,
+        )
 
     return combine_fastmode_correction_result(fast_result, full_result)
 
@@ -253,6 +281,29 @@ def run_full_physics_correction(
         _result_from_native(raw, state_vector, result_measurement or measurement),
         _lazy_final_evaluator(final_evaluation_case or case, state_vector),
     )
+
+
+def run_full_physics_correction_in_temporary_cache(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls,
+    result_measurement: Measurement | None = None,
+    final_evaluation_case: O2AInput | None = None,
+) -> Result:
+    """Run final correction without replacing a caller-owned fast-stage cache."""
+
+    with rtm.SessionCache() as correction_cache:
+        return run_full_physics_correction(
+            case=case,
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+            cache=correction_cache,
+            result_measurement=result_measurement,
+            final_evaluation_case=final_evaluation_case,
+        )
 
 
 def full_physics_case(case: O2AInput) -> O2AInput:
@@ -448,8 +499,39 @@ def run_native_retrieval(
     )
 
 
-def resolved_state_vector_for_case(case: O2AInput, state_vector: StateVector) -> StateVector:
+def resolved_state_vector_for_case(
+    case: O2AInput,
+    state_vector: StateVector,
+) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
+
+    return resolved_state_vector_from_profile(
+        case,
+        state_vector,
+        lambda: pressure_altitude_profile_from_case(case),
+    )
+
+
+def resolved_state_vector_for_loaded_case(
+    case: O2AInput,
+    state_vector: StateVector,
+    cache: rtm.SessionCache,
+) -> StateVector:
+    """Attach pressure metadata from a cache already matched to this case."""
+
+    return resolved_state_vector_from_profile(
+        case,
+        state_vector,
+        lambda: pressure_altitude_profile_from_loaded_cache(case, cache),
+    )
+
+
+def resolved_state_vector_from_profile(
+    case: O2AInput,
+    state_vector: StateVector,
+    pressure_profile: Callable[[], PressureAltitudeProfile],
+) -> StateVector:
+    """Resolve state-vector parameters that need case-owned pressure metadata."""
 
     parameters = []
     pressure_altitude_profile = None
@@ -464,7 +546,7 @@ def resolved_state_vector_for_case(case: O2AInput, state_vector: StateVector) ->
             continue
 
         if pressure_altitude_profile is None:
-            pressure_altitude_profile = pressure_altitude_profile_from_case(case)
+            pressure_altitude_profile = pressure_profile()
 
         parameters.append(resolver(case, pressure_altitude_profile))
         changed = True
@@ -613,19 +695,34 @@ def simulate_measurement(
 def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfile:
     """Read the pressure-altitude relation from the RTM atmospheric grid."""
 
-    budget = rtm.atmospheric_budget(
-        case,
-        [case.spectral_grid.start_nm],
+    budget = rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
+
+    return pressure_altitude_profile_from_budget(budget)
+
+
+def pressure_altitude_profile_from_loaded_cache(
+    case: O2AInput,
+    cache: rtm.SessionCache,
+) -> PressureAltitudeProfile:
+    """Read pressure-altitude metadata from a cache already matched to this case."""
+
+    return pressure_altitude_profile_from_budget(
+        cache.atmospheric_budget([case.spectral_grid.start_nm])
     )
+
+
+def pressure_altitude_profile_from_budget(budget: AtmosphericBudget) -> PressureAltitudeProfile:
+    """Build the pressure-altitude relation from RTM atmospheric budget rows."""
+
     table = budget.table
     levels_by_pressure: dict[float, float] = {}
 
     for row in table:
-        levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
-            row["top_altitude_km"]
+        levels_by_pressure[round(budget_row_float(row, "top_pressure_hpa"), 12)] = budget_row_float(
+            row, "top_altitude_km"
         )
-        levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
-            row["bottom_altitude_km"]
+        levels_by_pressure[round(budget_row_float(row, "bottom_pressure_hpa"), 12)] = (
+            budget_row_float(row, "bottom_altitude_km")
         )
 
     levels = sorted((altitude, pressure) for pressure, altitude in levels_by_pressure.items())
@@ -634,6 +731,17 @@ def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfi
         altitude_km=tuple(altitude for altitude, _pressure in levels),
         pressure_hpa=tuple(pressure for _altitude, pressure in levels),
     )
+
+
+def budget_row_float(row: Mapping[str, object], key: str) -> float:
+    """Read a numeric atmospheric-budget value from copied RTM table rows."""
+
+    value = row[key]
+
+    if not isinstance(value, int | float):
+        raise TypeError(f"atmospheric budget field {key} is not numeric")
+
+    return float(value)
 
 
 def measurement_from_sun_normalized_radiance_noise(

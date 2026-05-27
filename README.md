@@ -198,6 +198,32 @@ simulated measurement construction, CSV writing, or plot rendering.
 The technical note is
 [`research/performance/o2a-retrieval/fastmode-final-correction.md`](./research/performance/o2a-retrieval/fastmode-final-correction.md).
 
+The retained local benchmark was refreshed on 2026-05-27 with
+[`uv run benchmark/run_benchmark.py`](./benchmark/run_benchmark.py). It uses the
+benchmark worker cap of 2 on the 10-core local machine and separates setup from
+the timed retrieval loop:
+
+```text
+forward no-session median                      0.976 s
+forward session cached-run median              0.263 s
+OE single session retrieval median             1.098 s
+OE single fastmode retrieval median            0.529 s
+OE 5-case session sweep retrieval median       2.491 s
+OE 5-case fastmode sweep retrieval median      0.804 s
+OE 5-case fastmode sweep retrieval total       4.368 s
+```
+
+That benchmark artifact is
+[`benchmark/results.json`](./benchmark/results.json). It is a shorter
+production-path timing check; the retained 100-case validation sweep above
+remains the accuracy and convergence contract.
+
+The wrapper-overhead probe used the 10-worker baseline case directly. Under that
+boundary, the current one-shot fastmode public call is `0.230 s` median, and a
+repeated-start loop with a caller-owned session cache is `0.179 s` median after
+the first sparse-case load. That focused evidence is tracked in
+[`research/performance/o2a-retrieval/fastmode-session-overhead.md`](./research/performance/o2a-retrieval/fastmode-session-overhead.md).
+
 The tracked paired DISAMAR/zdisamar summary is
 [`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
 The tracked fastmode summary is

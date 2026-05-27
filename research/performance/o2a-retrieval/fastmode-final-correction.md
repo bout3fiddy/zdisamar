@@ -96,7 +96,10 @@ The retained OE path uses one public `disamar_oe` call:
 5. If final correction is enabled, zdisamar disables fastmode on the original
    full measurement case copy.
 6. The correction keeps explicit sparse wavelengths on the measurement grid.
-7. The same session handle loads that sparse full-physics correction case.
+7. For a one-shot `cache=None` call, the same temporary session handle loads
+   that sparse full-physics correction case.  For a caller-supplied cache, the
+   correction uses a temporary handle so the warmed sparse fast-stage case
+   remains reusable.
 8. Native OE computes one full-physics forward model, Jacobian, and update.
 9. The result returns the corrected state plus fast-stage correction diagnostics.
 ```
