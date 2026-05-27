@@ -71,6 +71,61 @@ def assert_rtm_conversions() -> None:
     )
 
 
+def assert_session_cache_warms_optimal_estimation_route_once() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.rtm import session_cache
+
+    calls: list[tuple[str, object]] = []
+    case = cast(O2AInput, SimpleNamespace(scene_id="cache-case"))
+
+    class Handle:
+        def load_o2a_case(self, loaded_case, *, copy_case: bool = True) -> None:
+
+            calls.append(("load", (loaded_case, copy_case)))
+
+        def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
+
+            calls.append(("warm_oe", state_names))
+
+        def close(self) -> None:
+
+            calls.append(("close", None))
+
+    with patch.object(session_cache, "RtmHandle", side_effect=Handle):
+        cache = session_cache.SessionCache()
+
+        try:
+            try:
+                cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            except RuntimeError as error:
+                assert "no loaded wavelength-band case" in str(error)
+            else:
+                raise AssertionError("unloaded OE cache warm was accepted")
+
+            cache.load(case)
+            cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            cache.warm_optimal_estimation(
+                ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+            )
+            cache.load(case)
+            cache.warm_optimal_estimation(
+                ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+            )
+        finally:
+            cache.close()
+
+    assert calls == [
+        ("load", (case, True)),
+        ("warm_oe", ("aerosol_optical_depth",)),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
+        ("load", (case, True)),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
+        ("close", None),
+    ]
+
+
 def assert_plot_jacobian_uses_rtm_conversion() -> None:
 
     import numpy as np
@@ -1025,11 +1080,12 @@ def assert_fastmode_batch_runs_full_correction() -> None:
         max_change_transformed_state=0.4,
     )
     native_calls: list[dict[str, object]] = []
+    correction_loads: list[tuple[object, bool]] = []
 
     class CorrectionCache:
-        def __init__(self, case) -> None:
+        def load(self, case, *, copy_case: bool = True) -> None:
 
-            assert case is correction_case
+            correction_loads.append((case, copy_case))
 
         def __enter__(self):
 
@@ -1081,7 +1137,8 @@ def assert_fastmode_batch_runs_full_correction() -> None:
         uncertainty_scale=None,
     )
     correction_case_builder.assert_called_once_with(full_case, correction_measurement)
-    session_cache.assert_called_once_with(correction_case)
+    session_cache.assert_called_once_with()
+    assert correction_loads == [(correction_case, False)]
     resolved_template.assert_called_once()
     assert len(native_calls) == 1
     corrected_vectors = cast(tuple[StateVector, StateVector], native_calls[0]["state_vectors"])
@@ -1678,6 +1735,7 @@ def main() -> int:
     assert_import_laziness()
     assert_plot_package_boundary()
     assert_rtm_conversions()
+    assert_session_cache_warms_optimal_estimation_route_once()
     assert_plot_jacobian_uses_rtm_conversion()
     assert_optimal_estimation_grid_mismatch_rejected()
     assert_optimal_estimation_result_dataclass()

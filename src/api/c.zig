@@ -664,6 +664,36 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     return @intFromEnum(ZdsStatus.ok);
 }
 
+export fn zds_warm_o2a_optimal_estimation(
+    ctx: ?*Context,
+    state_ids: ?[*]const u8,
+    requested_state_count: usize,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const loaded_prepared = resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const state_slice = if (state_ids) |ids| ids[0..requested_state_count] else &.{};
+    const selection = jacobianStateSelection(state_slice) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    var prepared = loaded_prepared;
+    prepared.route.derivative_mode = .semi_analytical;
+    prepared.route.derivative_state_mask = selection.mask;
+    zdisamar.warmO2ASessionStorage(
+        allocator,
+        &resolved.o2a_session_storage,
+        &prepared,
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
 export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, capacity: usize, out_len: ?*usize) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     const json = zdisamar.renderDefaultO2AInputJson(allocator) catch |err| {

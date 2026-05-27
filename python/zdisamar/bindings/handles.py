@@ -202,6 +202,18 @@ class RtmHandle:
 
         self._check(self._lib.zds_warm_o2a_session(self._ctx))
 
+    def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
+        """Build reusable RTM work arrays for the OE Jacobian route."""
+
+        state_ids = jacobian_state_ids(state_names)
+        self._check(
+            self._lib.zds_warm_o2a_optimal_estimation(
+                self._ctx,
+                state_ids,
+                len(state_ids),
+            )
+        )
+
     def spectrum(
         self,
         *,

@@ -171,3 +171,35 @@ correction prepare, about `7 ms` in the current boundary.  The measured Python
 payload work is below `0.4 ms`; the recoverable cost is in native preparation.
 Removing it safely requires native correction-session state rather than another
 Python cache reshuffle.
+
+## 2026-05-27 OE-Specific Warm Hook
+
+Finding: native session warmup can now be requested for the semi-analytical OE
+Jacobian route rather than the generic no-Jacobian spectrum route.  The C API
+accepts the requested Jacobian state ids, switches the loaded route to
+semi-analytical derivatives, and warms the session storage for that route.
+`SessionCache.warm_optimal_estimation(...)` caches the state-name tuple so a
+caller-owned session does not repeat the same warm request.
+
+Rejected for automatic multistart batch use: prewarming the Python handle's
+storage before a parallel native start batch does not warm the per-worker
+`ProductStorage` instances that actually run the starts.  On the scene-008
+25-start diagnosis boundary this added work without helping the worker
+storages, so the batch path leaves warmup to the worker-owned storage.
+
+Small accepted cleanup: parallel OE batch cache loads skip the generic
+no-Jacobian warm because the native batch workers use their own product
+storages.  One-shot retrievals and single-worker batches still warm the loaded
+storage, preserving the repeated public retrieval path.
+
+Timing evidence:
+
+```text
+scene 008, 25 starts, ZDISAMAR_WORKER_LIMIT=10
+before cleanup, batch_workers=3: 8.764 s
+after cleanup,  batch_workers=3: 8.480 s
+```
+
+Interpretation: this is not the large native-session win.  The larger win still
+requires a fused fastmode/correction session or reusable correction session that
+owns the worker storage used by the actual batch starts.

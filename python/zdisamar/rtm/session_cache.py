@@ -14,6 +14,7 @@ class SessionCache:
     case: O2AInput | None = None
     _handle: RtmHandle = field(init=False, repr=False)
     _loaded: bool = field(default=False, init=False, repr=False)
+    _oe_warm_state_names: tuple[str, ...] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
 
@@ -30,6 +31,7 @@ class SessionCache:
 
         self._handle.load_o2a_case(case, copy_case=copy_case)
         self._loaded = True
+        self._oe_warm_state_names = None
 
     def warm(self) -> None:
         """Prepare reusable native RTM work arrays for the loaded case."""
@@ -38,6 +40,18 @@ class SessionCache:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         self._handle.warm_cache()
+
+    def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
+        """Prepare reusable native RTM work arrays for an OE Jacobian route."""
+
+        if not self._loaded:
+            raise RuntimeError("SessionCache has no loaded wavelength-band case")
+
+        if self._oe_warm_state_names == state_names:
+            return
+
+        self._handle.warm_optimal_estimation_cache(state_names)
+        self._oe_warm_state_names = state_names
 
     def has_loaded_case(self, case: O2AInput) -> bool:
         """Return whether this cache already owns the prepared native case."""
@@ -98,6 +112,7 @@ class SessionCache:
 
         self._handle.close()
         self._loaded = False
+        self._oe_warm_state_names = None
 
     def __enter__(self) -> Self:
 

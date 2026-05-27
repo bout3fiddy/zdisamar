@@ -103,7 +103,9 @@ def retrieve(
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
 
         if cache is None:
-            with rtm.SessionCache(fast_case) as local_cache:
+            with rtm.SessionCache() as local_cache:
+                local_cache.load(fast_case, copy_case=False)
+                local_cache.warm()
                 resolved_state_vector = resolved_state_vector_for_loaded_case(
                     fast_case,
                     state_vector,
@@ -163,7 +165,9 @@ def retrieve(
     resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if cache is None:
-        with rtm.SessionCache(case) as local_cache:
+        with rtm.SessionCache() as local_cache:
+            local_cache.load(case, copy_case=False)
+            local_cache.warm()
             result = run_native_retrieval(
                 case=case,
                 measurement=measurement,
@@ -222,7 +226,12 @@ def retrieve_many(
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
 
         if cache is None:
-            with rtm.SessionCache(fast_case) as local_cache:
+            with rtm.SessionCache() as local_cache:
+                local_cache.load(fast_case, copy_case=False)
+
+                if batch_workers == 1:
+                    local_cache.warm()
+
                 resolved_template = resolved_state_vector_for_loaded_case(
                     fast_case,
                     state_vector_batch[0],
@@ -254,7 +263,9 @@ def retrieve_many(
 
         if not cache.has_loaded_case(fast_case):
             cache.load(fast_case, copy_case=False)
-            cache.warm()
+
+            if batch_workers == 1:
+                cache.warm()
 
         resolved_template = resolved_state_vector_for_loaded_case(
             fast_case,
@@ -286,7 +297,12 @@ def retrieve_many(
         )
 
     if cache is None:
-        with rtm.SessionCache(case) as local_cache:
+        with rtm.SessionCache() as local_cache:
+            local_cache.load(case, copy_case=False)
+
+            if batch_workers == 1:
+                local_cache.warm()
+
             resolved_template = resolved_state_vector_for_case(case, state_vector_batch[0])
 
             return run_native_retrieval_batch(
@@ -423,7 +439,12 @@ def run_fastmode_correction_batch(
     )
     correction_controls = replace(controls, max_iterations=1)
 
-    with rtm.SessionCache(correction_case) as correction_cache:
+    with rtm.SessionCache() as correction_cache:
+        correction_cache.load(correction_case, copy_case=False)
+
+        if batch_workers == 1:
+            correction_cache.warm()
+
         correction_template = resolved_state_vector_for_loaded_case(
             correction_case,
             corrected_state_vectors[0],
@@ -754,7 +775,9 @@ def run_native_retrieval_batch(
 
     if load_case and not cache.has_loaded_case(case):
         cache.load(case, copy_case=False)
-        cache.warm()
+
+        if batch_workers == 1:
+            cache.warm()
 
     initial_rows, prior_rows = batch_state_rows(resolved_template, state_vectors)
     raw = cache._handle.optimal_estimation_batch(  # noqa: SLF001
