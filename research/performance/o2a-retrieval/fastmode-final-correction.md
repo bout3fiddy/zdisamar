@@ -61,7 +61,7 @@ fastmode.oe.fast_stage_sampling.uncertainty_scale = None
 
 fastmode.oe.final_correction.enabled = True
 fastmode.oe.final_correction.wavelength_window_nm = (765.2, 768.0)
-fastmode.oe.final_correction.wavelength_count = 12
+fastmode.oe.final_correction.wavelength_count = 4
 ```
 
 The RTM fields reduce work in the native forward model.  Fourier caps skip high
@@ -107,7 +107,7 @@ fast stage:
   wavelength_window_nm = 765.2-768.0, wavelength_count = 25
 
 final correction:
-  wavelength_window_nm = 765.2-768.0, wavelength_count = 12
+  wavelength_window_nm = 765.2-768.0, wavelength_count = 4
 ```
 
 Users can replace the default by assigning explicit wavelengths:
@@ -182,20 +182,20 @@ Summary from
 [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json):
 
 ```text
-fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
-fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
+fullmode: 100/100 converged, median 1.848 s, mean 1.774 s
+fastmode: 100/100 converged, median 0.500 s, mean 0.483 s
 ```
 
-The validation sweep resolves 38 fast-stage wavelengths and 12 final-correction
+The validation sweep resolves 38 fast-stage wavelengths and 4 final-correction
 wavelengths for every scene.  Fastmode median speedup against the same-run
-fullmode reference is `+1.416 s`; mean speedup is `+1.371 s`.
+fullmode reference is `+1.351 s`; mean speedup is `+1.292 s`.
 
 Accuracy against the full-physics reference retrieval stayed inside the retained
 gate:
 
 ```text
-fastmode max AOD delta vs fullmode:          5.285e-04
-fastmode max mid-pressure delta vs fullmode: 0.668 hPa
+fastmode max AOD delta vs fullmode:          5.165e-04
+fastmode max mid-pressure delta vs fullmode: 0.609 hPa
 ```
 
 The sweep compares:
@@ -212,7 +212,7 @@ The tracked outputs are:
 - [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json)
 
 The validation gate requires fastmode to beat full-reference median latency,
-retain the 38/12 wavelength shape, and stay inside the retained AOD and
+retain the 38/4 wavelength shape, and stay inside the retained AOD and
 aerosol-pressure delta limits.
 
 ## Why This Works

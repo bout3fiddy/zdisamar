@@ -2,18 +2,18 @@
   "by_mode": {
     "fastmode": {
       "aerosol_mid_pressure_abs_error_hpa": {
-        "max": 0.9396147567105686,
-        "max_abs": 0.9396147567105686,
-        "mean": 0.05459567247407898,
-        "median": 0.01894011793257275,
-        "min": 0.0004079986082388
+        "max": 0.8808001640824159,
+        "max_abs": 0.8808001640824159,
+        "mean": 0.051870151333212676,
+        "median": 0.018438535146458435,
+        "min": 0.00015718528419483846
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.0004787533077466,
-        "max_abs": 0.0004787533077466,
-        "mean": 3.125947092967583e-05,
-        "median": 5.081326687528254e-06,
-        "min": 1.6396835444965063e-08
+        "max": 0.0005069638329717185,
+        "max_abs": 0.0005069638329717185,
+        "mean": 3.142261027322526e-05,
+        "median": 4.888675981806756e-06,
+        "min": 1.5981832857114853e-08
       },
       "converged": 100,
       "fast_stage_converged": 100,
@@ -25,26 +25,26 @@
         "min": 38.0
       },
       "final_correction_sample_count": {
-        "max": 12.0,
-        "max_abs": 12.0,
-        "mean": 12.0,
-        "median": 12.0,
-        "min": 12.0
+        "max": 4.0,
+        "max_abs": 4.0,
+        "mean": 4.0,
+        "median": 4.0,
+        "min": 4.0
       },
-      "full_correction_converged": 15,
+      "full_correction_converged": 5,
       "full_correction_state_vector_convergence": {
-        "max": 9.32702640404769,
-        "max_abs": 9.32702640404769,
-        "mean": 2.1003231664457114,
-        "median": 1.880970127146142,
-        "min": 0.3054900427795896
+        "max": 11.033534655347973,
+        "max_abs": 11.033534655347973,
+        "mean": 3.212222651564767,
+        "median": 3.098314629655622,
+        "min": 0.408711237843104
       },
       "retrieval_s": {
-        "max": 0.7281708749942482,
-        "max_abs": 0.7281708749942482,
-        "mean": 0.5284860428911634,
-        "median": 0.5384249375201762,
-        "min": 0.3218361248727888
+        "max": 0.6264455418568105,
+        "max_abs": 0.6264455418568105,
+        "mean": 0.4825627082982101,
+        "median": 0.5000214170431718,
+        "min": 0.28627983294427395
       },
       "rows": 100
     },
@@ -52,24 +52,24 @@
       "aerosol_mid_pressure_abs_error_hpa": {
         "max": 0.2717610722959307,
         "max_abs": 0.2717610722959307,
-        "mean": 0.010103960984987408,
-        "median": 0.00194960571852215,
+        "mean": 0.010103960959292523,
+        "median": 0.001949605718522207,
         "min": 5.0009920073534886e-05
       },
       "aerosol_optical_depth_abs_error": {
-        "max": 0.0001521198873327,
-        "max_abs": 0.0001521198873327,
-        "mean": 6.510986607688352e-06,
+        "max": 0.0001521198873327967,
+        "max_abs": 0.0001521198873327967,
+        "mean": 6.5109865598445e-06,
         "median": 8.034164403758481e-07,
-        "min": 1.5020904298168606e-08
+        "min": 1.5020904298168603e-08
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.9134694170206785,
-        "max_abs": 2.9134694170206785,
-        "mean": 1.8991539557860233,
-        "median": 1.944492666516453,
-        "min": 0.8961943751201034
+        "max": 2.2682352080009878,
+        "max_abs": 2.2682352080009878,
+        "mean": 1.7744904299709015,
+        "median": 1.8484554999740794,
+        "min": 0.9001883750315756
       },
       "rows": 100
     }
@@ -153,23 +153,15 @@
         "final_correction": {
           "enabled": true,
           "uncertainty_scale": null,
-          "wavelength_count": 12,
+          "wavelength_count": 4,
           "wavelength_window_nm": [
             765.2,
             768.0
           ],
           "wavelengths_nm": [
             765.2,
-            765.44,
-            765.72,
-            765.96,
-            766.2,
-            766.48,
-            766.72,
-            767.0,
-            767.24,
-            767.48,
-            767.76,
+            766.12,
+            767.08,
             768.0
           ]
         }
@@ -189,32 +181,32 @@
   },
   "fastmode_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
-      "max": 0.6678536844146379,
-      "max_abs": 0.6678536844146379,
-      "mean": -0.017228424009010722,
-      "median": -0.013393870975107802,
-      "min": -0.26878612756001985
+      "max": 0.6090390917864852,
+      "max_abs": 0.6090390917864852,
+      "mean": -0.015772698114278682,
+      "median": -0.012395475870448536,
+      "min": -0.2593688021457865
     },
     "aerosol_optical_depth_delta": {
-      "max": 0.0005284810296529996,
-      "max_abs": 0.0005284810296529996,
-      "mean": 1.3249135615791552e-05,
-      "median": 1.4096002071140035e-07,
-      "min": -0.00016868543538189895
+      "max": 0.0005164743744178191,
+      "max_abs": 0.0005164743744178191,
+      "mean": 1.1695306604659756e-05,
+      "median": -1.6289199378238806e-08,
+      "min": -0.00016158410893959974
     },
     "retrieval_speedup_s": {
-      "max": 2.1852985420264304,
-      "max_abs": 2.1852985420264304,
-      "mean": 1.37066791289486,
-      "median": 1.416388500481844,
-      "min": 0.5223176251165569
+      "max": 1.7177239989396185,
+      "max_abs": 1.7177239989396185,
+      "mean": 1.2919277216726914,
+      "median": 1.350976667017676,
+      "min": 0.5459907921031117
     }
   },
   "latency_position": {
-    "fastmode_median_s": 0.5384249375201762,
-    "fastmode_reference_speedup_s": 1.4060677289962769,
+    "fastmode_median_s": 0.5000214170431718,
+    "fastmode_reference_speedup_s": 1.3484340829309076,
     "note": "Fastmode should stay below full-reference median latency while preserving the retained sparse fast-stage and final-correction sample counts.",
-    "reference_median_s": 1.944492666516453
+    "reference_median_s": 1.8484554999740794
   },
   "outputs": {
     "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",

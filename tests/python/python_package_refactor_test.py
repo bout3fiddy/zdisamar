@@ -1021,8 +1021,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             ]
             final_correction = cast(dict[str, object], fastmode_oe["final_correction"])
             final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
-            assert final_correction["wavelength_count"] == 12
-            assert len(final_correction_wavelengths) == 12
+            assert final_correction["wavelength_count"] == 4
+            assert len(final_correction_wavelengths) == 4
             fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
             disabled_fastmode = fast_case.optimisation.fastmode.resolved_dict(
                 fast_case.measurement_wavelengths_nm

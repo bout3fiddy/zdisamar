@@ -28,14 +28,14 @@ full-physics OE update after fastmode convergence. The retained 100-case sweep
 reports:
 
 ```text
-fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
-fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
+fullmode: 100/100 converged, median 1.848 s, mean 1.774 s
+fastmode: 100/100 converged, median 0.500 s, mean 0.483 s
 ```
 
-The retained fastmode default uses 38 fast-stage wavelengths and 12
+The retained fastmode default uses 38 fast-stage wavelengths and 4
 full-physics correction wavelengths in the validation sweep. It keeps median
-speedup at `+1.416 s` versus fullmode while staying within `5.285e-04` AOD and
-`0.668 hPa` pressure maximum retrieved-state deltas.
+speedup at `+1.351 s` versus fullmode while staying within `5.165e-04` AOD and
+`0.609 hPa` pressure maximum retrieved-state deltas.
 The reported fullmode and fastmode durations are wall-clock timings around the
 public retrieval call, including session/cache creation, native case load and
 preparation, native OE work, and the sparse full-physics correction.

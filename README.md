@@ -181,16 +181,16 @@ measurement grid, then uses that result as the starting state for one sparse
 full-physics forward model plus Jacobian update.
 
 ```text
-zdisamar fullmode: 100/100 converged, median 1.944 s, mean 1.899 s
-zdisamar fastmode: 100/100 converged, median 0.538 s, mean 0.528 s
+zdisamar fullmode: 100/100 converged, median 1.848 s, mean 1.774 s
+zdisamar fastmode: 100/100 converged, median 0.500 s, mean 0.483 s
 ```
 
 ![Fastmode retrieved-state comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 
-The retained fastmode sweep uses 38 fast-stage wavelengths and 12 full-physics
+The retained fastmode sweep uses 38 fast-stage wavelengths and 4 full-physics
 correction wavelengths on the validation measurement grid. Median speedup versus
-fullmode is `+1.416 s`. The maximum fastmode-minus-fullmode deltas are
-`5.285e-04` aerosol optical depth and `0.668 hPa` aerosol mid pressure.
+fullmode is `+1.351 s`. The maximum fastmode-minus-fullmode deltas are
+`5.165e-04` aerosol optical depth and `0.609 hPa` aerosol mid pressure.
 These timings are wall-clock durations around the public retrieval call. They
 include session/cache creation, native case load and preparation, native OE work,
 and the sparse full-physics correction; they do not include scene construction,
@@ -324,7 +324,7 @@ fastmode.oe.fast_stage_sampling.windows = (
     o2a.FastModeWavelengthWindow((755.0, 758.5), 16),
     o2a.FastModeWavelengthWindow((765.2, 768.0), 25),
 )
-fastmode.oe.final_correction.wavelength_count = 12
+fastmode.oe.final_correction.wavelength_count = 4
 ```
 
 ### Optimal Estimation

@@ -390,7 +390,7 @@ class FastModeFinalCorrection:
 
     enabled: bool = True
     wavelength_window_nm: tuple[float, float] = (765.2, 768.0)
-    wavelength_count: int | None = 12
+    wavelength_count: int | None = 4
     wavelengths_nm: tuple[float, ...] = ()
     uncertainty_scale: float | None = None
 

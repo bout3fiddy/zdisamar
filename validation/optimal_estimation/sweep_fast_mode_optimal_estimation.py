@@ -50,12 +50,12 @@ SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.js
 
 CANONICAL_COMMAND = "uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py"
 RUN_COUNT = oe_cases.run_count()
-# Retained pbranch25_cont16 gate.  The limits are just above the refreshed
-# 100-case max deltas: 5.285e-4 AOD and 0.668 hPa aerosol mid pressure.
+# Retained pbranch25_cont4 gate. The limits are above the refreshed 100-case
+# max deltas while staying below the previous pbranch25_cont16 envelope.
 FASTMODE_REFERENCE_MAX_ABS_AOD_DELTA = 5.5e-4
 FASTMODE_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 0.7
 FASTMODE_FAST_STAGE_SAMPLE_COUNT = 38
-FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT = 12
+FASTMODE_FINAL_CORRECTION_SAMPLE_COUNT = 4
 
 MODE_LABELS = {
     "reference": "zdisamar fullmode",
