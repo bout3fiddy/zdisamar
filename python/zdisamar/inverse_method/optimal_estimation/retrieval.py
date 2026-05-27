@@ -240,6 +240,12 @@ class Result(NotebookDisplay):
     last_evaluation: RtmEvaluation | None = None
     initial_state: Sequence[float] | None = None
     fast_correction: FastCorrection | None = None
+    diagnosis: object | None = field(default=None, repr=False, compare=False)
+    diagnosis_factory: Callable[..., object] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,
@@ -279,6 +285,20 @@ class Result(NotebookDisplay):
         index = self.state_names.index(name)
 
         return math.sqrt(max(float(self.posterior_covariance[index][index]), 0.0))
+
+    def diagnose(self, **kwargs: object) -> object:
+        """Run or return the multi-start diagnosis attached by the retrieval call."""
+
+        if self.diagnosis is not None and not kwargs:
+            return self.diagnosis
+
+        if self.diagnosis_factory is None:
+            raise RuntimeError("this result does not retain enough context for diagnosis")
+
+        diagnosis = self.diagnosis_factory(**kwargs)
+        object.__setattr__(self, "diagnosis", diagnosis)
+
+        return diagnosis
 
     def summary(self) -> PrettyMapping:
         """Return a compact display summary for notebooks."""

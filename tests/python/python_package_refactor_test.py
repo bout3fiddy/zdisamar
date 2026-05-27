@@ -173,6 +173,55 @@ def assert_optimal_estimation_result_dataclass() -> None:
     assert replace(positional, fast_correction=correction).fast_correction is correction
 
 
+def assert_optimal_estimation_diagnosis_display() -> None:
+
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import RetrievalDiagnosis
+    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+
+    calls = 0
+
+    def diagnosis_factory(*, start_count: int = 100):
+
+        nonlocal calls
+        calls += 1
+
+        return {"start_count": start_count}
+
+    result = Result(
+        state_names=("aerosol_optical_depth",),
+        state=(0.1,),
+        iterations=1,
+        converged=True,
+        history=(),
+        posterior_covariance=((1.0,),),
+        averaging_kernel=((1.0,),),
+        diagnosis_factory=diagnosis_factory,
+    )
+    diagnosis = result.diagnose(start_count=3)
+    assert diagnosis == {"start_count": 3}
+    assert result.diagnosis is diagnosis
+    assert result.diagnose() is diagnosis
+    assert calls == 1
+
+    sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        start_state=((0.1, 225.0), (2.0, 825.0)),
+        retrieved_state=((0.12, 340.0), (0.55, 670.0)),
+        iterations=(4, 7),
+        converged=(True, True),
+        start_bounds=((0.1, 2.0), (225.0, 825.0)),
+        result_state=(0.12, 340.0),
+        result_initial_state=(0.1, 225.0),
+        batch_workers=1,
+    )
+    payload = sweep.to_dict()
+    assert payload["runs"] == 2
+    figure = sweep.plot(cells=25)
+    figure_payload = figure.to_dict()
+    assert figure_payload["runs"] == 2
+    assert "trajectory density" in figure._repr_svg_()
+
+
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
@@ -420,6 +469,10 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
             events.append(("load", case, copy_case))
 
+        def warm(self) -> None:
+
+            events.append(("warm", None, None))
+
     with (
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
@@ -436,6 +489,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     assert events == [
         ("has_loaded_case", requested_case, None),
         ("load", requested_case, False),
+        ("warm", None, None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -615,6 +669,10 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
             loads.append((case, copy_case))
 
+        def warm(self) -> None:
+
+            pass
+
     class CorrectionCache:
         _handle = Cache.Handle()
 
@@ -763,6 +821,10 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
             loads.append((case, copy_case))
 
+        def warm(self) -> None:
+
+            pass
+
     with patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval):
         result = o2a_oe.retrieve(
             case=cast(O2AInput, reference_case),
@@ -895,6 +957,10 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         def load(self, case, *, copy_case: bool = True) -> None:
 
             loads.append((case, copy_case))
+
+        def warm(self) -> None:
+
+            pass
 
     def fake_pressure_profile(case, cache):
 
@@ -1373,6 +1439,7 @@ def main() -> int:
     assert_plot_jacobian_uses_rtm_conversion()
     assert_optimal_estimation_grid_mismatch_rejected()
     assert_optimal_estimation_result_dataclass()
+    assert_optimal_estimation_diagnosis_display()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
     assert_state_vector_uncertainty_rejected()

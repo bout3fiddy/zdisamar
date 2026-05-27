@@ -1,0 +1,258 @@
+"""Multi-start optimal-estimation diagnosis objects."""
+
+import copy
+import math
+import statistics
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from ... import rtm
+from ...display import NotebookDisplay, PrettyMapping
+from ...input.wavelength_band.o2a import O2AInput
+from .retrieval import Measurement, RetrievalControls
+from .state_vector import StateName, StateVector
+
+
+@dataclass(frozen=True)
+class RetrievalDiagnosis(NotebookDisplay):
+    """Final states from many starts of the same inverse problem."""
+
+    state_names: tuple[StateName, ...]
+    start_state: tuple[tuple[float, ...], ...]
+    retrieved_state: tuple[tuple[float, ...], ...]
+    iterations: tuple[int, ...]
+    converged: tuple[bool, ...]
+    start_bounds: tuple[tuple[float, float], ...]
+    result_state: tuple[float, ...]
+    result_initial_state: tuple[float, ...] | None
+    batch_workers: int
+    elapsed_s: float = 0.0
+
+    def value(self, name: StateName) -> tuple[float, ...]:
+        """Return one retrieved state column by name."""
+
+        index = self.state_names.index(name)
+
+        return tuple(row[index] for row in self.retrieved_state)
+
+    def start_value(self, name: StateName) -> tuple[float, ...]:
+        """Return one start-state column by name."""
+
+        index = self.state_names.index(name)
+
+        return tuple(row[index] for row in self.start_state)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a compact diagnosis summary."""
+
+        state_payload = {}
+
+        for index, name in enumerate(self.state_names):
+            retrieved = [row[index] for row in self.retrieved_state]
+            starts = [row[index] for row in self.start_state]
+            state_payload[name] = {
+                "start": {
+                    "min": min(starts),
+                    "max": max(starts),
+                    "bounds": list(self.start_bounds[index]),
+                },
+                "retrieved": numeric_stats(retrieved),
+                "accepted_result": self.result_state[index],
+            }
+
+        return {
+            "runs": len(self.start_state),
+            "converged": sum(1 for value in self.converged if value),
+            "batch_workers": self.batch_workers,
+            "elapsed_s": self.elapsed_s,
+            "retrievals_per_s": (
+                len(self.start_state) / self.elapsed_s if self.elapsed_s > 0.0 else math.nan
+            ),
+            "iterations": numeric_stats(self.iterations),
+            "state": state_payload,
+        }
+
+    def summary(self) -> PrettyMapping:
+        """Return a notebook-friendly diagnosis summary."""
+
+        return PrettyMapping("RetrievalDiagnosis", self.to_dict())
+
+    def plot(
+        self,
+        save: str | Path | None = None,
+        *,
+        cells: int = 150,
+    ):
+        """Render the basin trajectory-density plot as SVG."""
+
+        from ...plot.properties import PLOT
+        from ...plot.retrieval_diagnosis import retrieval_diagnosis_figure
+
+        return PLOT.finish(retrieval_diagnosis_figure(self, cells=cells), save=save)
+
+    def __repr__(self) -> str:
+
+        return repr(self.summary())
+
+
+def diagnose_retrieval(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    result_state: Sequence[float],
+    result_initial_state: Sequence[float] | None,
+    controls: RetrievalControls,
+    start_count: int = 100,
+    batch_workers: int = 1,
+    bounds: Mapping[StateName, tuple[float, float]] | None = None,
+    cache: rtm.SessionCache | None = None,
+) -> RetrievalDiagnosis:
+    """Run a same-scene multi-start sweep using the native batch path."""
+
+    if start_count <= 0:
+        raise ValueError("start_count must be positive")
+
+    if batch_workers <= 0:
+        raise ValueError("batch_workers must be positive")
+
+    axes = diagnosis_bounds(state_vector, bounds or {})
+    start_rows = diagnosis_start_grid(axes, start_count)
+    start_vectors = tuple(state_vector_for_start(state_vector, row) for row in start_rows)
+
+    from . import o2a as o2a_oe
+
+    start_s = time.perf_counter()
+    batch = o2a_oe.retrieve_many(
+        case=case,
+        measurement=measurement,
+        state_vectors=start_vectors,
+        controls=controls,
+        cache=cache,
+        batch_workers=batch_workers,
+    )
+    elapsed_s = time.perf_counter() - start_s
+
+    return RetrievalDiagnosis(
+        state_names=state_vector.names,
+        start_state=start_rows,
+        retrieved_state=batch.state,
+        iterations=batch.iterations,
+        converged=batch.converged,
+        start_bounds=axes,
+        result_state=tuple(float(value) for value in result_state),
+        result_initial_state=(
+            None
+            if result_initial_state is None
+            else tuple(float(value) for value in result_initial_state)
+        ),
+        batch_workers=batch_workers,
+        elapsed_s=elapsed_s,
+    )
+
+
+def diagnosis_bounds(
+    state_vector: StateVector,
+    supplied: Mapping[StateName, tuple[float, float]],
+) -> tuple[tuple[float, float], ...]:
+    """Resolve finite start bounds for each state-vector coordinate."""
+
+    axes = []
+
+    for parameter in state_vector.parameters:
+        if parameter.name in supplied:
+            low, high = supplied[parameter.name]
+        else:
+            low = parameter.lower
+            high = parameter.upper
+
+        if low is None or high is None:
+            raise ValueError(
+                f"diagnosis start bounds for {parameter.name!r} must be finite; "
+                "pass bounds={name: (low, high)} or set parameter lower/upper"
+            )
+
+        low = float(low)
+        high = float(high)
+
+        if not all(math.isfinite(value) for value in (low, high)) or not high > low:
+            raise ValueError(f"invalid diagnosis bounds for {parameter.name!r}")
+
+        axes.append((low, high))
+
+    return tuple(axes)
+
+
+def diagnosis_start_grid(
+    axes: Sequence[tuple[float, float]],
+    start_count: int,
+) -> tuple[tuple[float, ...], ...]:
+    """Build deterministic start rows over the first two state axes."""
+
+    if len(axes) != 2:
+        raise ValueError("multi-start basin diagnosis currently requires exactly two state axes")
+
+    columns = max(1, math.ceil(math.sqrt(start_count)))
+    rows = max(1, math.ceil(start_count / columns))
+    x_values = linspace(axes[0][0], axes[0][1], columns)
+    y_values = linspace(axes[1][0], axes[1][1], rows)
+
+    starts = []
+
+    for y_value in y_values:
+        for x_value in x_values:
+            starts.append((x_value, y_value))
+
+            if len(starts) == start_count:
+                return tuple(starts)
+
+    return tuple(starts)
+
+
+def linspace(low: float, high: float, count: int) -> tuple[float, ...]:
+    """Return count evenly spaced values including both endpoints."""
+
+    if count <= 1:
+        return (0.5 * (low + high),)
+
+    step = (high - low) / (count - 1)
+
+    return tuple(low + index * step for index in range(count))
+
+
+def state_vector_for_start(
+    state_vector: StateVector,
+    start: Sequence[float],
+) -> StateVector:
+    """Use one start row as both initial state and prior for the sweep."""
+
+    if len(start) != len(state_vector.parameters):
+        raise ValueError("diagnosis start length does not match state vector")
+
+    parameters = []
+
+    for parameter, value in zip(state_vector.parameters, start, strict=True):
+        updated = copy.copy(parameter)
+        object.__setattr__(updated, "initial", float(value))
+        object.__setattr__(updated, "prior", float(value))
+        parameters.append(updated)
+
+    return StateVector(tuple(parameters))
+
+
+def numeric_stats(values: Sequence[float | int]) -> dict[str, float]:
+    """Return small finite stats for display payloads."""
+
+    parsed = [float(value) for value in values]
+
+    if not parsed:
+        return {"min": math.nan, "median": math.nan, "mean": math.nan, "max": math.nan}
+
+    return {
+        "min": min(parsed),
+        "median": statistics.median(parsed),
+        "mean": statistics.fmean(parsed),
+        "max": max(parsed),
+    }

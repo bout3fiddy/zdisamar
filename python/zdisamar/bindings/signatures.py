@@ -6,6 +6,8 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    COptimalEstimationBatchRequest,
+    COptimalEstimationBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
     CRadiativeTransferDiagnostics,
@@ -149,11 +151,27 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ],
         ctypes.c_int,
     )
+    bind(
+        lib,
+        "zds_run_o2a_optimal_estimation_batch",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationBatchResult),
+        ],
+        ctypes.c_int,
+    )
     bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
     bind(
         lib,
         "zds_optimal_estimation_result_free",
         [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationResult)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_optimal_estimation_batch_result_free",
+        [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationBatchResult)],
         None,
     )
     bind(

@@ -249,6 +249,35 @@ pub const Result = struct {
     }
 };
 
+pub const BatchResult = struct {
+    run_count: usize = 0,
+    state_count: usize = 0,
+    iteration_count: []usize = &.{},
+    converged: []u8 = &.{},
+    state: []f64 = &.{},
+
+    pub fn init(allocator: Allocator, run_count: usize, state_count: usize) !BatchResult {
+        if (run_count == 0) return error.InvalidStateSpec;
+        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        var result: BatchResult = .{
+            .run_count = run_count,
+            .state_count = state_count,
+        };
+        errdefer result.deinit(allocator);
+        result.iteration_count = try allocator.alloc(usize, run_count);
+        result.converged = try allocator.alloc(u8, run_count);
+        result.state = try allocator.alloc(f64, run_count * state_count);
+        return result;
+    }
+
+    pub fn deinit(self: *BatchResult, allocator: Allocator) void {
+        allocator.free(self.iteration_count);
+        allocator.free(self.converged);
+        allocator.free(self.state);
+        self.* = .{};
+    }
+};
+
 pub const Controls = struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
@@ -422,23 +451,9 @@ pub fn runO2A(
     forward_storage: *InstrumentGrid.ProductStorage,
     controls: Controls,
 ) !Result {
-    // instrumentation: trace zone
-    // captures: full optimal-estimation retrieval wall time
-    // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
-    const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
-    defer retrieval_zone.end();
-
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
     if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
-    // instrumentation: trace counter
-    // captures: active retrieval state count
-    // why: normalize iteration and solver timing by inverse-problem dimension.
-    Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
-    // instrumentation: trace counter
-    // captures: configured maximum OE iterations
-    // why: make trace comparisons robust when controls change.
-    Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
 
     var prepared_case = try RetrievalPreparedCase.init(
         allocator,
@@ -451,10 +466,266 @@ pub fn runO2A(
     );
     defer prepared_case.deinit(allocator);
 
+    return runPreparedO2A(allocator, &prepared_case, state_specs, controls);
+}
+
+pub fn runO2ABatch(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    controls: Controls,
+    batch_worker_count: usize,
+) !BatchResult {
+    if (state_template.len == 0 or state_template.len > max_state_count) return error.InvalidStateCount;
+    if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+    if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
+    if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
+    if (initial_states.len % state_template.len != 0) return error.InvalidStateSpec;
+    const run_count = initial_states.len / state_template.len;
+    if (run_count == 0) return error.InvalidStateSpec;
+
+    var batch = try BatchResult.init(allocator, run_count, state_template.len);
+    errdefer batch.deinit(allocator);
+
+    const effective_worker_count = @min(run_count, @max(@as(usize, 1), batch_worker_count));
+    if (effective_worker_count == 1) {
+        var prepared_case = try RetrievalPreparedCase.init(
+            allocator,
+            base_input,
+            measurement_wavelength_nm,
+            measurement_reflectance,
+            measurement_variance,
+            state_template,
+            forward_storage,
+        );
+        defer prepared_case.deinit(allocator);
+        try runO2ABatchRange(
+            allocator,
+            &prepared_case,
+            state_template,
+            initial_states,
+            prior_states,
+            controls,
+            &batch,
+            0,
+            run_count,
+        );
+        return batch;
+    }
+
+    try runO2ABatchParallel(
+        allocator,
+        base_input,
+        measurement_wavelength_nm,
+        measurement_reflectance,
+        measurement_variance,
+        state_template,
+        initial_states,
+        prior_states,
+        controls,
+        &batch,
+        effective_worker_count,
+    );
+    return batch;
+}
+
+fn runO2ABatchRange(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchResult,
+    start_run: usize,
+    end_run: usize,
+) !void {
+    var run_specs_buffer: [max_state_count]StateSpec = undefined;
+    for (start_run..end_run) |run_index| {
+        const state_offset = run_index * state_template.len;
+        for (state_template, 0..) |template, state_index| {
+            var spec = template;
+            spec.initial = initial_states[state_offset + state_index];
+            spec.prior = prior_states[state_offset + state_index];
+            run_specs_buffer[state_index] = spec;
+        }
+        const run_specs = run_specs_buffer[0..state_template.len];
+        const summary = try runPreparedO2ASummary(allocator, prepared_case, run_specs, controls);
+
+        batch.iteration_count[run_index] = summary.iteration_count;
+        batch.converged[run_index] = if (summary.converged) 1 else 0;
+        for (0..state_template.len) |state_index| {
+            batch.state[state_offset + state_index] = summary.state[state_index];
+        }
+    }
+}
+
+// Worker descriptor for one contiguous slice of a native OE start batch.
+// layout(64-bit):
+//   size: 224 B, align: 8 B
+//   field storage: 216 B across 15 fields; largest: slice descriptors=128 B across 8 slices; padding: 8 B
+//   unused bits: 64 padding + 0 bool-storage slack = 64 bits
+//   out-of-line: all input slices borrow the batch request; batch points at caller-owned result buffers
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: native batch worker count, usually CPU-core bounded for multi-start diagnosis
+//   footprint: per instance = 224 B (0.219 KiB); each worker owns its prepared case and product storage while running
+const BatchWorker = struct {
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchResult,
+    start_run: usize,
+    end_run: usize,
+    err: ?anyerror = null,
+};
+
+fn runO2ABatchParallel(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchResult,
+    worker_count: usize,
+) !void {
+    const workers = try allocator.alloc(BatchWorker, worker_count);
+    defer allocator.free(workers);
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
+
+    var started_thread_count: usize = 0;
+    for (0..worker_count) |worker_index| {
+        const start_run = worker_index * batch.run_count / worker_count;
+        const end_run = (worker_index + 1) * batch.run_count / worker_count;
+        workers[worker_index] = .{
+            .allocator = allocator,
+            .base_input = base_input,
+            .measurement_wavelength_nm = measurement_wavelength_nm,
+            .measurement_reflectance = measurement_reflectance,
+            .measurement_variance = measurement_variance,
+            .state_template = state_template,
+            .initial_states = initial_states,
+            .prior_states = prior_states,
+            .controls = controls,
+            .batch = batch,
+            .start_run = start_run,
+            .end_run = end_run,
+        };
+
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                runO2ABatchWorker,
+                .{&workers[worker_index]},
+            ) catch {
+                runO2ABatchWorker(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        }
+    }
+
+    runO2ABatchWorker(&workers[worker_count - 1]);
+    for (threads[0..started_thread_count]) |thread| thread.join();
+    for (workers) |worker| {
+        if (worker.err) |err| return err;
+    }
+}
+
+fn runO2ABatchWorker(worker: *BatchWorker) void {
+    runO2ABatchWorkerFallible(worker) catch |err| {
+        worker.err = err;
+    };
+}
+
+fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
+    var forward_storage: InstrumentGrid.ProductStorage = .{};
+    defer forward_storage.deinit(worker.allocator);
+    var prepared_case = try RetrievalPreparedCase.init(
+        worker.allocator,
+        worker.base_input,
+        worker.measurement_wavelength_nm,
+        worker.measurement_reflectance,
+        worker.measurement_variance,
+        worker.state_template,
+        &forward_storage,
+    );
+    defer prepared_case.deinit(worker.allocator);
+    try runO2ABatchRange(
+        worker.allocator,
+        &prepared_case,
+        worker.state_template,
+        worker.initial_states,
+        worker.prior_states,
+        worker.controls,
+        worker.batch,
+        worker.start_run,
+        worker.end_run,
+    );
+}
+
+fn runPreparedO2A(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+) !Result {
     var result = try Result.init(allocator, state_specs.len, controls.max_iterations);
     errdefer result.deinit(allocator);
 
-    const state_space = try initializeStateSpace(state_specs, &result);
+    _ = try runPreparedO2ACore(allocator, prepared_case, state_specs, controls, &result);
+    return result;
+}
+
+fn runPreparedO2ASummary(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+) !RunSummary {
+    return runPreparedO2ACore(allocator, prepared_case, state_specs, controls, null);
+}
+
+fn runPreparedO2ACore(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+    full_result: ?*Result,
+) !RunSummary {
+    // instrumentation: trace zone
+    // captures: full optimal-estimation retrieval wall time
+    // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
+    const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
+    defer retrieval_zone.end();
+    // instrumentation: trace counter
+    // captures: active retrieval state count
+    // why: normalize iteration and solver timing by inverse-problem dimension.
+    Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
+    // instrumentation: trace counter
+    // captures: configured maximum OE iterations
+    // why: make trace comparisons robust when controls change.
+    Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
+
+    prepared_case.state_specs = state_specs;
+
+    const state_space = try initializeStateSpace(state_specs, full_result);
     var state = state_space.state;
     prepared_case.route.derivative_mode = .semi_analytical;
     prepared_case.route.derivative_state_mask = state_space.derivative_state_mask;
@@ -488,7 +759,7 @@ pub fn runO2A(
             defer zone.end();
             break :traced_evaluation try evaluateO2AState(
                 allocator,
-                &prepared_case,
+                prepared_case,
                 previous,
             );
         };
@@ -541,32 +812,39 @@ pub fn runO2A(
             @as(f64, @floatFromInt(state_specs.len));
         converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
 
-        const history_offset = iteration_offset * state_specs.len;
-        for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
-        result.history_chi2[iteration_offset] = accumulation.chi2_reflectance + chi2_state;
-        result.history_chi2_reflectance[iteration_offset] = accumulation.chi2_reflectance;
-        result.history_chi2_state_vector[iteration_offset] = chi2_state;
-        result.history_state_vector_convergence[iteration_offset] = state_conv;
-        result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
-
-        final_posterior_precision = step.posterior_precision;
-        scratch.jt_invse_j = accumulation.jt_invse_j;
+        if (full_result) |result| {
+            const history_offset = iteration_offset * state_specs.len;
+            for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
+            result.history_chi2[iteration_offset] = accumulation.chi2_reflectance + chi2_state;
+            result.history_chi2_reflectance[iteration_offset] = accumulation.chi2_reflectance;
+            result.history_chi2_state_vector[iteration_offset] = chi2_state;
+            result.history_state_vector_convergence[iteration_offset] = state_conv;
+            result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
+            final_posterior_precision = step.posterior_precision;
+            scratch.jt_invse_j = accumulation.jt_invse_j;
+        }
         iteration_count = iteration_offset + 1;
         if (converged) break;
     }
 
-    const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
-    const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
-    result.iteration_count = @intCast(iteration_count);
-    result.converged = converged;
-    for (0..state_specs.len) |row| {
-        result.state[row] = state[row];
-        for (0..state_specs.len) |col| {
-            result.posterior_covariance[row * state_specs.len + col] = posterior_covariance[row][col];
-            result.averaging_kernel[row * state_specs.len + col] = averaging_kernel[row][col];
+    if (full_result) |result| {
+        const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
+        const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
+        result.iteration_count = @intCast(iteration_count);
+        result.converged = converged;
+        for (0..state_specs.len) |row| {
+            result.state[row] = state[row];
+            for (0..state_specs.len) |col| {
+                result.posterior_covariance[row * state_specs.len + col] = posterior_covariance[row][col];
+                result.averaging_kernel[row * state_specs.len + col] = averaging_kernel[row][col];
+            }
         }
     }
-    return result;
+    return .{
+        .state = state,
+        .iteration_count = iteration_count,
+        .converged = converged,
+    };
 }
 
 pub fn correctPreparedO2A(
@@ -678,7 +956,7 @@ pub fn correctPreparedO2A(
     return result;
 }
 
-fn initializeStateSpace(state_specs: []const StateSpec, result: *Result) !StateSpace {
+fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) !StateSpace {
     var state_space: StateSpace = .{
         .state = algebra.zeroVector(),
         .prior = algebra.zeroVector(),
@@ -690,14 +968,16 @@ fn initializeStateSpace(state_specs: []const StateSpec, result: *Result) !StateS
 
     for (state_specs, 0..) |spec, index| {
         try validateStateSpec(spec);
-        result.state_ids[index] = spec.state;
         state_space.state[index] = spec.initial;
         state_space.prior[index] = spec.prior;
         state_space.variance[index] = spec.variance;
         state_space.lower[index] = spec.lower_bound;
         state_space.upper[index] = spec.upper_bound;
-        result.initial_state[index] = spec.initial;
         state_space.derivative_state_mask |= jacobian.stateMask(spec.state);
+        if (result) |full_result| {
+            full_result.state_ids[index] = spec.state;
+            full_result.initial_state[index] = spec.initial;
+        }
     }
     return state_space;
 }
@@ -735,6 +1015,20 @@ fn validateStateSpec(spec: StateSpec) !void {
 const ForwardEvaluation = struct {
     view: InstrumentGrid.InstrumentGridProductView,
     solar_mu0: f64,
+};
+
+// Batch-only final-state output for one start.
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: state=24 B, iteration_count=8 B, converged=1 B; padding: 7 B
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one stack value per completed batch start
+//   footprint: per instance = 40 B (0.039 KiB)
+const RunSummary = struct {
+    state: Vector,
+    iteration_count: usize,
+    converged: bool,
 };
 
 fn evaluateO2AState(

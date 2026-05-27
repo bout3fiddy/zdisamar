@@ -32,6 +32,8 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    COptimalEstimationBatchRequest,
+    COptimalEstimationBatchResult,
     COptimalEstimationControls,
     COptimalEstimationRequest,
     COptimalEstimationResult,
@@ -97,6 +99,30 @@ def double_array(values, name: str):
         raise ValueError(f"{name} values must be finite")
 
     return (ctypes.c_double * len(copied))(*copied)
+
+
+def flattened_state_rows(rows, state_count: int, name: str) -> tuple[list[float], int]:
+    """Copy a two-dimensional state table into row-major native input."""
+
+    copied = []
+    run_count = 0
+
+    for row in rows:
+        values = [float(value) for value in row]
+
+        if len(values) != state_count:
+            raise ValueError(f"{name} rows must have {state_count} values")
+
+        copied.extend(values)
+        run_count += 1
+
+    if run_count == 0:
+        raise ValueError(f"{name} must not be empty")
+
+    if any(not math.isfinite(value) for value in copied):
+        raise ValueError(f"{name} values must be finite")
+
+    return copied, run_count
 
 
 class RtmHandle:
@@ -345,6 +371,41 @@ class RtmHandle:
             controls=controls,
         )
 
+    def optimal_estimation_batch(
+        self,
+        *,
+        measurement,
+        state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        batch_workers=1,
+    ):
+        """Run many native O2 A retrievals against one loaded case and measurement."""
+
+        request, buffers = self._optimal_estimation_batch_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            initial_states=initial_states,
+            prior_states=prior_states,
+            controls=controls,
+            batch_workers=batch_workers,
+        )
+        raw = COptimalEstimationBatchResult()
+        self._check(
+            self._lib.zds_run_o2a_optimal_estimation_batch(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_batch_result(raw)
+        finally:
+            del buffers
+            self._lib.zds_optimal_estimation_batch_result_free(self._ctx, ctypes.byref(raw))
+
     def _run_optimal_estimation(self, runner_name: str, *, measurement, state_vector, controls):
 
         request, buffers = self._optimal_estimation_request(
@@ -506,6 +567,64 @@ class RtmHandle:
 
         return request, buffers
 
+    def _optimal_estimation_batch_request(
+        self,
+        *,
+        measurement,
+        state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        batch_workers,
+    ):
+
+        template_request, template_buffers = self._optimal_estimation_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+        state_count = len(state_vector.parameters)
+        initial_values, run_count = flattened_state_rows(
+            initial_states,
+            state_count,
+            "batch initial states",
+        )
+        prior_values, prior_run_count = flattened_state_rows(
+            prior_states,
+            state_count,
+            "batch prior states",
+        )
+
+        if prior_run_count != run_count:
+            raise ValueError("batch initial and prior states must have the same row count")
+
+        if not isinstance(batch_workers, Integral) or isinstance(batch_workers, bool):
+            raise ValueError("optimal-estimation batch_workers must be an integer")
+
+        batch_worker_count = int(batch_workers)
+
+        if batch_worker_count <= 0:
+            raise ValueError("optimal-estimation batch_workers must be positive")
+
+        initial = double_array(initial_values, "batch initial states")
+        prior = double_array(prior_values, "batch prior states")
+        request = COptimalEstimationBatchRequest(
+            sample_count=template_request.sample_count,
+            wavelength_nm=template_request.wavelength_nm,
+            reflectance=template_request.reflectance,
+            variance=template_request.variance,
+            state_count=template_request.state_count,
+            state_template=template_request.states,
+            run_count=run_count,
+            initial=initial,
+            prior=prior,
+            controls=template_request.controls,
+            batch_worker_count=batch_worker_count,
+        )
+        buffers = (*template_buffers, initial, prior)
+
+        return request, buffers
+
     def close(self) -> None:
         """Release the opaque Zig RTM handle."""
 
@@ -653,6 +772,20 @@ class RtmHandle:
                 iteration_count,
             ),
             "history_snr_normal": uint8s(raw.history_snr_normal, iteration_count),
+        }
+
+    def _copied_optimal_estimation_batch_result(self, raw: COptimalEstimationBatchResult):
+
+        run_count = int(raw.run_count)
+        state_count = int(raw.state_count)
+        value_count = run_count * state_count
+
+        return {
+            "run_count": run_count,
+            "state_count": state_count,
+            "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
+            "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
+            "state": tuple(float(raw.state[index]) for index in range(value_count)),
         }
 
     def _check(self, status: int) -> None:

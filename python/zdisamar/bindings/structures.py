@@ -248,3 +248,30 @@ class COptimalEstimationResult(ctypes.Structure):
         ("history_snr_normal", ctypes.POINTER(ctypes.c_uint8)),
         ("result_handle", ctypes.c_void_p),
     ]
+
+
+class COptimalEstimationBatchRequest(ctypes.Structure):
+    _fields_ = [
+        ("sample_count", ctypes.c_size_t),
+        ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
+        ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("variance", ctypes.POINTER(ctypes.c_double)),
+        ("state_count", ctypes.c_size_t),
+        ("state_template", ctypes.POINTER(COptimalEstimationStateSpec)),
+        ("run_count", ctypes.c_size_t),
+        ("initial", ctypes.POINTER(ctypes.c_double)),
+        ("prior", ctypes.POINTER(ctypes.c_double)),
+        ("controls", COptimalEstimationControls),
+        ("batch_worker_count", ctypes.c_size_t),
+    ]
+
+
+class COptimalEstimationBatchResult(ctypes.Structure):
+    _fields_ = [
+        ("run_count", ctypes.c_size_t),
+        ("state_count", ctypes.c_size_t),
+        ("iteration_count", ctypes.POINTER(ctypes.c_size_t)),
+        ("converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("state", ctypes.POINTER(ctypes.c_double)),
+        ("result_handle", ctypes.c_void_p),
+    ]
