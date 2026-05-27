@@ -72,13 +72,18 @@ def retrieve(
 
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
-    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if case.optimisation.fastmode.enabled:
         fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
 
         if cache is None:
             with rtm.SessionCache(fast_case) as local_cache:
+                resolved_state_vector = resolved_state_vector_for_case(
+                    fast_case,
+                    state_vector,
+                    cache=local_cache,
+                )
+
                 return run_fastmode_oe(
                     case=case,
                     measurement=measurement,
@@ -88,10 +93,17 @@ def retrieve(
                     controls=active_controls,
                     cache=local_cache,
                     fast_case_loaded=True,
+                    preserve_fast_cache=False,
                 )
 
         if not cache.has_loaded_case(fast_case):
             cache.load(fast_case, copy_case=False)
+
+        resolved_state_vector = resolved_state_vector_for_case(
+            fast_case,
+            state_vector,
+            cache=cache,
+        )
 
         return run_fastmode_oe(
             case=case,
@@ -102,7 +114,10 @@ def retrieve(
             controls=active_controls,
             cache=cache,
             fast_case_loaded=True,
+            preserve_fast_cache=True,
         )
+
+    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
 
     if cache is None:
         with rtm.SessionCache(case) as local_cache:
@@ -156,6 +171,7 @@ def run_fastmode_oe(
     controls: RetrievalControls,
     cache: rtm.SessionCache,
     fast_case_loaded: bool,
+    preserve_fast_cache: bool = False,
 ) -> Result:
     """Run an O2 A fastmode retrieval in one session cache."""
 
@@ -183,15 +199,26 @@ def run_fastmode_oe(
         uncertainty_scale=final_correction.uncertainty_scale,
     )
     correction_case = full_correction_case(full_state_case, correction_measurement)
-    full_result = run_full_physics_correction(
-        case=correction_case,
-        measurement=correction_measurement,
-        state_vector=corrected_state_vector,
-        controls=controls,
-        cache=cache,
-        result_measurement=measurement,
-        final_evaluation_case=full_case,
-    )
+
+    if preserve_fast_cache:
+        full_result = run_full_physics_correction_in_temporary_cache(
+            case=correction_case,
+            measurement=correction_measurement,
+            state_vector=corrected_state_vector,
+            controls=controls,
+            result_measurement=measurement,
+            final_evaluation_case=full_case,
+        )
+    else:
+        full_result = run_full_physics_correction(
+            case=correction_case,
+            measurement=correction_measurement,
+            state_vector=corrected_state_vector,
+            controls=controls,
+            cache=cache,
+            result_measurement=measurement,
+            final_evaluation_case=full_case,
+        )
 
     return combine_fastmode_correction_result(fast_result, full_result)
 
@@ -253,6 +280,29 @@ def run_full_physics_correction(
         _result_from_native(raw, state_vector, result_measurement or measurement),
         _lazy_final_evaluator(final_evaluation_case or case, state_vector),
     )
+
+
+def run_full_physics_correction_in_temporary_cache(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls,
+    result_measurement: Measurement | None = None,
+    final_evaluation_case: O2AInput | None = None,
+) -> Result:
+    """Run final correction without replacing a caller-owned fast-stage cache."""
+
+    with rtm.SessionCache() as correction_cache:
+        return run_full_physics_correction(
+            case=case,
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+            cache=correction_cache,
+            result_measurement=result_measurement,
+            final_evaluation_case=final_evaluation_case,
+        )
 
 
 def full_physics_case(case: O2AInput) -> O2AInput:
@@ -448,7 +498,12 @@ def run_native_retrieval(
     )
 
 
-def resolved_state_vector_for_case(case: O2AInput, state_vector: StateVector) -> StateVector:
+def resolved_state_vector_for_case(
+    case: O2AInput,
+    state_vector: StateVector,
+    *,
+    cache: rtm.SessionCache | None = None,
+) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
 
     parameters = []
@@ -464,7 +519,7 @@ def resolved_state_vector_for_case(case: O2AInput, state_vector: StateVector) ->
             continue
 
         if pressure_altitude_profile is None:
-            pressure_altitude_profile = pressure_altitude_profile_from_case(case)
+            pressure_altitude_profile = pressure_altitude_profile_from_case(case, cache=cache)
 
         parameters.append(resolver(case, pressure_altitude_profile))
         changed = True
@@ -610,12 +665,17 @@ def simulate_measurement(
     )
 
 
-def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfile:
+def pressure_altitude_profile_from_case(
+    case: O2AInput,
+    *,
+    cache: rtm.SessionCache | None = None,
+) -> PressureAltitudeProfile:
     """Read the pressure-altitude relation from the RTM atmospheric grid."""
 
-    budget = rtm.atmospheric_budget(
-        case,
-        [case.spectral_grid.start_nm],
+    budget = (
+        cache.atmospheric_budget([case.spectral_grid.start_nm])
+        if cache is not None and cache.has_loaded_case(case)
+        else rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
     )
     table = budget.table
     levels_by_pressure: dict[float, float] = {}

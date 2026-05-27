@@ -45,6 +45,7 @@ Read these notes in order:
 - [Measurement provenance](measurement-provenance.md)
 - [Current retrieval elapsed time](current-retrieval-elapsed-time.md)
 - [Fastmode sampling and final correction](fastmode-final-correction.md)
+- [Fastmode session overhead log](fastmode-session-overhead.md)
 - [Optimisation notes](optimisation-notes/)
 - [Session reuse](session-reuse.md)
 - [State-vector Jacobians](state-vector-jacobians.md)

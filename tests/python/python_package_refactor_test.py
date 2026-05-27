@@ -586,6 +586,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     calls: list[dict[str, object]] = []
     correction_calls: list[tuple[object, RetrievalControls]] = []
     loads: list[tuple[object, bool]] = []
+    correction_loads: list[tuple[object, bool]] = []
 
     def fake_native_retrieval(**kwargs):
 
@@ -614,6 +615,21 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
             loads.append((case, copy_case))
 
+    class CorrectionCache:
+        _handle = Cache.Handle()
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            correction_loads.append((case, copy_case))
+
+        def __enter__(self):
+
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+
+            return None
+
     with (
         patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
         patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
@@ -630,6 +646,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         ) as correction_case_builder,
         patch.object(o2a_oe, "_result_from_native", return_value=full_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
+        patch.object(o2a_oe.rtm, "SessionCache", side_effect=CorrectionCache) as session_cache,
     ):
         result = o2a_oe.retrieve(
             case=cast(O2AInput, reference_case),
@@ -651,7 +668,9 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         uncertainty_scale=None,
     )
     correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
-    assert loads == [(reference_case, False), (correction_case, False)]
+    session_cache.assert_called_once_with()
+    assert loads == [(reference_case, False)]
+    assert correction_loads == [(correction_case, False)]
     assert len(correction_calls) == 1
     corrected_state_vector = cast(StateVector, correction_calls[0][0])
     correction_controls = correction_calls[0][1]
@@ -779,6 +798,149 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         assert "wavelength count must be at least two" in str(error)
     else:
         raise AssertionError("single-sample fast-stage window count was accepted")
+
+
+def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
+
+    from zdisamar.input.instrument import SpectralGrid
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Measurement,
+        Result,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.rtm.session_cache import SessionCache
+
+    @dataclass(frozen=True)
+    class ResolvedParameter:
+        name: str
+        initial: float
+        prior: float
+        prior_uncertainty: float
+        lower: float | None = None
+        upper: float | None = None
+
+        def write_to(self, target: object, value: float) -> None:
+
+            del target, value
+
+    @dataclass(frozen=True)
+    class PressureParameter:
+        name: str = "aerosol_layer_mid_pressure_hpa"
+        initial: float = 800.0
+        prior: float = 810.0
+        prior_uncertainty: float = 90.0
+        lower: float | None = None
+        upper: float | None = None
+
+        def resolve_for_case(self, case, pressure_altitude_profile) -> ResolvedParameter:
+
+            del case
+            assert pressure_altitude_profile == "profile-from-loaded-fast-cache"
+
+            return ResolvedParameter(
+                name=self.name,
+                initial=self.initial,
+                prior=self.prior,
+                prior_uncertainty=self.prior_uncertainty,
+                lower=self.lower,
+                upper=self.upper,
+            )
+
+        def write_to(self, target: object, value: float) -> None:
+
+            del target, value
+
+    optimisation = O2AOptimisation.defaults()
+    optimisation.fastmode.enabled = True
+    optimisation.fastmode.oe.final_correction.enabled = False
+    wavelengths = tuple(
+        round(755.0 + index * 0.1, 10) for index in range(int(round((768.0 - 755.0) / 0.1)) + 1)
+    )
+    measurement = Measurement(
+        wavelengths,
+        tuple(0.1 + 0.001 * index for index in range(len(wavelengths))),
+        signal_to_noise=100.0,
+    )
+    reference_case = SimpleNamespace(
+        scene_id="reference",
+        optimisation=optimisation,
+        spectral_grid=SpectralGrid(
+            start_nm=wavelengths[0],
+            end_nm=wavelengths[-1],
+            sample_count=len(wavelengths),
+        ),
+        instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
+    )
+    state_vector = StateVector((PressureParameter(),))
+    controls = RetrievalControls(max_iterations=2)
+    loads: list[tuple[object, bool]] = []
+    profile_calls: list[tuple[object, object]] = []
+    retrieval_calls: list[dict[str, object]] = []
+
+    class Cache:
+        _handle = SimpleNamespace()
+
+        def has_loaded_case(self, case) -> bool:
+
+            return bool(loads and loads[-1][0] is case)
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            loads.append((case, copy_case))
+
+    def fake_pressure_profile(case, *, cache=None):
+
+        profile_calls.append((case, cache))
+
+        return "profile-from-loaded-fast-cache"
+
+    def fake_native_retrieval(**kwargs):
+
+        retrieval_calls.append(kwargs)
+
+        return Result(
+            state_names=kwargs["state_vector"].names,
+            state=(800.0,),
+            iterations=1,
+            converged=True,
+            history=(),
+            posterior_covariance=((1.0,),),
+            averaging_kernel=((1.0,),),
+            measurement=kwargs["measurement"],
+            initial_state=kwargs["state_vector"].initial_state(),
+        )
+
+    cache = Cache()
+
+    with (
+        patch.object(
+            o2a_oe,
+            "pressure_altitude_profile_from_case",
+            side_effect=fake_pressure_profile,
+        ),
+        patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
+    ):
+        result = o2a_oe.retrieve(
+            case=cast(O2AInput, reference_case),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+            cache=cast(SessionCache, cache),
+        )
+
+    assert result.converged
+    assert len(loads) == 1
+    fast_case = cast(O2AInput, loads[0][0])
+    assert fast_case is not reference_case
+    assert fast_case.spectral_grid.sample_count < reference_case.spectral_grid.sample_count
+    assert profile_calls == [(fast_case, cache)]
+    assert len(retrieval_calls) == 1
+    resolved_state_vector = cast(StateVector, retrieval_calls[0]["state_vector"])
+    assert isinstance(resolved_state_vector.parameters[0], ResolvedParameter)
 
 
 def assert_native_oe_marshaling_bounds() -> None:
@@ -1215,6 +1377,7 @@ def main() -> int:
     assert_native_oe_reuses_matching_supplied_cache()
     assert_fastmode_oe_runs_single_full_correction()
     assert_fastmode_oe_uses_sparse_fast_stage_sampling()
+    assert_fastmode_pressure_profile_uses_loaded_sparse_cache()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
     assert_reference_data_and_rtm_tables()
