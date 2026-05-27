@@ -65,6 +65,8 @@ research/performance/tracing/output/labos-bottleneck/summary.json
 Current retrieval artifacts:
 
 ```text
+benchmark/results.json
+benchmark/fast_results.json
 validation/outputs/optimal_estimation/paired_oe_plot_manifest.json
 validation/outputs/optimal_estimation/paired_oe_retrieved_scatter.png
 validation/outputs/optimal_estimation/paired_oe_error_histograms.png

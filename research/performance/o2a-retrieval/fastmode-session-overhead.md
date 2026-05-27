@@ -34,13 +34,10 @@ converged: true
 Timing evidence after the change:
 
 ```text
-cache=None median: 235.899 ms
-instrumented cache=None total: 234.069 ms
-prepare.samples_12.fast_True: 8.760 ms
-warm_cache: 44.567 ms
-native fast OE: 101.010 ms
-prepare.samples_4.fast_False: 7.325 ms
-native full-physics correction: 69.418 ms
+cache=None median: 230.234 ms
+instrumented cache=None total: 229.178 ms
+prepare.samples_12.fast_True: 8.413 ms
+prepare.samples_4.fast_False: 6.874 ms
 ```
 
 Accepted: removes the full-grid pressure-profile prepare from the timed
@@ -105,14 +102,14 @@ Repeated-start timing with one caller-owned empty `SessionCache()`, five
 different initial states, and no explicit controls:
 
 ```text
-retrieval times: [252.639, 196.693, 193.307, 223.627, 196.890] ms
-median: 196.890 ms
+retrieval times: [226.053, 170.083, 178.657, 198.858, 172.902] ms
+median: 178.657 ms
 iterations: [5, 5, 5, 6, 5]
 converged: [true, true, true, true, true]
 ```
 
-The first call pays the initial sparse fast-stage load/warm cost.  Later calls
-reuse the same fast-stage cache; the final correction does not replace it.
+The first call pays the initial sparse fast-stage load and warm cost.  Later
+calls reuse the same fast-stage cache; the final correction does not replace it.
 
 ## 2026-05-27 Duplicate Cache-Match Checks
 
@@ -130,8 +127,8 @@ Timing evidence from the repeated-start probe:
 
 ```text
 cache-match calls: 4 for 5 starts
-total cache-match time: 1.607 ms
-mean matched-call time: 0.402 ms
+total cache-match time: 1.296 ms
+mean matched-call time: 0.324 ms
 ```
 
 Accepted: removes one redundant fingerprint check from each already-loaded
@@ -144,10 +141,10 @@ The 4-sample full-physics correction load was split inside the Python binding:
 
 ```text
 load samples_4.fast_False:
-  apply_rtm_optimisation: 0.084 ms
-  resolve_assets:         0.216 ms
-  json_payload:           0.071 ms
-  native_prepare:         7.572 ms
+  apply_rtm_optimisation: 0.075 ms
+  resolve_assets:         0.239 ms
+  json_payload:           0.073 ms
+  native_prepare:         6.874 ms
   python_bookkeeping:     0.006 ms
 ```
 
@@ -170,7 +167,7 @@ native multi-start session work and is too large for this wrapper-overhead PR.
 ## Remaining Overhead
 
 The clean remaining per-call overhead target is the 4-sample full-physics
-correction prepare, about `7-8 ms` in the current boundary.  The measured Python
+correction prepare, about `7 ms` in the current boundary.  The measured Python
 payload work is below `0.4 ms`; the recoverable cost is in native preparation.
 Removing it safely requires native correction-session state rather than another
 Python cache reshuffle.

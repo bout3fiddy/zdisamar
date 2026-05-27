@@ -19,17 +19,17 @@ Paired sweep results:
 ```text
 DISAMAR Fortran:
   converged              100/100
-  retrieval median       1227.947 s
-  retrieval mean         1197.811 s
+  retrieval median       1228.826 s
+  retrieval mean         1189.862 s
   max AOD error          1.789e-4
   max mid-pressure error 0.661 hPa
 
 zdisamar:
   converged              100/100
-  retrieval median       3.327 s
-  retrieval mean         3.235 s
-  max AOD error          1.521e-4
-  max mid-pressure error 0.272 hPa
+  retrieval median       3.624 s
+  retrieval mean         3.667 s
+  max AOD error          1.770e-4
+  max mid-pressure error 0.608 hPa
 ```
 
 Slow retained zdisamar case:
