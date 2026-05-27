@@ -181,16 +181,45 @@ semi-analytical derivatives, and warms the session storage for that route.
 `SessionCache.warm_optimal_estimation(...)` caches the state-name tuple so a
 caller-owned session does not repeat the same warm request.
 
+Follow-up: the Python OE paths now use this hook after resolving the loaded
+state vector.  One-shot retrievals and single-worker native batches warm the
+semi-analytical Jacobian route for the requested states; parallel native batches
+still skip Python-handle warmup because their starts run in worker-owned
+storage.
+
+Scene-008 repeated public retrieval check, five starts with one session cache
+and `ZDISAMAR_WORKER_LIMIT=10`:
+
+```text
+OE-route warm median:          406.376 ms
+generic preload, no OE warm:   407.204 ms
+```
+
+Interpretation: the hook wiring is the correct route selection, but it is not a
+large repeated-retrieval speedup on this scene.  The cost is dominated by the
+native RTM/Jacobian evaluations and the sparse full-physics correction.
+
 Rejected for automatic multistart batch use: prewarming the Python handle's
 storage before a parallel native start batch does not warm the per-worker
 `ProductStorage` instances that actually run the starts.  On the scene-008
 25-start diagnosis boundary this added work without helping the worker
 storages, so the batch path leaves warmup to the worker-owned storage.
 
+Rejected follow-up: warming each native batch worker's own `ProductStorage`
+before its run range also stayed inside timing noise.  It warmed the
+semi-analytical route and captured profile preparation before the worker's
+first start, but it did not reduce the measured boundary enough to justify the
+extra warm pass.
+
+```text
+scene 008, 25 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3:  8.458 s
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3: 33.484 s
+```
+
 Small accepted cleanup: parallel OE batch cache loads skip the generic
 no-Jacobian warm because the native batch workers use their own product
 storages.  One-shot retrievals and single-worker batches still warm the loaded
-storage, preserving the repeated public retrieval path.
+storage on the OE Jacobian route, preserving the repeated public retrieval path.
 
 Timing evidence:
 

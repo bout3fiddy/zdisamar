@@ -595,7 +595,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=())
+    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -619,9 +619,9 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
             events.append(("load", case, copy_case))
 
-        def warm(self) -> None:
+        def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
 
-            events.append(("warm", None, None))
+            events.append(("warm_oe", state_names, None))
 
     with (
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
@@ -639,7 +639,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     assert events == [
         ("has_loaded_case", requested_case, None),
         ("load", requested_case, False),
-        ("warm", None, None),
+        ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -659,7 +659,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=())
+    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -683,6 +683,10 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
             raise AssertionError("matching OE cache reloaded its prepared case")
 
+        def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
+
+            events.append(("warm_oe", state_names, None))
+
     with (
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
@@ -698,6 +702,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     assert result is native_result
     assert events == [
         ("has_loaded_case", requested_case, None),
+        ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
 
