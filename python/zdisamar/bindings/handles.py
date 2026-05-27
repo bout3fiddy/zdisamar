@@ -35,6 +35,7 @@ from .structures import (
     COptimalEstimationBatchRequest,
     COptimalEstimationBatchResult,
     COptimalEstimationControls,
+    COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
     COptimalEstimationStateSpec,
@@ -418,6 +419,61 @@ class RtmHandle:
             del buffers
             self._lib.zds_optimal_estimation_batch_result_free(self._ctx, ctypes.byref(raw))
 
+    def optimal_estimation_fastmode_batch(
+        self,
+        *,
+        correction_handle,
+        measurement,
+        correction_measurement,
+        state_vector,
+        correction_state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        correction_controls,
+        batch_workers=1,
+    ):
+        """Run fast-stage and sparse correction batches inside one native boundary."""
+
+        fast_request, fast_buffers = self._optimal_estimation_batch_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            initial_states=initial_states,
+            prior_states=prior_states,
+            controls=controls,
+            batch_workers=batch_workers,
+        )
+        correction_request, correction_buffers = (
+            correction_handle._optimal_estimation_batch_request(
+                measurement=correction_measurement,
+                state_vector=correction_state_vector,
+                initial_states=initial_states,
+                prior_states=prior_states,
+                controls=correction_controls,
+                batch_workers=batch_workers,
+            )
+        )
+        raw = COptimalEstimationFastmodeBatchResult()
+        self._check(
+            self._lib.zds_run_o2a_fastmode_optimal_estimation_batch(
+                self._ctx,
+                correction_handle._ctx,
+                ctypes.byref(fast_request),
+                ctypes.byref(correction_request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_fastmode_batch_result(raw)
+        finally:
+            del fast_buffers
+            del correction_buffers
+            self._lib.zds_optimal_estimation_fastmode_batch_result_free(
+                self._ctx,
+                ctypes.byref(raw),
+            )
+
     def _run_optimal_estimation(self, runner_name: str, *, measurement, state_vector, controls):
 
         request, buffers = self._optimal_estimation_request(
@@ -798,6 +854,35 @@ class RtmHandle:
             "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
             "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
             "state": tuple(float(raw.state[index]) for index in range(value_count)),
+        }
+
+    def _copied_optimal_estimation_fastmode_batch_result(
+        self,
+        raw: COptimalEstimationFastmodeBatchResult,
+    ):
+
+        run_count = int(raw.run_count)
+        state_count = int(raw.state_count)
+        value_count = run_count * state_count
+
+        return {
+            "run_count": run_count,
+            "state_count": state_count,
+            "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
+            "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
+            "state": tuple(float(raw.state[index]) for index in range(value_count)),
+            "fast_stage_iteration_count": tuple(
+                int(raw.fast_stage_iteration_count[index]) for index in range(run_count)
+            ),
+            "fast_stage_converged": tuple(
+                bool(raw.fast_stage_converged[index]) for index in range(run_count)
+            ),
+            "full_correction_iteration_count": tuple(
+                int(raw.full_correction_iteration_count[index]) for index in range(run_count)
+            ),
+            "full_correction_converged": tuple(
+                bool(raw.full_correction_converged[index]) for index in range(run_count)
+            ),
         }
 
     def _check(self, status: int) -> None:

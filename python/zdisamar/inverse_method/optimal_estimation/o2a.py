@@ -238,26 +238,26 @@ def retrieve_many(
                     local_cache,
                 )
 
-                fast_batch = run_native_retrieval_batch(
-                    case=fast_case,
-                    measurement=fast_measurement,
+                if not final_correction.enabled:
+                    return run_native_retrieval_batch(
+                        case=fast_case,
+                        measurement=fast_measurement,
+                        state_vectors=state_vector_batch,
+                        resolved_template=resolved_template,
+                        controls=active_controls,
+                        cache=local_cache,
+                        load_case=False,
+                        batch_workers=batch_workers,
+                    )
+
+                return run_native_fastmode_retrieval_batch(
+                    case=case,
+                    measurement=measurement,
+                    fast_measurement=fast_measurement,
                     state_vectors=state_vector_batch,
                     resolved_template=resolved_template,
                     controls=active_controls,
                     cache=local_cache,
-                    load_case=False,
-                    batch_workers=batch_workers,
-                )
-
-                if not final_correction.enabled:
-                    return fast_batch
-
-                return run_fastmode_correction_batch(
-                    case=case,
-                    measurement=measurement,
-                    state_vectors=state_vector_batch,
-                    fast_batch=fast_batch,
-                    controls=active_controls,
                     batch_workers=batch_workers,
                 )
 
@@ -273,26 +273,26 @@ def retrieve_many(
             cache,
         )
 
-        fast_batch = run_native_retrieval_batch(
-            case=fast_case,
-            measurement=fast_measurement,
+        if not final_correction.enabled:
+            return run_native_retrieval_batch(
+                case=fast_case,
+                measurement=fast_measurement,
+                state_vectors=state_vector_batch,
+                resolved_template=resolved_template,
+                controls=active_controls,
+                cache=cache,
+                load_case=False,
+                batch_workers=batch_workers,
+            )
+
+        return run_native_fastmode_retrieval_batch(
+            case=case,
+            measurement=measurement,
+            fast_measurement=fast_measurement,
             state_vectors=state_vector_batch,
             resolved_template=resolved_template,
             controls=active_controls,
             cache=cache,
-            load_case=False,
-            batch_workers=batch_workers,
-        )
-
-        if not final_correction.enabled:
-            return fast_batch
-
-        return run_fastmode_correction_batch(
-            case=case,
-            measurement=measurement,
-            state_vectors=state_vector_batch,
-            fast_batch=fast_batch,
-            controls=active_controls,
             batch_workers=batch_workers,
         )
 
@@ -411,6 +411,76 @@ def run_fastmode_oe(
         )
 
     return combine_fastmode_correction_result(fast_result, full_result)
+
+
+def run_native_fastmode_retrieval_batch(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    fast_measurement: Measurement,
+    state_vectors: Sequence[StateVector],
+    resolved_template: StateVector,
+    controls: RetrievalControls,
+    cache: rtm.SessionCache,
+    batch_workers: int,
+) -> BatchResult:
+    """Run fast-stage and sparse correction starts inside one native handoff."""
+
+    final_correction = case.optimisation.fastmode.oe.final_correction
+    full_case = full_physics_case(case)
+    correction_wavelengths_nm = final_correction.resolved_wavelengths(measurement.wavelength_nm)
+    correction_measurement = full_correction_measurement(
+        measurement,
+        wavelengths_nm=correction_wavelengths_nm,
+        uncertainty_scale=final_correction.uncertainty_scale,
+    )
+    correction_case = full_correction_case(full_case, correction_measurement)
+    correction_controls = replace(controls, max_iterations=1)
+    initial_rows, prior_rows = batch_state_rows(resolved_template, state_vectors)
+
+    with rtm.SessionCache() as correction_cache:
+        correction_cache.load(correction_case, copy_case=False)
+
+        if batch_workers == 1:
+            correction_cache.warm()
+
+        correction_template = resolved_state_vector_for_loaded_case(
+            correction_case,
+            state_vectors[0],
+            correction_cache,
+        )
+        raw = cache._handle.optimal_estimation_fastmode_batch(  # noqa: SLF001
+            correction_handle=correction_cache._handle,  # noqa: SLF001
+            measurement=fast_measurement,
+            correction_measurement=correction_measurement,
+            state_vector=resolved_template,
+            correction_state_vector=correction_template,
+            initial_states=initial_rows,
+            prior_states=prior_rows,
+            controls=controls,
+            correction_controls=correction_controls,
+            batch_workers=batch_workers,
+        )
+
+    state_count = int(raw["state_count"])
+    states = tuple(
+        tuple(float(value) for value in raw["state"][offset : offset + state_count])
+        for offset in range(0, len(raw["state"]), state_count)
+    )
+
+    return BatchResult(
+        state_names=resolved_template.names,
+        state=states,
+        iterations=tuple(int(value) for value in raw["iteration_count"]),
+        converged=tuple(bool(value) for value in raw["converged"]),
+        measurement=measurement,
+        fast_stage_iterations=tuple(int(value) for value in raw["fast_stage_iteration_count"]),
+        fast_stage_converged=tuple(bool(value) for value in raw["fast_stage_converged"]),
+        full_correction_iterations=tuple(
+            int(value) for value in raw["full_correction_iteration_count"]
+        ),
+        full_correction_converged=tuple(bool(value) for value in raw["full_correction_converged"]),
+    )
 
 
 def run_fastmode_correction_batch(

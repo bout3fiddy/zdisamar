@@ -241,3 +241,35 @@ native prefetch worker cap, matching the native runtime default when the
 environment is unset.  Cap automatic diagnosis start workers at `3`, which was
 the best observed shape for the 100-start boundary and avoids turning a
 10-worker native prefetch run into a 5x nested worker fanout by default.
+
+## 2026-05-27 Fused Native Fastmode Batch Handoff
+
+Change: add a native fastmode batch handoff that runs the sparse fast-stage
+batch and then feeds the fast-stage states directly into the sparse
+full-physics correction batch.  This removes the Python round trip that copied
+the fast-stage states, rebuilt corrected `StateVector` objects, and submitted a
+second independent native batch.
+
+Parity check:
+
+```text
+scene 008, 10 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+max_state_delta: 0.0
+iterations_equal: true
+fast_iterations_equal: true
+correction_iterations_equal: true
+converged_equal: true
+correction_converged_equal: true
+```
+
+Timing evidence:
+
+```text
+scene 008, 25 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3: 8.508 s
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3: 33.554 s
+```
+
+Interpretation: the fused handoff is semantically cleaner and removes a Python
+boundary, but it is not the single-digit sweep win.  The realistic 100-start
+boundary is still dominated by the native RTM/Jacobian evaluations themselves;
+the Python fast-stage-to-correction copy was not a material cost at this scale.

@@ -8,6 +8,7 @@ from .structures import (
     CInstrumentResponse,
     COptimalEstimationBatchRequest,
     COptimalEstimationBatchResult,
+    COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
     CRadiativeTransferDiagnostics,
@@ -167,6 +168,18 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ],
         ctypes.c_int,
     )
+    bind(
+        lib,
+        "zds_run_o2a_fastmode_optimal_estimation_batch",
+        [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationFastmodeBatchResult),
+        ],
+        ctypes.c_int,
+    )
     bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
     bind(
         lib,
@@ -178,6 +191,12 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_optimal_estimation_batch_result_free",
         [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationBatchResult)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_optimal_estimation_fastmode_batch_result_free",
+        [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationFastmodeBatchResult)],
         None,
     )
     bind(

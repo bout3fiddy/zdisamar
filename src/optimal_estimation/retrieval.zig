@@ -278,6 +278,47 @@ pub const BatchResult = struct {
     }
 };
 
+pub const FastmodeBatchResult = struct {
+    run_count: usize = 0,
+    state_count: usize = 0,
+    iteration_count: []usize = &.{},
+    converged: []u8 = &.{},
+    state: []f64 = &.{},
+    fast_stage_iteration_count: []usize = &.{},
+    fast_stage_converged: []u8 = &.{},
+    full_correction_iteration_count: []usize = &.{},
+    full_correction_converged: []u8 = &.{},
+
+    pub fn init(allocator: Allocator, run_count: usize, state_count: usize) !FastmodeBatchResult {
+        if (run_count == 0) return error.InvalidStateSpec;
+        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        var result: FastmodeBatchResult = .{
+            .run_count = run_count,
+            .state_count = state_count,
+        };
+        errdefer result.deinit(allocator);
+        result.iteration_count = try allocator.alloc(usize, run_count);
+        result.converged = try allocator.alloc(u8, run_count);
+        result.state = try allocator.alloc(f64, run_count * state_count);
+        result.fast_stage_iteration_count = try allocator.alloc(usize, run_count);
+        result.fast_stage_converged = try allocator.alloc(u8, run_count);
+        result.full_correction_iteration_count = try allocator.alloc(usize, run_count);
+        result.full_correction_converged = try allocator.alloc(u8, run_count);
+        return result;
+    }
+
+    pub fn deinit(self: *FastmodeBatchResult, allocator: Allocator) void {
+        allocator.free(self.iteration_count);
+        allocator.free(self.converged);
+        allocator.free(self.state);
+        allocator.free(self.fast_stage_iteration_count);
+        allocator.free(self.fast_stage_converged);
+        allocator.free(self.full_correction_iteration_count);
+        allocator.free(self.full_correction_converged);
+        self.* = .{};
+    }
+};
+
 pub const Controls = struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
@@ -533,6 +574,85 @@ pub fn runO2ABatch(
         effective_worker_count,
     );
     return batch;
+}
+
+pub fn runO2AFastmodeBatch(
+    allocator: Allocator,
+    fast_input: *const o2a_types.ResolvedVendorO2ACase,
+    fast_measurement_wavelength_nm: []const f64,
+    fast_measurement_reflectance: []const f64,
+    fast_measurement_variance: []const f64,
+    fast_state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    fast_forward_storage: *InstrumentGrid.ProductStorage,
+    fast_controls: Controls,
+    correction_input: *const o2a_types.ResolvedVendorO2ACase,
+    correction_measurement_wavelength_nm: []const f64,
+    correction_measurement_reflectance: []const f64,
+    correction_measurement_variance: []const f64,
+    correction_state_template: []const StateSpec,
+    correction_prior_states: []const f64,
+    correction_forward_storage: *InstrumentGrid.ProductStorage,
+    correction_controls: Controls,
+    batch_worker_count: usize,
+) !FastmodeBatchResult {
+    if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
+    if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
+    if (initial_states.len % fast_state_template.len != 0) return error.InvalidStateSpec;
+    const run_count = initial_states.len / fast_state_template.len;
+    if (run_count == 0) return error.InvalidStateSpec;
+    if (correction_prior_states.len != run_count * correction_state_template.len) return error.InvalidStateSpec;
+
+    var fast_batch = try runO2ABatch(
+        allocator,
+        fast_input,
+        fast_measurement_wavelength_nm,
+        fast_measurement_reflectance,
+        fast_measurement_variance,
+        fast_state_template,
+        initial_states,
+        prior_states,
+        fast_forward_storage,
+        fast_controls,
+        batch_worker_count,
+    );
+    defer fast_batch.deinit(allocator);
+
+    var correction_batch = try runO2ABatch(
+        allocator,
+        correction_input,
+        correction_measurement_wavelength_nm,
+        correction_measurement_reflectance,
+        correction_measurement_variance,
+        correction_state_template,
+        fast_batch.state,
+        correction_prior_states,
+        correction_forward_storage,
+        correction_controls,
+        batch_worker_count,
+    );
+    defer correction_batch.deinit(allocator);
+
+    if (correction_batch.run_count != fast_batch.run_count or
+        correction_batch.state_count != fast_batch.state_count)
+    {
+        return error.InvalidStateSpec;
+    }
+
+    var result = try FastmodeBatchResult.init(allocator, run_count, fast_state_template.len);
+    errdefer result.deinit(allocator);
+    for (0..run_count) |run_index| {
+        result.fast_stage_iteration_count[run_index] = fast_batch.iteration_count[run_index];
+        result.fast_stage_converged[run_index] = fast_batch.converged[run_index];
+        result.full_correction_iteration_count[run_index] = correction_batch.iteration_count[run_index];
+        result.full_correction_converged[run_index] = correction_batch.converged[run_index];
+        result.iteration_count[run_index] =
+            fast_batch.iteration_count[run_index] + correction_batch.iteration_count[run_index];
+        result.converged[run_index] = fast_batch.converged[run_index];
+    }
+    @memcpy(result.state, correction_batch.state);
+    return result;
 }
 
 fn runO2ABatchRange(
