@@ -2,6 +2,7 @@
 
 import copy
 import math
+import os
 import statistics
 import time
 from collections.abc import Mapping, Sequence
@@ -106,7 +107,7 @@ def diagnose_retrieval(
     result_initial_state: Sequence[float] | None,
     controls: RetrievalControls,
     start_count: int = 100,
-    batch_workers: int = 1,
+    batch_workers: int | None = None,
     bounds: Mapping[StateName, tuple[float, float]] | None = None,
     cache: rtm.SessionCache | None = None,
 ) -> RetrievalDiagnosis:
@@ -115,7 +116,11 @@ def diagnose_retrieval(
     if start_count <= 0:
         raise ValueError("start_count must be positive")
 
-    if batch_workers <= 0:
+    active_batch_workers = (
+        diagnosis_batch_worker_count(start_count) if batch_workers is None else batch_workers
+    )
+
+    if active_batch_workers <= 0:
         raise ValueError("batch_workers must be positive")
 
     axes = diagnosis_bounds(state_vector, bounds or {})
@@ -131,7 +136,7 @@ def diagnose_retrieval(
         state_vectors=start_vectors,
         controls=controls,
         cache=cache,
-        batch_workers=batch_workers,
+        batch_workers=active_batch_workers,
     )
     elapsed_s = time.perf_counter() - start_s
 
@@ -148,9 +153,34 @@ def diagnose_retrieval(
             if result_initial_state is None
             else tuple(float(value) for value in result_initial_state)
         ),
-        batch_workers=batch_workers,
+        batch_workers=active_batch_workers,
         elapsed_s=elapsed_s,
     )
+
+
+def diagnosis_batch_worker_count(start_count: int) -> int:
+    """Choose a bounded native start-worker count for a same-scene diagnosis."""
+
+    return min(start_count, max(1, min(5, native_worker_ceiling())))
+
+
+def native_worker_ceiling() -> int:
+    """Return the configured native worker ceiling used by RTM prefetch loops."""
+
+    configured = os.environ.get("ZDISAMAR_WORKER_LIMIT")
+
+    if configured is not None:
+        try:
+            value = int(configured)
+        except ValueError as exc:
+            raise ValueError("ZDISAMAR_WORKER_LIMIT must be a positive integer") from exc
+
+        if value <= 0:
+            raise ValueError("ZDISAMAR_WORKER_LIMIT must be a positive integer")
+
+        return value
+
+    return os.cpu_count() or 1
 
 
 def diagnosis_bounds(

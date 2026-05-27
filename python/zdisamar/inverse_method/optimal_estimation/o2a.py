@@ -937,7 +937,7 @@ def attach_diagnosis(
     def diagnose(
         *,
         start_count: int = 100,
-        batch_workers: int = 1,
+        batch_workers: int | None = None,
         bounds: Mapping[StateName, tuple[float, float]] | None = None,
         cache: rtm.SessionCache | None = None,
     ) -> object:

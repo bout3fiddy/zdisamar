@@ -222,6 +222,101 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     assert "trajectory density" in figure._repr_svg_()
 
 
+def assert_optimal_estimation_diagnosis_auto_workers() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
+    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
+    from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
+    from zdisamar.inverse_method.optimal_estimation.state_vector import (
+        AerosolOpticalDepth,
+        StateVector,
+        StateVectorParameter,
+        SurfaceAlbedo,
+    )
+
+    state_vector = StateVector(
+        cast(
+            tuple[StateVectorParameter, ...],
+            (
+                AerosolOpticalDepth(
+                    initial=0.2,
+                    prior=0.2,
+                    prior_uncertainty=0.5,
+                    lower=0.1,
+                    upper=2.0,
+                ),
+                SurfaceAlbedo(
+                    initial=0.3,
+                    prior=0.3,
+                    prior_uncertainty=0.2,
+                    lower=0.05,
+                    upper=0.8,
+                ),
+            ),
+        )
+    )
+    measurement = Measurement(
+        wavelength_nm=(760.0, 761.0),
+        reflectance=(0.1, 0.2),
+        signal_to_noise=100.0,
+    )
+    batch = BatchResult(
+        state_names=state_vector.names,
+        state=((0.2, 0.3),) * 9,
+        iterations=(1,) * 9,
+        converged=(True,) * 9,
+        measurement=measurement,
+    )
+    calls: list[dict[str, object]] = []
+
+    def retrieve_many(**kwargs):
+
+        calls.append(kwargs)
+
+        return batch
+
+    with (
+        patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
+        patch(
+            "zdisamar.inverse_method.optimal_estimation.o2a.retrieve_many",
+            side_effect=retrieve_many,
+        ),
+    ):
+        diagnosis = diagnose_retrieval(
+            case=cast(O2AInput, object()),
+            measurement=measurement,
+            state_vector=state_vector,
+            result_state=(0.2, 0.3),
+            result_initial_state=(0.2, 0.3),
+            controls=RetrievalControls(),
+            start_count=9,
+        )
+
+    assert diagnosis.batch_workers == 5
+    assert calls[0]["batch_workers"] == 5
+
+    calls.clear()
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.retrieve_many",
+        side_effect=retrieve_many,
+    ):
+        explicit = diagnose_retrieval(
+            case=cast(O2AInput, object()),
+            measurement=measurement,
+            state_vector=state_vector,
+            result_state=(0.2, 0.3),
+            result_initial_state=(0.2, 0.3),
+            controls=RetrievalControls(),
+            start_count=9,
+            batch_workers=2,
+        )
+
+    assert explicit.batch_workers == 2
+    assert calls[0]["batch_workers"] == 2
+
+
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
@@ -1587,6 +1682,7 @@ def main() -> int:
     assert_optimal_estimation_grid_mismatch_rejected()
     assert_optimal_estimation_result_dataclass()
     assert_optimal_estimation_diagnosis_display()
+    assert_optimal_estimation_diagnosis_auto_workers()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
     assert_state_vector_uncertainty_rejected()
