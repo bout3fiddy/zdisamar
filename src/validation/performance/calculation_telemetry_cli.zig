@@ -25,6 +25,7 @@ const Config = struct {
     end_nm: f64 = default_end_nm,
     sample_count: u32 = default_sample_count,
     high_resolution_step_nm: f64 = default_high_resolution_step_nm,
+    surface_pressure_hpa: ?f64 = null,
     surface_albedo: ?f64 = null,
     aerosol_optical_depth: ?f64 = null,
     aerosol_single_scatter_albedo: ?f64 = null,
@@ -71,12 +72,23 @@ fn mainInner() !void {
     input.spectral_grid.end_nm = config.end_nm;
     input.spectral_grid.sample_count = config.sample_count;
     input.observation.high_resolution_step_nm = config.high_resolution_step_nm;
+    var interval_storage: [16]@TypeOf(input.intervals[0]) = undefined;
+    if (input.intervals.len > interval_storage.len) return error.InvalidIntervalCount;
+    @memcpy(interval_storage[0..input.intervals.len], input.intervals);
+    input.intervals = interval_storage[0..input.intervals.len];
+    if (config.surface_pressure_hpa) |value| input.surface_pressure_hpa = value;
     if (config.surface_albedo) |value| input.surface_albedo = value;
     if (config.aerosol_optical_depth) |value| input.aerosol.optical_depth = value;
     if (config.aerosol_single_scatter_albedo) |value| input.aerosol.single_scatter_albedo = value;
     if (config.aerosol_asymmetry_factor) |value| input.aerosol.asymmetry_factor = value;
     if (config.aerosol_layer_top_pressure_hpa) |value| input.aerosol.placement.top_pressure_hpa = value;
     if (config.aerosol_layer_bottom_pressure_hpa) |value| input.aerosol.placement.bottom_pressure_hpa = value;
+    if (config.surface_pressure_hpa != null or
+        config.aerosol_layer_top_pressure_hpa != null or
+        config.aerosol_layer_bottom_pressure_hpa != null)
+    {
+        updateFitIntervals(&input, interval_storage[0..input.intervals.len]);
+    }
     if (config.solar_zenith_deg) |value| input.geometry.solar_zenith_deg = value;
     if (config.viewing_zenith_deg) |value| input.geometry.viewing_zenith_deg = value;
     if (config.relative_azimuth_deg) |value| input.geometry.relative_azimuth_deg = value;
@@ -170,6 +182,10 @@ fn parseArgs(args: []const []const u8) !Config {
             index += 1;
             if (index >= args.len) return error.MissingHighResolutionStep;
             config.high_resolution_step_nm = try std.fmt.parseFloat(f64, args[index]);
+        } else if (std.mem.eql(u8, arg, "--surface-pressure-hpa")) {
+            index += 1;
+            if (index >= args.len) return error.MissingSurfacePressure;
+            config.surface_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--surface-albedo")) {
             index += 1;
             if (index >= args.len) return error.MissingSurfaceAlbedo;
@@ -213,6 +229,27 @@ fn parseArgs(args: []const []const u8) !Config {
     return config;
 }
 
+fn updateFitIntervals(input: anytype, intervals: anytype) void {
+    const fit_index = @as(u64, input.fit_interval_index_1based);
+    const top_pressure = input.aerosol.placement.top_pressure_hpa;
+    const bottom_pressure = input.aerosol.placement.bottom_pressure_hpa;
+
+    for (intervals) |*interval| {
+        const interval_index = @as(u64, interval.index_1based);
+        if (interval_index + 1 == fit_index) {
+            interval.bottom_pressure_hpa = top_pressure;
+        } else if (interval_index == fit_index) {
+            interval.top_pressure_hpa = top_pressure;
+            interval.bottom_pressure_hpa = bottom_pressure;
+        } else if (interval_index == fit_index + 1) {
+            interval.top_pressure_hpa = bottom_pressure;
+        }
+        if (interval_index == input.layer_count) {
+            interval.bottom_pressure_hpa = input.surface_pressure_hpa;
+        }
+    }
+}
+
 fn writeSummary(
     config: Config,
     input: anytype,
@@ -236,6 +273,7 @@ fn writeSummary(
         \\  "end_nm": {d:.8},
         \\  "requested_sample_count": {},
         \\  "high_resolution_step_nm": {d:.8},
+        \\  "surface_pressure_hpa": {e:.17},
         \\  "surface_albedo": {e:.17},
         \\  "aerosol_optical_depth": {e:.17},
         \\  "aerosol_single_scatter_albedo": {e:.17},
@@ -274,6 +312,7 @@ fn writeSummary(
             config.end_nm,
             config.sample_count,
             config.high_resolution_step_nm,
+            input.surface_pressure_hpa,
             input.surface_albedo,
             input.aerosol.optical_depth,
             input.aerosol.single_scatter_albedo,
