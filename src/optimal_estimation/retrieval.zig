@@ -738,7 +738,11 @@ fn runO2ABatchParallel(
     );
     defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
-    var queue = work_partition.ChunkQueue.init(batch.run_count, 1);
+    // One-iteration correction batches are uniform enough that wider queue
+    // chunks reduce scheduling traffic; multi-iteration basin sweeps keep
+    // one-start chunks so hard starts do not pin the tail.
+    const batch_chunk_size: usize = if (controls.max_iterations == 1) 4 else 1;
+    var queue = work_partition.ChunkQueue.init(batch.run_count, batch_chunk_size);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{

@@ -729,6 +729,31 @@ full-correction diagnosis path.  It still does not change the broader
 conclusion: single-digit 100-start sweeps require reducing the number or cost
 of native RTM/Jacobian evaluations.
 
+## 2026-05-28 Correction Batch Chunking
+
+Finding: after staged fastmode scheduling, the fast stage still needs
+one-start queue chunks because broad basin sweeps have variable iteration
+counts.  The sparse full-physics correction is different: it is a one-iteration
+batch, so starts are closer to uniform and one-start queue chunks add scheduler
+traffic without the same tail-balance value.
+
+Change: keep one-start chunks for multi-iteration batches, but let
+`controls.max_iterations == 1` correction batches claim four starts at a time.
+
+Scene 008, 100 starts, sparse final correction, `ZDISAMAR_WORKER_LIMIT=10`,
+`batch_workers=2`:
+
+```text
+correction chunk=1 rerun: 31.728 s
+correction chunk=2:       30.259 s
+correction chunk=4:       30.401 s on rerun, 29.694 s on first run
+correction chunk=8:       30.049 s
+```
+
+Interpretation: chunk 4 is a small scheduling cleanup, not a new architecture.
+The retained conclusion stays the same: the dominant cost is native
+RTM/Jacobian evaluation work.
+
 ## 2026-05-28 Rejected Single-Boundary Probes
 
 These probes were run against the public `Result.diagnose()`/native batch
