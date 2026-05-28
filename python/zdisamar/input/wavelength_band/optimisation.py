@@ -344,7 +344,7 @@ class FastModeOeControls:
     """
 
     max_iterations: int = 10
-    state_vector_convergence_threshold: float = 30.0
+    state_vector_convergence_threshold: float = 1.0
     max_change_transformed_state: float = 1.0
 
     @classmethod

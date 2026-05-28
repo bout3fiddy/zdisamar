@@ -642,10 +642,11 @@ threshold 20: median 0.356 s, max delta 4.18164e-4 AOD / 0.545859 hPa
 threshold 30: median 0.349 s, max delta 4.18164e-4 AOD / 0.545859 hPa
 ```
 
-Change: set the case-owned fastmode OE
-`state_vector_convergence_threshold` to `30.0`.  This keeps the retained
-fastmode/reference max-delta gate unchanged while reducing accepted fast-stage
-iterations in broad repeated-start sweeps.
+Decision: do not carry `30.0` as the case-owned fastmode OE default.  It kept
+the retained fastmode/reference max-delta gate unchanged in this probe, but
+`40.0` failed the retained validation gate below.  Keeping the public default at
+`1.0` leaves the diagnosis work on the established accuracy contract instead of
+shipping a near-boundary speed retune as part of the batch API change.
 
 ## 2026-05-28 Prefetch Boundary Recheck After Retune
 

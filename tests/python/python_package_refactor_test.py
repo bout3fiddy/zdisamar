@@ -1587,7 +1587,7 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert fastmode_radiative_transfer["fourier_order_cap"] == 5
             fastmode_oe = cast(dict[str, object], resolved_fastmode["oe"])
             fast_controls = cast(dict[str, object], fastmode_oe["controls"])
-            assert fast_controls["state_vector_convergence_threshold"] == 30.0
+            assert fast_controls["state_vector_convergence_threshold"] == 1.0
             fast_sampling = cast(dict[str, object], fastmode_oe["fast_stage_sampling"])
             fast_sampling_wavelengths = cast(list[float], fast_sampling["wavelengths_nm"])
             fast_sampling_count = cast(int, fast_sampling["sample_count"])
