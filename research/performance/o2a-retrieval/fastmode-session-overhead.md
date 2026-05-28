@@ -358,6 +358,44 @@ scene-008 timings above use `ZDISAMAR_WORKER_LIMIT=10`.  The retained benchmark
 canary intentionally uses a smaller two-worker cap, so it is not the right
 boundary for judging the 10-core multi-start diagnosis timing.
 
+## 2026-05-28 Start-Level Tail Balance
+
+Finding: scene-008 broad start grids do not cost the same per start.  With
+static contiguous assignment, the 100-start fast-stage-only run had the same
+global iteration histogram, but the 3-worker chunks owned uneven iteration
+loads:
+
+```text
+iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+static 3-worker iteration sums: [132, 131, 151]
+```
+
+Change: keep the inner native forward-prefetch policy unchanged, but let the
+outer native OE batch workers claim one start at a time from `ChunkQueue`.
+Each worker still owns its prepared case and product storage; the queue only
+balances which start index is run next.
+
+Timing evidence on the same scene-008 100-start boundary:
+
+```text
+ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+fast stage only, before: 21.50-21.60 s
+fast stage only, after:  21.283 s
+full correction, before: 31.848 s
+full correction, after:  31.688 s
+```
+
+Checksums and iteration histograms were unchanged:
+
+```text
+fast-stage-only checksum: 53299.59263402397
+full-correction checksum: 54177.55550248104
+```
+
+Accepted as a small tail-balance cleanup.  It does not change the current
+conclusion: this workload still needs fewer OE RTM/Jacobian evaluations or a
+per-evaluation RTM/Jacobian speedup to reach single-digit 100-start sweeps.
+
 Two narrow prefetch scheduling probes were rejected:
 
 - Increasing the reused-session pooled forward-prefetch chunk from `8` to `16`

@@ -8,6 +8,7 @@ const o2a_types = @import("../input/o2a_reference/types.zig");
 const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
 const Trace = @import("../forward_model/performance_trace.zig");
+const work_partition = @import("../forward_model/work_partition.zig");
 const algebra = @import("algebra.zig");
 
 const Allocator = std.mem.Allocator;
@@ -746,8 +747,7 @@ const FastmodeBatchWorker = struct {
     correction_prior_states: []const f64,
     correction_controls: Controls,
     result: *FastmodeBatchResult,
-    start_run: usize,
-    end_run: usize,
+    queue: *work_partition.ChunkQueue,
     err: ?anyerror = null,
 };
 
@@ -776,10 +776,9 @@ fn runO2AFastmodeBatchParallel(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
+    var queue = work_partition.ChunkQueue.init(result.run_count, 1);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
-        const start_run = worker_index * result.run_count / worker_count;
-        const end_run = (worker_index + 1) * result.run_count / worker_count;
         workers[worker_index] = .{
             .allocator = allocator,
             .fast_input = fast_input,
@@ -798,8 +797,7 @@ fn runO2AFastmodeBatchParallel(
             .correction_prior_states = correction_prior_states,
             .correction_controls = correction_controls,
             .result = result,
-            .start_run = start_run,
-            .end_run = end_run,
+            .queue = &queue,
         };
 
         if (worker_index + 1 < worker_count) {
@@ -853,21 +851,25 @@ fn runO2AFastmodeBatchWorkerFallible(worker: *FastmodeBatchWorker) !void {
         &correction_forward_storage,
     );
     defer correction_prepared_case.deinit(worker.allocator);
-    try runO2AFastmodeBatchRange(
-        worker.allocator,
-        &fast_prepared_case,
-        &correction_prepared_case,
-        worker.fast_state_template,
-        worker.correction_state_template,
-        worker.initial_states,
-        worker.prior_states,
-        worker.correction_prior_states,
-        worker.fast_controls,
-        worker.correction_controls,
-        worker.result,
-        worker.start_run,
-        worker.end_run,
-    );
+    // Broad basin sweeps have variable iteration counts by start. Claim one
+    // start at a time so a hard region does not pin the final worker tail.
+    while (worker.queue.next()) |chunk| {
+        try runO2AFastmodeBatchRange(
+            worker.allocator,
+            &fast_prepared_case,
+            &correction_prepared_case,
+            worker.fast_state_template,
+            worker.correction_state_template,
+            worker.initial_states,
+            worker.prior_states,
+            worker.correction_prior_states,
+            worker.fast_controls,
+            worker.correction_controls,
+            worker.result,
+            chunk.start,
+            chunk.end,
+        );
+    }
 }
 
 fn runO2ABatchRange(
@@ -921,8 +923,7 @@ const BatchWorker = struct {
     prior_states: []const f64,
     controls: Controls,
     batch: *BatchResult,
-    start_run: usize,
-    end_run: usize,
+    queue: *work_partition.ChunkQueue,
     err: ?anyerror = null,
 };
 
@@ -944,10 +945,9 @@ fn runO2ABatchParallel(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
+    var queue = work_partition.ChunkQueue.init(batch.run_count, 1);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
-        const start_run = worker_index * batch.run_count / worker_count;
-        const end_run = (worker_index + 1) * batch.run_count / worker_count;
         workers[worker_index] = .{
             .allocator = allocator,
             .base_input = base_input,
@@ -959,8 +959,7 @@ fn runO2ABatchParallel(
             .prior_states = prior_states,
             .controls = controls,
             .batch = batch,
-            .start_run = start_run,
-            .end_run = end_run,
+            .queue = &queue,
         };
 
         if (worker_index + 1 < worker_count) {
@@ -1002,17 +1001,21 @@ fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
         &forward_storage,
     );
     defer prepared_case.deinit(worker.allocator);
-    try runO2ABatchRange(
-        worker.allocator,
-        &prepared_case,
-        worker.state_template,
-        worker.initial_states,
-        worker.prior_states,
-        worker.controls,
-        worker.batch,
-        worker.start_run,
-        worker.end_run,
-    );
+    // Broad basin sweeps have variable iteration counts by start. Claim one
+    // start at a time so a hard region does not pin the final worker tail.
+    while (worker.queue.next()) |chunk| {
+        try runO2ABatchRange(
+            worker.allocator,
+            &prepared_case,
+            worker.state_template,
+            worker.initial_states,
+            worker.prior_states,
+            worker.controls,
+            worker.batch,
+            chunk.start,
+            chunk.end,
+        );
+    }
 }
 
 fn runPreparedO2A(
