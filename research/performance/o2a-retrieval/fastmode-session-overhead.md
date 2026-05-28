@@ -445,3 +445,43 @@ Interpretation: this is a real, modest iteration-count win.  It does not make
 the 100-start diagnosis single-digit because most starts still require four or
 five RTM/Jacobian evaluations, but it moves the retained fastmode latency and
 keeps the existing accuracy contract.
+
+## 2026-05-28 Fused Fastmode Batch Workers
+
+Finding: the `~175 ms` repeated-retrieval probe is not the same workload as the
+scene-008 basin sweep.  The broad 100-start scene-008 grid still performs 414
+fast-stage RTM/Jacobian evaluations plus 100 sparse full-physics correction
+evaluations, so the fast-stage-only boundary alone is above the `17.5 s`
+estimate:
+
+```text
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+fast stage only: 21.490 s
+iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+```
+
+Change: `runO2AFastmodeBatch` now gives each native batch worker both the
+fast-stage prepared case and the sparse correction prepared case.  Each worker
+runs its assigned starts end-to-end, avoiding the intermediate `BatchResult`
+state table and the second batch/thread handoff between fast-stage and
+correction solves.
+
+Focused scene-008 checks after the change:
+
+```text
+scene 008, 25 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+elapsed: 8.019 s
+checksum: 13628.270821723605
+
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+elapsed: 31.848 s
+iteration histogram: {3: 3, 4: 20, 5: 42, 6: 31, 7: 3, 8: 1}
+fast-stage iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+checksum: 54177.55550248104
+```
+
+The same live 100-start probe immediately before the native worker fusion was
+`32.156 s` with the same checksum and iteration histograms.  This is a modest
+native-boundary cleanup, not the single-digit answer.  The remaining target
+still requires fewer OE RTM/Jacobian evaluations or a per-evaluation forward
+model speedup.
