@@ -111,7 +111,7 @@ def diagnose_retrieval(
     state_vector: StateVector,
     result_state: Sequence[float],
     result_initial_state: Sequence[float] | None,
-    controls: RetrievalControls,
+    controls: RetrievalControls | None,
     start_count: int = 100,
     batch_workers: int | None = None,
     bounds: Mapping[StateName, tuple[float, float]] | None = None,

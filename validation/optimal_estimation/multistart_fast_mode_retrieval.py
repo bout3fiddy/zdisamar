@@ -308,7 +308,7 @@ def run_scene(
                     state_vector=state_template,
                     result_state=state_template.initial_state(),
                     result_initial_state=state_template.initial_state(),
-                    controls=oe_setup.retrieval_controls(),
+                    controls=None,
                     cache=cache,
                     start_count=len(pending),
                     batch_workers=batch_workers,
@@ -410,7 +410,6 @@ def run_scene(
                     case=case,
                     measurement=measurement,
                     state_vector=state_vector,
-                    controls=oe_setup.retrieval_controls(),
                     cache=cache,
                 )
                 retrieval_s = time.perf_counter() - retrieval_start

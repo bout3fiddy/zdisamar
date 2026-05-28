@@ -49,7 +49,7 @@ fastmode.adaptive_reference_grid.strong_line_min_divisions = 6
 fastmode.adaptive_reference_grid.strong_line_max_divisions = 22
 
 fastmode.oe.controls.max_iterations = 10
-fastmode.oe.controls.state_vector_convergence_threshold = 1.0
+fastmode.oe.controls.state_vector_convergence_threshold = 10.0
 fastmode.oe.controls.max_change_transformed_state = 1.0
 
 fastmode.oe.fast_stage_sampling.enabled = True

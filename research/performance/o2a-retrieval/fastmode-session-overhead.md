@@ -395,3 +395,53 @@ Timing evidence with the packaged binding rebuilt by
 scene 008, 10 starts, native_worker_limit=10, auto batch_workers=3: 3.586 s
 scene 008, 25 starts, native_worker_limit=10, auto batch_workers=3: 8.469 s
 ```
+
+## 2026-05-28 Fastmode Convergence Threshold
+
+Finding: the broad scene-008 basin sweep is slower than the steady repeated
+retrieval prefetch probe because it has many more OE iterations.  On the
+100-start fast-stage-only boundary, the current default produced this iteration
+mix:
+
+```text
+state_vector_convergence_threshold=1.0
+elapsed: 23.861 s
+iteration histogram: {2: 1, 3: 13, 4: 33, 5: 43, 6: 9, 8: 1}
+```
+
+Rejected: increasing `max_change_transformed_state`.  It did not materially
+reduce the scene-008 25-start runtime and only moved states by small amounts.
+Very loose convergence thresholds were also rejected: threshold `50` reduced
+the 100-start scene-008 fast-stage-only boundary to `19.607 s`, but moved the
+retrieved state by `7.17e-4` AOD and `1.15 hPa` versus the retained fastmode
+default, outside the retained validation pressure gate.
+
+Change: set the case-owned fastmode OE
+`state_vector_convergence_threshold` to `10.0` and make retained validation
+callers omit explicit controls so they exercise the same case-owned fastmode
+path as public `retrieve(..., controls=None)` and `Result.diagnose()`.
+
+Scene-008 fast-stage-only timing evidence:
+
+```text
+state_vector_convergence_threshold=10.0
+elapsed: 21.476 s
+iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+all 100 starts converged
+```
+
+Retained fastmode-vs-reference validation was regenerated with the fullmode
+rows unchanged and the fastmode rows rerun under the new case-owned controls:
+
+```text
+fastmode rows: 100
+fast-stage converged: 100
+fastmode median retrieval: 0.389819 s
+fastmode-reference max_abs AOD delta: 4.181641e-4
+fastmode-reference max_abs pressure delta: 5.458586e-1 hPa
+```
+
+Interpretation: this is a real, modest iteration-count win.  It does not make
+the 100-start diagnosis single-digit because most starts still require four or
+five RTM/Jacobian evaluations, but it moves the retained fastmode latency and
+keeps the existing accuracy contract.
