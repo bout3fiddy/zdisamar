@@ -143,6 +143,7 @@ pub const ZdsOptimalEstimationBatchResult = extern struct {
     state_count: usize = 0,
     iteration_count: ?[*]const usize = null,
     converged: ?[*]const u8 = null,
+    status: ?[*]const u8 = null,
     state: ?[*]const f64 = null,
     result_handle: ?*anyopaque = null,
 };
@@ -152,6 +153,7 @@ pub const ZdsOptimalEstimationFastmodeBatchResult = extern struct {
     state_count: usize = 0,
     iteration_count: ?[*]const usize = null,
     converged: ?[*]const u8 = null,
+    status: ?[*]const u8 = null,
     state: ?[*]const f64 = null,
     fast_stage_iteration_count: ?[*]const usize = null,
     fast_stage_converged: ?[*]const u8 = null,
@@ -1799,6 +1801,7 @@ fn optimalEstimationBatchResultView(native: *zdisamar.optimal_estimation.BatchRe
         .state_count = native.state_count,
         .iteration_count = native.iteration_count.ptr,
         .converged = native.converged.ptr,
+        .status = native.status.ptr,
         .state = native.state.ptr,
         .result_handle = @ptrCast(native),
     };
@@ -1810,6 +1813,7 @@ fn optimalEstimationFastmodeBatchResultView(native: *zdisamar.optimal_estimation
         .state_count = native.state_count,
         .iteration_count = native.iteration_count.ptr,
         .converged = native.converged.ptr,
+        .status = native.status.ptr,
         .state = native.state.ptr,
         .fast_stage_iteration_count = native.fast_stage_iteration_count.ptr,
         .fast_stage_converged = native.fast_stage_converged.ptr,

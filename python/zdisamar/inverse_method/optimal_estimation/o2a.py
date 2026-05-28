@@ -32,6 +32,7 @@ class BatchResult:
     iterations: tuple[int, ...]
     converged: tuple[bool, ...]
     measurement: Measurement
+    status: tuple[str, ...] = ()
     fast_stage_iterations: tuple[int, ...] | None = None
     fast_stage_converged: tuple[bool, ...] | None = None
     full_correction_iterations: tuple[int, ...] | None = None
@@ -484,6 +485,7 @@ def run_native_fastmode_retrieval_batch(
         iterations=tuple(int(value) for value in raw["iteration_count"]),
         converged=tuple(bool(value) for value in raw["converged"]),
         measurement=measurement,
+        status=tuple(str(value) for value in raw["status"]),
         fast_stage_iterations=tuple(int(value) for value in raw["fast_stage_iteration_count"]),
         fast_stage_converged=tuple(bool(value) for value in raw["fast_stage_converged"]),
         full_correction_iterations=tuple(
@@ -818,6 +820,7 @@ def run_native_retrieval_batch(
         iterations=tuple(int(value) for value in raw["iteration_count"]),
         converged=tuple(bool(value) for value in raw["converged"]),
         measurement=measurement,
+        status=tuple(str(value) for value in raw["status"]),
     )
 
 

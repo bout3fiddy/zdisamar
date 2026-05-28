@@ -268,9 +268,11 @@ def assert_optimal_estimation_diagnosis_display() -> None:
         result_state=(0.12, 340.0),
         result_initial_state=(0.1, 225.0),
         batch_workers=1,
+        start_status=("ok", "failed"),
     )
     payload = sweep.to_dict()
     assert payload["runs"] == 2
+    assert payload["failed_starts"] == 1
     assert payload["native_worker_limit"] is None
     figure = sweep.plot(cells=25)
     figure_payload = figure.to_dict()
@@ -319,6 +321,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         iterations=(1,) * 9,
         converged=(True,) * 9,
         measurement=measurement,
+        status=("ok",) * 9,
     )
     calls: list[dict[str, object]] = []
 
@@ -358,7 +361,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
     start_rows = cast(tuple[tuple[float, ...], ...], calls[0]["start_rows"])
     assert len(start_rows) == 9
-    assert start_rows[0] == (0.0, 50.0)
+    assert start_rows[0] == (0.02, 50.0)
     assert start_rows[-1] == (2.0, 900.0)
 
     calls.clear()
@@ -1096,6 +1099,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
                 "state": (0.305, 761.5, 0.415, 691.0),
                 "iteration_count": (5, 6),
                 "converged": (True, False),
+                "status": ("ok", "failed"),
                 "fast_stage_iteration_count": (4, 5),
                 "fast_stage_converged": (True, False),
                 "full_correction_iteration_count": (1, 1),
@@ -1180,6 +1184,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
     assert result.state == ((0.305, 761.5), (0.415, 691.0))
     assert result.iterations == (5, 6)
     assert result.converged == (True, False)
+    assert result.status == ("ok", "failed")
     assert result.measurement is measurement
     assert result.fast_stage_iterations == (4, 5)
     assert result.fast_stage_converged == (True, False)

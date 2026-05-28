@@ -48,6 +48,7 @@ from .structures import (
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
 _MAX_UINT32 = 2**32 - 1
 _NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
+_BATCH_RUN_STATUS_NAMES = ("pending", "ok", "failed")
 
 
 def contiguous_wavelengths(wavelengths_nm):
@@ -86,6 +87,15 @@ def jacobian_state_ids(state_names: tuple[str, ...]):
             raise ValueError(f"unsupported Jacobian state: {state_name}") from exc
 
     return (ctypes.c_uint8 * len(ids))(*ids)
+
+
+def batch_run_status(value: int) -> str:
+    """Translate native per-start batch status into a stable Python label."""
+
+    try:
+        return _BATCH_RUN_STATUS_NAMES[int(value)]
+    except IndexError:
+        return f"unknown:{int(value)}"
 
 
 def double_array(values, name: str):
@@ -847,12 +857,14 @@ class RtmHandle:
         run_count = int(raw.run_count)
         state_count = int(raw.state_count)
         value_count = run_count * state_count
+        status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
 
         return {
             "run_count": run_count,
             "state_count": state_count,
             "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
             "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
+            "status": status,
             "state": tuple(float(raw.state[index]) for index in range(value_count)),
         }
 
@@ -864,12 +876,14 @@ class RtmHandle:
         run_count = int(raw.run_count)
         state_count = int(raw.state_count)
         value_count = run_count * state_count
+        status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
 
         return {
             "run_count": run_count,
             "state_count": state_count,
             "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
             "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
+            "status": status,
             "state": tuple(float(raw.state[index]) for index in range(value_count)),
             "fast_stage_iteration_count": tuple(
                 int(raw.fast_stage_iteration_count[index]) for index in range(run_count)

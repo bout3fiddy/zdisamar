@@ -254,6 +254,7 @@ pub const BatchResult = struct {
     state_count: usize = 0,
     iteration_count: []usize = &.{},
     converged: []u8 = &.{},
+    status: []u8 = &.{},
     state: []f64 = &.{},
 
     pub fn init(allocator: Allocator, run_count: usize, state_count: usize) !BatchResult {
@@ -266,13 +267,16 @@ pub const BatchResult = struct {
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
+        result.status = try allocator.alloc(u8, run_count);
         result.state = try allocator.alloc(f64, run_count * state_count);
+        initializeBatchOutput(result.output());
         return result;
     }
 
     pub fn deinit(self: *BatchResult, allocator: Allocator) void {
         allocator.free(self.iteration_count);
         allocator.free(self.converged);
+        allocator.free(self.status);
         allocator.free(self.state);
         self.* = .{};
     }
@@ -283,9 +287,16 @@ pub const BatchResult = struct {
             .state_count = self.state_count,
             .iteration_count = self.iteration_count,
             .converged = self.converged,
+            .status = self.status,
             .state = self.state,
         };
     }
+};
+
+pub const BatchRunStatus = enum(u8) {
+    pending = 0,
+    ok = 1,
+    failed = 2,
 };
 
 const BatchOutput = struct {
@@ -293,14 +304,58 @@ const BatchOutput = struct {
     state_count: usize,
     iteration_count: []usize,
     converged: []u8,
+    status: []u8,
     state: []f64,
 };
+
+fn initializeBatchOutput(batch: BatchOutput) void {
+    for (0..batch.run_count) |run_index| {
+        markBatchRunPending(batch, run_index);
+    }
+}
+
+fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
+    for (0..result.run_count) |run_index| {
+        result.iteration_count[run_index] = 0;
+        result.converged[run_index] = 0;
+        result.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+        result.fast_stage_iteration_count[run_index] = 0;
+        result.fast_stage_converged[run_index] = 0;
+        result.full_correction_iteration_count[run_index] = 0;
+        result.full_correction_converged[run_index] = 0;
+        const state_offset = run_index * result.state_count;
+        for (0..result.state_count) |state_index| {
+            result.state[state_offset + state_index] = std.math.nan(f64);
+        }
+    }
+}
+
+fn markBatchRunPending(batch: BatchOutput, run_index: usize) void {
+    batch.iteration_count[run_index] = 0;
+    batch.converged[run_index] = 0;
+    batch.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+    const state_offset = run_index * batch.state_count;
+    for (0..batch.state_count) |state_index| {
+        batch.state[state_offset + state_index] = std.math.nan(f64);
+    }
+}
+
+fn markBatchRunFailure(batch: BatchOutput, run_index: usize) void {
+    batch.iteration_count[run_index] = 0;
+    batch.converged[run_index] = 0;
+    batch.status[run_index] = @intFromEnum(BatchRunStatus.failed);
+    const state_offset = run_index * batch.state_count;
+    for (0..batch.state_count) |state_index| {
+        batch.state[state_offset + state_index] = std.math.nan(f64);
+    }
+}
 
 pub const FastmodeBatchResult = struct {
     run_count: usize = 0,
     state_count: usize = 0,
     iteration_count: []usize = &.{},
     converged: []u8 = &.{},
+    status: []u8 = &.{},
     state: []f64 = &.{},
     fast_stage_iteration_count: []usize = &.{},
     fast_stage_converged: []u8 = &.{},
@@ -317,17 +372,20 @@ pub const FastmodeBatchResult = struct {
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
+        result.status = try allocator.alloc(u8, run_count);
         result.state = try allocator.alloc(f64, run_count * state_count);
         result.fast_stage_iteration_count = try allocator.alloc(usize, run_count);
         result.fast_stage_converged = try allocator.alloc(u8, run_count);
         result.full_correction_iteration_count = try allocator.alloc(usize, run_count);
         result.full_correction_converged = try allocator.alloc(u8, run_count);
+        initializeFastmodeBatchResult(&result);
         return result;
     }
 
     pub fn deinit(self: *FastmodeBatchResult, allocator: Allocator) void {
         allocator.free(self.iteration_count);
         allocator.free(self.converged);
+        allocator.free(self.status);
         allocator.free(self.state);
         allocator.free(self.fast_stage_iteration_count);
         allocator.free(self.fast_stage_converged);
@@ -579,7 +637,7 @@ fn runO2ABatchInto(
 ) !void {
     const run_count = try validateBatchInputs(base_input, state_template, initial_states, prior_states, controls);
     if (batch.run_count != run_count or batch.state_count != state_template.len) return error.InvalidStateSpec;
-    if (batch.iteration_count.len != run_count or batch.converged.len != run_count) return error.InvalidStateSpec;
+    if (batch.iteration_count.len != run_count or batch.converged.len != run_count or batch.status.len != run_count) return error.InvalidStateSpec;
     if (batch.state.len != run_count * state_template.len) return error.InvalidStateSpec;
 
     const previous_context = Telemetry.currentContext();
@@ -743,6 +801,7 @@ pub fn runO2AFastmodeBatch(
         .state_count = fast_state_template.len,
         .iteration_count = result.fast_stage_iteration_count,
         .converged = result.fast_stage_converged,
+        .status = result.status,
         .state = result.state,
     };
     const fastmode_context = Telemetry.currentContext();
@@ -770,8 +829,14 @@ pub fn runO2AFastmodeBatch(
         .state_count = correction_state_template.len,
         .iteration_count = result.full_correction_iteration_count,
         .converged = result.full_correction_converged,
+        .status = result.status,
         .state = result.state,
     };
+    for (0..run_count) |run_index| {
+        if (result.status[run_index] == @intFromEnum(BatchRunStatus.ok)) {
+            result.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+        }
+    }
     {
         Telemetry.setContext(telemetryContextWithStage(fastmode_context, .correction));
         defer Telemetry.setContext(fastmode_context);
@@ -794,7 +859,10 @@ pub fn runO2AFastmodeBatch(
     for (0..run_count) |run_index| {
         result.iteration_count[run_index] =
             result.fast_stage_iteration_count[run_index] + result.full_correction_iteration_count[run_index];
-        result.converged[run_index] = result.fast_stage_converged[run_index];
+        result.converged[run_index] = if (result.status[run_index] == @intFromEnum(BatchRunStatus.ok))
+            result.fast_stage_converged[run_index]
+        else
+            0;
     }
     return result;
 }
@@ -812,8 +880,10 @@ fn runO2ABatchRange(
 ) !void {
     const range_context = Telemetry.currentContext();
     for (start_run..end_run) |run_index| {
+        if (batch.status[run_index] != @intFromEnum(BatchRunStatus.pending)) continue;
+
         const state_offset = run_index * state_template.len;
-        const summary = try runPreparedO2AStartSummary(
+        const summary = runPreparedO2AStartSummary(
             allocator,
             prepared_case,
             state_template,
@@ -822,10 +892,17 @@ fn runO2ABatchRange(
             controls,
             run_index + 1,
             range_context,
-        );
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {
+                markBatchRunFailure(batch.*, run_index);
+                continue;
+            },
+        };
 
         batch.iteration_count[run_index] = summary.iteration_count;
         batch.converged[run_index] = if (summary.converged) 1 else 0;
+        batch.status[run_index] = @intFromEnum(BatchRunStatus.ok);
         for (0..state_template.len) |state_index| {
             batch.state[state_offset + state_index] = summary.state[state_index];
         }

@@ -272,6 +272,7 @@ class COptimalEstimationBatchResult(ctypes.Structure):
         ("state_count", ctypes.c_size_t),
         ("iteration_count", ctypes.POINTER(ctypes.c_size_t)),
         ("converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("status", ctypes.POINTER(ctypes.c_uint8)),
         ("state", ctypes.POINTER(ctypes.c_double)),
         ("result_handle", ctypes.c_void_p),
     ]
@@ -283,6 +284,7 @@ class COptimalEstimationFastmodeBatchResult(ctypes.Structure):
         ("state_count", ctypes.c_size_t),
         ("iteration_count", ctypes.POINTER(ctypes.c_size_t)),
         ("converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("status", ctypes.POINTER(ctypes.c_uint8)),
         ("state", ctypes.POINTER(ctypes.c_double)),
         ("fast_stage_iteration_count", ctypes.POINTER(ctypes.c_size_t)),
         ("fast_stage_converged", ctypes.POINTER(ctypes.c_uint8)),

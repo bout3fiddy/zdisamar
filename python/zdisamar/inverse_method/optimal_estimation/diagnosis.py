@@ -19,6 +19,8 @@ from .state_vector import (
     StateVector,
 )
 
+DIAGNOSIS_AOD_LOWER = 0.02
+
 
 @dataclass(frozen=True)
 class RetrievalDiagnosis(NotebookDisplay):
@@ -33,6 +35,7 @@ class RetrievalDiagnosis(NotebookDisplay):
     result_state: tuple[float, ...]
     result_initial_state: tuple[float, ...] | None
     batch_workers: int
+    start_status: tuple[str, ...] = ()
     fast_stage_iterations: tuple[int, ...] | None = None
     fast_stage_converged: tuple[bool, ...] | None = None
     full_correction_iterations: tuple[int, ...] | None = None
@@ -53,6 +56,14 @@ class RetrievalDiagnosis(NotebookDisplay):
         index = self.state_names.index(name)
 
         return tuple(row[index] for row in self.start_state)
+
+    def resolved_start_status(self) -> tuple[str, ...]:
+        """Return one status label per start row."""
+
+        if self.start_status:
+            return self.start_status
+
+        return ("ok",) * len(self.start_state)
 
     def to_dict(self) -> dict[str, object]:
         """Return a compact diagnosis summary."""
@@ -75,6 +86,7 @@ class RetrievalDiagnosis(NotebookDisplay):
         return {
             "runs": len(self.start_state),
             "converged": sum(1 for value in self.converged if value),
+            "failed_starts": sum(1 for status in self.resolved_start_status() if status != "ok"),
             "batch_workers": self.batch_workers,
             "native_worker_limit": self.native_worker_limit,
             "elapsed_s": self.elapsed_s,
@@ -175,6 +187,7 @@ def diagnose_retrieval(
             else tuple(float(value) for value in result_initial_state)
         ),
         batch_workers=active_batch_workers,
+        start_status=(batch.status if batch.status else ("ok",) * len(active_start_rows)),
         fast_stage_iterations=batch.fast_stage_iterations,
         fast_stage_converged=batch.fast_stage_converged,
         full_correction_iterations=batch.full_correction_iterations,
@@ -228,7 +241,7 @@ def diagnosis_bounds(
         high: float | None
 
         if parameter.name == AEROSOL_OPTICAL_DEPTH:
-            low, high = 0.0, 2.0
+            low, high = DIAGNOSIS_AOD_LOWER, 2.0
         elif parameter.name == AEROSOL_LAYER_MID_PRESSURE_HPA:
             low, high = 50.0, float(case.surface.pressure_hpa)
         else:
@@ -292,7 +305,7 @@ def linspace(low: float, high: float, count: int) -> tuple[float, ...]:
 def numeric_stats(values: Sequence[float | int]) -> dict[str, float]:
     """Return small finite stats for display payloads."""
 
-    parsed = [float(value) for value in values]
+    parsed = [float(value) for value in values if math.isfinite(float(value))]
 
     if not parsed:
         return {"min": math.nan, "median": math.nan, "mean": math.nan, "max": math.nan}

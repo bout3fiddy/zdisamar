@@ -64,6 +64,9 @@ class RetrievalDiagnosisFigure:
             "height": self.height,
             "cells": self.cells,
             "runs": len(self.diagnosis.start_state),
+            "failed_starts": sum(
+                1 for status in self.diagnosis.resolved_start_status() if status != "ok"
+            ),
             "state_names": list(self.diagnosis.state_names),
         }
 
@@ -110,6 +113,7 @@ class RetrievalDiagnosisFigure:
             f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
             ".density-cell { shape-rendering: crispEdges; }"
             ".diagnosis-start { fill: white; stroke: #1f77b4; stroke-width: 1; opacity: 0.42; }"
+            ".diagnosis-bad-start { stroke: #b00020; stroke-width: 1.6; opacity: 0.78; }"
             ".diagnosis-end { fill: #111111; opacity: 0.58; }"
             ".diagnosis-result { fill: none; stroke: #111111; stroke-width: 2.2; }"
             "</style>"
@@ -197,7 +201,15 @@ def trajectory_density(diagnosis: RetrievalDiagnosis, cells: int) -> list[list[f
     x_span = x_high - x_low
     y_span = y_high - y_low
 
-    for start, end in zip(diagnosis.start_state, diagnosis.retrieved_state, strict=True):
+    for start, end, status in zip(
+        diagnosis.start_state,
+        diagnosis.retrieved_state,
+        diagnosis.resolved_start_status(),
+        strict=True,
+    ):
+        if status != "ok" or not finite_point(end):
+            continue
+
         start_x, start_y = start
         end_x, end_y = end
         normalized_length = max(abs(end_x - start_x) / x_span, abs(end_y - start_y) / y_span)
@@ -243,9 +255,9 @@ def density_color(normalized: float) -> tuple[str, float]:
 
     t = max(0.0, min(1.0, normalized)) ** 0.58
     red = 255
-    green = round(245 * (1.0 - t) + 42 * t)
-    blue = round(212 * (1.0 - t) + 35 * t)
-    opacity = 0.10 + 0.78 * t
+    green = round(216 * (1.0 - t) + 42 * t)
+    blue = round(150 * (1.0 - t) + 35 * t)
+    opacity = 0.28 + 0.66 * t
 
     return f"rgb({red},{green},{blue})", opacity
 
@@ -259,10 +271,24 @@ def trajectory_marker_svg(
 
     elements = []
 
-    for start in diagnosis.start_state:
-        elements.append(point_svg(start, x_domain, y_domain, "diagnosis-start", 2.0))
+    for start, status in zip(
+        diagnosis.start_state,
+        diagnosis.resolved_start_status(),
+        strict=True,
+    ):
+        if status == "ok":
+            elements.append(point_svg(start, x_domain, y_domain, "diagnosis-start", 2.0))
+        else:
+            elements.extend(bad_start_svg(start, x_domain, y_domain))
 
-    for end in diagnosis.retrieved_state:
+    for end, status in zip(
+        diagnosis.retrieved_state,
+        diagnosis.resolved_start_status(),
+        strict=True,
+    ):
+        if status != "ok" or not finite_point(end):
+            continue
+
         elements.append(point_svg(end, x_domain, y_domain, "diagnosis-end", 2.2))
 
     result = diagnosis.result_state
@@ -278,6 +304,30 @@ def trajectory_marker_svg(
     )
 
     return elements
+
+
+def finite_point(point: Sequence[float]) -> bool:
+    """Return whether a plotted state-space point is finite."""
+
+    return all(math.isfinite(float(value)) for value in point)
+
+
+def bad_start_svg(
+    point: Sequence[float],
+    x_domain: tuple[float, float],
+    y_domain: tuple[float, float],
+) -> list[str]:
+    """Render one failed start marker."""
+
+    x = scale_value(point[0], x_domain, 0.0, float(PANEL_WIDTH))
+    y = scale_value(point[1], y_domain, float(PANEL_HEIGHT), 0.0)
+
+    return [
+        f'<line class="diagnosis-bad-start" x1="{x - 4:.3f}" x2="{x + 4:.3f}" '
+        f'y1="{y - 4:.3f}" y2="{y + 4:.3f}" />',
+        f'<line class="diagnosis-bad-start" x1="{x - 4:.3f}" x2="{x + 4:.3f}" '
+        f'y1="{y + 4:.3f}" y2="{y - 4:.3f}" />',
+    ]
 
 
 def point_svg(
@@ -345,15 +395,18 @@ def axis_svg(
             '<text class="legend-label" x="18" y="0">start</text>',
             '<circle class="diagnosis-end" cx="76" cy="-4" r="3" />',
             '<text class="legend-label" x="88" y="0">retrieved</text>',
+            ('<line class="diagnosis-bad-start" x1="174" x2="182" y1="-8" y2="0" />'),
+            ('<line class="diagnosis-bad-start" x1="174" x2="182" y1="0" y2="-8" />'),
+            '<text class="legend-label" x="192" y="0">failed start</text>',
             (
-                f'<line class="diagnosis-result" x1="182" x2="198" '
+                f'<line class="diagnosis-result" x1="306" x2="322" '
                 f'y1="-4" y2="-4" stroke-dasharray="{dash_values(())}" />'
             ),
             (
-                f'<line class="diagnosis-result" x1="190" x2="190" '
+                f'<line class="diagnosis-result" x1="314" x2="314" '
                 f'y1="-12" y2="4" stroke-dasharray="{dash_values(())}" />'
             ),
-            '<text class="legend-label" x="208" y="0">accepted result</text>',
+            '<text class="legend-label" x="332" y="0">accepted result</text>',
             "</g>",
         ]
     )
