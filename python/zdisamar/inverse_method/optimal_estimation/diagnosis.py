@@ -1,11 +1,10 @@
 """Multi-start optimal-estimation diagnosis objects."""
 
-import copy
 import math
 import os
 import statistics
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +12,12 @@ from ... import rtm
 from ...display import NotebookDisplay, PrettyMapping
 from ...input.wavelength_band.o2a import O2AInput
 from .retrieval import Measurement, RetrievalControls
-from .state_vector import StateName, StateVector
+from .state_vector import (
+    AEROSOL_LAYER_MID_PRESSURE_HPA,
+    AEROSOL_OPTICAL_DEPTH,
+    StateName,
+    StateVector,
+)
 
 
 @dataclass(frozen=True)
@@ -112,22 +116,21 @@ def diagnose_retrieval(
     result_state: Sequence[float],
     result_initial_state: Sequence[float] | None,
     controls: RetrievalControls | None,
-    start_count: int = 100,
+    n: int = 100,
     batch_workers: int | None = None,
-    bounds: Mapping[StateName, tuple[float, float]] | None = None,
     cache: rtm.SessionCache | None = None,
     start_rows: Sequence[Sequence[float]] | None = None,
 ) -> RetrievalDiagnosis:
     """Run a same-scene multi-start sweep using the native batch path."""
 
-    if start_count <= 0:
-        raise ValueError("start_count must be positive")
+    if n <= 0:
+        raise ValueError("n must be positive")
 
-    axes = diagnosis_bounds(state_vector, bounds or {})
+    axes = diagnosis_bounds(case, state_vector)
     active_start_rows = (
         tuple(tuple(float(value) for value in row) for row in start_rows)
         if start_rows is not None
-        else diagnosis_start_grid(axes, start_count)
+        else diagnosis_start_grid(axes, n)
     )
 
     if not active_start_rows:
@@ -213,16 +216,21 @@ def native_worker_ceiling() -> int:
 
 
 def diagnosis_bounds(
+    case: O2AInput,
     state_vector: StateVector,
-    supplied: Mapping[StateName, tuple[float, float]],
 ) -> tuple[tuple[float, float], ...]:
-    """Resolve finite start bounds for each state-vector coordinate."""
+    """Resolve the diagnosis domain for each state-vector coordinate."""
 
     axes = []
 
     for parameter in state_vector.parameters:
-        if parameter.name in supplied:
-            low, high = supplied[parameter.name]
+        low: float | None
+        high: float | None
+
+        if parameter.name == AEROSOL_OPTICAL_DEPTH:
+            low, high = 0.0, 2.0
+        elif parameter.name == AEROSOL_LAYER_MID_PRESSURE_HPA:
+            low, high = 50.0, float(case.surface.pressure_hpa)
         else:
             low = parameter.lower
             high = parameter.upper
@@ -230,7 +238,7 @@ def diagnosis_bounds(
         if low is None or high is None:
             raise ValueError(
                 f"diagnosis start bounds for {parameter.name!r} must be finite; "
-                "pass bounds={name: (low, high)} or set parameter lower/upper"
+                "set parameter lower/upper"
             )
 
         low = float(low)
@@ -279,26 +287,6 @@ def linspace(low: float, high: float, count: int) -> tuple[float, ...]:
     step = (high - low) / (count - 1)
 
     return tuple(low + index * step for index in range(count))
-
-
-def state_vector_for_start(
-    state_vector: StateVector,
-    start: Sequence[float],
-) -> StateVector:
-    """Use one start row as both initial state and prior for the sweep."""
-
-    if len(start) != len(state_vector.parameters):
-        raise ValueError("diagnosis start length does not match state vector")
-
-    parameters = []
-
-    for parameter, value in zip(state_vector.parameters, start, strict=True):
-        updated = copy.copy(parameter)
-        object.__setattr__(updated, "initial", float(value))
-        object.__setattr__(updated, "prior", float(value))
-        parameters.append(updated)
-
-    return StateVector(tuple(parameters))
 
 
 def numeric_stats(values: Sequence[float | int]) -> dict[str, float]:

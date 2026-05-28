@@ -235,12 +235,12 @@ def assert_optimal_estimation_diagnosis_display() -> None:
 
     calls = 0
 
-    def diagnosis_factory(*, start_count: int = 100):
+    def diagnosis_factory(*, n: int = 100):
 
         nonlocal calls
         calls += 1
 
-        return {"start_count": start_count}
+        return {"n": n}
 
     result = Result(
         state_names=("aerosol_optical_depth",),
@@ -252,8 +252,8 @@ def assert_optimal_estimation_diagnosis_display() -> None:
         averaging_kernel=((1.0,),),
         diagnosis_factory=diagnosis_factory,
     )
-    diagnosis = result.diagnose(start_count=3)
-    assert diagnosis == {"start_count": 3}
+    diagnosis = result.diagnose(n=3)
+    assert diagnosis == {"n": 3}
     assert result.diagnosis is diagnosis
     assert result.diagnose() is diagnosis
     assert calls == 1
@@ -285,10 +285,10 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
     from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
     from zdisamar.inverse_method.optimal_estimation.state_vector import (
+        AerosolLayerMidPressure,
         AerosolOpticalDepth,
         StateVector,
         StateVectorParameter,
-        SurfaceAlbedo,
     )
 
     state_vector = StateVector(
@@ -299,15 +299,11 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
                     initial=0.2,
                     prior=0.2,
                     prior_uncertainty=0.5,
-                    lower=0.1,
-                    upper=2.0,
                 ),
-                SurfaceAlbedo(
-                    initial=0.3,
-                    prior=0.3,
-                    prior_uncertainty=0.2,
-                    lower=0.05,
-                    upper=0.8,
+                AerosolLayerMidPressure(
+                    initial=600.0,
+                    prior=600.0,
+                    prior_uncertainty=150.0,
                 ),
             ),
         )
@@ -319,7 +315,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     )
     batch = BatchResult(
         state_names=state_vector.names,
-        state=((0.2, 0.3),) * 9,
+        state=((0.2, 600.0),) * 9,
         iterations=(1,) * 9,
         converged=(True,) * 9,
         measurement=measurement,
@@ -347,20 +343,23 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         ),
     ):
         diagnosis = diagnose_retrieval(
-            case=cast(O2AInput, object()),
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 0.3),
-            result_initial_state=(0.2, 0.3),
+            result_state=(0.2, 600.0),
+            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
-            start_count=9,
+            n=9,
         )
 
     assert diagnosis.batch_workers == 2
     assert diagnosis.native_worker_limit == 10
     assert calls[0]["batch_workers"] == 2
     assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
-    assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
+    start_rows = cast(tuple[tuple[float, ...], ...], calls[0]["start_rows"])
+    assert len(start_rows) == 9
+    assert start_rows[0] == (0.0, 50.0)
+    assert start_rows[-1] == (2.0, 900.0)
 
     calls.clear()
 
@@ -369,13 +368,13 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         side_effect=diagnosis_batch,
     ):
         explicit = diagnose_retrieval(
-            case=cast(O2AInput, object()),
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 0.3),
-            result_initial_state=(0.2, 0.3),
+            result_state=(0.2, 600.0),
+            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
-            start_count=9,
+            n=9,
             batch_workers=2,
         )
 

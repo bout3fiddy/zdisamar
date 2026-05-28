@@ -17,7 +17,7 @@ from ...output.tables import AtmosphericBudget
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
-from .state_vector import StateName, StateVector
+from .state_vector import StateVector
 from .state_vector.pressure_altitude_profile import PressureAltitudeProfile
 
 FULL_CORRECTION_WINDOW_NM = (762.0, 768.0)
@@ -1068,9 +1068,7 @@ def attach_diagnosis(
 
     def diagnose(
         *,
-        start_count: int = 100,
-        batch_workers: int | None = None,
-        bounds: Mapping[StateName, tuple[float, float]] | None = None,
+        n: int = 100,
         cache: rtm.SessionCache | None = None,
     ) -> object:
 
@@ -1083,9 +1081,7 @@ def attach_diagnosis(
             result_state=result_state,
             result_initial_state=result_initial_state,
             controls=controls,
-            start_count=start_count,
-            batch_workers=batch_workers,
-            bounds=bounds,
+            n=n,
             cache=cache,
         )
 
