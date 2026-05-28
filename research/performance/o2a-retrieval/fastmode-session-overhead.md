@@ -686,3 +686,69 @@ correction adds one full-physics correction iteration to every start.  The
 current native `diagnose()` boundary is faster than repeating the public
 `retrieve()` call over the same starts, but the remaining cost is still native
 RTM/Jacobian work rather than Python request construction.
+
+## 2026-05-28 Rejected Single-Boundary Probes
+
+These probes were run against the public `Result.diagnose()`/native batch
+boundary after the threshold-30 retune.  None should be promoted without new
+evidence because each either regressed the same workload or failed the retained
+accuracy gate.
+
+Scene 008, 25 starts, `ZDISAMAR_WORKER_LIMIT=10`, auto-equivalent
+`batch_workers=2`:
+
+```text
+baseline sparse correction: 7.501 s
+baseline fast-stage-only:  5.003 s
+
+old qseries pivot-offset patch:
+  sparse correction: 8.379 s
+  fast-stage-only:  5.516 s
+
+summary-only diagnostic accumulation gate:
+  sparse correction: 7.604 s
+  fast-stage-only:  5.081 s
+
+fastmode RTM/adaptive-grid controls applied to sparse correction:
+  sparse correction: 10.265 s
+```
+
+Full-grid worker scan, scene 008, 100 starts:
+
+```text
+fast-stage-only batch_workers=1:  22.912 s
+fast-stage-only batch_workers=2:  20.359 s
+fast-stage-only batch_workers=3:  20.587 s
+fast-stage-only batch_workers=4:  21.790 s
+fast-stage-only batch_workers=5:  20.446 s
+fast-stage-only batch_workers=8:  20.554 s
+fast-stage-only batch_workers=10: 21.354 s
+
+sparse correction batch_workers=1: 33.439 s
+sparse correction batch_workers=2: 30.130 s
+sparse correction batch_workers=3: 30.233 s
+sparse correction batch_workers=5: 30.555 s
+sparse correction batch_workers=8: 30.678 s
+```
+
+Sampling and convergence probes:
+
+```text
+10-row and 11-row fast-stage subsets:
+  faster on the stress subset, but every tested subset worsened either AOD or
+  pressure against the same-run 12-row stress envelope
+
+3-row final correction:
+  faster on the stress subset, but worsened max AOD delta
+
+state_vector_convergence_threshold=40:
+  scene-008 diagnosis improved only 30.300 s -> 29.795 s
+  retained 100-case validation failed:
+    AOD max_abs_delta=9.155e-04 > 5.500e-04
+    pressure max_abs_delta=1.444 hPa > 0.700 hPa
+```
+
+Conclusion: after the current batching and threshold-30 changes, the remaining
+single-digit target needs a deeper reduction in native RTM/Jacobian work per OE
+evaluation, not another wrapper-level scheduling tweak or a looser sparse-row
+selector.
