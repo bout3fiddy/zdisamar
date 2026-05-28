@@ -7,6 +7,7 @@ const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
 const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
+const Telemetry = @import("../forward_model/calculation_telemetry.zig");
 const Trace = @import("../forward_model/performance_trace.zig");
 const work_partition = @import("../forward_model/work_partition.zig");
 const algebra = @import("algebra.zig");
@@ -167,12 +168,12 @@ pub const MeasurementWorkspace = struct {
 
 // Reused fixed-size state-space scratch. The spectral dimension is never stored here.
 // layout(64-bit):
-//   size: 560 B, align: 8 B
-//   field storage: vectors=128 B across 8 x [3]f64, matrices=432 B across 6 x 3x3 f64; padding: 0 B
+//   size: 416 B, align: 8 B
+//   field storage: vectors=128 B across 8 x [3]f64, matrices=288 B across 4 x 3x3 f64; padding: 0 B
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 9 cache line(s) at 64 B per line
+//   cache span: 7 cache line(s) at 64 B per line
 //   count: one stack value per active retrieval
-//   footprint: per instance = 560 B (0.547 KiB)
+//   footprint: per instance = 416 B (0.406 KiB)
 pub const IterationWorkspace = struct {
     sqrt_sa: Vector = algebra.zeroVector(),
     sqrt_inv_sa: Vector = algebra.zeroVector(),
@@ -186,8 +187,6 @@ pub const IterationWorkspace = struct {
     jt_invse_j: Matrix = algebra.zeroMatrix(),
     eigenvectors: Matrix = algebra.zeroMatrix(),
     posterior_precision: Matrix = algebra.zeroMatrix(),
-    posterior_covariance: Matrix = algebra.zeroMatrix(),
-    averaging_kernel: Matrix = algebra.zeroMatrix(),
 };
 
 // Native result storage retained behind the C result handle.
@@ -583,6 +582,10 @@ fn runO2ABatchInto(
     if (batch.iteration_count.len != run_count or batch.converged.len != run_count) return error.InvalidStateSpec;
     if (batch.state.len != run_count * state_template.len) return error.InvalidStateSpec;
 
+    const previous_context = Telemetry.currentContext();
+    Telemetry.setContext(telemetryContextWithScene(previous_context, base_input.scene_id));
+    defer Telemetry.setContext(previous_context);
+
     const effective_worker_count = @min(run_count, @max(@as(usize, 1), batch_worker_count));
     if (effective_worker_count == 1) {
         var prepared_case = try RetrievalPreparedCase.init(
@@ -622,6 +625,72 @@ fn runO2ABatchInto(
         batch,
         effective_worker_count,
     );
+}
+
+fn telemetryContextWithScene(context: Telemetry.Context, scene_id: []const u8) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    if (resolved.scene_hash == -1) resolved.scene_hash = telemetryHashBytes(scene_id);
+    return resolved;
+}
+
+fn telemetryContextWithStage(context: Telemetry.Context, stage: Telemetry.Stage) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    resolved.stage = stage;
+    return resolved;
+}
+
+fn telemetryContextWithStartState(context: Telemetry.Context, start_index: usize, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = telemetryContextWithState(context, state);
+    resolved.start_index = telemetryIndex(start_index);
+    return resolved;
+}
+
+fn telemetryContextWithEvaluationState(context: Telemetry.Context, iteration_index: usize, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = telemetryContextWithState(context, state);
+    resolved.iteration_index = telemetryIndex(iteration_index);
+    resolved.forward_evaluation_index = telemetryIndex(iteration_index);
+    return resolved;
+}
+
+fn telemetryContextWithState(context: Telemetry.Context, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    resolved.state_hash = telemetryHashFloats(state);
+    for (0..resolved.state_values.len) |index| {
+        resolved.state_values[index] = if (index < state.len) state[index] else std.math.nan(f64);
+    }
+    return resolved;
+}
+
+fn telemetryHashBytes(bytes: []const u8) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    var hasher = std.hash.Wyhash.init(0x6f65_5f6d_7374_6172);
+    hasher.update(bytes);
+    return signedTelemetryHash(hasher.final());
+}
+
+fn telemetryHashFloats(values: []const f64) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    var hasher = std.hash.Wyhash.init(0x6f65_5f73_7461_7465);
+    for (values) |value| {
+        var bits = @as(u64, @bitCast(value));
+        hasher.update(std.mem.asBytes(&bits));
+    }
+    return signedTelemetryHash(hasher.final());
+}
+
+fn signedTelemetryHash(hash: u64) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    return @as(i64, @bitCast(hash));
+}
+
+fn telemetryIndex(value: usize) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    return std.math.cast(i64, value) orelse std.math.maxInt(i64);
 }
 
 fn validateBatchInputs(
@@ -676,20 +745,25 @@ pub fn runO2AFastmodeBatch(
         .converged = result.fast_stage_converged,
         .state = result.state,
     };
-    try runO2ABatchInto(
-        allocator,
-        fast_input,
-        fast_measurement_wavelength_nm,
-        fast_measurement_reflectance,
-        fast_measurement_variance,
-        fast_state_template,
-        initial_states,
-        prior_states,
-        fast_forward_storage,
-        fast_controls,
-        batch_worker_count,
-        &fast_output,
-    );
+    const fastmode_context = Telemetry.currentContext();
+    {
+        Telemetry.setContext(telemetryContextWithStage(fastmode_context, .fast));
+        defer Telemetry.setContext(fastmode_context);
+        try runO2ABatchInto(
+            allocator,
+            fast_input,
+            fast_measurement_wavelength_nm,
+            fast_measurement_reflectance,
+            fast_measurement_variance,
+            fast_state_template,
+            initial_states,
+            prior_states,
+            fast_forward_storage,
+            fast_controls,
+            batch_worker_count,
+            &fast_output,
+        );
+    }
 
     var correction_output = BatchOutput{
         .run_count = run_count,
@@ -698,20 +772,24 @@ pub fn runO2AFastmodeBatch(
         .converged = result.full_correction_converged,
         .state = result.state,
     };
-    try runO2ABatchInto(
-        allocator,
-        correction_input,
-        correction_measurement_wavelength_nm,
-        correction_measurement_reflectance,
-        correction_measurement_variance,
-        correction_state_template,
-        result.state,
-        correction_prior_states,
-        correction_forward_storage,
-        correction_controls,
-        batch_worker_count,
-        &correction_output,
-    );
+    {
+        Telemetry.setContext(telemetryContextWithStage(fastmode_context, .correction));
+        defer Telemetry.setContext(fastmode_context);
+        try runO2ABatchInto(
+            allocator,
+            correction_input,
+            correction_measurement_wavelength_nm,
+            correction_measurement_reflectance,
+            correction_measurement_variance,
+            correction_state_template,
+            result.state,
+            correction_prior_states,
+            correction_forward_storage,
+            correction_controls,
+            batch_worker_count,
+            &correction_output,
+        );
+    }
 
     for (0..run_count) |run_index| {
         result.iteration_count[run_index] =
@@ -732,17 +810,19 @@ fn runO2ABatchRange(
     start_run: usize,
     end_run: usize,
 ) !void {
-    var run_specs_buffer: [max_state_count]StateSpec = undefined;
+    const range_context = Telemetry.currentContext();
     for (start_run..end_run) |run_index| {
         const state_offset = run_index * state_template.len;
-        for (state_template, 0..) |template, state_index| {
-            var spec = template;
-            spec.initial = initial_states[state_offset + state_index];
-            spec.prior = prior_states[state_offset + state_index];
-            run_specs_buffer[state_index] = spec;
-        }
-        const run_specs = run_specs_buffer[0..state_template.len];
-        const summary = try runPreparedO2ASummary(allocator, prepared_case, run_specs, controls);
+        const summary = try runPreparedO2AStartSummary(
+            allocator,
+            prepared_case,
+            state_template,
+            initial_states[state_offset .. state_offset + state_template.len],
+            prior_states[state_offset .. state_offset + state_template.len],
+            controls,
+            run_index + 1,
+            range_context,
+        );
 
         batch.iteration_count[run_index] = summary.iteration_count;
         batch.converged[run_index] = if (summary.converged) 1 else 0;
@@ -752,15 +832,52 @@ fn runO2ABatchRange(
     }
 }
 
+fn runPreparedO2AStartSummary(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_template: []const StateSpec,
+    initial_state: []const f64,
+    prior_state: []const f64,
+    controls: Controls,
+    start_index: usize,
+    base_context: Telemetry.Context,
+) !RunSummary {
+    std.debug.assert(initial_state.len == state_template.len);
+    std.debug.assert(prior_state.len == state_template.len);
+    var run_specs_buffer: [max_state_count]StateSpec = undefined;
+    for (state_template, 0..) |template, state_index| {
+        var spec = template;
+        spec.initial = initial_state[state_index];
+        spec.prior = prior_state[state_index];
+        run_specs_buffer[state_index] = spec;
+    }
+
+    const previous_context = Telemetry.currentContext();
+    const start_context = telemetryContextWithStartState(
+        base_context,
+        start_index,
+        initial_state,
+    );
+    Telemetry.setContext(start_context);
+    defer Telemetry.setContext(previous_context);
+    return runPreparedO2ASummary(
+        allocator,
+        prepared_case,
+        run_specs_buffer[0..state_template.len],
+        controls,
+    );
+}
+
 // Worker descriptor for one contiguous slice of a native OE start batch.
-// layout(64-bit):
+// layout(product 64-bit):
 //   size: 224 B, align: 8 B
-//   field storage: 216 B across 15 fields; largest: slice descriptors=128 B across 8 slices; padding: 8 B
+//   field storage: 216 B across 15 product fields; largest: slice descriptors=128 B across 8 slices; padding: 8 B
 //   unused bits: 64 padding + 0 bool-storage slack = 64 bits
 //   out-of-line: all input slices borrow the batch request; batch points at caller-owned result buffers
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: native batch worker count, usually CPU-core bounded for multi-start diagnosis
 //   footprint: per instance = 224 B (0.219 KiB); each worker owns its prepared case and product storage while running
+//   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
 const BatchWorker = struct {
     allocator: Allocator,
     base_input: *const o2a_types.ResolvedVendorO2ACase,
@@ -774,6 +891,7 @@ const BatchWorker = struct {
     batch: *BatchOutput,
     queue: *work_partition.ChunkQueue,
     shared_forward_prefetch_pool: ?*std.Thread.Pool,
+    telemetry_context: Telemetry.Context,
     err: ?anyerror = null,
 };
 
@@ -796,11 +914,14 @@ fn runO2ABatchParallel(
     defer allocator.free(threads);
     var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
     var shared_forward_prefetch_pool_valid = false;
-    const shared_forward_prefetch_pool = initSharedForwardPrefetchPool(
-        allocator,
-        &shared_forward_prefetch_pool_storage,
-        &shared_forward_prefetch_pool_valid,
-    );
+    const shared_forward_prefetch_pool = if (worker_count > 1)
+        initSharedForwardPrefetchPool(
+            allocator,
+            &shared_forward_prefetch_pool_storage,
+            &shared_forward_prefetch_pool_valid,
+        )
+    else
+        null;
     defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
     // One-iteration correction batches are uniform enough that wider queue
@@ -808,6 +929,7 @@ fn runO2ABatchParallel(
     // one-start chunks so hard starts do not pin the tail.
     const batch_chunk_size: usize = if (controls.max_iterations == 1) 4 else 1;
     var queue = work_partition.ChunkQueue.init(batch.run_count, batch_chunk_size);
+    const telemetry_context = Telemetry.currentContext();
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
@@ -823,6 +945,7 @@ fn runO2ABatchParallel(
             .batch = batch,
             .queue = &queue,
             .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
+            .telemetry_context = telemetry_context,
         };
 
         if (worker_index + 1 < worker_count) {
@@ -852,6 +975,10 @@ fn runO2ABatchWorker(worker: *BatchWorker) void {
 }
 
 fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
+    const previous_context = Telemetry.currentContext();
+    Telemetry.setContext(worker.telemetry_context);
+    defer Telemetry.setContext(previous_context);
+
     var forward_storage: InstrumentGrid.ProductStorage = .{};
     forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
     defer forward_storage.deinit(worker.allocator);
@@ -950,12 +1077,7 @@ fn runPreparedO2ACore(
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
 
-    var final_posterior_precision = algebra.zeroMatrix();
-    for (0..state_specs.len) |index| {
-        final_posterior_precision[index][index] = 1.0 / state_space.variance[index];
-        scratch.posterior_covariance[index][index] = state_space.variance[index];
-        scratch.averaging_kernel[index][index] = 1.0;
-    }
+    var final_posterior_precision: Matrix = undefined;
 
     var converged = false;
     var iteration_count: usize = 0;
@@ -969,6 +1091,13 @@ fn runPreparedO2ACore(
 
         const previous = state;
         const evaluation = traced_evaluation: {
+            const previous_context = Telemetry.currentContext();
+            Telemetry.setContext(telemetryContextWithEvaluationState(
+                previous_context,
+                iteration_offset + 1,
+                previous[0..state_specs.len],
+            ));
+            defer Telemetry.setContext(previous_context);
             // instrumentation: trace zone
             // captures: RTM product and Jacobian evaluation wall time
             // why: keep forward-model cost separate from inverse-method linear algebra.

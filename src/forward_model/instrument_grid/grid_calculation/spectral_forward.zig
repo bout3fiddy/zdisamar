@@ -13,6 +13,7 @@ const Storage = @import("storage.zig");
 const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 const work_partition = @import("../../work_partition.zig");
+const Telemetry = @import("../../calculation_telemetry.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
@@ -135,14 +136,15 @@ const ForwardPrefetchErrorState = struct {
     }
 };
 
-// layout(64-bit):
+// layout(product 64-bit):
 //   size: 352 B, align: 8 B
-//   field storage: 352 B across 13 fields; largest: implementations=168 B, route=72 B, misses=16 B; padding: 0 B (0 bits)
+//   field storage: 352 B across 13 product fields; largest: implementations=168 B, route=72 B, misses=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors; referenced storage is not included in size
 //   cache span: 6 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 352 B (0.344 KiB); total also includes referenced storage above
+//   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,
@@ -157,6 +159,7 @@ const ForwardPrefetchWorker = struct {
     end_index: usize,
     queue: ?*work_partition.ChunkQueue = null,
     worker_index: usize = 0,
+    telemetry_context: Telemetry.Context,
 };
 
 fn radianceScaleFromForward(
@@ -330,26 +333,35 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                     &worker.profile_spectroscopy_caches[index]
                 else
                     null;
-                worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
-                    allocator,
-                    worker.scene,
-                    worker.route,
-                    worker.prepared,
-                    miss.wavelength_nm,
-                    worker.safe_span,
-                    worker.implementations,
-                    scratch.layer_inputs,
-                    scratch.source_interfaces,
-                    scratch.rtm_quadrature_levels,
-                    scratch.pseudo_spherical_samples,
-                    scratch.pseudo_spherical_level_starts,
-                    scratch.pseudo_spherical_level_altitudes,
-                    &scratch.support_carrier_cache,
-                    profile_spectroscopy_cache,
-                    &scratch.labos_workspace,
-                ) catch |err| {
-                    worker.error_state.store(err);
-                    return;
+                worker.results[index] = result: {
+                    const previous_context = Telemetry.currentContext();
+                    Telemetry.setContext(telemetrySampleContext(
+                        worker.telemetry_context,
+                        index + 1,
+                        miss.wavelength_nm,
+                    ));
+                    defer Telemetry.setContext(previous_context);
+                    break :result computeForwardSampleAtWavelengthWithScratch(
+                        allocator,
+                        worker.scene,
+                        worker.route,
+                        worker.prepared,
+                        miss.wavelength_nm,
+                        worker.safe_span,
+                        worker.implementations,
+                        scratch.layer_inputs,
+                        scratch.source_interfaces,
+                        scratch.rtm_quadrature_levels,
+                        scratch.pseudo_spherical_samples,
+                        scratch.pseudo_spherical_level_starts,
+                        scratch.pseudo_spherical_level_altitudes,
+                        &scratch.support_carrier_cache,
+                        profile_spectroscopy_cache,
+                        &scratch.labos_workspace,
+                    ) catch |err| {
+                        worker.error_state.store(err);
+                        return;
+                    };
                 };
             }
         }
@@ -385,9 +397,9 @@ pub fn prefetchForwardSamples(
     thread_pool: ?*std.Thread.Pool,
 ) Error!void {
     if (misses.len == 0) return;
-
     const preferred_worker_count = preferredForwardWorkerCount(misses.len);
     const worker_count = preferred_worker_count;
+
     // instrumentation: trace counter
     // captures: selected forward worker count
     // why: tie prefetch timing to the concurrency shape chosen for this miss batch.
@@ -397,6 +409,8 @@ pub fn prefetchForwardSamples(
     // why: distinguish fewer computations from cheaper computation per miss.
     Trace.plotU("high_resolution_misses", @intCast(misses.len));
 
+    const telemetry_context = Telemetry.currentContext();
+
     if (worker_count == 1) {
         var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
         defer scratch.deinit(allocator);
@@ -405,24 +419,33 @@ pub fn prefetchForwardSamples(
                 &profile_spectroscopy_caches[miss_index]
             else
                 null;
-            result.* = try computeForwardSampleAtWavelengthWithScratch(
-                allocator,
-                scene,
-                route,
-                prepared,
-                miss.wavelength_nm,
-                safe_span,
-                implementations,
-                scratch.layer_inputs,
-                scratch.source_interfaces,
-                scratch.rtm_quadrature_levels,
-                scratch.pseudo_spherical_samples,
-                scratch.pseudo_spherical_level_starts,
-                scratch.pseudo_spherical_level_altitudes,
-                &scratch.support_carrier_cache,
-                profile_spectroscopy_cache,
-                &scratch.labos_workspace,
-            );
+            result.* = result_value: {
+                const previous_context = Telemetry.currentContext();
+                Telemetry.setContext(telemetrySampleContext(
+                    telemetry_context,
+                    miss_index + 1,
+                    miss.wavelength_nm,
+                ));
+                defer Telemetry.setContext(previous_context);
+                break :result_value try computeForwardSampleAtWavelengthWithScratch(
+                    allocator,
+                    scene,
+                    route,
+                    prepared,
+                    miss.wavelength_nm,
+                    safe_span,
+                    implementations,
+                    scratch.layer_inputs,
+                    scratch.source_interfaces,
+                    scratch.rtm_quadrature_levels,
+                    scratch.pseudo_spherical_samples,
+                    scratch.pseudo_spherical_level_starts,
+                    scratch.pseudo_spherical_level_altitudes,
+                    &scratch.support_carrier_cache,
+                    profile_spectroscopy_cache,
+                    &scratch.labos_workspace,
+                );
+            };
         }
         return;
     }
@@ -446,6 +469,7 @@ pub fn prefetchForwardSamples(
             .start_index = range.start,
             .end_index = range.end,
             .worker_index = worker_index,
+            .telemetry_context = telemetry_context,
         };
     }
 
@@ -484,4 +508,12 @@ pub fn prefetchForwardSamples(
 // PUB FOR TEST: re-exported via measurement/internal.zig.
 pub fn preferredForwardWorkerCount(miss_count: usize) usize {
     return work_partition.preferredWorkerCount(miss_count, min_parallel_forward_miss_count);
+}
+
+fn telemetrySampleContext(base: Telemetry.Context, sample_index: usize, wavelength_nm: f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return base;
+    var context = base;
+    context.sample_index = std.math.cast(i64, sample_index) orelse std.math.maxInt(i64);
+    context.wavelength_nm = wavelength_nm;
+    return context;
 }

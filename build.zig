@@ -517,6 +517,34 @@ pub fn build(b: *std.Build) void {
     );
     calculation_telemetry_step.dependOn(&run_calculation_telemetry.step);
 
+    const fastmode_diagnosis_telemetry_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/fastmode_diagnosis_telemetry_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = calculation_telemetry_internal_module,
+            },
+            .{
+                .name = "calculation_telemetry_sink",
+                .module = calculation_telemetry_sink_module,
+            },
+        },
+    });
+    const fastmode_diagnosis_telemetry_exe = b.addExecutable(.{
+        .name = "fastmode-diagnosis-telemetry",
+        .root_module = fastmode_diagnosis_telemetry_module,
+    });
+    fastmode_diagnosis_telemetry_exe.root_module.linkSystemLibrary("z", .{});
+    const run_fastmode_diagnosis_telemetry = b.addRunArtifact(fastmode_diagnosis_telemetry_exe);
+    if (b.args) |args| run_fastmode_diagnosis_telemetry.addArgs(args);
+    const fastmode_diagnosis_telemetry_step = b.step(
+        "fastmode-diagnosis-telemetry",
+        "Run the same-scene fastmode OE diagnosis telemetry harness",
+    );
+    fastmode_diagnosis_telemetry_step.dependOn(&run_fastmode_diagnosis_telemetry.step);
+
     // instrumentation: perturbation sensitivity
     // captures: final-output deltas and changed hook counts
     // why: test pruning ideas without product code paths.
@@ -632,6 +660,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
     check_step.dependOn(&calculation_telemetry_exe.step);
+    check_step.dependOn(&fastmode_diagnosis_telemetry_exe.step);
     check_step.dependOn(&perturbation_sensitivity_exe.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_internal_tests.step);

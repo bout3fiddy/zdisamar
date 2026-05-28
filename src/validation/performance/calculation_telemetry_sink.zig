@@ -9,6 +9,29 @@ pub const available = true;
 const nan = std.math.nan(f64);
 const missing_index: i64 = -1;
 
+pub const Stage = enum(i64) {
+    none = 0,
+    fast = 1,
+    correction = 2,
+};
+
+pub const max_state_value_count = 3;
+
+pub const Context = struct {
+    scene_index: i64 = missing_index,
+    scene_hash: i64 = missing_index,
+    start_index: i64 = missing_index,
+    stage: Stage = .none,
+    iteration_index: i64 = missing_index,
+    forward_evaluation_index: i64 = missing_index,
+    sample_index: i64 = missing_index,
+    state_hash: i64 = missing_index,
+    state_values: [max_state_value_count]f64 = [_]f64{nan} ** max_state_value_count,
+    wavelength_nm: f64 = nan,
+};
+
+threadlocal var active_context: Context = .{};
+
 const Expr = enum(u16) {
     sampling_kernel_shape = 1,
     forward_miss_reuse = 2,
@@ -81,6 +104,17 @@ pub const RowCounts = struct {
 const scalar_columns = [_]Parquet.ColumnDef{
     .{ .name = "event_index", .kind = .int64 },
     .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "scene_index", .kind = .int64 },
+    .{ .name = "scene_hash", .kind = .int64 },
+    .{ .name = "start_index", .kind = .int64 },
+    .{ .name = "stage", .kind = .int64 },
+    .{ .name = "iteration_index", .kind = .int64 },
+    .{ .name = "forward_evaluation_index", .kind = .int64 },
+    .{ .name = "sample_index", .kind = .int64 },
+    .{ .name = "state_hash", .kind = .int64 },
+    .{ .name = "state_0", .kind = .double },
+    .{ .name = "state_1", .kind = .double },
+    .{ .name = "state_2", .kind = .double },
     .{ .name = "wavelength_nm", .kind = .double },
     .{ .name = "layer_index", .kind = .int64 },
     .{ .name = "fourier_index", .kind = .int64 },
@@ -104,6 +138,17 @@ const scalar_columns = [_]Parquet.ColumnDef{
 const reduction_columns = [_]Parquet.ColumnDef{
     .{ .name = "event_index", .kind = .int64 },
     .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "scene_index", .kind = .int64 },
+    .{ .name = "scene_hash", .kind = .int64 },
+    .{ .name = "start_index", .kind = .int64 },
+    .{ .name = "stage", .kind = .int64 },
+    .{ .name = "iteration_index", .kind = .int64 },
+    .{ .name = "forward_evaluation_index", .kind = .int64 },
+    .{ .name = "sample_index", .kind = .int64 },
+    .{ .name = "state_hash", .kind = .int64 },
+    .{ .name = "state_0", .kind = .double },
+    .{ .name = "state_1", .kind = .double },
+    .{ .name = "state_2", .kind = .double },
     .{ .name = "wavelength_nm", .kind = .double },
     .{ .name = "layer_index", .kind = .int64 },
     .{ .name = "fourier_index", .kind = .int64 },
@@ -125,6 +170,17 @@ const reduction_columns = [_]Parquet.ColumnDef{
 const decision_columns = [_]Parquet.ColumnDef{
     .{ .name = "event_index", .kind = .int64 },
     .{ .name = "expr_id", .kind = .int32 },
+    .{ .name = "scene_index", .kind = .int64 },
+    .{ .name = "scene_hash", .kind = .int64 },
+    .{ .name = "start_index", .kind = .int64 },
+    .{ .name = "stage", .kind = .int64 },
+    .{ .name = "iteration_index", .kind = .int64 },
+    .{ .name = "forward_evaluation_index", .kind = .int64 },
+    .{ .name = "sample_index", .kind = .int64 },
+    .{ .name = "state_hash", .kind = .int64 },
+    .{ .name = "state_0", .kind = .double },
+    .{ .name = "state_1", .kind = .double },
+    .{ .name = "state_2", .kind = .double },
     .{ .name = "wavelength_nm", .kind = .double },
     .{ .name = "layer_index", .kind = .int64 },
     .{ .name = "fourier_index", .kind = .int64 },
@@ -139,6 +195,8 @@ const decision_columns = [_]Parquet.ColumnDef{
     .{ .name = "work_if_taken", .kind = .int64 },
     .{ .name = "work_if_not_taken", .kind = .int64 },
 };
+
+const common_column_count: usize = 19;
 
 const catalog_columns = [_]Parquet.ColumnDef{
     .{ .name = "expr_id", .kind = .int32 },
@@ -444,60 +502,76 @@ const Collector = struct {
     fn writeScalar(self: *Collector, expr: Expr, coord: Coordinates, values: ScalarValues) !void {
         const result_abs = absOrNan(values.result);
         try self.writeCommon(&self.scalar_table, expr, coord);
-        try self.scalar_table.appendDouble(8, values.input_0);
-        try self.scalar_table.appendDouble(9, values.input_1);
-        try self.scalar_table.appendDouble(10, values.input_2);
-        try self.scalar_table.appendDouble(11, values.input_3);
-        try self.scalar_table.appendDouble(12, values.param_0);
-        try self.scalar_table.appendDouble(13, values.param_1);
-        try self.scalar_table.appendDouble(14, values.result);
-        try self.scalar_table.appendDouble(15, result_abs);
-        try self.scalar_table.appendDouble(16, relativeScale(values));
-        try self.scalar_table.appendInt32(17, boolInt(values.clamped));
-        try self.scalar_table.appendInt32(18, boolInt(values.skipped));
-        try self.scalar_table.appendInt32(19, boolInt(std.math.isFinite(values.result)));
+        try self.scalar_table.appendDouble(common_column_count + 0, values.input_0);
+        try self.scalar_table.appendDouble(common_column_count + 1, values.input_1);
+        try self.scalar_table.appendDouble(common_column_count + 2, values.input_2);
+        try self.scalar_table.appendDouble(common_column_count + 3, values.input_3);
+        try self.scalar_table.appendDouble(common_column_count + 4, values.param_0);
+        try self.scalar_table.appendDouble(common_column_count + 5, values.param_1);
+        try self.scalar_table.appendDouble(common_column_count + 6, values.result);
+        try self.scalar_table.appendDouble(common_column_count + 7, result_abs);
+        try self.scalar_table.appendDouble(common_column_count + 8, relativeScale(values));
+        try self.scalar_table.appendInt32(common_column_count + 9, boolInt(values.clamped));
+        try self.scalar_table.appendInt32(common_column_count + 10, boolInt(values.skipped));
+        try self.scalar_table.appendInt32(common_column_count + 11, boolInt(std.math.isFinite(values.result)));
         try self.scalar_table.finishRow();
         self.scalar_rows += 1;
     }
 
     fn writeReduction(self: *Collector, expr: Expr, coord: Coordinates, values: ReductionValues) !void {
         try self.writeCommon(&self.reduction_table, expr, coord);
-        try self.reduction_table.appendInt64(8, index(values.term_count));
-        try self.reduction_table.appendInt64(9, index(values.nonzero_count));
-        try self.reduction_table.appendInt64(10, index(values.zero_count));
-        try self.reduction_table.appendDouble(11, values.min_term);
-        try self.reduction_table.appendDouble(12, values.max_term);
-        try self.reduction_table.appendDouble(13, values.sum);
-        try self.reduction_table.appendDouble(14, values.mean);
-        try self.reduction_table.appendDouble(15, values.l1_norm);
-        try self.reduction_table.appendDouble(16, values.l2_norm);
-        try self.reduction_table.appendDouble(17, values.result);
+        try self.reduction_table.appendInt64(common_column_count + 0, index(values.term_count));
+        try self.reduction_table.appendInt64(common_column_count + 1, index(values.nonzero_count));
+        try self.reduction_table.appendInt64(common_column_count + 2, index(values.zero_count));
+        try self.reduction_table.appendDouble(common_column_count + 3, values.min_term);
+        try self.reduction_table.appendDouble(common_column_count + 4, values.max_term);
+        try self.reduction_table.appendDouble(common_column_count + 5, values.sum);
+        try self.reduction_table.appendDouble(common_column_count + 6, values.mean);
+        try self.reduction_table.appendDouble(common_column_count + 7, values.l1_norm);
+        try self.reduction_table.appendDouble(common_column_count + 8, values.l2_norm);
+        try self.reduction_table.appendDouble(common_column_count + 9, values.result);
         try self.reduction_table.finishRow();
         self.reduction_rows += 1;
     }
 
     fn writeDecision(self: *Collector, expr: Expr, coord: Coordinates, values: DecisionValues) !void {
         try self.writeCommon(&self.decision_table, expr, coord);
-        try self.decision_table.appendDouble(8, values.lhs);
-        try self.decision_table.appendDouble(9, values.rhs);
-        try self.decision_table.appendDouble(10, values.threshold);
-        try self.decision_table.appendDouble(11, values.lhs - values.threshold);
-        try self.decision_table.appendInt32(12, boolInt(values.taken));
-        try self.decision_table.appendInt64(13, index(values.work_if_taken));
-        try self.decision_table.appendInt64(14, index(values.work_if_not_taken));
+        try self.decision_table.appendDouble(common_column_count + 0, values.lhs);
+        try self.decision_table.appendDouble(common_column_count + 1, values.rhs);
+        try self.decision_table.appendDouble(common_column_count + 2, values.threshold);
+        try self.decision_table.appendDouble(common_column_count + 3, values.lhs - values.threshold);
+        try self.decision_table.appendInt32(common_column_count + 4, boolInt(values.taken));
+        try self.decision_table.appendInt64(common_column_count + 5, index(values.work_if_taken));
+        try self.decision_table.appendInt64(common_column_count + 6, index(values.work_if_not_taken));
         try self.decision_table.finishRow();
         self.decision_rows += 1;
     }
 
     fn writeCommon(self: *Collector, table: *Parquet.TableWriter, expr: Expr, coord: Coordinates) !void {
+        const context = currentContext();
+        const wavelength_nm = if (std.math.isFinite(coord.wavelength_nm))
+            coord.wavelength_nm
+        else
+            context.wavelength_nm;
         try table.appendInt64(0, try self.nextEventIndex());
         try table.appendInt32(1, exprId(expr));
-        try table.appendDouble(2, coord.wavelength_nm);
-        try table.appendInt64(3, coord.layer_index);
-        try table.appendInt64(4, coord.fourier_index);
-        try table.appendInt64(5, coord.order_index);
-        try table.appendInt64(6, coord.state_index);
-        try table.appendInt64(7, coord.branch);
+        try table.appendInt64(2, context.scene_index);
+        try table.appendInt64(3, context.scene_hash);
+        try table.appendInt64(4, context.start_index);
+        try table.appendInt64(5, @intFromEnum(context.stage));
+        try table.appendInt64(6, context.iteration_index);
+        try table.appendInt64(7, context.forward_evaluation_index);
+        try table.appendInt64(8, context.sample_index);
+        try table.appendInt64(9, context.state_hash);
+        try table.appendDouble(10, context.state_values[0]);
+        try table.appendDouble(11, context.state_values[1]);
+        try table.appendDouble(12, context.state_values[2]);
+        try table.appendDouble(13, wavelength_nm);
+        try table.appendInt64(14, coord.layer_index);
+        try table.appendInt64(15, coord.fourier_index);
+        try table.appendInt64(16, coord.order_index);
+        try table.appendInt64(17, coord.state_index);
+        try table.appendInt64(18, coord.branch);
     }
 
     fn nextEventIndex(self: *Collector) !i64 {
@@ -537,6 +611,18 @@ pub fn setCollector(collector: *Collector) void {
 // why: stop hooks from writing after the harness closes files.
 pub fn clearCollector() void {
     active_collector_ptr.store(0, .release);
+}
+
+pub fn setContext(context: Context) void {
+    active_context = context;
+}
+
+pub fn currentContext() Context {
+    return active_context;
+}
+
+pub fn clearContext() void {
+    active_context = .{};
 }
 
 // instrumentation: calculation telemetry
