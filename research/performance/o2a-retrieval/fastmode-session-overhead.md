@@ -597,3 +597,31 @@ Interpretation: this is small by itself because the boundary is dominated by
 native RTM/Jacobian evaluations, but it keeps the Python API aligned with the
 intended native design: one diagnosis call, one prepared template, many start
 rows.
+
+## 2026-05-28 Auto Worker Cap Tightening
+
+Finding: after the row handoff, scene-008 worker scans still favored two
+outer start workers over three on the 10-core native prefetch boundary.  The
+third outer worker competes with the inner forward-prefetch pool more than it
+helps tail balance for this workload.
+
+Focused 25-start checks, `ZDISAMAR_WORKER_LIMIT=10`:
+
+```text
+fast-stage-only:
+  batch_workers=1: 6.056 s
+  batch_workers=2: 5.317 s
+  batch_workers=3: 5.400 s
+  batch_workers=4: 5.411 s
+
+sparse final correction:
+  batch_workers=1: 8.803 s
+  batch_workers=2: 8.068 s
+  batch_workers=3: 8.178 s
+  batch_workers=4: 8.257 s
+```
+
+Change: cap the automatic `Result.diagnose()` start-worker policy at two
+workers while leaving explicit `batch_workers=` unchanged.  This preserves the
+native prefetch worker cap and keeps the public diagnosis default on the faster
+measured boundary.

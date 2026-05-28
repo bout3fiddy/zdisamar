@@ -190,7 +190,7 @@ def diagnosis_batch_worker_count(start_count: int) -> int:
 def diagnosis_batch_worker_count_for_limit(start_count: int, native_worker_limit: int) -> int:
     """Choose start-level workers without hiding the native prefetch pool."""
 
-    return min(start_count, max(1, min(3, native_worker_limit)))
+    return min(start_count, max(1, min(2, native_worker_limit)))
 
 
 def native_worker_ceiling() -> int:

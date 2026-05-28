@@ -356,9 +356,9 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
             start_count=9,
         )
 
-    assert diagnosis.batch_workers == 3
+    assert diagnosis.batch_workers == 2
     assert diagnosis.native_worker_limit == 10
-    assert calls[0]["batch_workers"] == 3
+    assert calls[0]["batch_workers"] == 2
     assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
     assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
 
