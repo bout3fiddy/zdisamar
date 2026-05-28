@@ -197,12 +197,6 @@ def diagnose_retrieval(
     )
 
 
-def diagnosis_batch_worker_count(start_count: int) -> int:
-    """Choose a bounded native start-worker count for a same-scene diagnosis."""
-
-    return diagnosis_batch_worker_count_for_limit(start_count, native_worker_ceiling())
-
-
 def diagnosis_batch_worker_count_for_limit(start_count: int, native_worker_limit: int) -> int:
     """Choose start-level workers without hiding the native prefetch pool."""
 
