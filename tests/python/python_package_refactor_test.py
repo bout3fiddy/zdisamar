@@ -359,6 +359,8 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     assert diagnosis.batch_workers == 3
     assert diagnosis.native_worker_limit == 10
     assert calls[0]["batch_workers"] == 3
+    assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
+    assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
 
     calls.clear()
 
@@ -379,6 +381,8 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
 
     assert explicit.batch_workers == 2
     assert calls[0]["batch_workers"] == 2
+    assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
+    assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
 
 
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:

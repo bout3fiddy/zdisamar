@@ -523,3 +523,77 @@ The same live 100-start probe immediately before the native worker fusion was
 native-boundary cleanup, not the single-digit answer.  The remaining target
 still requires fewer OE RTM/Jacobian evaluations or a per-evaluation forward
 model speedup.
+
+## 2026-05-28 Prefetch-Mode Boundary Check
+
+The retained `~175 ms` figure comes from the steady repeated-start public API
+path: one caller-owned empty `SessionCache()`, fixed case and measurement,
+`ZDISAMAR_WORKER_LIMIT=10`, omitted controls, and only the starting state vector
+changing after an initial warm call.  It is a valid prefetch-session number, but
+it should not be multiplied across the scene-008 basin grid without rechecking
+the actual scene/start workload.
+
+Scene-008, 100 starts, fast-stage-only, same starts and measurement:
+
+```text
+public repeated retrieve, one SessionCache:
+  warm: 0.216 s
+  elapsed: 24.489 s
+  median: 254.193 ms
+  iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+  checksum: 53262.16281631299
+
+native diagnose batch, batch_workers=1:
+  elapsed: 23.985 s
+  iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+  checksum: 53262.16281631299
+
+native diagnose batch, batch_workers=2:
+  elapsed: 21.430 s
+  iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+  checksum: 53262.16281631299
+
+native diagnose batch, batch_workers=3:
+  elapsed: 21.681 s
+  iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+  checksum: 53262.16281631299
+```
+
+Interpretation: the current native `diagnose()` path is already at least as
+fast as the exact prefetch-session repeated path for this workload.  The
+remaining gap from a naive `100 * 175 ms` estimate is not Python wrapper churn;
+the broad scene-008 starts need more expensive RTM/Jacobian evaluations than
+the small repeated-start timing probe.
+
+## 2026-05-28 Diagnosis Row Handoff
+
+Change: `Result.diagnose()` now passes one resolved state-vector template plus
+row-major start/prior values into the native batch boundary.  It no longer
+materializes one Python `StateVector` object per start before handing the sweep
+to native code.
+
+Scene-008 fast-stage-only check after the row handoff and native worker-pool
+experiments:
+
+```text
+scene 008, 100 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=2
+elapsed: 21.038 s
+iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+checksum: 53262.16281631299
+
+scene 008, 25 starts, ZDISAMAR_WORKER_LIMIT=10, batch_workers=2
+elapsed: 5.310 s
+iteration histogram: {3: 7, 4: 10, 5: 6, 6: 2}
+checksum: 13399.690497323336
+
+scene 008, 100 starts with sparse final correction, ZDISAMAR_WORKER_LIMIT=10, batch_workers=3
+elapsed: 31.375 s
+iteration histogram: {3: 3, 4: 20, 5: 42, 6: 31, 7: 3, 8: 1}
+fast-stage iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
+checksum: 54138.99689749256
+```
+
+Interpretation: this is small by itself because the boundary is dominated by
+native RTM/Jacobian evaluations, but it keeps the Python API aligned with the
+intended native design: one diagnosis call, one prepared template, many start
+rows.

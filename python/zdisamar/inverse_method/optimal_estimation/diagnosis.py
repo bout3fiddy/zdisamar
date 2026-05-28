@@ -144,18 +144,17 @@ def diagnose_retrieval(
     if active_batch_workers <= 0:
         raise ValueError("batch_workers must be positive")
 
-    start_vectors = tuple(state_vector_for_start(state_vector, row) for row in active_start_rows)
-
     from . import o2a as o2a_oe
 
     start_s = time.perf_counter()
     batch = o2a_oe.diagnosis_batch(
         case=case,
         measurement=measurement,
-        state_vectors=start_vectors,
+        state_vectors=(state_vector,),
         controls=controls,
         cache=cache,
         batch_workers=active_batch_workers,
+        start_rows=active_start_rows,
     )
     elapsed_s = time.perf_counter() - start_s
 

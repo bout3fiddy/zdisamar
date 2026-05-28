@@ -748,6 +748,7 @@ const FastmodeBatchWorker = struct {
     correction_controls: Controls,
     result: *FastmodeBatchResult,
     queue: *work_partition.ChunkQueue,
+    shared_forward_prefetch_pool: ?*std.Thread.Pool,
     err: ?anyerror = null,
 };
 
@@ -775,6 +776,14 @@ fn runO2AFastmodeBatchParallel(
     defer allocator.free(workers);
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
+    var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
+    var shared_forward_prefetch_pool_valid = false;
+    const shared_forward_prefetch_pool = initSharedForwardPrefetchPool(
+        allocator,
+        &shared_forward_prefetch_pool_storage,
+        &shared_forward_prefetch_pool_valid,
+    );
+    defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
     var queue = work_partition.ChunkQueue.init(result.run_count, 1);
     var started_thread_count: usize = 0;
@@ -798,6 +807,7 @@ fn runO2AFastmodeBatchParallel(
             .correction_controls = correction_controls,
             .result = result,
             .queue = &queue,
+            .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
         };
 
         if (worker_index + 1 < worker_count) {
@@ -828,8 +838,10 @@ fn runO2AFastmodeBatchWorker(worker: *FastmodeBatchWorker) void {
 
 fn runO2AFastmodeBatchWorkerFallible(worker: *FastmodeBatchWorker) !void {
     var fast_forward_storage: InstrumentGrid.ProductStorage = .{};
+    fast_forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
     defer fast_forward_storage.deinit(worker.allocator);
     var correction_forward_storage: InstrumentGrid.ProductStorage = .{};
+    correction_forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
     defer correction_forward_storage.deinit(worker.allocator);
     var fast_prepared_case = try RetrievalPreparedCase.init(
         worker.allocator,
@@ -924,6 +936,7 @@ const BatchWorker = struct {
     controls: Controls,
     batch: *BatchResult,
     queue: *work_partition.ChunkQueue,
+    shared_forward_prefetch_pool: ?*std.Thread.Pool,
     err: ?anyerror = null,
 };
 
@@ -944,6 +957,14 @@ fn runO2ABatchParallel(
     defer allocator.free(workers);
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
+    var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
+    var shared_forward_prefetch_pool_valid = false;
+    const shared_forward_prefetch_pool = initSharedForwardPrefetchPool(
+        allocator,
+        &shared_forward_prefetch_pool_storage,
+        &shared_forward_prefetch_pool_valid,
+    );
+    defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
     var queue = work_partition.ChunkQueue.init(batch.run_count, 1);
     var started_thread_count: usize = 0;
@@ -960,6 +981,7 @@ fn runO2ABatchParallel(
             .controls = controls,
             .batch = batch,
             .queue = &queue,
+            .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
         };
 
         if (worker_index + 1 < worker_count) {
@@ -990,6 +1012,7 @@ fn runO2ABatchWorker(worker: *BatchWorker) void {
 
 fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
     var forward_storage: InstrumentGrid.ProductStorage = .{};
+    forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
     defer forward_storage.deinit(worker.allocator);
     var prepared_case = try RetrievalPreparedCase.init(
         worker.allocator,
@@ -1016,6 +1039,21 @@ fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
             chunk.end,
         );
     }
+}
+
+fn initSharedForwardPrefetchPool(
+    allocator: Allocator,
+    pool: *std.Thread.Pool,
+    valid: *bool,
+) ?*std.Thread.Pool {
+    const worker_count = work_partition.preferredWorkerCount(std.math.maxInt(usize), 1);
+    if (worker_count <= 1) return null;
+    pool.init(.{
+        .allocator = allocator,
+        .n_jobs = worker_count - 1,
+    }) catch return null;
+    valid.* = true;
+    return pool;
 }
 
 fn runPreparedO2A(

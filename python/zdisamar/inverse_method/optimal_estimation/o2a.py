@@ -213,6 +213,7 @@ def diagnosis_batch(
     controls: RetrievalControls | None = None,
     cache: rtm.SessionCache | None = None,
     batch_workers: int = 1,
+    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Run the native same-scene batch used by Result.diagnose()."""
 
@@ -247,6 +248,7 @@ def diagnosis_batch(
                         cache=local_cache,
                         load_case=False,
                         batch_workers=batch_workers,
+                        start_rows=start_rows,
                     )
 
                 return run_native_fastmode_retrieval_batch(
@@ -258,6 +260,7 @@ def diagnosis_batch(
                     controls=active_controls,
                     cache=local_cache,
                     batch_workers=batch_workers,
+                    start_rows=start_rows,
                 )
 
         if not cache.has_loaded_case(fast_case):
@@ -279,6 +282,7 @@ def diagnosis_batch(
                 cache=cache,
                 load_case=False,
                 batch_workers=batch_workers,
+                start_rows=start_rows,
             )
 
         return run_native_fastmode_retrieval_batch(
@@ -290,6 +294,7 @@ def diagnosis_batch(
             controls=active_controls,
             cache=cache,
             batch_workers=batch_workers,
+            start_rows=start_rows,
         )
 
     if cache is None:
@@ -310,6 +315,7 @@ def diagnosis_batch(
                 cache=local_cache,
                 load_case=False,
                 batch_workers=batch_workers,
+                start_rows=start_rows,
             )
 
     resolved_template = resolved_state_vector_for_case(case, state_vector_batch[0])
@@ -323,6 +329,7 @@ def diagnosis_batch(
         cache=cache,
         load_case=True,
         batch_workers=batch_workers,
+        start_rows=start_rows,
     )
 
 
@@ -419,6 +426,7 @@ def run_native_fastmode_retrieval_batch(
     controls: RetrievalControls,
     cache: rtm.SessionCache,
     batch_workers: int,
+    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Run fast-stage and sparse correction starts inside one native handoff."""
 
@@ -432,7 +440,11 @@ def run_native_fastmode_retrieval_batch(
     )
     correction_case = full_correction_case(full_case, correction_measurement)
     correction_controls = replace(controls, max_iterations=1)
-    initial_rows, prior_rows = batch_state_rows(resolved_template, state_vectors)
+    initial_rows, prior_rows = batch_start_rows(
+        resolved_template,
+        start_rows,
+        state_vectors,
+    )
 
     with rtm.SessionCache() as correction_cache:
         correction_cache.load(correction_case, copy_case=False)
@@ -833,6 +845,7 @@ def run_native_retrieval_batch(
     cache: rtm.SessionCache,
     load_case: bool = True,
     batch_workers: int = 1,
+    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Bind one prepared O2 A relation to many native OE starts."""
 
@@ -845,7 +858,11 @@ def run_native_retrieval_batch(
     if batch_workers == 1:
         cache.warm_optimal_estimation(resolved_template.jacobian_names)
 
-    initial_rows, prior_rows = batch_state_rows(resolved_template, state_vectors)
+    initial_rows, prior_rows = batch_start_rows(
+        resolved_template,
+        start_rows,
+        state_vectors,
+    )
     raw = cache._handle.optimal_estimation_batch(  # noqa: SLF001
         measurement=measurement,
         state_vector=resolved_template,
@@ -886,6 +903,34 @@ def batch_state_rows(
         prior_rows.append(state_vector.prior_state())
 
     return tuple(initial_rows), tuple(prior_rows)
+
+
+def batch_start_rows(
+    template: StateVector,
+    start_rows: Sequence[Sequence[float]] | None,
+    state_vectors: Sequence[StateVector],
+) -> tuple[tuple[tuple[float, ...], ...], tuple[tuple[float, ...], ...]]:
+    """Return native initial/prior rows, using start rows directly when supplied."""
+
+    if start_rows is None:
+        return batch_state_rows(template, state_vectors)
+
+    rows: list[tuple[float, ...]] = []
+
+    for start in start_rows:
+        values = tuple(float(value) for value in start)
+
+        if len(values) != len(template.parameters):
+            raise ValueError("diagnosis start length does not match state vector")
+
+        rows.append(values)
+
+    if not rows:
+        raise ValueError("start_rows must not be empty")
+
+    start_tuple = tuple(rows)
+
+    return start_tuple, start_tuple
 
 
 def resolved_state_vector_for_case(
