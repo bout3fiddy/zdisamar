@@ -268,19 +268,35 @@ def assert_optimal_estimation_diagnosis_display() -> None:
         result_state=(0.12, 340.0),
         result_initial_state=(0.1, 225.0),
         batch_workers=1,
+        truth_state=(0.2, 600.0),
         start_status=("ok", "failed"),
     )
     payload = sweep.to_dict()
     assert payload["runs"] == 2
-    assert payload["failed_starts"] == 1
+    assert payload["non_converged"] == 1
     assert payload["native_worker_limit"] is None
     figure = sweep.plot(cells=25)
     figure_payload = figure.to_dict()
     assert figure_payload["runs"] == 2
+    assert figure_payload["title"]["text"] == "Retrieval Basin"
     assert figure_payload["density"] == "interpolated trajectory field"
+    assert figure_payload["non_converged"] == 1
+    assert figure_payload["truth"] == [0.2, 600.0]
     diagnosis_svg = figure._repr_svg_()
-    assert "trajectory density" in diagnosis_svg
+    assert "Retrieval Basin" in diagnosis_svg
+    assert "accepted result" not in diagnosis_svg
+    assert 'class="legend"' not in diagnosis_svg
+    assert "density</text>" in diagnosis_svg
+    assert ">truth</text>" in diagnosis_svg
     assert diagnosis_svg.count('class="density-cell"') == 25 * 25
+    assert diagnosis_svg.count('class="diagnosis-non-converged"') == 2
+
+    no_truth = replace(sweep, truth_state=None)
+    no_truth_figure = no_truth.plot(cells=25)
+    assert no_truth_figure.to_dict()["truth"] is None
+    no_truth_svg = no_truth_figure._repr_svg_()
+    assert ">truth</text>" not in no_truth_svg
+    assert 'class="diagnosis-truth"' not in no_truth_svg
 
 
 def assert_optimal_estimation_diagnosis_auto_workers() -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 from ..inverse_method.optimal_estimation.diagnosis import RetrievalDiagnosis
 from .optimal_estimation import STATE_AXIS_TITLES
 from .properties import PLOT
-from .svg import dash_values, format_tick, scale_value, ticks
+from .svg import format_tick, scale_value, ticks
 
 FIGURE_WIDTH = 1180
 FIGURE_HEIGHT = 840
@@ -60,15 +60,16 @@ class RetrievalDiagnosisFigure:
 
         return {
             "type": "zdisamar-svg",
-            "title": {"text": "Retrieval basin diagnosis"},
+            "title": {"text": "Retrieval Basin"},
             "width": self.width,
             "height": self.height,
             "cells": self.cells,
             "density": "interpolated trajectory field",
             "runs": len(self.diagnosis.start_state),
-            "failed_starts": sum(
-                1 for status in self.diagnosis.resolved_start_status() if status != "ok"
-            ),
+            "non_converged": len(non_converged_starts(self.diagnosis)),
+            "truth": None
+            if self.diagnosis.truth_state is None
+            else list(self.diagnosis.truth_state),
             "state_names": list(self.diagnosis.state_names),
         }
 
@@ -81,12 +82,12 @@ class RetrievalDiagnosisFigure:
                 f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.width}" '
                 f'height="{self.height}" viewBox="0 0 {self.width} {self.height}">'
             ),
-            "<title>Retrieval basin diagnosis</title>",
+            "<title>Retrieval Basin</title>",
             self.svg_css(),
             f'<rect class="figure-bg" x="0" y="0" width="{self.width}" height="{self.height}" />',
             (
                 f'<text class="plot-title" x="{self.width / 2:.3f}" y="36" '
-                f'text-anchor="middle">Retrieval basin diagnosis</text>'
+                f'text-anchor="middle">Retrieval Basin</text>'
             ),
             f'<g class="panel" transform="translate({PANEL_X},{PANEL_Y})">',
             f'<rect class="plot-bg" x="0" y="0" width="{PANEL_WIDTH}" height="{PANEL_HEIGHT}" />',
@@ -108,16 +109,15 @@ class RetrievalDiagnosisFigure:
             f"text {{ font-family: {PLOT.font}; fill: black; }}"
             f".plot-title {{ font-size: {PLOT.title_font_size}px; font-weight: 400; }}"
             f".axis-title {{ font-size: {PLOT.axis_title_font_size}px; }}"
-            f".tick-label,.legend-label {{ font-size: {PLOT.axis_label_font_size}px; }}"
+            f".tick-label,.marker-label {{ font-size: {PLOT.axis_label_font_size}px; }}"
             ".figure-bg { fill: white; }"
             ".plot-bg { fill: white; stroke: black; stroke-width: 1; }"
             ".axis { stroke: black; stroke-width: 1; }"
             f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
             ".density-cell { shape-rendering: auto; }"
-            ".diagnosis-start { fill: white; stroke: #1f77b4; stroke-width: 1; opacity: 0.42; }"
-            ".diagnosis-bad-start { stroke: #b00020; stroke-width: 1.6; opacity: 0.78; }"
-            ".diagnosis-end { fill: #111111; opacity: 0.58; }"
-            ".diagnosis-result { fill: none; stroke: #111111; stroke-width: 2.2; }"
+            ".diagnosis-non-converged { stroke: #b00020; stroke-width: 1.8; opacity: 0.84; }"
+            ".diagnosis-truth { fill: none; stroke: #111111; stroke-width: 2.4; }"
+            ".marker-label { fill: #111111; font-weight: 600; }"
             "</style>"
         )
 
@@ -228,13 +228,14 @@ def normalized_trajectories(
             normalized_axis_value(end[0], diagnosis.start_bounds[0]),
             normalized_axis_value(end[1], diagnosis.start_bounds[1]),
         )
-        for start, end, status in zip(
+        for start, end, status, converged in zip(
             diagnosis.start_state,
             diagnosis.retrieved_state,
             diagnosis.resolved_start_status(),
+            diagnosis.converged,
             strict=True,
         )
-        if status == "ok" and finite_point(start) and finite_point(end)
+        if status == "ok" and converged and finite_point(start) and finite_point(end)
     ]
 
 
@@ -291,43 +292,32 @@ def trajectory_marker_svg(
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
-    """Render starts, endpoints, and the accepted result state."""
+    """Render only truth and non-converged starts."""
 
     elements = []
 
-    for start, status in zip(
-        diagnosis.start_state,
-        diagnosis.resolved_start_status(),
-        strict=True,
-    ):
-        if status == "ok":
-            elements.append(point_svg(start, x_domain, y_domain, "diagnosis-start", 2.0))
-        else:
-            elements.extend(bad_start_svg(start, x_domain, y_domain))
+    for start in non_converged_starts(diagnosis):
+        elements.extend(non_converged_start_svg(start, x_domain, y_domain))
 
-    for end, status in zip(
-        diagnosis.retrieved_state,
-        diagnosis.resolved_start_status(),
-        strict=True,
-    ):
-        if status != "ok" or not finite_point(end):
-            continue
-
-        elements.append(point_svg(end, x_domain, y_domain, "diagnosis-end", 2.2))
-
-    result = diagnosis.result_state
-    x = scale_value(result[0], x_domain, 0.0, float(PANEL_WIDTH))
-    y = scale_value(result[1], y_domain, float(PANEL_HEIGHT), 0.0)
-    elements.extend(
-        [
-            f'<line class="diagnosis-result" x1="{x - 8:.3f}" x2="{x + 8:.3f}" '
-            f'y1="{y:.3f}" y2="{y:.3f}" />',
-            f'<line class="diagnosis-result" x1="{x:.3f}" x2="{x:.3f}" '
-            f'y1="{y - 8:.3f}" y2="{y + 8:.3f}" />',
-        ]
-    )
+    if diagnosis.truth_state is not None:
+        elements.extend(truth_svg(diagnosis.truth_state, x_domain, y_domain))
 
     return elements
+
+
+def non_converged_starts(diagnosis: RetrievalDiagnosis) -> list[tuple[float, ...]]:
+    """Return starts that failed or returned without convergence."""
+
+    return [
+        start
+        for start, status, converged in zip(
+            diagnosis.start_state,
+            diagnosis.resolved_start_status(),
+            diagnosis.converged,
+            strict=True,
+        )
+        if status != "ok" or not converged
+    ]
 
 
 def finite_point(point: Sequence[float]) -> bool:
@@ -336,37 +326,41 @@ def finite_point(point: Sequence[float]) -> bool:
     return all(math.isfinite(float(value)) for value in point)
 
 
-def bad_start_svg(
+def non_converged_start_svg(
     point: Sequence[float],
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
-    """Render one failed start marker."""
+    """Render one non-converged start marker."""
 
     x = scale_value(point[0], x_domain, 0.0, float(PANEL_WIDTH))
     y = scale_value(point[1], y_domain, float(PANEL_HEIGHT), 0.0)
 
     return [
-        f'<line class="diagnosis-bad-start" x1="{x - 4:.3f}" x2="{x + 4:.3f}" '
-        f'y1="{y - 4:.3f}" y2="{y + 4:.3f}" />',
-        f'<line class="diagnosis-bad-start" x1="{x - 4:.3f}" x2="{x + 4:.3f}" '
-        f'y1="{y + 4:.3f}" y2="{y - 4:.3f}" />',
+        f'<line class="diagnosis-non-converged" x1="{x - 5:.3f}" x2="{x + 5:.3f}" '
+        f'y1="{y - 5:.3f}" y2="{y + 5:.3f}" />',
+        f'<line class="diagnosis-non-converged" x1="{x - 5:.3f}" x2="{x + 5:.3f}" '
+        f'y1="{y + 5:.3f}" y2="{y - 5:.3f}" />',
     ]
 
 
-def point_svg(
+def truth_svg(
     point: Sequence[float],
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
-    class_name: str,
-    radius: float,
-) -> str:
-    """Render one state-space marker."""
+) -> list[str]:
+    """Render a labelled truth marker."""
 
     x = scale_value(point[0], x_domain, 0.0, float(PANEL_WIDTH))
     y = scale_value(point[1], y_domain, float(PANEL_HEIGHT), 0.0)
 
-    return f'<circle class="{class_name}" cx="{x:.3f}" cy="{y:.3f}" r="{radius:.3f}" />'
+    return [
+        f'<line class="diagnosis-truth" x1="{x - 9:.3f}" x2="{x + 9:.3f}" '
+        f'y1="{y:.3f}" y2="{y:.3f}" />',
+        f'<line class="diagnosis-truth" x1="{x:.3f}" x2="{x:.3f}" '
+        f'y1="{y - 9:.3f}" y2="{y + 9:.3f}" />',
+        f'<text class="marker-label" x="{x + 12:.3f}" y="{y - 10:.3f}">truth</text>',
+    ]
 
 
 def axis_svg(
@@ -374,7 +368,7 @@ def axis_svg(
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
-    """Render axes, grid, labels, and a compact legend."""
+    """Render axes, grid, and labels."""
 
     elements = [
         f'<line class="axis" x1="0" x2="{PANEL_WIDTH}" y1="{PANEL_HEIGHT}" y2="{PANEL_HEIGHT}" />',
@@ -414,24 +408,6 @@ def axis_svg(
                 f'transform="translate(-112,{PANEL_HEIGHT / 2:.3f}) rotate(-90)" '
                 f'text-anchor="middle">{escape(y_title)}</text>'
             ),
-            '<g class="legend" transform="translate(8,-24)">',
-            '<circle class="diagnosis-start" cx="6" cy="-4" r="3" />',
-            '<text class="legend-label" x="18" y="0">start</text>',
-            '<circle class="diagnosis-end" cx="76" cy="-4" r="3" />',
-            '<text class="legend-label" x="88" y="0">retrieved</text>',
-            ('<line class="diagnosis-bad-start" x1="174" x2="182" y1="-8" y2="0" />'),
-            ('<line class="diagnosis-bad-start" x1="174" x2="182" y1="0" y2="-8" />'),
-            '<text class="legend-label" x="192" y="0">failed start</text>',
-            (
-                f'<line class="diagnosis-result" x1="306" x2="322" '
-                f'y1="-4" y2="-4" stroke-dasharray="{dash_values(())}" />'
-            ),
-            (
-                f'<line class="diagnosis-result" x1="314" x2="314" '
-                f'y1="-12" y2="4" stroke-dasharray="{dash_values(())}" />'
-            ),
-            '<text class="legend-label" x="332" y="0">accepted result</text>',
-            "</g>",
         ]
     )
 
@@ -439,7 +415,7 @@ def axis_svg(
 
 
 def colorbar_svg() -> list[str]:
-    """Render the trajectory-density color scale."""
+    """Render the density color scale."""
 
     elements = [f'<g class="colorbar" transform="translate({COLORBAR_X},{COLORBAR_Y})">']
     steps = 36
@@ -469,7 +445,7 @@ def colorbar_svg() -> list[str]:
                 f'<text class="axis-title" '
                 f'transform="translate({COLORBAR_WIDTH + 64},'
                 f'{COLORBAR_HEIGHT / 2:.3f}) rotate(-90)" '
-                'text-anchor="middle">trajectory density</text>'
+                'text-anchor="middle">density</text>'
             ),
             "</g>",
         ]

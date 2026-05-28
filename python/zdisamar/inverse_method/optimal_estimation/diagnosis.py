@@ -35,6 +35,7 @@ class RetrievalDiagnosis(NotebookDisplay):
     result_state: tuple[float, ...]
     result_initial_state: tuple[float, ...] | None
     batch_workers: int
+    truth_state: tuple[float, ...] | None = None
     start_status: tuple[str, ...] = ()
     fast_stage_iterations: tuple[int, ...] | None = None
     fast_stage_converged: tuple[bool, ...] | None = None
@@ -80,13 +81,23 @@ class RetrievalDiagnosis(NotebookDisplay):
                     "bounds": list(self.start_bounds[index]),
                 },
                 "retrieved": numeric_stats(retrieved),
-                "accepted_result": self.result_state[index],
+                "truth": None if self.truth_state is None else self.truth_state[index],
             }
+
+        non_converged = sum(
+            1
+            for status, converged in zip(
+                self.resolved_start_status(),
+                self.converged,
+                strict=True,
+            )
+            if status != "ok" or not converged
+        )
 
         return {
             "runs": len(self.start_state),
             "converged": sum(1 for value in self.converged if value),
-            "failed_starts": sum(1 for status in self.resolved_start_status() if status != "ok"),
+            "non_converged": non_converged,
             "batch_workers": self.batch_workers,
             "native_worker_limit": self.native_worker_limit,
             "elapsed_s": self.elapsed_s,
