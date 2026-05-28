@@ -21,6 +21,7 @@ COLORBAR_X = 1060
 COLORBAR_Y = 166
 COLORBAR_WIDTH = 22
 COLORBAR_HEIGHT = 420
+TRAJECTORY_FIELD_BANDWIDTH = 0.035
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class RetrievalDiagnosisFigure:
             "width": self.width,
             "height": self.height,
             "cells": self.cells,
+            "density": "interpolated trajectory field",
             "runs": len(self.diagnosis.start_state),
             "failed_starts": sum(
                 1 for status in self.diagnosis.resolved_start_status() if status != "ok"
@@ -111,7 +113,7 @@ class RetrievalDiagnosisFigure:
             ".plot-bg { fill: white; stroke: black; stroke-width: 1; }"
             ".axis { stroke: black; stroke-width: 1; }"
             f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
-            ".density-cell { shape-rendering: crispEdges; }"
+            ".density-cell { shape-rendering: auto; }"
             ".diagnosis-start { fill: white; stroke: #1f77b4; stroke-width: 1; opacity: 0.42; }"
             ".diagnosis-bad-start { stroke: #b00020; stroke-width: 1.6; opacity: 0.78; }"
             ".diagnosis-end { fill: #111111; opacity: 0.58; }"
@@ -150,7 +152,7 @@ def density_svg(
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
-    """Render interpolated trajectory density as SVG rectangles."""
+    """Render the full interpolated trajectory-density field."""
 
     density = trajectory_density(diagnosis, cells)
     max_density = max((value for row in density for value in row), default=0.0)
@@ -174,10 +176,6 @@ def density_svg(
 
         for x_index, value in enumerate(row):
             normalized = value / max_density
-
-            if normalized < 0.008:
-                continue
-
             cell_low_x = x_low + x_index * dx
             cell_high_x = cell_low_x + dx
             x0 = scale_value(cell_low_x, x_domain, 0.0, float(PANEL_WIDTH))
@@ -193,61 +191,87 @@ def density_svg(
 
 
 def trajectory_density(diagnosis: RetrievalDiagnosis, cells: int) -> list[list[float]]:
-    """Accumulate a smoothed density field along start-to-final trajectories."""
+    """Interpolate trajectory density over the full state-space panel."""
 
     grid = [[0.0 for _ in range(cells)] for _ in range(cells)]
-    x_low, x_high = diagnosis.start_bounds[0]
-    y_low, y_high = diagnosis.start_bounds[1]
-    x_span = x_high - x_low
-    y_span = y_high - y_low
+    trajectories = normalized_trajectories(diagnosis)
+    bandwidth2 = TRAJECTORY_FIELD_BANDWIDTH * TRAJECTORY_FIELD_BANDWIDTH
 
-    for start, end, status in zip(
-        diagnosis.start_state,
-        diagnosis.retrieved_state,
-        diagnosis.resolved_start_status(),
-        strict=True,
-    ):
-        if status != "ok" or not finite_point(end):
-            continue
+    if not trajectories:
+        return grid
 
-        start_x, start_y = start
-        end_x, end_y = end
-        normalized_length = max(abs(end_x - start_x) / x_span, abs(end_y - start_y) / y_span)
-        sample_count = max(2, int(math.ceil(normalized_length * cells * 2.0)))
+    for y_index, row in enumerate(grid):
+        y = (y_index + 0.5) / cells
 
-        for sample_index in range(sample_count):
-            t = sample_index / (sample_count - 1)
-            x = start_x + t * (end_x - start_x)
-            y = start_y + t * (end_y - start_y)
-            add_density_sample(grid, x, y, diagnosis.start_bounds)
+        for x_index in range(cells):
+            x = (x_index + 0.5) / cells
+            value = 0.0
+
+            for start_x, start_y, end_x, end_y in trajectories:
+                distance2 = distance_to_segment2(x, y, start_x, start_y, end_x, end_y)
+                value += math.exp(-0.5 * distance2 / bandwidth2)
+
+            row[x_index] = value
 
     return grid
 
 
-def add_density_sample(
-    grid: list[list[float]],
+def normalized_trajectories(
+    diagnosis: RetrievalDiagnosis,
+) -> list[tuple[float, float, float, float]]:
+    """Return finite successful start-to-retrieved paths in normalized panel units."""
+
+    return [
+        (
+            normalized_axis_value(start[0], diagnosis.start_bounds[0]),
+            normalized_axis_value(start[1], diagnosis.start_bounds[1]),
+            normalized_axis_value(end[0], diagnosis.start_bounds[0]),
+            normalized_axis_value(end[1], diagnosis.start_bounds[1]),
+        )
+        for start, end, status in zip(
+            diagnosis.start_state,
+            diagnosis.retrieved_state,
+            diagnosis.resolved_start_status(),
+            strict=True,
+        )
+        if status == "ok" and finite_point(start) and finite_point(end)
+    ]
+
+
+def normalized_axis_value(value: float, bounds: tuple[float, float]) -> float:
+    """Scale a state coordinate into the unit interval for distance calculations."""
+
+    low, high = bounds
+
+    return (float(value) - low) / (high - low)
+
+
+def distance_to_segment2(
     x: float,
     y: float,
-    bounds: Sequence[tuple[float, float]],
-) -> None:
-    """Add one Gaussian-smoothed sample to the density grid."""
+    start_x: float,
+    start_y: float,
+    end_x: float,
+    end_y: float,
+) -> float:
+    """Return squared unit-panel distance from a point to one trajectory segment."""
 
-    cells = len(grid)
-    x_low, x_high = bounds[0]
-    y_low, y_high = bounds[1]
+    dx = end_x - start_x
+    dy = end_y - start_y
+    length2 = dx * dx + dy * dy
 
-    if not (x_low <= x <= x_high and y_low <= y <= y_high):
-        return
+    if length2 <= 0.0:
+        projection = 0.0
+    else:
+        projection = ((x - start_x) * dx + (y - start_y) * dy) / length2
+        projection = max(0.0, min(1.0, projection))
 
-    center_x = int(round((x - x_low) / (x_high - x_low) * (cells - 1)))
-    center_y = int(round((y - y_low) / (y_high - y_low) * (cells - 1)))
-    radius = 3
-    sigma = 1.15
+    closest_x = start_x + projection * dx
+    closest_y = start_y + projection * dy
+    distance_x = x - closest_x
+    distance_y = y - closest_y
 
-    for y_index in range(max(0, center_y - radius), min(cells, center_y + radius + 1)):
-        for x_index in range(max(0, center_x - radius), min(cells, center_x + radius + 1)):
-            distance2 = (x_index - center_x) ** 2 + (y_index - center_y) ** 2
-            grid[y_index][x_index] += math.exp(-0.5 * distance2 / (sigma * sigma))
+    return distance_x * distance_x + distance_y * distance_y
 
 
 def density_color(normalized: float) -> tuple[str, float]:

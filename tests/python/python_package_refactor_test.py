@@ -277,7 +277,10 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     figure = sweep.plot(cells=25)
     figure_payload = figure.to_dict()
     assert figure_payload["runs"] == 2
-    assert "trajectory density" in figure._repr_svg_()
+    assert figure_payload["density"] == "interpolated trajectory field"
+    diagnosis_svg = figure._repr_svg_()
+    assert "trajectory density" in diagnosis_svg
+    assert diagnosis_svg.count('class="density-cell"') == 25 * 25
 
 
 def assert_optimal_estimation_diagnosis_auto_workers() -> None:
