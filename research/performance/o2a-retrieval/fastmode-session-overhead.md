@@ -687,6 +687,48 @@ current native `diagnose()` boundary is faster than repeating the public
 `retrieve()` call over the same starts, but the remaining cost is still native
 RTM/Jacobian work rather than Python request construction.
 
+## 2026-05-28 Staged Fastmode Batch Scheduling
+
+Finding: the per-worker fused fastmode batch, which ran each start end-to-end
+through fast stage and sparse correction, was not the best scheduling shape for
+the scene-008 broad basin grid.  A split probe showed that the fast stage and
+the four-wavelength correction prefer the same two outer workers, but running
+all fast-stage starts first and all correction starts second schedules better
+than interleaving correction work inside the fast-stage worker loop.
+
+Change: keep the public `Result.diagnose()` path and the single native
+fastmode batch handoff, but restore staged native execution inside
+`runO2AFastmodeBatch`: first run `runO2ABatch` for the sparse fast stage, then
+run `runO2ABatch` for the sparse full-physics correction using the fast-stage
+states as correction initials.  Remove the now-unused fused worker helpers.
+
+Parity check against public sequential retrieval, scene 008, 25 starts,
+`ZDISAMAR_WORKER_LIMIT=10`, `batch_workers=2`:
+
+```text
+max_state_delta: 0.0
+iterations_equal: true
+fast_iterations_equal: true
+converged_equal: true
+correction_converged_equal: true
+checksum: 13628.29988524
+```
+
+Timing evidence on the same scene-008 100-start full-correction boundary:
+
+```text
+previous fused batch_workers=2: 32.482 s
+staged batch_workers=2:        29.891 s
+staged batch_workers=3:        30.627 s
+iteration histogram:           {3: 8, 4: 21, 5: 45, 6: 25, 8: 1}
+fast-stage iteration histogram: {2: 8, 3: 21, 4: 45, 5: 25, 7: 1}
+```
+
+Interpretation: this is an accepted native scheduling win for the sparse
+full-correction diagnosis path.  It still does not change the broader
+conclusion: single-digit 100-start sweeps require reducing the number or cost
+of native RTM/Jacobian evaluations.
+
 ## 2026-05-28 Rejected Single-Boundary Probes
 
 These probes were run against the public `Result.diagnose()`/native batch

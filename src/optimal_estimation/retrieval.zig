@@ -605,50 +605,7 @@ pub fn runO2AFastmodeBatch(
     if (run_count == 0) return error.InvalidStateSpec;
     if (correction_prior_states.len != run_count * correction_state_template.len) return error.InvalidStateSpec;
 
-    var result = try FastmodeBatchResult.init(allocator, run_count, fast_state_template.len);
-    errdefer result.deinit(allocator);
-
-    const effective_worker_count = @min(run_count, @max(@as(usize, 1), batch_worker_count));
-    if (effective_worker_count == 1) {
-        var fast_prepared_case = try RetrievalPreparedCase.init(
-            allocator,
-            fast_input,
-            fast_measurement_wavelength_nm,
-            fast_measurement_reflectance,
-            fast_measurement_variance,
-            fast_state_template,
-            fast_forward_storage,
-        );
-        defer fast_prepared_case.deinit(allocator);
-        var correction_prepared_case = try RetrievalPreparedCase.init(
-            allocator,
-            correction_input,
-            correction_measurement_wavelength_nm,
-            correction_measurement_reflectance,
-            correction_measurement_variance,
-            correction_state_template,
-            correction_forward_storage,
-        );
-        defer correction_prepared_case.deinit(allocator);
-        try runO2AFastmodeBatchRange(
-            allocator,
-            &fast_prepared_case,
-            &correction_prepared_case,
-            fast_state_template,
-            correction_state_template,
-            initial_states,
-            prior_states,
-            correction_prior_states,
-            fast_controls,
-            correction_controls,
-            &result,
-            0,
-            run_count,
-        );
-        return result;
-    }
-
-    try runO2AFastmodeBatchParallel(
+    var fast_batch = try runO2ABatch(
         allocator,
         fast_input,
         fast_measurement_wavelength_nm,
@@ -657,231 +614,46 @@ pub fn runO2AFastmodeBatch(
         fast_state_template,
         initial_states,
         prior_states,
+        fast_forward_storage,
         fast_controls,
+        batch_worker_count,
+    );
+    defer fast_batch.deinit(allocator);
+
+    var correction_batch = try runO2ABatch(
+        allocator,
         correction_input,
         correction_measurement_wavelength_nm,
         correction_measurement_reflectance,
         correction_measurement_variance,
         correction_state_template,
+        fast_batch.state,
         correction_prior_states,
+        correction_forward_storage,
         correction_controls,
-        &result,
-        effective_worker_count,
+        batch_worker_count,
     );
-    return result;
-}
+    defer correction_batch.deinit(allocator);
 
-fn runO2AFastmodeBatchRange(
-    allocator: Allocator,
-    fast_prepared_case: *RetrievalPreparedCase,
-    correction_prepared_case: *RetrievalPreparedCase,
-    fast_state_template: []const StateSpec,
-    correction_state_template: []const StateSpec,
-    initial_states: []const f64,
-    prior_states: []const f64,
-    correction_prior_states: []const f64,
-    fast_controls: Controls,
-    correction_controls: Controls,
-    result: *FastmodeBatchResult,
-    start_run: usize,
-    end_run: usize,
-) !void {
-    var fast_specs_buffer: [max_state_count]StateSpec = undefined;
-    var correction_specs_buffer: [max_state_count]StateSpec = undefined;
-    for (start_run..end_run) |run_index| {
-        const state_offset = run_index * fast_state_template.len;
-        for (fast_state_template, 0..) |template, state_index| {
-            var spec = template;
-            spec.initial = initial_states[state_offset + state_index];
-            spec.prior = prior_states[state_offset + state_index];
-            fast_specs_buffer[state_index] = spec;
-        }
-        const fast_summary = try runPreparedO2ASummary(
-            allocator,
-            fast_prepared_case,
-            fast_specs_buffer[0..fast_state_template.len],
-            fast_controls,
-        );
+    if (correction_batch.run_count != fast_batch.run_count or
+        correction_batch.state_count != fast_batch.state_count)
+    {
+        return error.InvalidStateSpec;
+    }
 
-        for (correction_state_template, 0..) |template, state_index| {
-            var spec = template;
-            spec.initial = fast_summary.state[state_index];
-            spec.prior = correction_prior_states[state_offset + state_index];
-            correction_specs_buffer[state_index] = spec;
-        }
-        const correction_summary = try runPreparedO2ASummary(
-            allocator,
-            correction_prepared_case,
-            correction_specs_buffer[0..correction_state_template.len],
-            correction_controls,
-        );
-
-        result.fast_stage_iteration_count[run_index] = fast_summary.iteration_count;
-        result.fast_stage_converged[run_index] = if (fast_summary.converged) 1 else 0;
-        result.full_correction_iteration_count[run_index] = correction_summary.iteration_count;
-        result.full_correction_converged[run_index] = if (correction_summary.converged) 1 else 0;
+    var result = try FastmodeBatchResult.init(allocator, run_count, fast_state_template.len);
+    errdefer result.deinit(allocator);
+    for (0..run_count) |run_index| {
+        result.fast_stage_iteration_count[run_index] = fast_batch.iteration_count[run_index];
+        result.fast_stage_converged[run_index] = fast_batch.converged[run_index];
+        result.full_correction_iteration_count[run_index] = correction_batch.iteration_count[run_index];
+        result.full_correction_converged[run_index] = correction_batch.converged[run_index];
         result.iteration_count[run_index] =
-            fast_summary.iteration_count + correction_summary.iteration_count;
-        result.converged[run_index] = if (fast_summary.converged) 1 else 0;
-        for (0..fast_state_template.len) |state_index| {
-            result.state[state_offset + state_index] = correction_summary.state[state_index];
-        }
+            fast_batch.iteration_count[run_index] + correction_batch.iteration_count[run_index];
+        result.converged[run_index] = fast_batch.converged[run_index];
     }
-}
-
-const FastmodeBatchWorker = struct {
-    allocator: Allocator,
-    fast_input: *const o2a_types.ResolvedVendorO2ACase,
-    fast_measurement_wavelength_nm: []const f64,
-    fast_measurement_reflectance: []const f64,
-    fast_measurement_variance: []const f64,
-    fast_state_template: []const StateSpec,
-    initial_states: []const f64,
-    prior_states: []const f64,
-    fast_controls: Controls,
-    correction_input: *const o2a_types.ResolvedVendorO2ACase,
-    correction_measurement_wavelength_nm: []const f64,
-    correction_measurement_reflectance: []const f64,
-    correction_measurement_variance: []const f64,
-    correction_state_template: []const StateSpec,
-    correction_prior_states: []const f64,
-    correction_controls: Controls,
-    result: *FastmodeBatchResult,
-    queue: *work_partition.ChunkQueue,
-    shared_forward_prefetch_pool: ?*std.Thread.Pool,
-    err: ?anyerror = null,
-};
-
-fn runO2AFastmodeBatchParallel(
-    allocator: Allocator,
-    fast_input: *const o2a_types.ResolvedVendorO2ACase,
-    fast_measurement_wavelength_nm: []const f64,
-    fast_measurement_reflectance: []const f64,
-    fast_measurement_variance: []const f64,
-    fast_state_template: []const StateSpec,
-    initial_states: []const f64,
-    prior_states: []const f64,
-    fast_controls: Controls,
-    correction_input: *const o2a_types.ResolvedVendorO2ACase,
-    correction_measurement_wavelength_nm: []const f64,
-    correction_measurement_reflectance: []const f64,
-    correction_measurement_variance: []const f64,
-    correction_state_template: []const StateSpec,
-    correction_prior_states: []const f64,
-    correction_controls: Controls,
-    result: *FastmodeBatchResult,
-    worker_count: usize,
-) !void {
-    const workers = try allocator.alloc(FastmodeBatchWorker, worker_count);
-    defer allocator.free(workers);
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
-    var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
-    var shared_forward_prefetch_pool_valid = false;
-    const shared_forward_prefetch_pool = initSharedForwardPrefetchPool(
-        allocator,
-        &shared_forward_prefetch_pool_storage,
-        &shared_forward_prefetch_pool_valid,
-    );
-    defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
-
-    var queue = work_partition.ChunkQueue.init(result.run_count, 1);
-    var started_thread_count: usize = 0;
-    for (0..worker_count) |worker_index| {
-        workers[worker_index] = .{
-            .allocator = allocator,
-            .fast_input = fast_input,
-            .fast_measurement_wavelength_nm = fast_measurement_wavelength_nm,
-            .fast_measurement_reflectance = fast_measurement_reflectance,
-            .fast_measurement_variance = fast_measurement_variance,
-            .fast_state_template = fast_state_template,
-            .initial_states = initial_states,
-            .prior_states = prior_states,
-            .fast_controls = fast_controls,
-            .correction_input = correction_input,
-            .correction_measurement_wavelength_nm = correction_measurement_wavelength_nm,
-            .correction_measurement_reflectance = correction_measurement_reflectance,
-            .correction_measurement_variance = correction_measurement_variance,
-            .correction_state_template = correction_state_template,
-            .correction_prior_states = correction_prior_states,
-            .correction_controls = correction_controls,
-            .result = result,
-            .queue = &queue,
-            .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
-        };
-
-        if (worker_index + 1 < worker_count) {
-            threads[started_thread_count] = std.Thread.spawn(
-                .{},
-                runO2AFastmodeBatchWorker,
-                .{&workers[worker_index]},
-            ) catch {
-                runO2AFastmodeBatchWorker(&workers[worker_index]);
-                continue;
-            };
-            started_thread_count += 1;
-        }
-    }
-
-    runO2AFastmodeBatchWorker(&workers[worker_count - 1]);
-    for (threads[0..started_thread_count]) |thread| thread.join();
-    for (workers) |worker| {
-        if (worker.err) |err| return err;
-    }
-}
-
-fn runO2AFastmodeBatchWorker(worker: *FastmodeBatchWorker) void {
-    runO2AFastmodeBatchWorkerFallible(worker) catch |err| {
-        worker.err = err;
-    };
-}
-
-fn runO2AFastmodeBatchWorkerFallible(worker: *FastmodeBatchWorker) !void {
-    var fast_forward_storage: InstrumentGrid.ProductStorage = .{};
-    fast_forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
-    defer fast_forward_storage.deinit(worker.allocator);
-    var correction_forward_storage: InstrumentGrid.ProductStorage = .{};
-    correction_forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
-    defer correction_forward_storage.deinit(worker.allocator);
-    var fast_prepared_case = try RetrievalPreparedCase.init(
-        worker.allocator,
-        worker.fast_input,
-        worker.fast_measurement_wavelength_nm,
-        worker.fast_measurement_reflectance,
-        worker.fast_measurement_variance,
-        worker.fast_state_template,
-        &fast_forward_storage,
-    );
-    defer fast_prepared_case.deinit(worker.allocator);
-    var correction_prepared_case = try RetrievalPreparedCase.init(
-        worker.allocator,
-        worker.correction_input,
-        worker.correction_measurement_wavelength_nm,
-        worker.correction_measurement_reflectance,
-        worker.correction_measurement_variance,
-        worker.correction_state_template,
-        &correction_forward_storage,
-    );
-    defer correction_prepared_case.deinit(worker.allocator);
-    // Broad basin sweeps have variable iteration counts by start. Claim one
-    // start at a time so a hard region does not pin the final worker tail.
-    while (worker.queue.next()) |chunk| {
-        try runO2AFastmodeBatchRange(
-            worker.allocator,
-            &fast_prepared_case,
-            &correction_prepared_case,
-            worker.fast_state_template,
-            worker.correction_state_template,
-            worker.initial_states,
-            worker.prior_states,
-            worker.correction_prior_states,
-            worker.fast_controls,
-            worker.correction_controls,
-            worker.result,
-            chunk.start,
-            chunk.end,
-        );
-    }
+    @memcpy(result.state, correction_batch.state);
+    return result;
 }
 
 fn runO2ABatchRange(
