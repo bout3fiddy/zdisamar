@@ -1030,12 +1030,11 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         raise AssertionError("single-sample fast-stage window count was accepted")
 
 
-def assert_fastmode_batch_runs_full_correction() -> None:
+def assert_fastmode_batch_uses_native_fused_correction() -> None:
 
     from zdisamar.input.wavelength_band.o2a import O2AInput
     from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
         RetrievalControls,
@@ -1062,6 +1061,7 @@ def assert_fastmode_batch_runs_full_correction() -> None:
     full_case = SimpleNamespace(scene_id="full")
     correction_case = SimpleNamespace(scene_id="correction")
     measurement = Measurement((765.2, 766.0, 768.0), (0.1, 0.2, 0.3), signal_to_noise=100.0)
+    fast_measurement = Measurement((765.2, 768.0), (0.1, 0.3), signal_to_noise=100.0)
     correction_measurement = Measurement((765.2, 766.0), (0.1, 0.2), signal_to_noise=100.0)
     state_vectors = (
         StateVector(
@@ -1077,20 +1077,6 @@ def assert_fastmode_batch_runs_full_correction() -> None:
             )
         ),
     )
-    fast_batch = BatchResult(
-        state_names=state_vectors[0].names,
-        state=((0.31, 760.0), (0.42, 690.0)),
-        iterations=(4, 5),
-        converged=(True, False),
-        measurement=measurement,
-    )
-    correction_batch = BatchResult(
-        state_names=state_vectors[0].names,
-        state=((0.305, 761.5), (0.415, 691.0)),
-        iterations=(1, 1),
-        converged=(False, True),
-        measurement=correction_measurement,
-    )
     controls = RetrievalControls(
         max_iterations=6,
         state_vector_convergence_threshold=0.7,
@@ -1098,8 +1084,30 @@ def assert_fastmode_batch_runs_full_correction() -> None:
     )
     native_calls: list[dict[str, object]] = []
     correction_loads: list[tuple[object, bool]] = []
+    correction_handle = object()
+
+    class FastHandle:
+        def optimal_estimation_fastmode_batch(self, **kwargs):
+
+            native_calls.append(kwargs)
+
+            return {
+                "state_count": 2,
+                "state": (0.305, 761.5, 0.415, 691.0),
+                "iteration_count": (5, 6),
+                "converged": (True, False),
+                "fast_stage_iteration_count": (4, 5),
+                "fast_stage_converged": (True, False),
+                "full_correction_iteration_count": (1, 1),
+                "full_correction_converged": (False, True),
+            }
+
+    class FastCache:
+        _handle = FastHandle()
 
     class CorrectionCache:
+        _handle = correction_handle
+
         def load(self, case, *, copy_case: bool = True) -> None:
 
             correction_loads.append((case, copy_case))
@@ -1111,12 +1119,6 @@ def assert_fastmode_batch_runs_full_correction() -> None:
         def __exit__(self, *_exc: object) -> None:
 
             return None
-
-    def fake_native_batch(**kwargs):
-
-        native_calls.append(kwargs)
-
-        return correction_batch
 
     with (
         patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
@@ -1136,14 +1138,15 @@ def assert_fastmode_batch_runs_full_correction() -> None:
             "resolved_state_vector_for_loaded_case",
             return_value=state_vectors[0],
         ) as resolved_template,
-        patch.object(o2a_oe, "run_native_retrieval_batch", side_effect=fake_native_batch),
     ):
-        result = o2a_oe.run_fastmode_correction_batch(
+        result = o2a_oe.run_native_fastmode_retrieval_batch(
             case=reference_o2a_case,
             measurement=measurement,
+            fast_measurement=fast_measurement,
             state_vectors=state_vectors,
-            fast_batch=fast_batch,
+            resolved_template=state_vectors[0],
             controls=controls,
+            cache=cast(o2a_oe.rtm.SessionCache, FastCache()),
             batch_workers=3,
         )
 
@@ -1158,25 +1161,30 @@ def assert_fastmode_batch_runs_full_correction() -> None:
     assert correction_loads == [(correction_case, False)]
     resolved_template.assert_called_once()
     assert len(native_calls) == 1
-    corrected_vectors = cast(tuple[StateVector, StateVector], native_calls[0]["state_vectors"])
-    correction_controls = cast(RetrievalControls, native_calls[0]["controls"])
-    assert corrected_vectors[0].initial_state() == fast_batch.state[0]
-    assert corrected_vectors[0].prior_state() == state_vectors[0].prior_state()
-    assert corrected_vectors[1].initial_state() == fast_batch.state[1]
-    assert corrected_vectors[1].prior_state() == state_vectors[1].prior_state()
+    native_call = native_calls[0]
+    correction_controls = cast(RetrievalControls, native_call["correction_controls"])
+    assert native_call["correction_handle"] is correction_handle
+    assert native_call["measurement"] is fast_measurement
+    assert native_call["correction_measurement"] is correction_measurement
+    assert native_call["state_vector"] is state_vectors[0]
+    assert native_call["correction_state_vector"] is state_vectors[0]
+    assert native_call["initial_states"] == tuple(
+        vector.initial_state() for vector in state_vectors
+    )
+    assert native_call["prior_states"] == tuple(vector.prior_state() for vector in state_vectors)
+    assert native_call["controls"] is controls
     assert correction_controls.max_iterations == 1
     assert correction_controls.state_vector_convergence_threshold == 0.7
     assert correction_controls.max_change_transformed_state == 0.4
-    assert native_calls[0]["batch_workers"] == 3
-    assert native_calls[0]["load_case"] is False
-    assert result.state == correction_batch.state
+    assert native_call["batch_workers"] == 3
+    assert result.state == ((0.305, 761.5), (0.415, 691.0))
     assert result.iterations == (5, 6)
-    assert result.converged == fast_batch.converged
+    assert result.converged == (True, False)
     assert result.measurement is measurement
-    assert result.fast_stage_iterations == fast_batch.iterations
-    assert result.fast_stage_converged == fast_batch.converged
-    assert result.full_correction_iterations == correction_batch.iterations
-    assert result.full_correction_converged == correction_batch.converged
+    assert result.fast_stage_iterations == (4, 5)
+    assert result.fast_stage_converged == (True, False)
+    assert result.full_correction_iterations == (1, 1)
+    assert result.full_correction_converged == (False, True)
 
 
 def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
@@ -1770,7 +1778,7 @@ def main() -> int:
     assert_native_oe_reuses_matching_supplied_cache()
     assert_fastmode_oe_runs_single_full_correction()
     assert_fastmode_oe_uses_sparse_fast_stage_sampling()
-    assert_fastmode_batch_runs_full_correction()
+    assert_fastmode_batch_uses_native_fused_correction()
     assert_fastmode_pressure_profile_uses_loaded_sparse_cache()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()
