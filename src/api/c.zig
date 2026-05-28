@@ -849,34 +849,7 @@ const OptimalEstimationStateSpecs = struct {
 
 fn optimalEstimationMeasurementSlices(
     resolved: *Context,
-    request: *const ZdsOptimalEstimationRequest,
-) ?OptimalEstimationMeasurementSlices {
-    const wavelengths_ptr = request.wavelength_nm orelse {
-        resolved.setError("null measurement wavelengths");
-        return null;
-    };
-    const reflectance_ptr = request.reflectance orelse {
-        resolved.setError("null measurement reflectance");
-        return null;
-    };
-    const variance_ptr = request.variance orelse {
-        resolved.setError("null measurement variance");
-        return null;
-    };
-    if (request.sample_count == 0) {
-        resolved.setError("empty measurement");
-        return null;
-    }
-    return .{
-        .wavelength_nm = wavelengths_ptr[0..request.sample_count],
-        .reflectance = reflectance_ptr[0..request.sample_count],
-        .variance = variance_ptr[0..request.sample_count],
-    };
-}
-
-fn optimalEstimationBatchMeasurementSlices(
-    resolved: *Context,
-    request: *const ZdsOptimalEstimationBatchRequest,
+    request: anytype,
 ) ?OptimalEstimationMeasurementSlices {
     const wavelengths_ptr = request.wavelength_nm orelse {
         resolved.setError("null measurement wavelengths");
@@ -903,22 +876,7 @@ fn optimalEstimationBatchMeasurementSlices(
 
 fn optimalEstimationControls(
     resolved: *Context,
-    request: *const ZdsOptimalEstimationRequest,
-) ?zdisamar.optimal_estimation.Controls {
-    if (request.controls.max_iterations == 0 or request.controls.max_iterations > zdisamar.optimal_estimation.max_iteration_count) {
-        resolved.setError("invalid optimal-estimation max_iterations");
-        return null;
-    }
-    return .{
-        .max_iterations = request.controls.max_iterations,
-        .state_vector_convergence_threshold = request.controls.state_vector_convergence_threshold,
-        .max_change_transformed_state = request.controls.max_change_transformed_state,
-    };
-}
-
-fn optimalEstimationBatchControls(
-    resolved: *Context,
-    request: *const ZdsOptimalEstimationBatchRequest,
+    request: anytype,
 ) ?zdisamar.optimal_estimation.Controls {
     if (request.controls.max_iterations == 0 or request.controls.max_iterations > zdisamar.optimal_estimation.max_iteration_count) {
         resolved.setError("invalid optimal-estimation max_iterations");
@@ -1095,8 +1053,8 @@ export fn zds_run_o2a_optimal_estimation_batch(
         resolved.setError("multi-layer aerosol profiles are forward-simulation only");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const measurement = optimalEstimationBatchMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
-    const controls = optimalEstimationBatchControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const controls = optimalEstimationControls(resolved, resolved_request) orelse return @intFromEnum(ZdsStatus.failure);
     const state_template_ptr = resolved_request.state_template orelse {
         resolved.setError("null state template");
         return @intFromEnum(ZdsStatus.failure);
@@ -1220,13 +1178,13 @@ export fn zds_run_o2a_fastmode_optimal_estimation_batch(
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    const fast_measurement = optimalEstimationBatchMeasurementSlices(resolved, resolved_fast_request) orelse return @intFromEnum(ZdsStatus.failure);
-    const correction_measurement = optimalEstimationBatchMeasurementSlices(correction_resolved, resolved_correction_request) orelse {
+    const fast_measurement = optimalEstimationMeasurementSlices(resolved, resolved_fast_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const correction_measurement = optimalEstimationMeasurementSlices(correction_resolved, resolved_correction_request) orelse {
         resolved.setError("invalid fastmode correction measurement");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const fast_controls = optimalEstimationBatchControls(resolved, resolved_fast_request) orelse return @intFromEnum(ZdsStatus.failure);
-    const correction_controls = optimalEstimationBatchControls(correction_resolved, resolved_correction_request) orelse {
+    const fast_controls = optimalEstimationControls(resolved, resolved_fast_request) orelse return @intFromEnum(ZdsStatus.failure);
+    const correction_controls = optimalEstimationControls(correction_resolved, resolved_correction_request) orelse {
         resolved.setError("invalid fastmode correction controls");
         return @intFromEnum(ZdsStatus.failure);
     };
