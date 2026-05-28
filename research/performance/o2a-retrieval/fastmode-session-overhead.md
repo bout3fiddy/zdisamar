@@ -625,3 +625,64 @@ Change: cap the automatic `Result.diagnose()` start-worker policy at two
 workers while leaving explicit `batch_workers=` unchanged.  This preserves the
 native prefetch worker cap and keeps the public diagnosis default on the faster
 measured boundary.
+
+## 2026-05-28 Fast-Stage Convergence Retune
+
+Finding: the sparse full-physics correction absorbs a modestly looser
+fast-stage convergence threshold on the retained 100-case fastmode validation
+boundary.  Aggressive thresholds were rejected: `50` and above preserved
+convergence but moved at least one corrected state by `0.00618` AOD and
+`3.16 hPa` against the retained fullmode reference.
+
+Retained fastmode-only 100-case probes against the tracked fullmode reference:
+
+```text
+threshold 15: median 0.384 s, max delta 4.18164e-4 AOD / 0.545859 hPa
+threshold 20: median 0.356 s, max delta 4.18164e-4 AOD / 0.545859 hPa
+threshold 30: median 0.349 s, max delta 4.18164e-4 AOD / 0.545859 hPa
+```
+
+Change: set the case-owned fastmode OE
+`state_vector_convergence_threshold` to `30.0`.  This keeps the retained
+fastmode/reference max-delta gate unchanged while reducing accepted fast-stage
+iterations in broad repeated-start sweeps.
+
+## 2026-05-28 Prefetch Boundary Recheck After Retune
+
+Rechecked the user-facing prefetch-session shape after the threshold retune:
+one empty caller-owned `SessionCache()`, fixed scene/case/measurement,
+`ZDISAMAR_WORKER_LIMIT=10`, omitted controls, one warm call, varying only the
+state-vector initial/prior values, and no access to `result.final_evaluation`
+inside the timed loop.
+
+Scene 008, 100-start basin grid:
+
+```text
+public repeated retrieve, sparse final correction:
+  same first start repeated 20 times: median 249.910 ms, mean 250.202 ms
+  broad 100-start grid:              elapsed 38.881 s, median 404.847 ms, mean 388.805 ms
+  iteration histogram:               {3: 8, 4: 21, 5: 45, 6: 25, 8: 1}
+  fast-stage iteration histogram:    {2: 8, 3: 21, 4: 45, 5: 25, 7: 1}
+
+native diagnose batch, sparse final correction:
+  elapsed 30.516 s, avg 305.160 ms/start, batch_workers=2
+  iteration histogram:            {3: 8, 4: 21, 5: 45, 6: 25, 8: 1}
+  fast-stage iteration histogram: {2: 8, 3: 21, 4: 45, 5: 25, 7: 1}
+
+public repeated retrieve, fast-stage-only:
+  same first start repeated 20 times: median 108.306 ms, mean 108.997 ms
+  broad 100-start grid:              elapsed 23.331 s, median 251.214 ms, mean 233.313 ms
+  fast-stage iteration histogram:    {2: 8, 3: 21, 4: 45, 5: 25, 7: 1}
+
+native diagnose batch, fast-stage-only:
+  elapsed 20.359 s, avg 203.594 ms/start, batch_workers=2
+  fast-stage iteration histogram: {2: 8, 3: 21, 4: 45, 5: 25, 7: 1}
+```
+
+Interpretation: the prefetch-session number is real, but it is not a constant
+per-start multiplier for the basin grid.  The scene-008 grid contains many
+starts that need four or five fast-stage iterations, and sparse final
+correction adds one full-physics correction iteration to every start.  The
+current native `diagnose()` boundary is faster than repeating the public
+`retrieve()` call over the same starts, but the remaining cost is still native
+RTM/Jacobian work rather than Python request construction.
