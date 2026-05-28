@@ -746,6 +746,14 @@ state_vector_convergence_threshold=40:
   retained 100-case validation failed:
     AOD max_abs_delta=9.155e-04 > 5.500e-04
     pressure max_abs_delta=1.444 hPa > 0.700 hPa
+
+disabled telemetry/perturbation comptime gate:
+  product builds already lower the disabled instrumentation path well enough
+  that an explicit helper-level `comptime` gate did not help the real sweep.
+  ReleaseFast comparison against a detached baseline worktree:
+    25-start fast-stage-only: edited 5.006 s, baseline 5.062 s
+    25-start sparse correction: edited 7.632 s, baseline 7.666 s
+    100-start fast-stage-only: edited 22.168 s, baseline 20.541 s
 ```
 
 Conclusion: after the current batching and threshold-30 changes, the remaining
