@@ -277,7 +277,7 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     assert payload["runs"] == 2
     assert payload["non_converged"] == 1
     assert payload["native_worker_limit"] is None
-    figure = sweep.plot(cells=25)
+    figure = sweep.plot()
     figure_payload = figure.to_dict()
     assert figure_payload["runs"] == 2
     assert figure_payload["title"]["text"] == "Retrieval Paths"
@@ -297,7 +297,7 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     assert diagnosis_svg.count('class="diagnosis-non-converged"') == 2
 
     no_truth = replace(sweep, truth_state=None)
-    no_truth_figure = no_truth.plot(cells=25)
+    no_truth_figure = no_truth.plot()
     assert no_truth_figure.to_dict()["truth"] is None
     no_truth_svg = no_truth_figure._repr_svg_()
     assert ">truth" not in no_truth_svg

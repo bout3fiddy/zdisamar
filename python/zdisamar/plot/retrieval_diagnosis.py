@@ -36,7 +36,6 @@ class RetrievalDiagnosisFigure:
     """Single-panel SVG showing actual solver paths from diagnosis starts."""
 
     diagnosis: RetrievalDiagnosis
-    cells: int
 
     @property
     def width(self) -> int:
@@ -152,12 +151,10 @@ class RetrievalDiagnosisFigure:
 
 def retrieval_diagnosis_figure(
     diagnosis: RetrievalDiagnosis,
-    *,
-    cells: int = 150,
 ) -> RetrievalDiagnosisFigure:
     """Return the SVG figure for one multi-start diagnosis."""
 
-    return RetrievalDiagnosisFigure(diagnosis=diagnosis, cells=int(cells))
+    return RetrievalDiagnosisFigure(diagnosis=diagnosis)
 
 
 def plot_domains(diagnosis: RetrievalDiagnosis) -> tuple[tuple[float, float], tuple[float, float]]:

@@ -179,15 +179,13 @@ class RetrievalDiagnosis(NotebookDisplay):
     def plot(
         self,
         save: str | Path | None = None,
-        *,
-        cells: int = 150,
     ):
         """Render the retrieval path plot as SVG."""
 
         from ...plot.properties import PLOT
         from ...plot.retrieval_diagnosis import retrieval_diagnosis_figure
 
-        return PLOT.finish(retrieval_diagnosis_figure(self, cells=cells), save=save)
+        return PLOT.finish(retrieval_diagnosis_figure(self), save=save)
 
     def __repr__(self) -> str:
 
