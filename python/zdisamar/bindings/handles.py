@@ -856,16 +856,22 @@ class RtmHandle:
 
         run_count = int(raw.run_count)
         state_count = int(raw.state_count)
+        history_capacity = int(raw.history_capacity)
         value_count = run_count * state_count
+        history_value_count = run_count * history_capacity * state_count
         status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
 
         return {
             "run_count": run_count,
             "state_count": state_count,
+            "history_capacity": history_capacity,
             "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
             "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
             "status": status,
             "state": tuple(float(raw.state[index]) for index in range(value_count)),
+            "history_state": tuple(
+                float(raw.history_state[index]) for index in range(history_value_count)
+            ),
         }
 
     def _copied_optimal_estimation_fastmode_batch_result(
@@ -875,16 +881,22 @@ class RtmHandle:
 
         run_count = int(raw.run_count)
         state_count = int(raw.state_count)
+        history_capacity = int(raw.history_capacity)
         value_count = run_count * state_count
+        history_value_count = run_count * history_capacity * state_count
         status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
 
         return {
             "run_count": run_count,
             "state_count": state_count,
+            "history_capacity": history_capacity,
             "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
             "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
             "status": status,
             "state": tuple(float(raw.state[index]) for index in range(value_count)),
+            "history_state": tuple(
+                float(raw.history_state[index]) for index in range(history_value_count)
+            ),
             "fast_stage_iteration_count": tuple(
                 int(raw.fast_stage_iteration_count[index]) for index in range(run_count)
             ),

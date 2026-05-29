@@ -33,6 +33,7 @@ class BatchResult:
     converged: tuple[bool, ...]
     measurement: Measurement
     status: tuple[str, ...] = ()
+    history_state: tuple[tuple[tuple[float, ...], ...], ...] = ()
     fast_stage_iterations: tuple[int, ...] | None = None
     fast_stage_converged: tuple[bool, ...] | None = None
     full_correction_iterations: tuple[int, ...] | None = None
@@ -478,6 +479,7 @@ def run_native_fastmode_retrieval_batch(
         tuple(float(value) for value in raw["state"][offset : offset + state_count])
         for offset in range(0, len(raw["state"]), state_count)
     )
+    history_state = batch_history_state(raw)
 
     return BatchResult(
         state_names=resolved_template.names,
@@ -486,6 +488,7 @@ def run_native_fastmode_retrieval_batch(
         converged=tuple(bool(value) for value in raw["converged"]),
         measurement=measurement,
         status=tuple(str(value) for value in raw["status"]),
+        history_state=history_state,
         fast_stage_iterations=tuple(int(value) for value in raw["fast_stage_iteration_count"]),
         fast_stage_converged=tuple(bool(value) for value in raw["fast_stage_converged"]),
         full_correction_iterations=tuple(
@@ -813,6 +816,7 @@ def run_native_retrieval_batch(
         tuple(float(value) for value in raw["state"][offset : offset + state_count])
         for offset in range(0, len(raw["state"]), state_count)
     )
+    history_state = batch_history_state(raw)
 
     return BatchResult(
         state_names=resolved_template.names,
@@ -821,7 +825,34 @@ def run_native_retrieval_batch(
         converged=tuple(bool(value) for value in raw["converged"]),
         measurement=measurement,
         status=tuple(str(value) for value in raw["status"]),
+        history_state=history_state,
     )
+
+
+def batch_history_state(raw: Mapping[str, object]) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    """Return compact per-start iteration state paths from a native batch result."""
+
+    run_count = _native_int(raw, "run_count")
+    state_count = _native_int(raw, "state_count")
+    history_capacity = _native_int(raw, "history_capacity")
+    history_values = _native_floats(raw, "history_state")
+    iteration_counts = _native_ints(raw, "iteration_count")
+    paths = []
+
+    for run_index in range(run_count):
+        run_offset = run_index * history_capacity * state_count
+        run_path = []
+
+        for iteration_index in range(min(iteration_counts[run_index], history_capacity)):
+            offset = run_offset + iteration_index * state_count
+            row = tuple(history_values[offset : offset + state_count])
+
+            if all(math.isfinite(value) for value in row):
+                run_path.append(row)
+
+        paths.append(tuple(run_path))
+
+    return tuple(paths)
 
 
 def batch_state_rows(
@@ -1006,7 +1037,7 @@ def attach_diagnosis(
 
     def diagnose(
         *,
-        n: int = 100,
+        n: int | None = None,
         cache: rtm.SessionCache | None = None,
     ) -> object:
 
