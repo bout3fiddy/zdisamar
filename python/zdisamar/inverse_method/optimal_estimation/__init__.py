@@ -1,7 +1,9 @@
 """Optimal-estimation retrieval API."""
 
+from .diagnosis import RetrievalDiagnosis
 from .measurement import WavelengthGridMismatchError
 from .o2a import (
+    attach_diagnosis,
     attach_final_evaluation,
     case_for_state,
     evaluate_reflectance,
@@ -39,12 +41,14 @@ __all__ = [
     "RtmEvaluation",
     "Iteration",
     "Measurement",
+    "RetrievalDiagnosis",
     "RetrievalControls",
     "Result",
     "StateVector",
     "StateVectorParameter",
     "SurfaceAlbedo",
     "WavelengthGridMismatchError",
+    "attach_diagnosis",
     "attach_final_evaluation",
     "case_for_state",
     "evaluate_reflectance",

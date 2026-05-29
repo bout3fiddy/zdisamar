@@ -53,8 +53,6 @@ test {
     _ = @import("input/reference_data/ingest/reference_assets_loaded_asset_test.zig");
     _ = @import("output/atmospheric_budget_test.zig");
     _ = @import("output/o2_line_contributions_test.zig");
-    _ = @import("forward_model/implementations/surface_test.zig");
-
     _ = @import("forward_model/optical_properties/state_build/layer_accumulation_test.zig");
     _ = @import("forward_model/optical_properties/state_build/carrier_eval_test.zig");
     _ = @import("forward_model/optical_properties/state_build/forward_layers_test.zig");
@@ -62,8 +60,6 @@ test {
     _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
     _ = @import("forward_model/optical_properties/state_build/spectroscopy_test.zig");
     _ = @import("forward_model/implementations/instrument/integration_test.zig");
-    _ = @import("forward_model/implementations/radiative_transfer_test.zig");
-
     _ = @import("forward_model/instrument_grid/grid_calculation/root_test.zig");
     _ = @import("forward_model/instrument_grid/grid_calculation/spectral_forward_test.zig");
 }

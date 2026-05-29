@@ -381,8 +381,6 @@ pub fn simulateInternal(
         scene,
         route,
         prepared,
-        implementations,
-        setup,
         &simulation_plan,
         wavelength_plan_storage,
     );
@@ -565,8 +563,6 @@ fn prefetchSimulationPlan(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
-    setup: SimulationSetup,
     simulation_plan: *ResolvedSimulationPlan,
     wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!void {
@@ -596,8 +592,6 @@ fn prefetchSimulationPlan(
             scene,
             route,
             prepared,
-            implementations,
-            setup.safe_span,
             simulation_plan.forward_miss_plan.misses,
             simulation_plan.profile_spectroscopy_caches,
             results,

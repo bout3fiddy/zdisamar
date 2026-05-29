@@ -88,12 +88,10 @@ def fastmode_case(case: Any) -> Any:
 def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 
     start = time.perf_counter()
-    controls = oe_setup.retrieval_controls()
     result = o2a_oe.retrieve(
         case=case,
         measurement=measurement,
         state_vector=state_vector,
-        controls=controls,
     )
 
     return result, time.perf_counter() - start

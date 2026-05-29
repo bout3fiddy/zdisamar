@@ -96,6 +96,7 @@ pub const SummaryStorage = struct {
     forward_miss_plan_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
+    shared_forward_prefetch_pool: ?*std.Thread.Pool = null,
     forward_prefetch_pool: std.Thread.Pool = undefined,
     forward_prefetch_pool_worker_threads: usize = 0,
     forward_prefetch_pool_valid: bool = false,
@@ -131,6 +132,7 @@ pub const SummaryStorage = struct {
         worker_count: usize,
     ) ?*std.Thread.Pool {
         if (worker_count <= 1) return null;
+        if (self.shared_forward_prefetch_pool) |pool| return pool;
 
         const worker_thread_count = worker_count - 1;
         if (self.forward_prefetch_pool_valid and

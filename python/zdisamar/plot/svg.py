@@ -170,26 +170,6 @@ class SvgPanel:
 
         return (0.0, 1.0) if domain is None else domain
 
-    def with_default_markers(self) -> "SvgPanel":  # noqa: UP037
-
-        return SvgPanel(
-            title=self.title,
-            x_title=self.x_title,
-            y_title=self.y_title,
-            series=self.series,
-            width=self.width,
-            height=self.height,
-            x_domain=self.x_domain,
-            x_ticks=self.x_ticks,
-            y_domain=self.y_domain,
-            marker_x=tuple(marker_values(series_x_values(self.series))),
-            rule_y=self.rule_y,
-            y_axis_multiplier=self.y_axis_multiplier,
-            show_x_axis=self.show_x_axis,
-            show_title=self.show_title,
-            show_legend=self.show_legend,
-        )
-
 
 @dataclass(frozen=True)
 class SvgFigure:
@@ -731,11 +711,6 @@ def series_svg(
             f'stroke-dasharray="{dash_values(series.dash)}"><title>{escape(series.name)}</title></path>'
         )
     ]
-
-
-def series_x_values(series: Sequence[SvgSeries]) -> list[float]:
-
-    return [value for item in series for value in item.x]
 
 
 def band_polygon_svg(

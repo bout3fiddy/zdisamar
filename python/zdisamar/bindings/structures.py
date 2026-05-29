@@ -160,38 +160,6 @@ class OxygenCollisionInducedAbsorptionDiagnosticsRaw(ctypes.Structure):
     ]
 
 
-class CRadiativeTransferDiagnosticRow(ctypes.Structure):
-    _fields_ = [
-        ("wavelength_nm", ctypes.c_double),
-        ("layer_index", ctypes.c_uint32),
-        ("sublayer_index", ctypes.c_uint32),
-        ("global_sublayer_index", ctypes.c_uint32),
-        ("interval_index_1based", ctypes.c_uint32),
-        ("altitude_km", ctypes.c_double),
-        ("total_optical_depth", ctypes.c_double),
-        ("total_absorption_optical_depth", ctypes.c_double),
-        ("total_scattering_optical_depth", ctypes.c_double),
-        ("single_scatter_albedo", ctypes.c_double),
-        ("cumulative_optical_depth_above", ctypes.c_double),
-        ("mid_layer_transmission_proxy", ctypes.c_double),
-        ("direct_surface_transmission_proxy", ctypes.c_double),
-        ("atmospheric_scattering_source_proxy", ctypes.c_double),
-        ("absorption_loss_proxy", ctypes.c_double),
-        ("pseudo_spherical_airmass_factor", ctypes.c_double),
-        ("n_streams", ctypes.c_uint32),
-        ("integrate_source_function", ctypes.c_uint8),
-        ("final_reflectance", ctypes.c_double),
-        ("final_radiance", ctypes.c_double),
-    ]
-
-
-class CRadiativeTransferDiagnostics(ctypes.Structure):
-    _fields_ = [
-        ("len", ctypes.c_size_t),
-        ("rows", ctypes.POINTER(CRadiativeTransferDiagnosticRow)),
-    ]
-
-
 class COptimalEstimationStateSpec(ctypes.Structure):
     _fields_ = [
         ("state_id", ctypes.c_uint8),
@@ -246,5 +214,53 @@ class COptimalEstimationResult(ctypes.Structure):
         ("history_chi2_state_vector", ctypes.POINTER(ctypes.c_double)),
         ("history_state_vector_convergence", ctypes.POINTER(ctypes.c_double)),
         ("history_snr_normal", ctypes.POINTER(ctypes.c_uint8)),
+        ("result_handle", ctypes.c_void_p),
+    ]
+
+
+class COptimalEstimationBatchRequest(ctypes.Structure):
+    _fields_ = [
+        ("sample_count", ctypes.c_size_t),
+        ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
+        ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("variance", ctypes.POINTER(ctypes.c_double)),
+        ("state_count", ctypes.c_size_t),
+        ("state_template", ctypes.POINTER(COptimalEstimationStateSpec)),
+        ("run_count", ctypes.c_size_t),
+        ("initial", ctypes.POINTER(ctypes.c_double)),
+        ("prior", ctypes.POINTER(ctypes.c_double)),
+        ("controls", COptimalEstimationControls),
+        ("batch_worker_count", ctypes.c_size_t),
+    ]
+
+
+class COptimalEstimationBatchResult(ctypes.Structure):
+    _fields_ = [
+        ("run_count", ctypes.c_size_t),
+        ("state_count", ctypes.c_size_t),
+        ("history_capacity", ctypes.c_size_t),
+        ("iteration_count", ctypes.POINTER(ctypes.c_size_t)),
+        ("converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("status", ctypes.POINTER(ctypes.c_uint8)),
+        ("state", ctypes.POINTER(ctypes.c_double)),
+        ("history_state", ctypes.POINTER(ctypes.c_double)),
+        ("result_handle", ctypes.c_void_p),
+    ]
+
+
+class COptimalEstimationFastmodeBatchResult(ctypes.Structure):
+    _fields_ = [
+        ("run_count", ctypes.c_size_t),
+        ("state_count", ctypes.c_size_t),
+        ("history_capacity", ctypes.c_size_t),
+        ("iteration_count", ctypes.POINTER(ctypes.c_size_t)),
+        ("converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("status", ctypes.POINTER(ctypes.c_uint8)),
+        ("state", ctypes.POINTER(ctypes.c_double)),
+        ("history_state", ctypes.POINTER(ctypes.c_double)),
+        ("fast_stage_iteration_count", ctypes.POINTER(ctypes.c_size_t)),
+        ("fast_stage_converged", ctypes.POINTER(ctypes.c_uint8)),
+        ("full_correction_iteration_count", ctypes.POINTER(ctypes.c_size_t)),
+        ("full_correction_converged", ctypes.POINTER(ctypes.c_uint8)),
         ("result_handle", ctypes.c_void_p),
     ]

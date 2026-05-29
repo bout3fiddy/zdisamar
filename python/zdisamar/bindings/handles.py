@@ -12,11 +12,7 @@ from ..input.wavelength_band.o2a import O2AInput
 from ..output.spectrum import (
     JACOBIAN_STATE_NAMES,
     DiagnosticReport,
-    Irradiance,
-    Radiance,
     RadianceJacobian,
-    Reflectance,
-    SpectralAxis,
     Spectrum,
 )
 from ..output.tables import (
@@ -24,7 +20,6 @@ from ..output.tables import (
     InstrumentResponseTable,
     O2LineContributions,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
 )
 from .loader import load_library
 from .signatures import configure
@@ -32,11 +27,13 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    COptimalEstimationBatchRequest,
+    COptimalEstimationBatchResult,
     COptimalEstimationControls,
+    COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
     COptimalEstimationStateSpec,
-    CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
@@ -45,6 +42,7 @@ from .structures import (
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
 _MAX_UINT32 = 2**32 - 1
 _NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
+_BATCH_RUN_STATUS_NAMES = ("pending", "ok", "failed")
 
 
 def contiguous_wavelengths(wavelengths_nm):
@@ -85,6 +83,15 @@ def jacobian_state_ids(state_names: tuple[str, ...]):
     return (ctypes.c_uint8 * len(ids))(*ids)
 
 
+def batch_run_status(value: int) -> str:
+    """Translate native per-start batch status into a stable Python label."""
+
+    try:
+        return _BATCH_RUN_STATUS_NAMES[int(value)]
+    except IndexError:
+        return f"unknown:{int(value)}"
+
+
 def double_array(values, name: str):
     """Copy a Python numeric sequence into a contiguous C double buffer."""
 
@@ -97,6 +104,30 @@ def double_array(values, name: str):
         raise ValueError(f"{name} values must be finite")
 
     return (ctypes.c_double * len(copied))(*copied)
+
+
+def flattened_state_rows(rows, state_count: int, name: str) -> tuple[list[float], int]:
+    """Copy a two-dimensional state table into row-major native input."""
+
+    copied = []
+    run_count = 0
+
+    for row in rows:
+        values = [float(value) for value in row]
+
+        if len(values) != state_count:
+            raise ValueError(f"{name} rows must have {state_count} values")
+
+        copied.extend(values)
+        run_count += 1
+
+    if run_count == 0:
+        raise ValueError(f"{name} must not be empty")
+
+    if any(not math.isfinite(value) for value in copied):
+        raise ValueError(f"{name} values must be finite")
+
+    return copied, run_count
 
 
 class RtmHandle:
@@ -175,6 +206,18 @@ class RtmHandle:
         """Build reusable RTM work arrays for repeated runs."""
 
         self._check(self._lib.zds_warm_o2a_session(self._ctx))
+
+    def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
+        """Build reusable RTM work arrays for the OE Jacobian route."""
+
+        state_ids = jacobian_state_ids(state_names)
+        self._check(
+            self._lib.zds_warm_o2a_optimal_estimation(
+                self._ctx,
+                state_ids,
+                len(state_ids),
+            )
+        )
 
     def spectrum(
         self,
@@ -306,25 +349,6 @@ class RtmHandle:
             self._copied_rows(raw, self._lib.zds_o2_o2_cia_diagnostics_free)
         )
 
-    def radiative_transfer_diagnostics(self, wavelengths_nm) -> RadiativeTransferDiagnosticTable:
-        """Return copied bounded radiative-transfer evidence rows."""
-
-        wavelengths = contiguous_wavelengths(wavelengths_nm)
-        raw = CRadiativeTransferDiagnostics()
-        self._check(
-            self._lib.zds_radiative_transfer_diagnostics(
-                self._ctx,
-                wavelengths,
-                len(wavelengths),
-                None,
-                ctypes.byref(raw),
-            )
-        )
-
-        return RadiativeTransferDiagnosticTable(
-            self._copied_rows(raw, self._lib.zds_radiative_transfer_diagnostics_free)
-        )
-
     def optimal_estimation(self, *, measurement, state_vector, controls):
         """Run native O2 A optimal estimation for the loaded case."""
 
@@ -344,6 +368,96 @@ class RtmHandle:
             state_vector=state_vector,
             controls=controls,
         )
+
+    def optimal_estimation_batch(
+        self,
+        *,
+        measurement,
+        state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        batch_workers=1,
+    ):
+        """Run many native O2 A retrievals against one loaded case and measurement."""
+
+        request, buffers = self._optimal_estimation_batch_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            initial_states=initial_states,
+            prior_states=prior_states,
+            controls=controls,
+            batch_workers=batch_workers,
+        )
+        raw = COptimalEstimationBatchResult()
+        self._check(
+            self._lib.zds_run_o2a_optimal_estimation_batch(
+                self._ctx,
+                ctypes.byref(request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_batch_result(raw)
+        finally:
+            del buffers
+            self._lib.zds_optimal_estimation_batch_result_free(self._ctx, ctypes.byref(raw))
+
+    def optimal_estimation_fastmode_batch(
+        self,
+        *,
+        correction_handle,
+        measurement,
+        correction_measurement,
+        state_vector,
+        correction_state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        correction_controls,
+        batch_workers=1,
+    ):
+        """Run fast-stage and sparse correction batches inside one native boundary."""
+
+        fast_request, fast_buffers = self._optimal_estimation_batch_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            initial_states=initial_states,
+            prior_states=prior_states,
+            controls=controls,
+            batch_workers=batch_workers,
+        )
+        correction_request, correction_buffers = (
+            correction_handle._optimal_estimation_batch_request(
+                measurement=correction_measurement,
+                state_vector=correction_state_vector,
+                initial_states=initial_states,
+                prior_states=prior_states,
+                controls=correction_controls,
+                batch_workers=batch_workers,
+            )
+        )
+        raw = COptimalEstimationFastmodeBatchResult()
+        self._check(
+            self._lib.zds_run_o2a_fastmode_optimal_estimation_batch(
+                self._ctx,
+                correction_handle._ctx,
+                ctypes.byref(fast_request),
+                ctypes.byref(correction_request),
+                ctypes.byref(raw),
+            )
+        )
+
+        try:
+            return self._copied_optimal_estimation_fastmode_batch_result(raw)
+        finally:
+            del fast_buffers
+            del correction_buffers
+            self._lib.zds_optimal_estimation_fastmode_batch_result_free(
+                self._ctx,
+                ctypes.byref(raw),
+            )
 
     def _run_optimal_estimation(self, runner_name: str, *, measurement, state_vector, controls):
 
@@ -506,6 +620,64 @@ class RtmHandle:
 
         return request, buffers
 
+    def _optimal_estimation_batch_request(
+        self,
+        *,
+        measurement,
+        state_vector,
+        initial_states,
+        prior_states,
+        controls,
+        batch_workers,
+    ):
+
+        template_request, template_buffers = self._optimal_estimation_request(
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=controls,
+        )
+        state_count = len(state_vector.parameters)
+        initial_values, run_count = flattened_state_rows(
+            initial_states,
+            state_count,
+            "batch initial states",
+        )
+        prior_values, prior_run_count = flattened_state_rows(
+            prior_states,
+            state_count,
+            "batch prior states",
+        )
+
+        if prior_run_count != run_count:
+            raise ValueError("batch initial and prior states must have the same row count")
+
+        if not isinstance(batch_workers, Integral) or isinstance(batch_workers, bool):
+            raise ValueError("optimal-estimation batch_workers must be an integer")
+
+        batch_worker_count = int(batch_workers)
+
+        if batch_worker_count <= 0:
+            raise ValueError("optimal-estimation batch_workers must be positive")
+
+        initial = double_array(initial_values, "batch initial states")
+        prior = double_array(prior_values, "batch prior states")
+        request = COptimalEstimationBatchRequest(
+            sample_count=template_request.sample_count,
+            wavelength_nm=template_request.wavelength_nm,
+            reflectance=template_request.reflectance,
+            variance=template_request.variance,
+            state_count=template_request.state_count,
+            state_template=template_request.states,
+            run_count=run_count,
+            initial=initial,
+            prior=prior,
+            controls=template_request.controls,
+            batch_worker_count=batch_worker_count,
+        )
+        buffers = (*template_buffers, initial, prior)
+
+        return request, buffers
+
     def close(self) -> None:
         """Release the opaque Zig RTM handle."""
 
@@ -552,10 +724,10 @@ class RtmHandle:
             self._free_spectrum(raw)
 
         return Spectrum(
-            axis=SpectralAxis(wavelength_nm=wavelength_nm),
-            radiance_quantity=Radiance(radiance),
-            irradiance_quantity=Irradiance(irradiance),
-            reflectance_quantity=Reflectance(reflectance),
+            wavelength_nm=wavelength_nm,
+            radiance=radiance,
+            irradiance=irradiance,
+            reflectance=reflectance,
             case=self.input if include_case else None,
             solar_mu0_value=self._solar_mu0,
             diagnostic_report=report,
@@ -654,6 +826,62 @@ class RtmHandle:
             ),
             "history_snr_normal": uint8s(raw.history_snr_normal, iteration_count),
         }
+
+    def _copied_optimal_estimation_batch_result(self, raw: COptimalEstimationBatchResult):
+
+        return self._copied_optimal_estimation_batch_fields(raw)
+
+    def _copied_optimal_estimation_batch_fields(
+        self,
+        raw: COptimalEstimationBatchResult | COptimalEstimationFastmodeBatchResult,
+    ):
+
+        run_count = int(raw.run_count)
+        state_count = int(raw.state_count)
+        history_capacity = int(raw.history_capacity)
+        value_count = run_count * state_count
+        history_value_count = run_count * history_capacity * state_count
+        status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
+
+        return {
+            "run_count": run_count,
+            "state_count": state_count,
+            "history_capacity": history_capacity,
+            "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
+            "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
+            "status": status,
+            "state": tuple(float(raw.state[index]) for index in range(value_count)),
+            "history_state": tuple(
+                float(raw.history_state[index]) for index in range(history_value_count)
+            ),
+        }
+
+    def _copied_optimal_estimation_fastmode_batch_result(
+        self,
+        raw: COptimalEstimationFastmodeBatchResult,
+    ):
+
+        payload = self._copied_optimal_estimation_batch_fields(raw)
+        run_count = int(payload["run_count"])
+
+        payload.update(
+            {
+                "fast_stage_iteration_count": tuple(
+                    int(raw.fast_stage_iteration_count[index]) for index in range(run_count)
+                ),
+                "fast_stage_converged": tuple(
+                    bool(raw.fast_stage_converged[index]) for index in range(run_count)
+                ),
+                "full_correction_iteration_count": tuple(
+                    int(raw.full_correction_iteration_count[index]) for index in range(run_count)
+                ),
+                "full_correction_converged": tuple(
+                    bool(raw.full_correction_converged[index]) for index in range(run_count)
+                ),
+            }
+        )
+
+        return payload
 
     def _check(self, status: int) -> None:
 

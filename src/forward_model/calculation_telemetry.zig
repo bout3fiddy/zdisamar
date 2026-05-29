@@ -10,6 +10,23 @@ else
     false;
 
 pub const enabled: bool = requested and sink.available;
+pub const Stage = sink.Stage;
+pub const Context = sink.Context;
+
+pub inline fn setContext(context: Context) void {
+    if (comptime !enabled) return;
+    sink.setContext(context);
+}
+
+pub inline fn currentContext() Context {
+    if (comptime !enabled) return .{};
+    return sink.currentContext();
+}
+
+pub inline fn clearContext() void {
+    if (comptime !enabled) return;
+    sink.clearContext();
+}
 
 // instrumentation: calculation telemetry
 // captures: integration kernel counts

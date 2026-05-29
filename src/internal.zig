@@ -180,8 +180,6 @@ pub const forward_model = struct {
         pub const RadiativeTransferPerformanceThresholds = root.RadiativeTransferPerformanceThresholds;
         pub const RadiativeTransferControls = root.RadiativeTransferControls;
         pub const TransportFamily = root.TransportFamily;
-        pub const ImplementationClass = root.ImplementationClass;
-        pub const DerivativeSemantics = root.DerivativeSemantics;
         pub const Regime = root.Regime;
         pub const ExecutionMode = root.ExecutionMode;
         pub const DerivativeMode = root.DerivativeMode;
@@ -219,8 +217,6 @@ pub const forward_model = struct {
         pub const Bindings = root.Bindings;
         pub const Instrument = @import("forward_model/implementations/instrument.zig");
         pub const instrument_integration = @import("forward_model/implementations/instrument/integration.zig");
-        pub const Surface = @import("forward_model/implementations/surface.zig");
-        pub const Transport = @import("forward_model/implementations/transport.zig");
 
         pub fn exact() Bindings {
             return root.exact();

@@ -7,7 +7,9 @@ const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
 const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
+const Telemetry = @import("../forward_model/calculation_telemetry.zig");
 const Trace = @import("../forward_model/performance_trace.zig");
+const work_partition = @import("../forward_model/work_partition.zig");
 const algebra = @import("algebra.zig");
 
 const Allocator = std.mem.Allocator;
@@ -166,12 +168,12 @@ pub const MeasurementWorkspace = struct {
 
 // Reused fixed-size state-space scratch. The spectral dimension is never stored here.
 // layout(64-bit):
-//   size: 560 B, align: 8 B
-//   field storage: vectors=128 B across 8 x [3]f64, matrices=432 B across 6 x 3x3 f64; padding: 0 B
+//   size: 416 B, align: 8 B
+//   field storage: vectors=128 B across 8 x [3]f64, matrices=288 B across 4 x 3x3 f64; padding: 0 B
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 9 cache line(s) at 64 B per line
+//   cache span: 7 cache line(s) at 64 B per line
 //   count: one stack value per active retrieval
-//   footprint: per instance = 560 B (0.547 KiB)
+//   footprint: per instance = 416 B (0.406 KiB)
 pub const IterationWorkspace = struct {
     sqrt_sa: Vector = algebra.zeroVector(),
     sqrt_inv_sa: Vector = algebra.zeroVector(),
@@ -185,8 +187,6 @@ pub const IterationWorkspace = struct {
     jt_invse_j: Matrix = algebra.zeroMatrix(),
     eigenvectors: Matrix = algebra.zeroMatrix(),
     posterior_precision: Matrix = algebra.zeroMatrix(),
-    posterior_covariance: Matrix = algebra.zeroMatrix(),
-    averaging_kernel: Matrix = algebra.zeroMatrix(),
 };
 
 // Native result storage retained behind the C result handle.
@@ -245,6 +245,186 @@ pub const Result = struct {
         allocator.free(self.history_chi2_state_vector);
         allocator.free(self.history_state_vector_convergence);
         allocator.free(self.history_snr_normal);
+        self.* = .{};
+    }
+};
+
+pub const BatchResult = struct {
+    run_count: usize = 0,
+    state_count: usize = 0,
+    history_capacity: usize = 0,
+    iteration_count: []usize = &.{},
+    converged: []u8 = &.{},
+    status: []u8 = &.{},
+    state: []f64 = &.{},
+    history_state: []f64 = &.{},
+
+    pub fn init(allocator: Allocator, run_count: usize, state_count: usize, history_capacity: usize) !BatchResult {
+        if (run_count == 0) return error.InvalidStateSpec;
+        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        if (history_capacity == 0 or history_capacity > max_iteration_count) return error.InvalidStateSpec;
+        var result: BatchResult = .{
+            .run_count = run_count,
+            .state_count = state_count,
+            .history_capacity = history_capacity,
+        };
+        errdefer result.deinit(allocator);
+        result.iteration_count = try allocator.alloc(usize, run_count);
+        result.converged = try allocator.alloc(u8, run_count);
+        result.status = try allocator.alloc(u8, run_count);
+        result.state = try allocator.alloc(f64, run_count * state_count);
+        result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+        initializeBatchOutput(result.output());
+        return result;
+    }
+
+    pub fn deinit(self: *BatchResult, allocator: Allocator) void {
+        allocator.free(self.iteration_count);
+        allocator.free(self.converged);
+        allocator.free(self.status);
+        allocator.free(self.state);
+        allocator.free(self.history_state);
+        self.* = .{};
+    }
+
+    fn output(self: *BatchResult) BatchOutput {
+        return .{
+            .run_count = self.run_count,
+            .state_count = self.state_count,
+            .history_capacity = self.history_capacity,
+            .history_stride = self.history_capacity,
+            .history_start_offset = 0,
+            .iteration_count = self.iteration_count,
+            .converged = self.converged,
+            .status = self.status,
+            .state = self.state,
+            .history_state = self.history_state,
+        };
+    }
+};
+
+pub const BatchRunStatus = enum(u8) {
+    pending = 0,
+    ok = 1,
+    failed = 2,
+};
+
+const BatchOutput = struct {
+    run_count: usize,
+    state_count: usize,
+    history_capacity: usize,
+    history_stride: usize,
+    history_start_offset: usize,
+    iteration_count: []usize,
+    converged: []u8,
+    status: []u8,
+    state: []f64,
+    history_state: []f64,
+};
+
+fn initializeBatchOutput(batch: BatchOutput) void {
+    for (0..batch.run_count) |run_index| {
+        markBatchRunPending(batch, run_index);
+    }
+}
+
+fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
+    for (0..result.run_count) |run_index| {
+        result.iteration_count[run_index] = 0;
+        result.converged[run_index] = 0;
+        result.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+        result.fast_stage_iteration_count[run_index] = 0;
+        result.fast_stage_converged[run_index] = 0;
+        result.full_correction_iteration_count[run_index] = 0;
+        result.full_correction_converged[run_index] = 0;
+        const state_offset = run_index * result.state_count;
+        for (0..result.state_count) |state_index| {
+            result.state[state_offset + state_index] = std.math.nan(f64);
+        }
+        const history_offset = run_index * result.history_capacity * result.state_count;
+        for (0..result.history_capacity * result.state_count) |history_index| {
+            result.history_state[history_offset + history_index] = std.math.nan(f64);
+        }
+    }
+}
+
+fn markBatchRunPending(batch: BatchOutput, run_index: usize) void {
+    batch.iteration_count[run_index] = 0;
+    batch.converged[run_index] = 0;
+    batch.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+    const state_offset = run_index * batch.state_count;
+    for (0..batch.state_count) |state_index| {
+        batch.state[state_offset + state_index] = std.math.nan(f64);
+    }
+    clearBatchRunHistory(batch, run_index);
+}
+
+fn markBatchRunFailure(batch: BatchOutput, run_index: usize) void {
+    batch.iteration_count[run_index] = 0;
+    batch.converged[run_index] = 0;
+    batch.status[run_index] = @intFromEnum(BatchRunStatus.failed);
+    const state_offset = run_index * batch.state_count;
+    for (0..batch.state_count) |state_index| {
+        batch.state[state_offset + state_index] = std.math.nan(f64);
+    }
+    clearBatchRunHistory(batch, run_index);
+}
+
+fn clearBatchRunHistory(batch: BatchOutput, run_index: usize) void {
+    const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
+        batch.state_count;
+    for (0..batch.history_capacity * batch.state_count) |history_index| {
+        batch.history_state[history_offset + history_index] = std.math.nan(f64);
+    }
+}
+
+pub const FastmodeBatchResult = struct {
+    run_count: usize = 0,
+    state_count: usize = 0,
+    history_capacity: usize = 0,
+    iteration_count: []usize = &.{},
+    converged: []u8 = &.{},
+    status: []u8 = &.{},
+    state: []f64 = &.{},
+    history_state: []f64 = &.{},
+    fast_stage_iteration_count: []usize = &.{},
+    fast_stage_converged: []u8 = &.{},
+    full_correction_iteration_count: []usize = &.{},
+    full_correction_converged: []u8 = &.{},
+
+    pub fn init(allocator: Allocator, run_count: usize, state_count: usize, history_capacity: usize) !FastmodeBatchResult {
+        if (run_count == 0) return error.InvalidStateSpec;
+        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        if (history_capacity == 0 or history_capacity > max_iteration_count * 2) return error.InvalidStateSpec;
+        var result: FastmodeBatchResult = .{
+            .run_count = run_count,
+            .state_count = state_count,
+            .history_capacity = history_capacity,
+        };
+        errdefer result.deinit(allocator);
+        result.iteration_count = try allocator.alloc(usize, run_count);
+        result.converged = try allocator.alloc(u8, run_count);
+        result.status = try allocator.alloc(u8, run_count);
+        result.state = try allocator.alloc(f64, run_count * state_count);
+        result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+        result.fast_stage_iteration_count = try allocator.alloc(usize, run_count);
+        result.fast_stage_converged = try allocator.alloc(u8, run_count);
+        result.full_correction_iteration_count = try allocator.alloc(usize, run_count);
+        result.full_correction_converged = try allocator.alloc(u8, run_count);
+        initializeFastmodeBatchResult(&result);
+        return result;
+    }
+
+    pub fn deinit(self: *FastmodeBatchResult, allocator: Allocator) void {
+        allocator.free(self.iteration_count);
+        allocator.free(self.converged);
+        allocator.free(self.status);
+        allocator.free(self.state);
+        allocator.free(self.history_state);
+        allocator.free(self.fast_stage_iteration_count);
+        allocator.free(self.fast_stage_converged);
+        allocator.free(self.full_correction_iteration_count);
+        allocator.free(self.full_correction_converged);
         self.* = .{};
     }
 };
@@ -422,23 +602,9 @@ pub fn runO2A(
     forward_storage: *InstrumentGrid.ProductStorage,
     controls: Controls,
 ) !Result {
-    // instrumentation: trace zone
-    // captures: full optimal-estimation retrieval wall time
-    // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
-    const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
-    defer retrieval_zone.end();
-
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
     if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
-    // instrumentation: trace counter
-    // captures: active retrieval state count
-    // why: normalize iteration and solver timing by inverse-problem dimension.
-    Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
-    // instrumentation: trace counter
-    // captures: configured maximum OE iterations
-    // why: make trace comparisons robust when controls change.
-    Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
 
     var prepared_case = try RetrievalPreparedCase.init(
         allocator,
@@ -451,10 +617,624 @@ pub fn runO2A(
     );
     defer prepared_case.deinit(allocator);
 
+    return runPreparedO2A(allocator, &prepared_case, state_specs, controls);
+}
+
+pub fn runO2ABatch(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    controls: Controls,
+    batch_worker_count: usize,
+) !BatchResult {
+    const run_count = try validateBatchInputs(base_input, state_template, initial_states, prior_states, controls);
+    var batch = try BatchResult.init(allocator, run_count, state_template.len, controls.max_iterations);
+    errdefer batch.deinit(allocator);
+    var output = batch.output();
+
+    try runO2ABatchInto(
+        allocator,
+        base_input,
+        measurement_wavelength_nm,
+        measurement_reflectance,
+        measurement_variance,
+        state_template,
+        initial_states,
+        prior_states,
+        forward_storage,
+        controls,
+        batch_worker_count,
+        &output,
+    );
+    return batch;
+}
+
+fn runO2ABatchInto(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    forward_storage: *InstrumentGrid.ProductStorage,
+    controls: Controls,
+    batch_worker_count: usize,
+    batch: *BatchOutput,
+) !void {
+    const run_count = try validateBatchInputs(base_input, state_template, initial_states, prior_states, controls);
+    if (batch.run_count != run_count or batch.state_count != state_template.len) return error.InvalidStateSpec;
+    if (batch.iteration_count.len != run_count or batch.converged.len != run_count or batch.status.len != run_count) return error.InvalidStateSpec;
+    if (batch.state.len != run_count * state_template.len) return error.InvalidStateSpec;
+    if (batch.history_capacity < controls.max_iterations or batch.history_start_offset + batch.history_capacity > batch.history_stride) return error.InvalidStateSpec;
+    if (batch.history_state.len != run_count * batch.history_stride * state_template.len) return error.InvalidStateSpec;
+
+    const previous_context = Telemetry.currentContext();
+    Telemetry.setContext(telemetryContextWithScene(previous_context, base_input.scene_id));
+    defer Telemetry.setContext(previous_context);
+
+    const effective_worker_count = @min(run_count, @max(@as(usize, 1), batch_worker_count));
+    if (effective_worker_count == 1) {
+        var prepared_case = try RetrievalPreparedCase.init(
+            allocator,
+            base_input,
+            measurement_wavelength_nm,
+            measurement_reflectance,
+            measurement_variance,
+            state_template,
+            forward_storage,
+        );
+        defer prepared_case.deinit(allocator);
+        try runO2ABatchRange(
+            allocator,
+            &prepared_case,
+            state_template,
+            initial_states,
+            prior_states,
+            controls,
+            batch,
+            0,
+            run_count,
+        );
+        return;
+    }
+
+    try runO2ABatchParallel(
+        allocator,
+        base_input,
+        measurement_wavelength_nm,
+        measurement_reflectance,
+        measurement_variance,
+        state_template,
+        initial_states,
+        prior_states,
+        controls,
+        batch,
+        effective_worker_count,
+    );
+}
+
+fn telemetryContextWithScene(context: Telemetry.Context, scene_id: []const u8) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    if (resolved.scene_hash == -1) resolved.scene_hash = telemetryHashBytes(scene_id);
+    return resolved;
+}
+
+fn telemetryContextWithStage(context: Telemetry.Context, stage: Telemetry.Stage) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    resolved.stage = stage;
+    return resolved;
+}
+
+fn telemetryContextWithStartState(context: Telemetry.Context, start_index: usize, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = telemetryContextWithState(context, state);
+    resolved.start_index = telemetryIndex(start_index);
+    return resolved;
+}
+
+fn telemetryContextWithEvaluationState(context: Telemetry.Context, iteration_index: usize, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = telemetryContextWithState(context, state);
+    resolved.iteration_index = telemetryIndex(iteration_index);
+    resolved.forward_evaluation_index = telemetryIndex(iteration_index);
+    return resolved;
+}
+
+fn telemetryContextWithState(context: Telemetry.Context, state: []const f64) Telemetry.Context {
+    if (comptime !Telemetry.enabled) return context;
+    var resolved = context;
+    resolved.state_hash = telemetryHashFloats(state);
+    for (0..resolved.state_values.len) |index| {
+        resolved.state_values[index] = if (index < state.len) state[index] else std.math.nan(f64);
+    }
+    return resolved;
+}
+
+fn telemetryHashBytes(bytes: []const u8) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    var hasher = std.hash.Wyhash.init(0x6f65_5f6d_7374_6172);
+    hasher.update(bytes);
+    return signedTelemetryHash(hasher.final());
+}
+
+fn telemetryHashFloats(values: []const f64) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    var hasher = std.hash.Wyhash.init(0x6f65_5f73_7461_7465);
+    for (values) |value| {
+        var bits = @as(u64, @bitCast(value));
+        hasher.update(std.mem.asBytes(&bits));
+    }
+    return signedTelemetryHash(hasher.final());
+}
+
+fn signedTelemetryHash(hash: u64) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    return @as(i64, @bitCast(hash));
+}
+
+fn telemetryIndex(value: usize) i64 {
+    if (comptime !Telemetry.enabled) return 0;
+    return std.math.cast(i64, value) orelse std.math.maxInt(i64);
+}
+
+fn validateBatchInputs(
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+) !usize {
+    if (state_template.len == 0 or state_template.len > max_state_count) return error.InvalidStateCount;
+    if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
+    if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
+    if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
+    if (initial_states.len % state_template.len != 0) return error.InvalidStateSpec;
+    const run_count = initial_states.len / state_template.len;
+    if (run_count == 0) return error.InvalidStateSpec;
+    return run_count;
+}
+
+pub fn runO2AFastmodeBatch(
+    allocator: Allocator,
+    fast_input: *const o2a_types.ResolvedVendorO2ACase,
+    fast_measurement_wavelength_nm: []const f64,
+    fast_measurement_reflectance: []const f64,
+    fast_measurement_variance: []const f64,
+    fast_state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    fast_forward_storage: *InstrumentGrid.ProductStorage,
+    fast_controls: Controls,
+    correction_input: *const o2a_types.ResolvedVendorO2ACase,
+    correction_measurement_wavelength_nm: []const f64,
+    correction_measurement_reflectance: []const f64,
+    correction_measurement_variance: []const f64,
+    correction_state_template: []const StateSpec,
+    correction_prior_states: []const f64,
+    correction_forward_storage: *InstrumentGrid.ProductStorage,
+    correction_controls: Controls,
+    batch_worker_count: usize,
+) !FastmodeBatchResult {
+    if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
+    const run_count = try validateBatchInputs(fast_input, fast_state_template, initial_states, prior_states, fast_controls);
+    if (correction_prior_states.len != run_count * correction_state_template.len) return error.InvalidStateSpec;
+
+    const fast_history_capacity = fast_controls.max_iterations;
+    const correction_history_capacity = correction_controls.max_iterations;
+    const total_history_capacity = fast_history_capacity + correction_history_capacity;
+    var result = try FastmodeBatchResult.init(allocator, run_count, fast_state_template.len, total_history_capacity);
+    errdefer result.deinit(allocator);
+
+    var fast_output = BatchOutput{
+        .run_count = run_count,
+        .state_count = fast_state_template.len,
+        .history_capacity = fast_history_capacity,
+        .history_stride = result.history_capacity,
+        .history_start_offset = 0,
+        .iteration_count = result.fast_stage_iteration_count,
+        .converged = result.fast_stage_converged,
+        .status = result.status,
+        .state = result.state,
+        .history_state = result.history_state,
+    };
+    const fastmode_context = Telemetry.currentContext();
+    {
+        Telemetry.setContext(telemetryContextWithStage(fastmode_context, .fast));
+        defer Telemetry.setContext(fastmode_context);
+        try runO2ABatchInto(
+            allocator,
+            fast_input,
+            fast_measurement_wavelength_nm,
+            fast_measurement_reflectance,
+            fast_measurement_variance,
+            fast_state_template,
+            initial_states,
+            prior_states,
+            fast_forward_storage,
+            fast_controls,
+            batch_worker_count,
+            &fast_output,
+        );
+    }
+
+    var correction_output = BatchOutput{
+        .run_count = run_count,
+        .state_count = correction_state_template.len,
+        .history_capacity = correction_history_capacity,
+        .history_stride = result.history_capacity,
+        .history_start_offset = fast_history_capacity,
+        .iteration_count = result.full_correction_iteration_count,
+        .converged = result.full_correction_converged,
+        .status = result.status,
+        .state = result.state,
+        .history_state = result.history_state,
+    };
+    for (0..run_count) |run_index| {
+        if (result.status[run_index] == @intFromEnum(BatchRunStatus.ok)) {
+            result.status[run_index] = @intFromEnum(BatchRunStatus.pending);
+        }
+    }
+    {
+        Telemetry.setContext(telemetryContextWithStage(fastmode_context, .correction));
+        defer Telemetry.setContext(fastmode_context);
+        try runO2ABatchInto(
+            allocator,
+            correction_input,
+            correction_measurement_wavelength_nm,
+            correction_measurement_reflectance,
+            correction_measurement_variance,
+            correction_state_template,
+            result.state,
+            correction_prior_states,
+            correction_forward_storage,
+            correction_controls,
+            batch_worker_count,
+            &correction_output,
+        );
+    }
+
+    for (0..run_count) |run_index| {
+        result.iteration_count[run_index] =
+            result.fast_stage_iteration_count[run_index] + result.full_correction_iteration_count[run_index];
+        result.converged[run_index] = if (result.status[run_index] == @intFromEnum(BatchRunStatus.ok))
+            result.fast_stage_converged[run_index]
+        else
+            0;
+        compactFastmodeBatchHistory(&result, run_index, fast_history_capacity);
+    }
+    return result;
+}
+
+fn compactFastmodeBatchHistory(
+    result: *FastmodeBatchResult,
+    run_index: usize,
+    fast_history_capacity: usize,
+) void {
+    const fast_count = result.fast_stage_iteration_count[run_index];
+    const correction_count = result.full_correction_iteration_count[run_index];
+    if (correction_count == 0 or fast_count == fast_history_capacity) return;
+
+    const state_count = result.state_count;
+    const run_history_offset = run_index * result.history_capacity * state_count;
+    const source_offset = run_history_offset + fast_history_capacity * state_count;
+    const target_offset = run_history_offset + fast_count * state_count;
+    const value_count = correction_count * state_count;
+    std.mem.copyForwards(
+        f64,
+        result.history_state[target_offset .. target_offset + value_count],
+        result.history_state[source_offset .. source_offset + value_count],
+    );
+}
+
+fn runO2ABatchRange(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchOutput,
+    start_run: usize,
+    end_run: usize,
+) !void {
+    const range_context = Telemetry.currentContext();
+    for (start_run..end_run) |run_index| {
+        if (batch.status[run_index] != @intFromEnum(BatchRunStatus.pending)) continue;
+
+        const state_offset = run_index * state_template.len;
+        const summary = runPreparedO2AStartSummary(
+            allocator,
+            prepared_case,
+            state_template,
+            initial_states[state_offset .. state_offset + state_template.len],
+            prior_states[state_offset .. state_offset + state_template.len],
+            controls,
+            run_index + 1,
+            range_context,
+            batchHistoryState(batch.*, run_index),
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {
+                markBatchRunFailure(batch.*, run_index);
+                continue;
+            },
+        };
+
+        batch.iteration_count[run_index] = summary.iteration_count;
+        batch.converged[run_index] = if (summary.converged) 1 else 0;
+        batch.status[run_index] = @intFromEnum(BatchRunStatus.ok);
+        for (0..state_template.len) |state_index| {
+            batch.state[state_offset + state_index] = summary.state[state_index];
+        }
+    }
+}
+
+fn runPreparedO2AStartSummary(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_template: []const StateSpec,
+    initial_state: []const f64,
+    prior_state: []const f64,
+    controls: Controls,
+    start_index: usize,
+    base_context: Telemetry.Context,
+    history_state: []f64,
+) !RunSummary {
+    std.debug.assert(initial_state.len == state_template.len);
+    std.debug.assert(prior_state.len == state_template.len);
+    var run_specs_buffer: [max_state_count]StateSpec = undefined;
+    for (state_template, 0..) |template, state_index| {
+        var spec = template;
+        spec.initial = initial_state[state_index];
+        spec.prior = prior_state[state_index];
+        run_specs_buffer[state_index] = spec;
+    }
+
+    const previous_context = Telemetry.currentContext();
+    const start_context = telemetryContextWithStartState(
+        base_context,
+        start_index,
+        initial_state,
+    );
+    Telemetry.setContext(start_context);
+    defer Telemetry.setContext(previous_context);
+    return runPreparedO2ASummary(
+        allocator,
+        prepared_case,
+        run_specs_buffer[0..state_template.len],
+        controls,
+        history_state,
+    );
+}
+
+fn batchHistoryState(batch: BatchOutput, run_index: usize) []f64 {
+    const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
+        batch.state_count;
+    return batch.history_state[history_offset .. history_offset + batch.history_capacity * batch.state_count];
+}
+
+// Worker descriptor for one contiguous slice of a native OE start batch.
+// layout(product 64-bit):
+//   size: 224 B, align: 8 B
+//   field storage: 216 B across 15 product fields; largest: slice descriptors=128 B across 8 slices; padding: 8 B
+//   unused bits: 64 padding + 0 bool-storage slack = 64 bits
+//   out-of-line: all input slices borrow the batch request; batch points at caller-owned result buffers
+//   cache span: 4 cache line(s) at 64 B per line
+//   count: native batch worker count, usually CPU-core bounded for multi-start diagnosis
+//   footprint: per instance = 224 B (0.219 KiB); each worker owns its prepared case and product storage while running
+//   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
+const BatchWorker = struct {
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchOutput,
+    queue: *work_partition.ChunkQueue,
+    shared_forward_prefetch_pool: ?*std.Thread.Pool,
+    telemetry_context: Telemetry.Context,
+    err: ?anyerror = null,
+};
+
+fn runO2ABatchParallel(
+    allocator: Allocator,
+    base_input: *const o2a_types.ResolvedVendorO2ACase,
+    measurement_wavelength_nm: []const f64,
+    measurement_reflectance: []const f64,
+    measurement_variance: []const f64,
+    state_template: []const StateSpec,
+    initial_states: []const f64,
+    prior_states: []const f64,
+    controls: Controls,
+    batch: *BatchOutput,
+    worker_count: usize,
+) !void {
+    const workers = try allocator.alloc(BatchWorker, worker_count);
+    defer allocator.free(workers);
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
+    var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
+    var shared_forward_prefetch_pool_valid = false;
+    const shared_forward_prefetch_pool = if (worker_count > 1)
+        initSharedForwardPrefetchPool(
+            allocator,
+            &shared_forward_prefetch_pool_storage,
+            &shared_forward_prefetch_pool_valid,
+        )
+    else
+        null;
+    defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
+
+    // One-iteration correction batches are uniform enough that wider queue
+    // chunks reduce scheduling traffic; multi-iteration basin sweeps keep
+    // one-start chunks so hard starts do not pin the tail.
+    const batch_chunk_size: usize = if (controls.max_iterations == 1) 4 else 1;
+    var queue = work_partition.ChunkQueue.init(batch.run_count, batch_chunk_size);
+    const telemetry_context = Telemetry.currentContext();
+    var started_thread_count: usize = 0;
+    for (0..worker_count) |worker_index| {
+        workers[worker_index] = .{
+            .allocator = allocator,
+            .base_input = base_input,
+            .measurement_wavelength_nm = measurement_wavelength_nm,
+            .measurement_reflectance = measurement_reflectance,
+            .measurement_variance = measurement_variance,
+            .state_template = state_template,
+            .initial_states = initial_states,
+            .prior_states = prior_states,
+            .controls = controls,
+            .batch = batch,
+            .queue = &queue,
+            .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
+            .telemetry_context = telemetry_context,
+        };
+
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                runO2ABatchWorker,
+                .{&workers[worker_index]},
+            ) catch {
+                runO2ABatchWorker(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        }
+    }
+
+    runO2ABatchWorker(&workers[worker_count - 1]);
+    for (threads[0..started_thread_count]) |thread| thread.join();
+    for (workers) |worker| {
+        if (worker.err) |err| return err;
+    }
+}
+
+fn runO2ABatchWorker(worker: *BatchWorker) void {
+    runO2ABatchWorkerFallible(worker) catch |err| {
+        worker.err = err;
+    };
+}
+
+fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
+    const previous_context = Telemetry.currentContext();
+    Telemetry.setContext(worker.telemetry_context);
+    defer Telemetry.setContext(previous_context);
+
+    var forward_storage: InstrumentGrid.ProductStorage = .{};
+    forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
+    defer forward_storage.deinit(worker.allocator);
+    var prepared_case = try RetrievalPreparedCase.init(
+        worker.allocator,
+        worker.base_input,
+        worker.measurement_wavelength_nm,
+        worker.measurement_reflectance,
+        worker.measurement_variance,
+        worker.state_template,
+        &forward_storage,
+    );
+    defer prepared_case.deinit(worker.allocator);
+    // Broad basin sweeps have variable iteration counts by start. Claim one
+    // start at a time so a hard region does not pin the final worker tail.
+    while (worker.queue.next()) |chunk| {
+        try runO2ABatchRange(
+            worker.allocator,
+            &prepared_case,
+            worker.state_template,
+            worker.initial_states,
+            worker.prior_states,
+            worker.controls,
+            worker.batch,
+            chunk.start,
+            chunk.end,
+        );
+    }
+}
+
+fn initSharedForwardPrefetchPool(
+    allocator: Allocator,
+    pool: *std.Thread.Pool,
+    valid: *bool,
+) ?*std.Thread.Pool {
+    const worker_count = work_partition.preferredWorkerCount(std.math.maxInt(usize), 1);
+    if (worker_count <= 1) return null;
+    pool.init(.{
+        .allocator = allocator,
+        .n_jobs = worker_count - 1,
+    }) catch return null;
+    valid.* = true;
+    return pool;
+}
+
+fn runPreparedO2A(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+) !Result {
     var result = try Result.init(allocator, state_specs.len, controls.max_iterations);
     errdefer result.deinit(allocator);
 
-    const state_space = try initializeStateSpace(state_specs, &result);
+    var empty_history: [0]f64 = .{};
+    _ = try runPreparedO2ACore(
+        allocator,
+        prepared_case,
+        state_specs,
+        controls,
+        &result,
+        empty_history[0..],
+    );
+    return result;
+}
+
+fn runPreparedO2ASummary(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+    history_state: []f64,
+) !RunSummary {
+    return runPreparedO2ACore(allocator, prepared_case, state_specs, controls, null, history_state);
+}
+
+fn runPreparedO2ACore(
+    allocator: Allocator,
+    prepared_case: *RetrievalPreparedCase,
+    state_specs: []const StateSpec,
+    controls: Controls,
+    full_result: ?*Result,
+    history_state: []f64,
+) !RunSummary {
+    // instrumentation: trace zone
+    // captures: full optimal-estimation retrieval wall time
+    // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
+    const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
+    defer retrieval_zone.end();
+    // instrumentation: trace counter
+    // captures: active retrieval state count
+    // why: normalize iteration and solver timing by inverse-problem dimension.
+    Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
+    // instrumentation: trace counter
+    // captures: configured maximum OE iterations
+    // why: make trace comparisons robust when controls change.
+    Trace.plotU("optimal_estimation_max_iterations", @intCast(controls.max_iterations));
+
+    prepared_case.state_specs = state_specs;
+
+    const state_space = try initializeStateSpace(state_specs, full_result);
     var state = state_space.state;
     prepared_case.route.derivative_mode = .semi_analytical;
     prepared_case.route.derivative_state_mask = state_space.derivative_state_mask;
@@ -462,12 +1242,7 @@ pub fn runO2A(
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
 
-    var final_posterior_precision = algebra.zeroMatrix();
-    for (0..state_specs.len) |index| {
-        final_posterior_precision[index][index] = 1.0 / state_space.variance[index];
-        scratch.posterior_covariance[index][index] = state_space.variance[index];
-        scratch.averaging_kernel[index][index] = 1.0;
-    }
+    var final_posterior_precision: Matrix = undefined;
 
     var converged = false;
     var iteration_count: usize = 0;
@@ -481,6 +1256,13 @@ pub fn runO2A(
 
         const previous = state;
         const evaluation = traced_evaluation: {
+            const previous_context = Telemetry.currentContext();
+            Telemetry.setContext(telemetryContextWithEvaluationState(
+                previous_context,
+                iteration_offset + 1,
+                previous[0..state_specs.len],
+            ));
+            defer Telemetry.setContext(previous_context);
             // instrumentation: trace zone
             // captures: RTM product and Jacobian evaluation wall time
             // why: keep forward-model cost separate from inverse-method linear algebra.
@@ -488,7 +1270,7 @@ pub fn runO2A(
             defer zone.end();
             break :traced_evaluation try evaluateO2AState(
                 allocator,
-                &prepared_case,
+                prepared_case,
                 previous,
             );
         };
@@ -541,32 +1323,43 @@ pub fn runO2A(
             @as(f64, @floatFromInt(state_specs.len));
         converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal;
 
-        const history_offset = iteration_offset * state_specs.len;
-        for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
-        result.history_chi2[iteration_offset] = accumulation.chi2_reflectance + chi2_state;
-        result.history_chi2_reflectance[iteration_offset] = accumulation.chi2_reflectance;
-        result.history_chi2_state_vector[iteration_offset] = chi2_state;
-        result.history_state_vector_convergence[iteration_offset] = state_conv;
-        result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
-
-        final_posterior_precision = step.posterior_precision;
-        scratch.jt_invse_j = accumulation.jt_invse_j;
+        if (full_result) |result| {
+            const history_offset = iteration_offset * state_specs.len;
+            for (0..state_specs.len) |index| result.history_state[history_offset + index] = state[index];
+            result.history_chi2[iteration_offset] = accumulation.chi2_reflectance + chi2_state;
+            result.history_chi2_reflectance[iteration_offset] = accumulation.chi2_reflectance;
+            result.history_chi2_state_vector[iteration_offset] = chi2_state;
+            result.history_state_vector_convergence[iteration_offset] = state_conv;
+            result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
+            final_posterior_precision = step.posterior_precision;
+            scratch.jt_invse_j = accumulation.jt_invse_j;
+        }
+        if (history_state.len > 0) {
+            const history_offset = iteration_offset * state_specs.len;
+            for (0..state_specs.len) |index| history_state[history_offset + index] = state[index];
+        }
         iteration_count = iteration_offset + 1;
         if (converged) break;
     }
 
-    const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
-    const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
-    result.iteration_count = @intCast(iteration_count);
-    result.converged = converged;
-    for (0..state_specs.len) |row| {
-        result.state[row] = state[row];
-        for (0..state_specs.len) |col| {
-            result.posterior_covariance[row * state_specs.len + col] = posterior_covariance[row][col];
-            result.averaging_kernel[row * state_specs.len + col] = averaging_kernel[row][col];
+    if (full_result) |result| {
+        const posterior_covariance = try algebra.invertSymmetric(final_posterior_precision, state_specs.len);
+        const averaging_kernel = algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_specs.len);
+        result.iteration_count = @intCast(iteration_count);
+        result.converged = converged;
+        for (0..state_specs.len) |row| {
+            result.state[row] = state[row];
+            for (0..state_specs.len) |col| {
+                result.posterior_covariance[row * state_specs.len + col] = posterior_covariance[row][col];
+                result.averaging_kernel[row * state_specs.len + col] = averaging_kernel[row][col];
+            }
         }
     }
-    return result;
+    return .{
+        .state = state,
+        .iteration_count = iteration_count,
+        .converged = converged,
+    };
 }
 
 pub fn correctPreparedO2A(
@@ -678,7 +1471,7 @@ pub fn correctPreparedO2A(
     return result;
 }
 
-fn initializeStateSpace(state_specs: []const StateSpec, result: *Result) !StateSpace {
+fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) !StateSpace {
     var state_space: StateSpace = .{
         .state = algebra.zeroVector(),
         .prior = algebra.zeroVector(),
@@ -690,14 +1483,16 @@ fn initializeStateSpace(state_specs: []const StateSpec, result: *Result) !StateS
 
     for (state_specs, 0..) |spec, index| {
         try validateStateSpec(spec);
-        result.state_ids[index] = spec.state;
         state_space.state[index] = spec.initial;
         state_space.prior[index] = spec.prior;
         state_space.variance[index] = spec.variance;
         state_space.lower[index] = spec.lower_bound;
         state_space.upper[index] = spec.upper_bound;
-        result.initial_state[index] = spec.initial;
         state_space.derivative_state_mask |= jacobian.stateMask(spec.state);
+        if (result) |full_result| {
+            full_result.state_ids[index] = spec.state;
+            full_result.initial_state[index] = spec.initial;
+        }
     }
     return state_space;
 }
@@ -735,6 +1530,20 @@ fn validateStateSpec(spec: StateSpec) !void {
 const ForwardEvaluation = struct {
     view: InstrumentGrid.InstrumentGridProductView,
     solar_mu0: f64,
+};
+
+// Batch-only final-state output for one start.
+// layout(64-bit):
+//   size: 40 B, align: 8 B
+//   field storage: state=24 B, iteration_count=8 B, converged=1 B; padding: 7 B
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 1 cache line(s) at 64 B per line
+//   count: one stack value per completed batch start
+//   footprint: per instance = 40 B (0.039 KiB)
+const RunSummary = struct {
+    state: Vector,
+    iteration_count: usize,
+    converged: bool,
 };
 
 fn evaluateO2AState(

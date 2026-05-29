@@ -6,9 +6,11 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    COptimalEstimationBatchRequest,
+    COptimalEstimationBatchResult,
+    COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
-    CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
@@ -36,6 +38,12 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
     )
     bind(lib, "zds_warm_o2a_session", [ctypes.c_void_p], ctypes.c_int)
+    bind(
+        lib,
+        "zds_warm_o2a_optimal_estimation",
+        [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t],
+        ctypes.c_int,
+    )
     bind(
         lib,
         "zds_default_o2a_input_json",
@@ -119,18 +127,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     )
     bind(
         lib,
-        "zds_radiative_transfer_diagnostics",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.POINTER(CSpectrum),
-            ctypes.POINTER(CRadiativeTransferDiagnostics),
-        ],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
         "zds_run_o2a_optimal_estimation",
         [
             ctypes.c_void_p,
@@ -149,11 +145,45 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ],
         ctypes.c_int,
     )
+    bind(
+        lib,
+        "zds_run_o2a_optimal_estimation_batch",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationBatchResult),
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_run_o2a_fastmode_optimal_estimation_batch",
+        [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationBatchRequest),
+            ctypes.POINTER(COptimalEstimationFastmodeBatchResult),
+        ],
+        ctypes.c_int,
+    )
     bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
     bind(
         lib,
         "zds_optimal_estimation_result_free",
         [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationResult)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_optimal_estimation_batch_result_free",
+        [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationBatchResult)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_optimal_estimation_fastmode_batch_result_free",
+        [ctypes.c_void_p, ctypes.POINTER(COptimalEstimationFastmodeBatchResult)],
         None,
     )
     bind(
@@ -178,12 +208,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_o2_o2_cia_diagnostics_free",
         [ctypes.c_void_p, ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw)],
-        None,
-    )
-    bind(
-        lib,
-        "zds_radiative_transfer_diagnostics_free",
-        [ctypes.c_void_p, ctypes.POINTER(CRadiativeTransferDiagnostics)],
         None,
     )
     bind(lib, "zds_last_error", [ctypes.c_void_p], ctypes.c_char_p)

@@ -71,6 +71,61 @@ def assert_rtm_conversions() -> None:
     )
 
 
+def assert_session_cache_warms_optimal_estimation_route_once() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.rtm import session_cache
+
+    calls: list[tuple[str, object]] = []
+    case = cast(O2AInput, SimpleNamespace(scene_id="cache-case"))
+
+    class Handle:
+        def load_o2a_case(self, loaded_case, *, copy_case: bool = True) -> None:
+
+            calls.append(("load", (loaded_case, copy_case)))
+
+        def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
+
+            calls.append(("warm_oe", state_names))
+
+        def close(self) -> None:
+
+            calls.append(("close", None))
+
+    with patch.object(session_cache, "RtmHandle", side_effect=Handle):
+        cache = session_cache.SessionCache()
+
+        try:
+            try:
+                cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            except RuntimeError as error:
+                assert "no loaded wavelength-band case" in str(error)
+            else:
+                raise AssertionError("unloaded OE cache warm was accepted")
+
+            cache.load(case)
+            cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            cache.warm_optimal_estimation(
+                ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+            )
+            cache.load(case)
+            cache.warm_optimal_estimation(
+                ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+            )
+        finally:
+            cache.close()
+
+    assert calls == [
+        ("load", (case, True)),
+        ("warm_oe", ("aerosol_optical_depth",)),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
+        ("load", (case, True)),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
+        ("close", None),
+    ]
+
+
 def assert_plot_jacobian_uses_rtm_conversion() -> None:
 
     import numpy as np
@@ -171,6 +226,429 @@ def assert_optimal_estimation_result_dataclass() -> None:
         full_correction_state_vector_convergence=1.5,
     )
     assert replace(positional, fast_correction=correction).fast_correction is correction
+
+
+def assert_optimal_estimation_diagnosis_display() -> None:
+
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import RetrievalDiagnosis
+    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+
+    calls = 0
+
+    def diagnosis_factory(*, n: int | None = None):
+
+        nonlocal calls
+        calls += 1
+
+        return {"n": n}
+
+    result = Result(
+        state_names=("aerosol_optical_depth",),
+        state=(0.1,),
+        iterations=1,
+        converged=True,
+        history=(),
+        posterior_covariance=((1.0,),),
+        averaging_kernel=((1.0,),),
+        diagnosis_factory=diagnosis_factory,
+    )
+    diagnosis = result.diagnose(n=3)
+    assert diagnosis == {"n": 3}
+    assert result.diagnosis is diagnosis
+    assert result.diagnose() is diagnosis
+    assert calls == 1
+
+    sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        start_state=((0.1, 225.0), (2.0, 825.0)),
+        retrieved_state=((0.12, 340.0), (0.55, 670.0)),
+        iterations=(4, 7),
+        converged=(True, True),
+        retrieval_paths=(
+            ((0.12, 340.0),),
+            ((0.8, 700.0), (0.55, 670.0)),
+        ),
+        start_bounds=((0.1, 2.0), (225.0, 825.0)),
+        batch_workers=1,
+        truth_state=(0.2, 600.0),
+        start_status=("ok", "failed"),
+    )
+    payload = sweep.to_dict()
+    assert payload["runs"] == 2
+    assert payload["non_converged"] == 1
+    assert payload["native_worker_limit"] is None
+    figure = sweep.plot()
+    figure_payload = figure.to_dict()
+    assert figure_payload["runs"] == 2
+    assert figure_payload["title"]["text"] == "Retrieval Paths"
+    assert figure_payload["x_scale"] == "pseudo-log"
+    assert figure_payload["non_converged"] == 1
+    assert figure_payload["truth"] == [0.2, 600.0]
+    diagnosis_svg = figure._repr_svg_()
+    assert "Retrieval Paths" in diagnosis_svg
+    assert "accepted result" not in diagnosis_svg
+    assert 'class="legend"' not in diagnosis_svg
+    assert "pseudo-log scale" not in diagnosis_svg
+    assert ">AOD at 550 nm</text>" in diagnosis_svg
+    assert ">0.01</text>" not in diagnosis_svg
+    assert ">truth (0.2, 600 hPa)</text>" in diagnosis_svg
+    assert 'class="density-cell"' not in diagnosis_svg
+    assert 'class="cluster-label"' in diagnosis_svg
+    assert diagnosis_svg.count('class="diagnosis-non-converged"') == 2
+
+    no_truth = replace(sweep, truth_state=None)
+    no_truth_figure = no_truth.plot()
+    assert no_truth_figure.to_dict()["truth"] is None
+    no_truth_svg = no_truth_figure._repr_svg_()
+    assert ">truth" not in no_truth_svg
+    assert 'class="diagnosis-truth"' not in no_truth_svg
+
+
+def assert_optimal_estimation_diagnosis_auto_workers() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
+    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
+    from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
+    from zdisamar.inverse_method.optimal_estimation.state_vector import (
+        AerosolLayerMidPressure,
+        AerosolOpticalDepth,
+        StateVector,
+        StateVectorParameter,
+    )
+
+    state_vector = StateVector(
+        cast(
+            tuple[StateVectorParameter, ...],
+            (
+                AerosolOpticalDepth(
+                    initial=0.2,
+                    prior=0.2,
+                    prior_uncertainty=0.5,
+                ),
+                AerosolLayerMidPressure(
+                    initial=600.0,
+                    prior=600.0,
+                    prior_uncertainty=150.0,
+                ),
+            ),
+        )
+    )
+    measurement = Measurement(
+        wavelength_nm=(760.0, 761.0),
+        reflectance=(0.1, 0.2),
+        signal_to_noise=100.0,
+    )
+    batch = BatchResult(
+        state_names=state_vector.names,
+        state=((0.2, 600.0),) * 9,
+        iterations=(1,) * 9,
+        converged=(True,) * 9,
+        measurement=measurement,
+        status=("ok",) * 9,
+    )
+    calls: list[dict[str, object]] = []
+
+    def diagnosis_batch(**kwargs):
+
+        calls.append(kwargs)
+
+        return batch
+
+    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+
+    banned_batch_api = "retrieve" + "_many"
+    assert not hasattr(optimal_estimation, banned_batch_api)
+    assert not hasattr(o2a_oe, banned_batch_api)
+
+    with (
+        patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
+        patch(
+            "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+            side_effect=diagnosis_batch,
+        ),
+    ):
+        diagnosis = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=9,
+        )
+
+    assert diagnosis.batch_workers == 2
+    assert diagnosis.native_worker_limit == 10
+    assert calls[0]["batch_workers"] == 2
+    assert calls[0]["state_vector"] is state_vector
+    start_rows = cast(tuple[tuple[float, ...], ...], calls[0]["start_rows"])
+    assert len(start_rows) == 9
+    assert start_rows[0] == (0.02, 50.0)
+    assert math.isclose(start_rows[-1][0], 2.0)
+    assert start_rows[-1][1] == 900.0
+
+    calls.clear()
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=diagnosis_batch,
+    ):
+        explicit = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=9,
+            batch_workers=2,
+        )
+
+    assert explicit.batch_workers == 2
+    assert calls[0]["batch_workers"] == 2
+    assert calls[0]["state_vector"] is state_vector
+    assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
+
+    calls.clear()
+
+    explicit_rows = tuple((0.02 + index * 0.001, 50.0 + index) for index in range(100))
+
+    def explicit_diagnosis_batch(**kwargs):
+
+        calls.append(kwargs)
+        rows = cast(tuple[tuple[float, ...], ...], kwargs["start_rows"])
+
+        return BatchResult(
+            state_names=state_vector.names,
+            state=rows,
+            iterations=(1,) * len(rows),
+            converged=(True,) * len(rows),
+            measurement=measurement,
+            status=("ok",) * len(rows),
+        )
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=explicit_diagnosis_batch,
+    ):
+        explicit_large = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=len(explicit_rows),
+            batch_workers=2,
+            start_rows=explicit_rows,
+        )
+
+    assert len(explicit_large.start_state) == 100
+    assert calls[0]["start_rows"] == explicit_rows
+
+
+def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
+    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
+    from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
+    from zdisamar.inverse_method.optimal_estimation.state_vector import (
+        AerosolLayerMidPressure,
+        AerosolOpticalDepth,
+        StateVector,
+        StateVectorParameter,
+    )
+
+    state_vector = StateVector(
+        cast(
+            tuple[StateVectorParameter, ...],
+            (
+                AerosolOpticalDepth(
+                    initial=0.2,
+                    prior=0.2,
+                    prior_uncertainty=0.5,
+                ),
+                AerosolLayerMidPressure(
+                    initial=600.0,
+                    prior=600.0,
+                    prior_uncertainty=150.0,
+                ),
+            ),
+        )
+    )
+    measurement = Measurement(
+        wavelength_nm=(760.0, 761.0),
+        reflectance=(0.1, 0.2),
+        signal_to_noise=100.0,
+    )
+    calls: list[tuple[tuple[float, ...], ...]] = []
+
+    def diagnosis_batch(**kwargs):
+
+        rows = cast(tuple[tuple[float, ...], ...], kwargs["start_rows"])
+        calls.append(rows)
+        states = []
+        converged = []
+        status = []
+
+        for aod, pressure in rows:
+            failed = aod > 1.6 and pressure > 650.0
+
+            if failed:
+                states.append((math.nan, math.nan))
+                converged.append(False)
+                status.append("failed")
+            elif aod < 0.55:
+                states.append((0.24, 620.0))
+                converged.append(True)
+                status.append("ok")
+            else:
+                states.append((1.28, 310.0))
+                converged.append(True)
+                status.append("ok")
+
+        return BatchResult(
+            state_names=state_vector.names,
+            state=tuple(states),
+            iterations=(3,) * len(rows),
+            converged=tuple(converged),
+            measurement=measurement,
+            status=tuple(status),
+        )
+
+    with (
+        patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
+        patch(
+            "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+            side_effect=diagnosis_batch,
+        ),
+    ):
+        diagnosis = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=25,
+        )
+
+    assert len(calls) == 2
+    assert len(calls[0]) == 16
+    assert len(calls[1]) == 9
+    assert len(diagnosis.start_state) == 25
+    assert diagnosis.start_state[:16] == calls[0]
+    assert diagnosis.start_state[16:] == calls[1]
+    assert any(row[0] not in {start[0] for start in calls[0]} for row in calls[1])
+    assert cast(int, diagnosis.to_dict()["non_converged"]) >= 1
+
+    calls.clear()
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=diagnosis_batch,
+    ):
+        dynamic = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+        )
+
+    assert len(calls) >= 3
+    assert len(calls[0]) == 9
+    assert len(calls[1]) == 10
+    assert 9 < len(dynamic.start_state) <= 30
+    first_refinement_rows = calls[1]
+    dynamic_refinement_rows = dynamic.start_state[9:]
+    assert any(0.46 <= row[0] <= 0.49 for row in first_refinement_rows)
+    assert any(0.58 <= row[0] <= 0.60 for row in first_refinement_rows)
+    assert any(0.45 <= row[0] <= 0.65 for row in dynamic_refinement_rows)
+    assert any(0.37 <= row[0] <= 0.55 for row in dynamic_refinement_rows)
+
+    calls.clear()
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import BoundaryBisectionStrategy
+
+    strategy = BoundaryBisectionStrategy(
+        refinement_batch_size=3,
+        bracket_fractions=(0.125,),
+    )
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=diagnosis_batch,
+    ):
+        custom = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            seeding_strategy=strategy,
+        )
+
+    assert len(calls) >= 2
+    assert len(calls[1]) == 3
+    assert any(0.46 <= row[0] <= 0.49 for row in custom.start_state[9:])
+
+    from zdisamar.inverse_method.optimal_estimation.diagnosis import DiagnosisBatchSummary
+
+    def synthetic_boundary_batch(rows: tuple[tuple[float, ...], ...]) -> DiagnosisBatchSummary:
+
+        states = tuple((0.24, 620.0) if aod < 0.43 else (1.28, 310.0) for aod, _ in rows)
+
+        return DiagnosisBatchSummary(
+            state=states,
+            iterations=(3,) * len(rows),
+            converged=(True,) * len(rows),
+            status=("ok",) * len(rows),
+            history_state=(),
+            fast_stage_iterations=None,
+            fast_stage_converged=None,
+            full_correction_iterations=None,
+            full_correction_converged=None,
+        )
+
+    strategy = BoundaryBisectionStrategy()
+    rows = strategy.initial_rows(((0.02, 2.0), (50.0, 900.0)))
+    summary = synthetic_boundary_batch(rows)
+
+    while len(rows) < 30:
+        next_rows = strategy.refinement_rows(
+            axes=((0.02, 2.0), (50.0, 900.0)),
+            start_rows=rows,
+            batch=summary,
+            count=min(strategy.refinement_batch_size, 30 - len(rows)),
+        )
+
+        if not next_rows:
+            break
+
+        next_summary = synthetic_boundary_batch(next_rows)
+        rows += next_rows
+        summary = DiagnosisBatchSummary(
+            state=summary.state + next_summary.state,
+            iterations=summary.iterations + next_summary.iterations,
+            converged=summary.converged + next_summary.converged,
+            status=summary.status + next_summary.status,
+            history_state=(),
+            fast_stage_iterations=None,
+            fast_stage_converged=None,
+            full_correction_iterations=None,
+            full_correction_converged=None,
+        )
+
+    boundary_aod = [row[0] for row in rows if 0.38 <= row[0] <= 0.45]
+    assert len(boundary_aod) >= 6
+    assert any(0.421 <= value <= 0.422 for value in boundary_aod)
+    assert any(0.433 <= value <= 0.434 for value in boundary_aod)
+
+    try:
+        diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=31,
+        )
+    except ValueError as error:
+        assert "at most 30" in str(error)
+    else:
+        raise AssertionError("diagnosis accepted more than 30 starts")
 
 
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
@@ -396,7 +874,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=())
+    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -420,6 +898,10 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
             events.append(("load", case, copy_case))
 
+        def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
+
+            events.append(("warm_oe", state_names, None))
+
     with (
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
@@ -436,6 +918,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     assert events == [
         ("has_loaded_case", requested_case, None),
         ("load", requested_case, False),
+        ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -455,7 +938,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     events: list[tuple[str, object, object]] = []
     requested_case = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=())
+    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -479,6 +962,10 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
             raise AssertionError("matching OE cache reloaded its prepared case")
 
+        def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
+
+            events.append(("warm_oe", state_names, None))
+
     with (
         patch.object(o2a_oe, "_result_from_native", return_value=native_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
@@ -494,6 +981,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     assert result is native_result
     assert events == [
         ("has_loaded_case", requested_case, None),
+        ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -614,6 +1102,10 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         def load(self, case, *, copy_case: bool = True) -> None:
 
             loads.append((case, copy_case))
+
+        def warm(self) -> None:
+
+            pass
 
     class CorrectionCache:
         _handle = Cache.Handle()
@@ -763,6 +1255,10 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
             loads.append((case, copy_case))
 
+        def warm(self) -> None:
+
+            pass
+
     with patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval):
         result = o2a_oe.retrieve(
             case=cast(O2AInput, reference_case),
@@ -799,6 +1295,200 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         assert "wavelength count must be at least two" in str(error)
     else:
         raise AssertionError("single-sample fast-stage window count was accepted")
+
+
+def assert_fastmode_batch_uses_native_fused_correction() -> None:
+
+    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+        Measurement,
+        RetrievalControls,
+    )
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+
+    @dataclass(frozen=True)
+    class Parameter:
+        name: str
+        initial: float
+        prior: float
+        prior_uncertainty: float
+        lower: float | None = None
+        upper: float | None = None
+
+        def write_to(self, target: object, value: float) -> None:
+
+            del target, value
+
+    optimisation = O2AOptimisation.defaults()
+    optimisation.fastmode.enabled = True
+    reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
+    reference_o2a_case = cast(O2AInput, reference_case)
+    full_case = SimpleNamespace(scene_id="full")
+    correction_case = SimpleNamespace(scene_id="correction")
+    measurement = Measurement((765.2, 766.0, 768.0), (0.1, 0.2, 0.3), signal_to_noise=100.0)
+    fast_measurement = Measurement((765.2, 768.0), (0.1, 0.3), signal_to_noise=100.0)
+    correction_measurement = Measurement((765.2, 766.0), (0.1, 0.2), signal_to_noise=100.0)
+    state_vectors = (
+        StateVector(
+            (
+                Parameter("aerosol_optical_depth", 0.2, 0.3, 0.8),
+                Parameter("aerosol_layer_mid_pressure_hpa", 800.0, 820.0, 100.0),
+            )
+        ),
+        StateVector(
+            (
+                Parameter("aerosol_optical_depth", 0.5, 0.6, 0.8),
+                Parameter("aerosol_layer_mid_pressure_hpa", 700.0, 710.0, 100.0),
+            )
+        ),
+    )
+    controls = RetrievalControls(
+        max_iterations=6,
+        state_vector_convergence_threshold=0.7,
+        max_change_transformed_state=0.4,
+    )
+    native_calls: list[dict[str, object]] = []
+    correction_loads: list[tuple[object, bool]] = []
+    correction_handle = object()
+
+    class FastHandle:
+        def optimal_estimation_fastmode_batch(self, **kwargs):
+
+            native_calls.append(kwargs)
+
+            return {
+                "run_count": 2,
+                "state_count": 2,
+                "history_capacity": 7,
+                "state": (0.305, 761.5, 0.415, 691.0),
+                "history_state": (
+                    0.1,
+                    800.0,
+                    0.2,
+                    780.0,
+                    0.3,
+                    762.0,
+                    0.305,
+                    761.5,
+                    0.305,
+                    761.5,
+                    0.305,
+                    761.5,
+                    0.305,
+                    761.5,
+                    0.5,
+                    700.0,
+                    0.45,
+                    695.0,
+                    0.42,
+                    691.0,
+                    0.415,
+                    691.0,
+                    0.415,
+                    691.0,
+                    0.415,
+                    691.0,
+                    0.415,
+                    691.0,
+                ),
+                "iteration_count": (5, 6),
+                "converged": (True, False),
+                "status": ("ok", "failed"),
+                "fast_stage_iteration_count": (4, 5),
+                "fast_stage_converged": (True, False),
+                "full_correction_iteration_count": (1, 1),
+                "full_correction_converged": (False, True),
+            }
+
+    class FastCache:
+        _handle = FastHandle()
+
+    class CorrectionCache:
+        _handle = correction_handle
+
+        def load(self, case, *, copy_case: bool = True) -> None:
+
+            correction_loads.append((case, copy_case))
+
+        def __enter__(self):
+
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+
+            return None
+
+    with (
+        patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
+        patch.object(
+            o2a_oe,
+            "full_correction_measurement",
+            return_value=correction_measurement,
+        ) as correction_measurement_builder,
+        patch.object(
+            o2a_oe,
+            "full_correction_case",
+            return_value=correction_case,
+        ) as correction_case_builder,
+        patch.object(o2a_oe.rtm, "SessionCache", side_effect=CorrectionCache) as session_cache,
+        patch.object(
+            o2a_oe,
+            "resolved_state_vector_for_loaded_case",
+            return_value=state_vectors[0],
+        ) as resolved_template,
+    ):
+        result = o2a_oe.run_native_fastmode_retrieval_batch(
+            case=reference_o2a_case,
+            measurement=measurement,
+            fast_measurement=fast_measurement,
+            state_vector=state_vectors[0],
+            resolved_template=state_vectors[0],
+            controls=controls,
+            cache=cast(o2a_oe.rtm.SessionCache, FastCache()),
+            start_rows=tuple(vector.initial_state() for vector in state_vectors),
+            batch_workers=3,
+        )
+
+    full_physics_case.assert_called_once_with(reference_case)
+    correction_measurement_builder.assert_called_once_with(
+        measurement,
+        wavelengths_nm=(765.2, 766.0, 768.0),
+        uncertainty_scale=None,
+    )
+    correction_case_builder.assert_called_once_with(full_case, correction_measurement)
+    session_cache.assert_called_once_with()
+    assert correction_loads == [(correction_case, False)]
+    resolved_template.assert_called_once()
+    assert len(native_calls) == 1
+    native_call = native_calls[0]
+    correction_controls = cast(RetrievalControls, native_call["correction_controls"])
+    assert native_call["correction_handle"] is correction_handle
+    assert native_call["measurement"] is fast_measurement
+    assert native_call["correction_measurement"] is correction_measurement
+    assert native_call["state_vector"] is state_vectors[0]
+    assert native_call["correction_state_vector"] is state_vectors[0]
+    assert native_call["initial_states"] == tuple(
+        vector.initial_state() for vector in state_vectors
+    )
+    assert native_call["prior_states"] == tuple(vector.initial_state() for vector in state_vectors)
+    assert native_call["controls"] is controls
+    assert correction_controls.max_iterations == 1
+    assert correction_controls.state_vector_convergence_threshold == 0.7
+    assert correction_controls.max_change_transformed_state == 0.4
+    assert native_call["batch_workers"] == 3
+    assert result.state == ((0.305, 761.5), (0.415, 691.0))
+    assert result.iterations == (5, 6)
+    assert result.converged == (True, False)
+    assert result.status == ("ok", "failed")
+    assert result.history_state[0][-1] == (0.305, 761.5)
+    assert result.history_state[1][-1] == (0.415, 691.0)
+    assert result.measurement is measurement
+    assert result.fast_stage_iterations == (4, 5)
+    assert result.fast_stage_converged == (True, False)
+    assert result.full_correction_iterations == (1, 1)
+    assert result.full_correction_converged == (False, True)
 
 
 def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
@@ -895,6 +1585,10 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         def load(self, case, *, copy_case: bool = True) -> None:
 
             loads.append((case, copy_case))
+
+        def warm(self) -> None:
+
+            pass
 
     def fake_pressure_profile(case, cache):
 
@@ -1191,6 +1885,8 @@ def assert_reference_data_and_rtm_tables() -> None:
             )
             assert fastmode_radiative_transfer["fourier_order_cap"] == 5
             fastmode_oe = cast(dict[str, object], resolved_fastmode["oe"])
+            fast_controls = cast(dict[str, object], fastmode_oe["controls"])
+            assert fast_controls["state_vector_convergence_threshold"] == 1.0
             fast_sampling = cast(dict[str, object], fastmode_oe["fast_stage_sampling"])
             fast_sampling_wavelengths = cast(list[float], fast_sampling["wavelengths_nm"])
             fast_sampling_count = cast(int, fast_sampling["sample_count"])
@@ -1370,9 +2066,13 @@ def main() -> int:
     assert_import_laziness()
     assert_plot_package_boundary()
     assert_rtm_conversions()
+    assert_session_cache_warms_optimal_estimation_route_once()
     assert_plot_jacobian_uses_rtm_conversion()
     assert_optimal_estimation_grid_mismatch_rejected()
     assert_optimal_estimation_result_dataclass()
+    assert_optimal_estimation_diagnosis_display()
+    assert_optimal_estimation_diagnosis_auto_workers()
+    assert_optimal_estimation_diagnosis_adaptive_grid()
     assert_final_evaluation_reuses_last_rtm_evaluation()
     assert_lazy_final_evaluator_snapshots_case()
     assert_state_vector_uncertainty_rejected()
@@ -1383,6 +2083,7 @@ def main() -> int:
     assert_native_oe_reuses_matching_supplied_cache()
     assert_fastmode_oe_runs_single_full_correction()
     assert_fastmode_oe_uses_sparse_fast_stage_sampling()
+    assert_fastmode_batch_uses_native_fused_correction()
     assert_fastmode_pressure_profile_uses_loaded_sparse_cache()
     assert_native_oe_marshaling_bounds()
     assert_native_oe_runs_after_default_prepare()

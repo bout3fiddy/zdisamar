@@ -3,6 +3,26 @@
 // why: keep product/test builds free of Parquet capture state.
 pub const available = false;
 
+pub const Stage = enum(i64) {
+    none = 0,
+    fast = 1,
+    correction = 2,
+};
+
+pub const max_state_value_count = 3;
+
+pub const Context = struct {};
+
+pub inline fn setContext(context: Context) void {
+    _ = context;
+}
+
+pub inline fn currentContext() Context {
+    return .{};
+}
+
+pub inline fn clearContext() void {}
+
 pub inline fn wavelengthSamplingPlan(
     row_count: usize,
     radiance_integrated_rows: usize,

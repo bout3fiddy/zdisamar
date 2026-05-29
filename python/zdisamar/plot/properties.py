@@ -20,7 +20,6 @@ class PlotProperties:
     font = "Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace"
     markers_nm = (755.0, 760.76, 776.0)
     line_width = 1.4
-    isrf_line_width = 1.6
     marker_rule_width = 0.8
     marker_rule_dash = (4, 3)
     profile_point_size = 26

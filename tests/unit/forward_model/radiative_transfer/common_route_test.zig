@@ -26,8 +26,6 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
     });
     try std.testing.expectEqual(common.TransportFamily.labos, labos_route.family);
     try std.testing.expectEqual(common.DerivativeMode.none, labos_route.derivative_mode);
-    try std.testing.expectEqual(common.DerivativeSemantics.none, labos_route.derivativeSemantics());
-    try std.testing.expectEqualStrings("baseline_labos", labos_route.family.provenanceLabel());
 
     const twenty_stream_route = try prepareRoute(.{
         .regime = .nadir,
@@ -48,7 +46,6 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
         .derivative_mode = .semi_analytical,
     });
     try std.testing.expectEqual(common.DerivativeMode.semi_analytical, jacobian_route.derivative_mode);
-    try std.testing.expectEqual(common.DerivativeSemantics.analytical, jacobian_route.derivativeSemantics());
     try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
