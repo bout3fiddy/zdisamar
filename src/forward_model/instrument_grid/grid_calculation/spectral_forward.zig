@@ -4,6 +4,7 @@ const OpticsPreparation = @import("../../optical_properties/root.zig");
 const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
 const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const dispatcher = @import("../../radiative_transfer/dispatcher.zig");
 const jacobian = @import("../../jacobian/root.zig");
 const labos = @import("../../radiative_transfer/labos/root.zig");
 const Trace = @import("../../performance_trace.zig");
@@ -137,20 +138,18 @@ const ForwardPrefetchErrorState = struct {
 };
 
 // layout(product 64-bit):
-//   size: 352 B, align: 8 B
-//   field storage: 352 B across 13 product fields; largest: implementations=168 B, route=72 B, misses=16 B; padding: 0 B (0 bits)
+//   size: 184 B, align: 8 B
+//   field storage: 184 B across 11 product fields; largest: route=80 B, misses=16 B, profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 6 cache line(s) at 64 B per line
+//   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 352 B (0.344 KiB); total also includes referenced storage above
+//   footprint: per instance = 184 B (0.180 KiB); total also includes referenced storage above
 //   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
-    safe_span: f64,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
@@ -164,38 +163,21 @@ const ForwardPrefetchWorker = struct {
 
 fn radianceScaleFromForward(
     scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     wavelength_nm: f64,
-    safe_span: f64,
-    phase: f64,
-    forward: common.ForwardResult,
 ) f64 {
     const solar_irradiance = solar_compat.irradianceAtWavelength(scene, wavelength_nm);
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
-    const surface_gain = implementations.surface.brdfFactor(.{
-        .scene = scene,
-        .prepared = prepared,
-        .wavelength_nm = wavelength_nm,
-        .safe_span = safe_span,
-        .phase = phase,
-        .forward = forward,
-    });
-    // math: scale(lambda) = mu0 * BRDF_factor(lambda) * E0(lambda) / pi.
-    return solar_cosine * surface_gain * solar_irradiance / std.math.pi;
+    // math: built-in O2 A surface scaling is Lambertian, so BRDF_factor(lambda) = 1.
+    return solar_cosine * solar_irradiance / std.math.pi;
 }
 
 fn integratedSampleFromForward(
     scene: *const Scene,
     route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     wavelength_nm: f64,
-    safe_span: f64,
-    phase: f64,
     forward: common.ForwardResult,
 ) ForwardIntegratedSample {
-    const scale = radianceScaleFromForward(scene, prepared, implementations, wavelength_nm, safe_span, phase, forward);
+    const scale = radianceScaleFromForward(scene, wavelength_nm);
     return .{
         // math: L(lambda) = reflectance_factor(lambda) * scale(lambda).
         .radiance = forward.toa_reflectance_factor * scale,
@@ -219,8 +201,6 @@ fn computeForwardSampleAtWavelengthWithScratch(
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
-    safe_span: f64,
-    implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
     rtm_quadrature_levels: []common.RtmQuadratureLevel,
@@ -270,12 +250,9 @@ fn computeForwardSampleAtWavelengthWithScratch(
         // why: keep the radiative-transfer solve separate from surrounding input and scaling work.
         const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
         defer zone.end();
-        break :forward if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
-            try execute_with_workspace(allocator, effective_route, input, labos_workspace)
-        else
-            try implementations.transport.executePrepared(allocator, effective_route, input);
+        break :forward try dispatcher.executePreparedWithLabosWorkspace(allocator, effective_route, input, labos_workspace);
     };
-    return integratedSampleFromForward(scene, route, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
+    return integratedSampleFromForward(scene, route, wavelength_nm, forward);
 }
 
 // hot path:
@@ -347,8 +324,6 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                         worker.route,
                         worker.prepared,
                         miss.wavelength_nm,
-                        worker.safe_span,
-                        worker.implementations,
                         scratch.layer_inputs,
                         scratch.source_interfaces,
                         scratch.rtm_quadrature_levels,
@@ -389,8 +364,6 @@ pub fn prefetchForwardSamples(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
-    safe_span: f64,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
@@ -433,8 +406,6 @@ pub fn prefetchForwardSamples(
                     route,
                     prepared,
                     miss.wavelength_nm,
-                    safe_span,
-                    implementations,
                     scratch.layer_inputs,
                     scratch.source_interfaces,
                     scratch.rtm_quadrature_levels,
@@ -460,8 +431,6 @@ pub fn prefetchForwardSamples(
             .scene = scene,
             .route = route,
             .prepared = prepared,
-            .implementations = implementations,
-            .safe_span = safe_span,
             .misses = misses,
             .profile_spectroscopy_caches = profile_spectroscopy_caches,
             .results = results,

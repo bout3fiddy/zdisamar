@@ -148,29 +148,6 @@ pub const RadiativeTransferControls = struct {
 
 pub const TransportFamily = enum {
     labos,
-
-    pub fn classification(self: TransportFamily) ImplementationClass {
-        return switch (self) {
-            .labos => .baseline,
-        };
-    }
-
-    pub fn provenanceLabel(self: TransportFamily) []const u8 {
-        return switch (self) {
-            .labos => "baseline_labos",
-        };
-    }
-};
-
-pub const ImplementationClass = enum {
-    baseline,
-    surrogate,
-};
-
-pub const DerivativeSemantics = enum {
-    none,
-    proxy,
-    analytical,
 };
 
 pub const Regime = SceneModel.ObservationRegime;
@@ -209,14 +186,6 @@ pub const Route = struct {
     derivative_mode: DerivativeMode,
     derivative_state_mask: jacobian.StateMask = jacobian.all_states_mask,
     rtm_controls: RadiativeTransferControls = .{},
-
-    pub fn derivativeSemantics(self: Route) DerivativeSemantics {
-        if (self.derivative_mode == .none) return .none;
-        return switch (self.family.classification()) {
-            .surrogate => .proxy,
-            .baseline => .analytical,
-        };
-    }
 };
 
 // layout(64-bit):

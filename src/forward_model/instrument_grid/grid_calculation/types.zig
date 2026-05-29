@@ -1,25 +1,21 @@
 const std = @import("std");
 const jacobian = @import("../../jacobian/root.zig");
 const InstrumentProviders = @import("../../implementations/instrument.zig");
-const SurfaceProviders = @import("../../implementations/surface.zig");
-const TransportProviders = @import("../../implementations/transport.zig");
 
 const Allocator = std.mem.Allocator;
 
 pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
-// Bound implementation implementations used by instrument grid evaluation.
+// Bound instrument implementation used by instrument grid evaluation.
 // layout(64-bit):
-//   size: 136 B, align: 8 B
-//   field storage: transport=64 B, surface=24 B, instrument=48 B; padding: 0 B (0 bits)
+//   size: 48 B, align: 8 B
+//   field storage: instrument=48 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
+//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
+//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const Implementations = struct {
-    transport: TransportProviders.Implementation,
-    surface: SurfaceProviders.Implementation,
     instrument: InstrumentProviders.Implementation,
 };
 
