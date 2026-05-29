@@ -211,10 +211,6 @@ def diagnose_retrieval(
     if n is not None and n <= 0:
         raise ValueError("n must be positive")
 
-    if n is not None and n > DIAGNOSIS_DEFAULT_START_CAP:
-        raise ValueError(f"n must be at most {DIAGNOSIS_DEFAULT_START_CAP}")
-
-    axes = diagnosis_bounds(case, state_vector)
     explicit_start_rows = (
         None
         if start_rows is None
@@ -224,6 +220,10 @@ def diagnose_retrieval(
     if explicit_start_rows is not None and not explicit_start_rows:
         raise ValueError("start_rows must not be empty")
 
+    if explicit_start_rows is None and n is not None and n > DIAGNOSIS_DEFAULT_START_CAP:
+        raise ValueError(f"n must be at most {DIAGNOSIS_DEFAULT_START_CAP}")
+
+    axes = diagnosis_bounds(case, state_vector)
     active_start_count = (
         len(explicit_start_rows)
         if explicit_start_rows is not None

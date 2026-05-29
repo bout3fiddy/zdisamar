@@ -302,7 +302,6 @@ def run_scene(
                 state_vector=state_template,
                 controls=None,
                 cache=cache,
-                n=len(pending),
                 batch_workers=batch_workers,
                 start_rows=tuple(
                     (

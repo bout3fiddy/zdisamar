@@ -407,6 +407,41 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     assert calls[0]["state_vector"] is state_vector
     assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
 
+    calls.clear()
+
+    explicit_rows = tuple((0.02 + index * 0.001, 50.0 + index) for index in range(100))
+
+    def explicit_diagnosis_batch(**kwargs):
+
+        calls.append(kwargs)
+        rows = cast(tuple[tuple[float, ...], ...], kwargs["start_rows"])
+
+        return BatchResult(
+            state_names=state_vector.names,
+            state=rows,
+            iterations=(1,) * len(rows),
+            converged=(True,) * len(rows),
+            measurement=measurement,
+            status=("ok",) * len(rows),
+        )
+
+    with patch(
+        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        side_effect=explicit_diagnosis_batch,
+    ):
+        explicit_large = diagnose_retrieval(
+            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            measurement=measurement,
+            state_vector=state_vector,
+            controls=RetrievalControls(),
+            n=len(explicit_rows),
+            batch_workers=2,
+            start_rows=explicit_rows,
+        )
+
+    assert len(explicit_large.start_state) == 100
+    assert calls[0]["start_rows"] == explicit_rows
+
 
 def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
 
