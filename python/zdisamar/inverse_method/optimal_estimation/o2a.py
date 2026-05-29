@@ -834,7 +834,12 @@ def batch_start_rows(
     template: StateVector,
     start_rows: Sequence[Sequence[float]],
 ) -> tuple[tuple[tuple[float, ...], ...], tuple[tuple[float, ...], ...]]:
-    """Return native initial/prior rows from diagnosis start coordinates."""
+    """Return native initial/prior rows for operational diagnosis starts.
+
+    In the operational O2 A retrieval path, the apriori is also the solver
+    initial state. Each diagnosis row therefore represents one complete
+    prior/start scenario, rather than a fixed-prior optimizer basin probe.
+    """
 
     rows: list[tuple[float, ...]] = []
 
