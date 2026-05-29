@@ -269,8 +269,6 @@ def assert_optimal_estimation_diagnosis_display() -> None:
             ((0.8, 700.0), (0.55, 670.0)),
         ),
         start_bounds=((0.1, 2.0), (225.0, 825.0)),
-        result_state=(0.12, 340.0),
-        result_initial_state=(0.1, 225.0),
         batch_workers=1,
         truth_state=(0.2, 600.0),
         start_status=("ok", "failed"),
@@ -375,8 +373,6 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
             n=9,
         )
@@ -384,7 +380,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
     assert diagnosis.batch_workers == 2
     assert diagnosis.native_worker_limit == 10
     assert calls[0]["batch_workers"] == 2
-    assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
+    assert calls[0]["state_vector"] is state_vector
     start_rows = cast(tuple[tuple[float, ...], ...], calls[0]["start_rows"])
     assert len(start_rows) == 9
     assert start_rows[0] == (0.02, 50.0)
@@ -401,8 +397,6 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
             n=9,
             batch_workers=2,
@@ -410,7 +404,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
 
     assert explicit.batch_workers == 2
     assert calls[0]["batch_workers"] == 2
-    assert len(cast(tuple[object, ...], calls[0]["state_vectors"])) == 1
+    assert calls[0]["state_vector"] is state_vector
     assert len(cast(tuple[object, ...], calls[0]["start_rows"])) == 9
 
 
@@ -495,8 +489,6 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
             n=25,
         )
@@ -520,8 +512,6 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
         )
 
@@ -552,8 +542,6 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
             seeding_strategy=strategy,
         )
@@ -619,8 +607,6 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
             case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
-            result_state=(0.2, 600.0),
-            result_initial_state=(0.2, 600.0),
             controls=RetrievalControls(),
             n=31,
         )
@@ -1422,10 +1408,11 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
             case=reference_o2a_case,
             measurement=measurement,
             fast_measurement=fast_measurement,
-            state_vectors=state_vectors,
+            state_vector=state_vectors[0],
             resolved_template=state_vectors[0],
             controls=controls,
             cache=cast(o2a_oe.rtm.SessionCache, FastCache()),
+            start_rows=tuple(vector.initial_state() for vector in state_vectors),
             batch_workers=3,
         )
 
@@ -1450,7 +1437,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
     assert native_call["initial_states"] == tuple(
         vector.initial_state() for vector in state_vectors
     )
-    assert native_call["prior_states"] == tuple(vector.prior_state() for vector in state_vectors)
+    assert native_call["prior_states"] == tuple(vector.initial_state() for vector in state_vectors)
     assert native_call["controls"] is controls
     assert correction_controls.max_iterations == 1
     assert correction_controls.state_vector_convergence_threshold == 0.7

@@ -3,13 +3,8 @@
 from pathlib import Path
 
 from . import fields
-from .axes import label
-from .data import column_values
-from .profiles import interval_profile_rows, nearest_wavelength_value
-from .properties import PLOT, PlotAccessor
-from .svg import SvgFigure, SvgPanel, SvgSeries
-
-DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
+from .profiles import profile_figure
+from .properties import PlotAccessor
 
 
 class CollisionInducedAbsorptionPlot(PlotAccessor):
@@ -37,47 +32,10 @@ def optical_depth_profile(
     wavelength_nm: float | None,
 ):
 
-    quantity = fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH
-    selected_wavelength_nm = profile_wavelength(table, wavelength_nm)
-    data = interval_profile_rows(
+    return profile_figure(
         table,
-        value=quantity,
-        vertical_axis="altitude_km",
-        wavelength_nm=selected_wavelength_nm,
+        quantity=fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH,
+        title="O2-O2 collision-induced absorption optical depth profile",
+        color_key="collision_induced_absorption",
+        wavelength_nm=wavelength_nm,
     )
-    title = "O2-O2 collision-induced absorption optical depth profile"
-
-    if selected_wavelength_nm is not None and data:
-        title = f"{title}, {nearest_wavelength_value(data, selected_wavelength_nm):.2f} nm"
-
-    panel = SvgPanel(
-        title=title,
-        x_title=label(quantity),
-        y_title=label("altitude_km"),
-        series=(
-            SvgSeries.points(
-                title,
-                column_values(data, quantity),
-                column_values(data, "altitude_km"),
-                color=PLOT.colors["collision_induced_absorption"],
-                point_size=PLOT.profile_point_size,
-                opacity=PLOT.profile_point_opacity,
-            ),
-        ),
-        show_legend=False,
-    )
-
-    return SvgFigure(title=title, panels=(panel,))
-
-
-def profile_wavelength(table, wavelength_nm: float | None) -> float | None:
-
-    if wavelength_nm is not None:
-        return wavelength_nm
-
-    values = sorted({float(value) for value in table.column(fields.WAVELENGTH_NM)})
-
-    if len(values) <= 1:
-        return None
-
-    return min(values, key=lambda value: abs(value - DEFAULT_PROFILE_WAVELENGTH_NM))

@@ -12,11 +12,7 @@ from ..input.wavelength_band.o2a import O2AInput
 from ..output.spectrum import (
     JACOBIAN_STATE_NAMES,
     DiagnosticReport,
-    Irradiance,
-    Radiance,
     RadianceJacobian,
-    Reflectance,
-    SpectralAxis,
     Spectrum,
 )
 from ..output.tables import (
@@ -24,7 +20,6 @@ from ..output.tables import (
     InstrumentResponseTable,
     O2LineContributions,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
 )
 from .loader import load_library
 from .signatures import configure
@@ -39,7 +34,6 @@ from .structures import (
     COptimalEstimationRequest,
     COptimalEstimationResult,
     COptimalEstimationStateSpec,
-    CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
@@ -353,25 +347,6 @@ class RtmHandle:
 
         return OxygenCollisionInducedAbsorptionDiagnosticTable(
             self._copied_rows(raw, self._lib.zds_o2_o2_cia_diagnostics_free)
-        )
-
-    def radiative_transfer_diagnostics(self, wavelengths_nm) -> RadiativeTransferDiagnosticTable:
-        """Return copied bounded radiative-transfer evidence rows."""
-
-        wavelengths = contiguous_wavelengths(wavelengths_nm)
-        raw = CRadiativeTransferDiagnostics()
-        self._check(
-            self._lib.zds_radiative_transfer_diagnostics(
-                self._ctx,
-                wavelengths,
-                len(wavelengths),
-                None,
-                ctypes.byref(raw),
-            )
-        )
-
-        return RadiativeTransferDiagnosticTable(
-            self._copied_rows(raw, self._lib.zds_radiative_transfer_diagnostics_free)
         )
 
     def optimal_estimation(self, *, measurement, state_vector, controls):
@@ -749,10 +724,10 @@ class RtmHandle:
             self._free_spectrum(raw)
 
         return Spectrum(
-            axis=SpectralAxis(wavelength_nm=wavelength_nm),
-            radiance_quantity=Radiance(radiance),
-            irradiance_quantity=Irradiance(irradiance),
-            reflectance_quantity=Reflectance(reflectance),
+            wavelength_nm=wavelength_nm,
+            radiance=radiance,
+            irradiance=irradiance,
+            reflectance=reflectance,
             case=self.input if include_case else None,
             solar_mu0_value=self._solar_mu0,
             diagnostic_report=report,
@@ -854,6 +829,13 @@ class RtmHandle:
 
     def _copied_optimal_estimation_batch_result(self, raw: COptimalEstimationBatchResult):
 
+        return self._copied_optimal_estimation_batch_fields(raw)
+
+    def _copied_optimal_estimation_batch_fields(
+        self,
+        raw: COptimalEstimationBatchResult | COptimalEstimationFastmodeBatchResult,
+    ):
+
         run_count = int(raw.run_count)
         state_count = int(raw.state_count)
         history_capacity = int(raw.history_capacity)
@@ -879,37 +861,27 @@ class RtmHandle:
         raw: COptimalEstimationFastmodeBatchResult,
     ):
 
-        run_count = int(raw.run_count)
-        state_count = int(raw.state_count)
-        history_capacity = int(raw.history_capacity)
-        value_count = run_count * state_count
-        history_value_count = run_count * history_capacity * state_count
-        status = tuple(batch_run_status(raw.status[index]) for index in range(run_count))
+        payload = self._copied_optimal_estimation_batch_fields(raw)
+        run_count = int(payload["run_count"])
 
-        return {
-            "run_count": run_count,
-            "state_count": state_count,
-            "history_capacity": history_capacity,
-            "iteration_count": tuple(int(raw.iteration_count[index]) for index in range(run_count)),
-            "converged": tuple(bool(raw.converged[index]) for index in range(run_count)),
-            "status": status,
-            "state": tuple(float(raw.state[index]) for index in range(value_count)),
-            "history_state": tuple(
-                float(raw.history_state[index]) for index in range(history_value_count)
-            ),
-            "fast_stage_iteration_count": tuple(
-                int(raw.fast_stage_iteration_count[index]) for index in range(run_count)
-            ),
-            "fast_stage_converged": tuple(
-                bool(raw.fast_stage_converged[index]) for index in range(run_count)
-            ),
-            "full_correction_iteration_count": tuple(
-                int(raw.full_correction_iteration_count[index]) for index in range(run_count)
-            ),
-            "full_correction_converged": tuple(
-                bool(raw.full_correction_converged[index]) for index in range(run_count)
-            ),
-        }
+        payload.update(
+            {
+                "fast_stage_iteration_count": tuple(
+                    int(raw.fast_stage_iteration_count[index]) for index in range(run_count)
+                ),
+                "fast_stage_converged": tuple(
+                    bool(raw.fast_stage_converged[index]) for index in range(run_count)
+                ),
+                "full_correction_iteration_count": tuple(
+                    int(raw.full_correction_iteration_count[index]) for index in range(run_count)
+                ),
+                "full_correction_converged": tuple(
+                    bool(raw.full_correction_converged[index]) for index in range(run_count)
+                ),
+            }
+        )
+
+        return payload
 
     def _check(self, status: int) -> None:
 

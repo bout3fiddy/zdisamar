@@ -160,38 +160,6 @@ class OxygenCollisionInducedAbsorptionDiagnosticsRaw(ctypes.Structure):
     ]
 
 
-class CRadiativeTransferDiagnosticRow(ctypes.Structure):
-    _fields_ = [
-        ("wavelength_nm", ctypes.c_double),
-        ("layer_index", ctypes.c_uint32),
-        ("sublayer_index", ctypes.c_uint32),
-        ("global_sublayer_index", ctypes.c_uint32),
-        ("interval_index_1based", ctypes.c_uint32),
-        ("altitude_km", ctypes.c_double),
-        ("total_optical_depth", ctypes.c_double),
-        ("total_absorption_optical_depth", ctypes.c_double),
-        ("total_scattering_optical_depth", ctypes.c_double),
-        ("single_scatter_albedo", ctypes.c_double),
-        ("cumulative_optical_depth_above", ctypes.c_double),
-        ("mid_layer_transmission_proxy", ctypes.c_double),
-        ("direct_surface_transmission_proxy", ctypes.c_double),
-        ("atmospheric_scattering_source_proxy", ctypes.c_double),
-        ("absorption_loss_proxy", ctypes.c_double),
-        ("pseudo_spherical_airmass_factor", ctypes.c_double),
-        ("n_streams", ctypes.c_uint32),
-        ("integrate_source_function", ctypes.c_uint8),
-        ("final_reflectance", ctypes.c_double),
-        ("final_radiance", ctypes.c_double),
-    ]
-
-
-class CRadiativeTransferDiagnostics(ctypes.Structure):
-    _fields_ = [
-        ("len", ctypes.c_size_t),
-        ("rows", ctypes.POINTER(CRadiativeTransferDiagnosticRow)),
-    ]
-
-
 class COptimalEstimationStateSpec(ctypes.Structure):
     _fields_ = [
         ("state_id", ctypes.c_uint8),

@@ -36,7 +36,6 @@ sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
 from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
-from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation.diagnosis import (  # noqa: E402
     diagnose_retrieval,
     diagnosis_batch_worker_count_for_limit,
@@ -287,198 +286,105 @@ def run_scene(
 
         return rows
 
-    if case.optimisation.fastmode.enabled:
-        retrieval_start = time.perf_counter()
-        state_vectors = [
-            multistart_state_vector(
-                start=start,
-                prior=start,
-                surface_pressure_hpa=truth["surface_pressure_hpa"],
-            )
-            for _, start in pending
-        ]
-        retrieval_mode = "native_batch_fast_stage" if fast_stage_only else "native_batch_fastmode"
+    retrieval_start = time.perf_counter()
+    state_template = multistart_state_vector(
+        start=pending[0][1],
+        prior=pending[0][1],
+        surface_pressure_hpa=truth["surface_pressure_hpa"],
+    )
+    retrieval_mode = "native_batch_fast_stage" if fast_stage_only else "native_batch_fastmode"
 
-        try:
-            with rtm.SessionCache() as cache:
-                state_template = state_vectors[0]
-                result = diagnose_retrieval(
-                    case=case,
-                    measurement=measurement,
-                    state_vector=state_template,
-                    result_state=state_template.initial_state(),
-                    result_initial_state=state_template.initial_state(),
-                    controls=None,
-                    cache=cache,
-                    n=len(pending),
-                    batch_workers=batch_workers,
-                    start_rows=tuple(
-                        (
-                            start["aerosol_optical_depth"],
-                            start["aerosol_mid_pressure_hpa"],
-                        )
-                        for _, start in pending
-                    ),
-                )
-
-            batch_s = time.perf_counter() - retrieval_start
-            retrieval_s = batch_s / len(pending)
-            aod_values = result.value("aerosol_optical_depth")
-            pressure_values = result.value("aerosol_layer_mid_pressure_hpa")
-            fast_stage_iterations = result.fast_stage_iterations or result.iterations
-            fast_stage_converged = result.fast_stage_converged or result.converged
-            full_correction_converged = result.full_correction_converged
-
-            for offset, ((start_index, start), converged, iterations) in enumerate(
-                zip(pending, result.converged, result.iterations, strict=True)
-            ):
-                row = retrieval_row(
-                    scene_index=scene_index,
-                    start_index=start_index,
-                    status="ok",
-                    error="",
-                    converged=converged,
-                    iterations=iterations,
-                    fast_stage_iterations=fast_stage_iterations[offset],
-                    fast_stage_converged=fast_stage_converged[offset],
-                    full_correction_converged=(
-                        math.nan
-                        if full_correction_converged is None
-                        else full_correction_converged[offset]
-                    ),
-                    full_correction_state_vector_convergence=math.nan,
-                    retrieval_s=retrieval_s,
-                    truth=truth,
-                    start=start,
-                    retrieved_aod=aod_values[offset],
-                    retrieved_pressure=pressure_values[offset],
-                    retrieval_mode=retrieval_mode,
-                    batch_wall_s=batch_s,
-                )
-                rows.append(row)
-
-                if checkpoint_path is not None:
-                    append_run(checkpoint_path, row)
-        except Exception as exc:  # noqa: BLE001 - retained as validation evidence.
-            batch_s = time.perf_counter() - retrieval_start
-            retrieval_s = batch_s / len(pending)
-
-            for start_index, start in pending:
-                row = retrieval_row(
-                    scene_index=scene_index,
-                    start_index=start_index,
-                    status="error",
-                    error=str(exc),
-                    converged=False,
-                    iterations=0,
-                    fast_stage_iterations=math.nan,
-                    fast_stage_converged=math.nan,
-                    full_correction_converged=math.nan,
-                    full_correction_state_vector_convergence=math.nan,
-                    retrieval_s=retrieval_s,
-                    truth=truth,
-                    start=start,
-                    retrieved_aod=math.nan,
-                    retrieved_pressure=math.nan,
-                    retrieval_mode=retrieval_mode,
-                    batch_wall_s=batch_s,
-                )
-                rows.append(row)
-
-                if checkpoint_path is not None:
-                    append_run(checkpoint_path, row)
-
-        print(
-            f"scene {scene_index:03d} batched {len(pending):03d}/{start_count} "
-            f"dt={batch_s:.3f}s avg={retrieval_s:.3f}s",
-            flush=True,
-        )
-
-        return rows
-
-    with rtm.SessionCache() as cache:
-        for start_index, start in pending:
-            retrieval_start = time.perf_counter()
-            state_vector = multistart_state_vector(
-                start=start,
-                prior=start,
-                surface_pressure_hpa=truth["surface_pressure_hpa"],
+    try:
+        with rtm.SessionCache() as cache:
+            result = diagnose_retrieval(
+                case=case,
+                measurement=measurement,
+                state_vector=state_template,
+                controls=None,
+                cache=cache,
+                n=len(pending),
+                batch_workers=batch_workers,
+                start_rows=tuple(
+                    (
+                        start["aerosol_optical_depth"],
+                        start["aerosol_mid_pressure_hpa"],
+                    )
+                    for _, start in pending
+                ),
             )
 
-            try:
-                result = o2a_oe.retrieve(
-                    case=case,
-                    measurement=measurement,
-                    state_vector=state_vector,
-                    cache=cache,
-                )
-                retrieval_s = time.perf_counter() - retrieval_start
-                retrieved_aod = result.value("aerosol_optical_depth")
-                retrieved_pressure = result.value("aerosol_layer_mid_pressure_hpa")
-                correction = result.fast_correction
-                status = "ok"
-                error = ""
-                converged = bool(result.converged)
-                iterations = int(result.iterations)
-                fast_stage_iterations = (
-                    math.nan if correction is None else int(correction.fast_iterations)
-                )
-                fast_stage_converged = (
-                    math.nan if correction is None else bool(correction.fast_converged)
-                )
-                full_correction_converged = (
-                    math.nan if correction is None else bool(correction.full_correction_converged)
-                )
-                full_correction_state_vector_convergence = (
-                    math.nan
-                    if correction is None
-                    else float(correction.full_correction_state_vector_convergence)
-                )
-            except Exception as exc:  # noqa: BLE001 - retained as validation evidence.
-                retrieval_s = time.perf_counter() - retrieval_start
-                retrieved_aod = math.nan
-                retrieved_pressure = math.nan
-                status = "error"
-                error = str(exc)
-                converged = False
-                iterations = 0
-                fast_stage_iterations = math.nan
-                fast_stage_converged = math.nan
-                full_correction_converged = math.nan
-                full_correction_state_vector_convergence = math.nan
+        batch_s = time.perf_counter() - retrieval_start
+        retrieval_s = batch_s / len(pending)
+        aod_values = result.value("aerosol_optical_depth")
+        pressure_values = result.value("aerosol_layer_mid_pressure_hpa")
+        fast_stage_iterations = result.fast_stage_iterations or result.iterations
+        fast_stage_converged = result.fast_stage_converged or result.converged
+        full_correction_converged = result.full_correction_converged
 
+        for offset, ((start_index, start), converged, iterations) in enumerate(
+            zip(pending, result.converged, result.iterations, strict=True)
+        ):
             row = retrieval_row(
                 scene_index=scene_index,
                 start_index=start_index,
-                status=status,
-                error=error,
+                status="ok",
+                error="",
                 converged=converged,
                 iterations=iterations,
-                fast_stage_iterations=fast_stage_iterations,
-                fast_stage_converged=fast_stage_converged,
-                full_correction_converged=full_correction_converged,
-                full_correction_state_vector_convergence=full_correction_state_vector_convergence,
+                fast_stage_iterations=fast_stage_iterations[offset],
+                fast_stage_converged=fast_stage_converged[offset],
+                full_correction_converged=(
+                    math.nan
+                    if full_correction_converged is None
+                    else full_correction_converged[offset]
+                ),
+                full_correction_state_vector_convergence=math.nan,
                 retrieval_s=retrieval_s,
                 truth=truth,
                 start=start,
-                retrieved_aod=retrieved_aod,
-                retrieved_pressure=retrieved_pressure,
-                retrieval_mode="python_loop",
-                batch_wall_s=math.nan,
+                retrieved_aod=aod_values[offset],
+                retrieved_pressure=pressure_values[offset],
+                retrieval_mode=retrieval_mode,
+                batch_wall_s=batch_s,
+            )
+            rows.append(row)
+
+            if checkpoint_path is not None:
+                append_run(checkpoint_path, row)
+    except Exception as exc:  # noqa: BLE001 - retained as validation evidence.
+        batch_s = time.perf_counter() - retrieval_start
+        retrieval_s = batch_s / len(pending)
+
+        for start_index, start in pending:
+            row = retrieval_row(
+                scene_index=scene_index,
+                start_index=start_index,
+                status="error",
+                error=str(exc),
+                converged=False,
+                iterations=0,
+                fast_stage_iterations=math.nan,
+                fast_stage_converged=math.nan,
+                full_correction_converged=math.nan,
+                full_correction_state_vector_convergence=math.nan,
+                retrieval_s=retrieval_s,
+                truth=truth,
+                start=start,
+                retrieved_aod=math.nan,
+                retrieved_pressure=math.nan,
+                retrieval_mode=retrieval_mode,
+                batch_wall_s=batch_s,
             )
             rows.append(row)
 
             if checkpoint_path is not None:
                 append_run(checkpoint_path, row)
 
-            progress_step = 1 if start_count <= 10 else 10
-
-            if start_index % progress_step == 0 or start_index == start_count:
-                print(
-                    f"scene {scene_index:03d} start {start_index:03d}/{start_count} "
-                    f"dt={retrieval_s:.3f}s status={status}",
-                    flush=True,
-                )
+    print(
+        f"scene {scene_index:03d} batched {len(pending):03d}/{start_count} "
+        f"dt={batch_s:.3f}s avg={retrieval_s:.3f}s",
+        flush=True,
+    )
 
     return rows
 
@@ -696,34 +602,6 @@ def scene_domains(data: pd.DataFrame) -> tuple[tuple[float, float], tuple[float,
     pressure_domain = extent(pressure_values)
 
     return aod_domain, pressure_domain
-
-
-def movement_rows(data: pd.DataFrame) -> pd.DataFrame:
-
-    rows = []
-
-    for row in data.to_dict("records"):
-        if row["status"] != "ok":
-            continue
-
-        rows.extend(
-            [
-                {
-                    "start_index": int(row["start_index"]),
-                    "state": "start",
-                    "aerosol_optical_depth": float(row["start_aerosol_optical_depth"]),
-                    "aerosol_mid_pressure_hpa": float(row["start_aerosol_mid_pressure_hpa"]),
-                },
-                {
-                    "start_index": int(row["start_index"]),
-                    "state": "retrieved",
-                    "aerosol_optical_depth": float(row["retrieved_aerosol_optical_depth"]),
-                    "aerosol_mid_pressure_hpa": float(row["retrieved_aerosol_mid_pressure_hpa"]),
-                },
-            ]
-        )
-
-    return pd.DataFrame.from_records(rows)
 
 
 def marker_rows(data: pd.DataFrame) -> pd.DataFrame:

@@ -29,8 +29,8 @@ class AxisSpec:
     """Small axis object kept independent of any plotting package."""
 
     format: str = ".4g"
-    tickCount: int = 5  # noqa: N815
-    labelExpr: str | None = None  # noqa: N815
+    tickCount: int = 5
+    labelExpr: str | None = None
 
     def to_dict(self) -> dict[str, object]:
 
@@ -183,7 +183,7 @@ def default_numeric_axis(values, tick_count: int, compact_axis: bool) -> AxisSpe
     return AxisSpec(format=".4g", tickCount=tick_count)
 
 
-def numeric_axis(values, *, tickCount: int):  # noqa: N803
+def numeric_axis(values, *, tickCount: int):
     """Return a compact numeric axis without changing plotted data values."""
 
     exponent = axis_exponent(values)

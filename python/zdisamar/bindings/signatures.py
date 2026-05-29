@@ -11,7 +11,6 @@ from .structures import (
     COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
-    CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
@@ -128,18 +127,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     )
     bind(
         lib,
-        "zds_radiative_transfer_diagnostics",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.POINTER(CSpectrum),
-            ctypes.POINTER(CRadiativeTransferDiagnostics),
-        ],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
         "zds_run_o2a_optimal_estimation",
         [
             ctypes.c_void_p,
@@ -221,12 +208,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_o2_o2_cia_diagnostics_free",
         [ctypes.c_void_p, ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw)],
-        None,
-    )
-    bind(
-        lib,
-        "zds_radiative_transfer_diagnostics_free",
-        [ctypes.c_void_p, ctypes.POINTER(CRadiativeTransferDiagnostics)],
         None,
     )
     bind(lib, "zds_last_error", [ctypes.c_void_p], ctypes.c_char_p)

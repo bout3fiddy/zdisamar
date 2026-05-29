@@ -7,7 +7,6 @@ from typing import ClassVar
 from ..bindings.structures import (
     CAtmosphericBudgetRow,
     CInstrumentResponseRow,
-    CRadiativeTransferDiagnosticRow,
     O2LineContributionRow,
     OxygenCollisionInducedAbsorptionRow,
 )
@@ -175,10 +174,3 @@ class OxygenCollisionInducedAbsorptionDiagnosticTable(RtmTable):
         from ..plot.collision_induced_absorption import CollisionInducedAbsorptionPlot
 
         return CollisionInducedAbsorptionPlot(self)
-
-
-@dataclass(frozen=True)
-class RadiativeTransferDiagnosticTable(RtmTable):
-    """Bounded radiative-transfer diagnostic table."""
-
-    columns = field_names(CRadiativeTransferDiagnosticRow)

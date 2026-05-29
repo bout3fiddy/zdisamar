@@ -1,9 +1,75 @@
 """Shared profile-table transforms for vertical diagnostic plots."""
 
 import math
+from collections.abc import Sequence
+from typing import Protocol
 
 from . import fields
-from .data import PlotRow, as_float, require_columns, to_records
+from .axes import label
+from .data import PlotRow, as_float, column_values, require_columns, to_records
+from .properties import PLOT
+from .svg import SvgFigure, SvgPanel, SvgSeries
+
+DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
+
+
+class ColumnTable(Protocol):
+    def column(self, name: str) -> Sequence[float]: ...
+
+
+def profile_figure(
+    table: ColumnTable,
+    *,
+    quantity: str,
+    title: str,
+    color_key: str,
+    wavelength_nm: float | None,
+) -> SvgFigure:
+    """Build a wavelength-selected altitude profile figure."""
+
+    selected_wavelength_nm = profile_wavelength(table, wavelength_nm)
+    data = interval_profile_rows(
+        table,
+        value=quantity,
+        vertical_axis="altitude_km",
+        wavelength_nm=selected_wavelength_nm,
+    )
+    resolved_title = title
+
+    if selected_wavelength_nm is not None and data:
+        resolved_title = f"{title}, {nearest_wavelength_value(data, selected_wavelength_nm):.2f} nm"
+
+    panel = SvgPanel(
+        title=resolved_title,
+        x_title=label(quantity),
+        y_title=label("altitude_km"),
+        series=(
+            SvgSeries.points(
+                resolved_title,
+                column_values(data, quantity),
+                column_values(data, "altitude_km"),
+                color=PLOT.colors[color_key],
+                point_size=PLOT.profile_point_size,
+                opacity=PLOT.profile_point_opacity,
+            ),
+        ),
+        show_legend=False,
+    )
+
+    return SvgFigure(title=resolved_title, panels=(panel,))
+
+
+def profile_wavelength(table: ColumnTable, wavelength_nm: float | None) -> float | None:
+
+    if wavelength_nm is not None:
+        return wavelength_nm
+
+    values = sorted({float(value) for value in table.column(fields.WAVELENGTH_NM)})
+
+    if len(values) <= 1:
+        return None
+
+    return min(values, key=lambda value: abs(value - DEFAULT_PROFILE_WAVELENGTH_NM))
 
 
 def nearest_wavelength_value(obj: object, wavelength_nm: float) -> float:

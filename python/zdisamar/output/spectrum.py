@@ -27,34 +27,6 @@ class DiagnosticReport:
 
 
 @dataclass(frozen=True)
-class SpectralAxis:
-    """Wavelength coordinates for one RTM spectrum."""
-
-    wavelength_nm: array
-
-
-@dataclass(frozen=True)
-class Radiance:
-    """Radiance samples on a spectral axis."""
-
-    values: array
-
-
-@dataclass(frozen=True)
-class Irradiance:
-    """Irradiance samples on a spectral axis."""
-
-    values: array
-
-
-@dataclass(frozen=True)
-class Reflectance:
-    """Reflectance samples on a spectral axis."""
-
-    values: array
-
-
-@dataclass(frozen=True)
 class RadianceJacobian:
     """Radiance Jacobian columns returned by the RTM."""
 
@@ -74,10 +46,10 @@ class ReflectanceJacobian:
 class Spectrum(NotebookDisplay):
     """Copied RTM spectrum arrays."""
 
-    axis: SpectralAxis
-    radiance_quantity: Radiance
-    irradiance_quantity: Irradiance
-    reflectance_quantity: Reflectance
+    wavelength_nm: array
+    radiance: array
+    irradiance: array
+    reflectance: array
     case: O2AInput | None = None
     solar_mu0_value: float | None = None
     diagnostic_report: DiagnosticReport | None = None
@@ -112,26 +84,6 @@ class Spectrum(NotebookDisplay):
             return self.solar_mu0_value
 
         return self.case.geometry.solar_mu0
-
-    @property
-    def wavelength_nm(self) -> array:
-
-        return self.axis.wavelength_nm
-
-    @property
-    def radiance(self) -> array:
-
-        return self.radiance_quantity.values
-
-    @property
-    def irradiance(self) -> array:
-
-        return self.irradiance_quantity.values
-
-    @property
-    def reflectance(self) -> array:
-
-        return self.reflectance_quantity.values
 
     @property
     def sun_normalized_radiance(self) -> array:

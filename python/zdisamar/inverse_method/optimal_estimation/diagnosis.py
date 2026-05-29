@@ -97,8 +97,6 @@ class RetrievalDiagnosis(NotebookDisplay):
     converged: tuple[bool, ...]
     retrieval_paths: tuple[tuple[tuple[float, ...], ...], ...]
     start_bounds: tuple[tuple[float, float], ...]
-    result_state: tuple[float, ...]
-    result_initial_state: tuple[float, ...] | None
     batch_workers: int
     truth_state: tuple[float, ...] | None = None
     start_status: tuple[str, ...] = ()
@@ -201,8 +199,6 @@ def diagnose_retrieval(
     case: O2AInput,
     measurement: Measurement,
     state_vector: StateVector,
-    result_state: Sequence[float],
-    result_initial_state: Sequence[float] | None,
     controls: RetrievalControls | None,
     n: int | None = None,
     batch_workers: int | None = None,
@@ -272,12 +268,6 @@ def diagnose_retrieval(
         converged=batch.converged,
         retrieval_paths=batch.history_state,
         start_bounds=axes,
-        result_state=tuple(float(value) for value in result_state),
-        result_initial_state=(
-            None
-            if result_initial_state is None
-            else tuple(float(value) for value in result_initial_state)
-        ),
         batch_workers=active_batch_workers,
         start_status=(batch.status if batch.status else ("ok",) * len(active_start_rows)),
         fast_stage_iterations=batch.fast_stage_iterations,
@@ -406,11 +396,11 @@ def run_diagnosis_batch(
     batch = o2a_oe.diagnosis_batch(
         case=case,
         measurement=measurement,
-        state_vectors=(state_vector,),
+        state_vector=state_vector,
+        start_rows=start_rows,
         controls=controls,
         cache=cache,
         batch_workers=batch_workers,
-        start_rows=start_rows,
     )
 
     return DiagnosisBatchSummary(

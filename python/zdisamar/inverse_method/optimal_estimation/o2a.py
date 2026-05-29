@@ -3,7 +3,8 @@
 import copy
 import math
 from array import array
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
 from ... import rtm
@@ -48,6 +49,101 @@ class BatchResult:
             raise KeyError(f"unknown state variable: {name}") from exc
 
         return tuple(row[index] for row in self.state)
+
+
+@dataclass(frozen=True)
+class RetrievalRoute:
+    """Resolved case/cache inputs for one O2 A retrieval handoff."""
+
+    case: O2AInput
+    measurement: Measurement
+    state_vector: StateVector
+    cache: rtm.SessionCache
+    load_case: bool
+    preserve_fast_cache: bool
+
+
+@contextmanager
+def resolved_retrieval_route(
+    *,
+    case: O2AInput,
+    measurement: Measurement,
+    state_vector: StateVector,
+    cache: rtm.SessionCache | None,
+) -> Iterator[RetrievalRoute]:
+    """Resolve the shared case/cache/template setup for single and batch OE."""
+
+    if case.optimisation.fastmode.enabled:
+        fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
+
+        if cache is None:
+            with rtm.SessionCache() as local_cache:
+                local_cache.load(fast_case, copy_case=False)
+                resolved_state_vector = resolved_state_vector_for_loaded_case(
+                    fast_case,
+                    state_vector,
+                    local_cache,
+                )
+
+                yield RetrievalRoute(
+                    case=fast_case,
+                    measurement=fast_measurement,
+                    state_vector=resolved_state_vector,
+                    cache=local_cache,
+                    load_case=False,
+                    preserve_fast_cache=False,
+                )
+
+            return
+
+        if not cache.has_loaded_case(fast_case):
+            cache.load(fast_case, copy_case=False)
+
+        resolved_state_vector = resolved_state_vector_for_loaded_case(
+            fast_case,
+            state_vector,
+            cache,
+        )
+
+        yield RetrievalRoute(
+            case=fast_case,
+            measurement=fast_measurement,
+            state_vector=resolved_state_vector,
+            cache=cache,
+            load_case=False,
+            preserve_fast_cache=True,
+        )
+
+        return
+
+    if cache is None:
+        with rtm.SessionCache() as local_cache:
+            local_cache.load(case, copy_case=False)
+            resolved_state_vector = resolved_state_vector_for_loaded_case(
+                case,
+                state_vector,
+                local_cache,
+            )
+
+            yield RetrievalRoute(
+                case=case,
+                measurement=measurement,
+                state_vector=resolved_state_vector,
+                cache=local_cache,
+                load_case=False,
+                preserve_fast_cache=False,
+            )
+
+        return
+
+    yield RetrievalRoute(
+        case=case,
+        measurement=measurement,
+        state_vector=resolved_state_vector_for_case(case, state_vector),
+        cache=cache,
+        load_case=True,
+        preserve_fast_cache=False,
+    )
 
 
 def case_for_state(
@@ -101,102 +197,33 @@ def retrieve(
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
 
-    if case.optimisation.fastmode.enabled:
-        fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
-
-        if cache is None:
-            with rtm.SessionCache() as local_cache:
-                local_cache.load(fast_case, copy_case=False)
-                resolved_state_vector = resolved_state_vector_for_loaded_case(
-                    fast_case,
-                    state_vector,
-                    local_cache,
-                )
-
-                result = run_fastmode_oe(
-                    case=case,
-                    measurement=measurement,
-                    fast_case=fast_case,
-                    fast_measurement=fast_measurement,
-                    state_vector=resolved_state_vector,
-                    controls=active_controls,
-                    cache=local_cache,
-                    fast_case_loaded=True,
-                    preserve_fast_cache=False,
-                )
-
-                return attach_diagnosis(
-                    result,
-                    case=case,
-                    measurement=measurement,
-                    state_vector=state_vector,
-                    controls=active_controls,
-                )
-
-        if not cache.has_loaded_case(fast_case):
-            cache.load(fast_case, copy_case=False)
-
-        resolved_state_vector = resolved_state_vector_for_loaded_case(
-            fast_case,
-            state_vector,
-            cache,
-        )
-
-        result = run_fastmode_oe(
-            case=case,
-            measurement=measurement,
-            fast_case=fast_case,
-            fast_measurement=fast_measurement,
-            state_vector=resolved_state_vector,
-            controls=active_controls,
-            cache=cache,
-            fast_case_loaded=True,
-            preserve_fast_cache=True,
-        )
-
-        return attach_diagnosis(
-            result,
-            case=case,
-            measurement=measurement,
-            state_vector=state_vector,
-            controls=active_controls,
-        )
-
-    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
-
-    if cache is None:
-        with rtm.SessionCache() as local_cache:
-            local_cache.load(case, copy_case=False)
-            resolved_state_vector = resolved_state_vector_for_loaded_case(
-                case,
-                state_vector,
-                local_cache,
-            )
-            result = run_native_retrieval(
-                case=case,
-                measurement=measurement,
-                state_vector=resolved_state_vector,
-                controls=active_controls,
-                cache=local_cache,
-                load_case=False,
-            )
-
-            return attach_diagnosis(
-                result,
-                case=case,
-                measurement=measurement,
-                state_vector=state_vector,
-                controls=active_controls,
-            )
-
-    result = run_native_retrieval(
+    with resolved_retrieval_route(
         case=case,
         measurement=measurement,
-        state_vector=resolved_state_vector,
-        controls=active_controls,
+        state_vector=state_vector,
         cache=cache,
-        load_case=True,
-    )
+    ) as route:
+        if case.optimisation.fastmode.enabled:
+            result = run_fastmode_oe(
+                case=case,
+                measurement=measurement,
+                fast_case=route.case,
+                fast_measurement=route.measurement,
+                state_vector=route.state_vector,
+                controls=active_controls,
+                cache=route.cache,
+                fast_case_loaded=True,
+                preserve_fast_cache=route.preserve_fast_cache,
+            )
+        else:
+            result = run_native_retrieval(
+                case=route.case,
+                measurement=route.measurement,
+                state_vector=route.state_vector,
+                controls=active_controls,
+                cache=route.cache,
+                load_case=route.load_case,
+            )
 
     return attach_diagnosis(
         result,
@@ -211,128 +238,60 @@ def diagnosis_batch(
     *,
     case: O2AInput,
     measurement: Measurement,
-    state_vectors: Sequence[StateVector],
+    state_vector: StateVector,
+    start_rows: Sequence[Sequence[float]],
     controls: RetrievalControls | None = None,
     cache: rtm.SessionCache | None = None,
     batch_workers: int = 1,
-    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Run the native same-scene batch used by Result.diagnose()."""
 
     _require_aerosol_retrieval_compatible(case)
     active_controls = retrieval_controls_for_case(case, controls)
-    state_vector_batch = tuple(state_vectors)
 
-    if not state_vector_batch:
-        raise ValueError("state_vectors must not be empty")
-
-    if case.optimisation.fastmode.enabled:
-        final_correction = case.optimisation.fastmode.oe.final_correction
-        fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
-
-        if cache is None:
-            with rtm.SessionCache() as local_cache:
-                local_cache.load(fast_case, copy_case=False)
-
-                resolved_template = resolved_state_vector_for_loaded_case(
-                    fast_case,
-                    state_vector_batch[0],
-                    local_cache,
-                )
-
-                if not final_correction.enabled:
-                    return run_native_retrieval_batch(
-                        case=fast_case,
-                        measurement=fast_measurement,
-                        state_vectors=state_vector_batch,
-                        resolved_template=resolved_template,
-                        controls=active_controls,
-                        cache=local_cache,
-                        load_case=False,
-                        batch_workers=batch_workers,
-                        start_rows=start_rows,
-                    )
-
-                return run_native_fastmode_retrieval_batch(
-                    case=case,
-                    measurement=measurement,
-                    fast_measurement=fast_measurement,
-                    state_vectors=state_vector_batch,
-                    resolved_template=resolved_template,
-                    controls=active_controls,
-                    cache=local_cache,
-                    batch_workers=batch_workers,
-                    start_rows=start_rows,
-                )
-
-        if not cache.has_loaded_case(fast_case):
-            cache.load(fast_case, copy_case=False)
-
-        resolved_template = resolved_state_vector_for_loaded_case(
-            fast_case,
-            state_vector_batch[0],
-            cache,
-        )
-
-        if not final_correction.enabled:
-            return run_native_retrieval_batch(
-                case=fast_case,
-                measurement=fast_measurement,
-                state_vectors=state_vector_batch,
-                resolved_template=resolved_template,
-                controls=active_controls,
-                cache=cache,
-                load_case=False,
-                batch_workers=batch_workers,
-                start_rows=start_rows,
-            )
-
-        return run_native_fastmode_retrieval_batch(
-            case=case,
-            measurement=measurement,
-            fast_measurement=fast_measurement,
-            state_vectors=state_vector_batch,
-            resolved_template=resolved_template,
-            controls=active_controls,
-            cache=cache,
-            batch_workers=batch_workers,
-            start_rows=start_rows,
-        )
-
-    if cache is None:
-        with rtm.SessionCache() as local_cache:
-            local_cache.load(case, copy_case=False)
-            resolved_template = resolved_state_vector_for_loaded_case(
-                case,
-                state_vector_batch[0],
-                local_cache,
-            )
-
-            return run_native_retrieval_batch(
-                case=case,
-                measurement=measurement,
-                state_vectors=state_vector_batch,
-                resolved_template=resolved_template,
-                controls=active_controls,
-                cache=local_cache,
-                load_case=False,
-                batch_workers=batch_workers,
-                start_rows=start_rows,
-            )
-
-    resolved_template = resolved_state_vector_for_case(case, state_vector_batch[0])
-
-    return run_native_retrieval_batch(
+    with resolved_retrieval_route(
         case=case,
         measurement=measurement,
-        state_vectors=state_vector_batch,
-        resolved_template=resolved_template,
-        controls=active_controls,
+        state_vector=state_vector,
         cache=cache,
-        load_case=True,
-        batch_workers=batch_workers,
-        start_rows=start_rows,
-    )
+    ) as route:
+        if case.optimisation.fastmode.enabled:
+            final_correction = case.optimisation.fastmode.oe.final_correction
+
+            if not final_correction.enabled:
+                return run_native_retrieval_batch(
+                    case=route.case,
+                    measurement=route.measurement,
+                    resolved_template=route.state_vector,
+                    controls=active_controls,
+                    cache=route.cache,
+                    start_rows=start_rows,
+                    load_case=route.load_case,
+                    batch_workers=batch_workers,
+                )
+
+            return run_native_fastmode_retrieval_batch(
+                case=case,
+                measurement=measurement,
+                fast_measurement=route.measurement,
+                state_vector=state_vector,
+                resolved_template=route.state_vector,
+                controls=active_controls,
+                cache=route.cache,
+                start_rows=start_rows,
+                batch_workers=batch_workers,
+            )
+
+        return run_native_retrieval_batch(
+            case=route.case,
+            measurement=route.measurement,
+            resolved_template=route.state_vector,
+            controls=active_controls,
+            cache=route.cache,
+            start_rows=start_rows,
+            load_case=route.load_case,
+            batch_workers=batch_workers,
+        )
 
 
 def retrieval_controls_for_case(
@@ -423,12 +382,12 @@ def run_native_fastmode_retrieval_batch(
     case: O2AInput,
     measurement: Measurement,
     fast_measurement: Measurement,
-    state_vectors: Sequence[StateVector],
+    state_vector: StateVector,
     resolved_template: StateVector,
     controls: RetrievalControls,
     cache: rtm.SessionCache,
+    start_rows: Sequence[Sequence[float]],
     batch_workers: int,
-    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Run fast-stage and sparse correction starts inside one native handoff."""
 
@@ -442,18 +401,14 @@ def run_native_fastmode_retrieval_batch(
     )
     correction_case = full_correction_case(full_case, correction_measurement)
     correction_controls = replace(controls, max_iterations=1)
-    initial_rows, prior_rows = batch_start_rows(
-        resolved_template,
-        start_rows,
-        state_vectors,
-    )
+    initial_rows, prior_rows = batch_start_rows(resolved_template, start_rows)
 
     with rtm.SessionCache() as correction_cache:
         correction_cache.load(correction_case, copy_case=False)
 
         correction_template = resolved_state_vector_for_loaded_case(
             correction_case,
-            state_vectors[0],
+            state_vector,
             correction_cache,
         )
 
@@ -461,8 +416,8 @@ def run_native_fastmode_retrieval_batch(
             cache.warm_optimal_estimation(resolved_template.jacobian_names)
             correction_cache.warm_optimal_estimation(correction_template.jacobian_names)
 
-        raw = cache._handle.optimal_estimation_fastmode_batch(  # noqa: SLF001
-            correction_handle=correction_cache._handle,  # noqa: SLF001
+        raw = cache._handle.optimal_estimation_fastmode_batch(
+            correction_handle=correction_cache._handle,
             measurement=fast_measurement,
             correction_measurement=correction_measurement,
             state_vector=resolved_template,
@@ -474,27 +429,11 @@ def run_native_fastmode_retrieval_batch(
             batch_workers=batch_workers,
         )
 
-    state_count = int(raw["state_count"])
-    states = tuple(
-        tuple(float(value) for value in raw["state"][offset : offset + state_count])
-        for offset in range(0, len(raw["state"]), state_count)
-    )
-    history_state = batch_history_state(raw)
-
-    return BatchResult(
+    return batch_result_from_native(
+        raw,
         state_names=resolved_template.names,
-        state=states,
-        iterations=tuple(int(value) for value in raw["iteration_count"]),
-        converged=tuple(bool(value) for value in raw["converged"]),
         measurement=measurement,
-        status=tuple(str(value) for value in raw["status"]),
-        history_state=history_state,
-        fast_stage_iterations=tuple(int(value) for value in raw["fast_stage_iteration_count"]),
-        fast_stage_converged=tuple(bool(value) for value in raw["fast_stage_converged"]),
-        full_correction_iterations=tuple(
-            int(value) for value in raw["full_correction_iteration_count"]
-        ),
-        full_correction_converged=tuple(bool(value) for value in raw["full_correction_converged"]),
+        include_fastmode_fields=True,
     )
 
 
@@ -545,7 +484,7 @@ def run_full_physics_correction(
     """Apply one full-physics native correction for an already converged fast state."""
 
     cache.load(case, copy_case=False)
-    raw = cache._handle.optimal_estimation_correction(  # noqa: SLF001
+    raw = cache._handle.optimal_estimation_correction(
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
@@ -762,7 +701,7 @@ def run_native_retrieval(
 
     cache.warm_optimal_estimation(resolved_state_vector.jacobian_names)
 
-    raw = cache._handle.optimal_estimation(  # noqa: SLF001
+    raw = cache._handle.optimal_estimation(
         measurement=measurement,
         state_vector=resolved_state_vector,
         controls=active_controls,
@@ -779,13 +718,12 @@ def run_native_retrieval_batch(
     *,
     case: O2AInput,
     measurement: Measurement,
-    state_vectors: Sequence[StateVector],
     resolved_template: StateVector,
     controls: RetrievalControls | None,
     cache: rtm.SessionCache,
+    start_rows: Sequence[Sequence[float]],
     load_case: bool = True,
     batch_workers: int = 1,
-    start_rows: Sequence[Sequence[float]] | None = None,
 ) -> BatchResult:
     """Bind one prepared O2 A relation to many native OE starts."""
 
@@ -798,12 +736,8 @@ def run_native_retrieval_batch(
     if batch_workers == 1:
         cache.warm_optimal_estimation(resolved_template.jacobian_names)
 
-    initial_rows, prior_rows = batch_start_rows(
-        resolved_template,
-        start_rows,
-        state_vectors,
-    )
-    raw = cache._handle.optimal_estimation_batch(  # noqa: SLF001
+    initial_rows, prior_rows = batch_start_rows(resolved_template, start_rows)
+    raw = cache._handle.optimal_estimation_batch(
         measurement=measurement,
         state_vector=resolved_template,
         initial_states=initial_rows,
@@ -811,20 +745,61 @@ def run_native_retrieval_batch(
         controls=active_controls,
         batch_workers=batch_workers,
     )
-    state_count = int(raw["state_count"])
-    states = tuple(
-        tuple(float(value) for value in raw["state"][offset : offset + state_count])
-        for offset in range(0, len(raw["state"]), state_count)
+
+    return batch_result_from_native(
+        raw,
+        state_names=resolved_template.names,
+        measurement=measurement,
+        include_fastmode_fields=False,
     )
+
+
+def batch_result_from_native(
+    raw: Mapping[str, object],
+    *,
+    state_names: tuple[str, ...],
+    measurement: Measurement,
+    include_fastmode_fields: bool,
+) -> BatchResult:
+    """Convert a copied native batch payload into Python diagnosis state."""
+
+    state_count = _native_int(raw, "state_count")
+    state_values = _native_floats(raw, "state")
+    states = tuple(
+        tuple(state_values[offset : offset + state_count])
+        for offset in range(0, len(state_values), state_count)
+    )
+    iterations = _native_ints(raw, "iteration_count")
+    converged = tuple(bool(value) for value in _native_ints(raw, "converged"))
+    status = _native_strings(raw, "status")
     history_state = batch_history_state(raw)
 
+    if include_fastmode_fields:
+        return BatchResult(
+            state_names=state_names,
+            state=states,
+            iterations=iterations,
+            converged=converged,
+            measurement=measurement,
+            status=status,
+            history_state=history_state,
+            fast_stage_iterations=_native_ints(raw, "fast_stage_iteration_count"),
+            fast_stage_converged=tuple(
+                bool(value) for value in _native_ints(raw, "fast_stage_converged")
+            ),
+            full_correction_iterations=_native_ints(raw, "full_correction_iteration_count"),
+            full_correction_converged=tuple(
+                bool(value) for value in _native_ints(raw, "full_correction_converged")
+            ),
+        )
+
     return BatchResult(
-        state_names=resolved_template.names,
+        state_names=state_names,
         state=states,
-        iterations=tuple(int(value) for value in raw["iteration_count"]),
-        converged=tuple(bool(value) for value in raw["converged"]),
+        iterations=iterations,
+        converged=converged,
         measurement=measurement,
-        status=tuple(str(value) for value in raw["status"]),
+        status=status,
         history_state=history_state,
     )
 
@@ -855,34 +830,11 @@ def batch_history_state(raw: Mapping[str, object]) -> tuple[tuple[tuple[float, .
     return tuple(paths)
 
 
-def batch_state_rows(
-    template: StateVector,
-    state_vectors: Sequence[StateVector],
-) -> tuple[tuple[tuple[float, ...], ...], tuple[tuple[float, ...], ...]]:
-    """Return row-major initial/prior state tables compatible with one template."""
-
-    initial_rows = []
-    prior_rows = []
-
-    for state_vector in state_vectors:
-        if state_vector.names != template.names:
-            raise ValueError("batched state vectors must use the same state order")
-
-        initial_rows.append(state_vector.initial_state())
-        prior_rows.append(state_vector.prior_state())
-
-    return tuple(initial_rows), tuple(prior_rows)
-
-
 def batch_start_rows(
     template: StateVector,
-    start_rows: Sequence[Sequence[float]] | None,
-    state_vectors: Sequence[StateVector],
+    start_rows: Sequence[Sequence[float]],
 ) -> tuple[tuple[tuple[float, ...], ...], tuple[tuple[float, ...], ...]]:
-    """Return native initial/prior rows, using start rows directly when supplied."""
-
-    if start_rows is None:
-        return batch_state_rows(template, state_vectors)
+    """Return native initial/prior rows from diagnosis start coordinates."""
 
     rows: list[tuple[float, ...]] = []
 
@@ -1028,12 +980,6 @@ def attach_diagnosis(
     diagnosis_case = copy.deepcopy(case)
     diagnosis_measurement = copy.deepcopy(measurement)
     diagnosis_state_vector = copy.deepcopy(state_vector)
-    result_state = tuple(float(value) for value in result.state)
-    result_initial_state = (
-        None
-        if result.initial_state is None
-        else tuple(float(value) for value in result.initial_state)
-    )
 
     def diagnose(
         *,
@@ -1047,8 +993,6 @@ def attach_diagnosis(
             case=diagnosis_case,
             measurement=diagnosis_measurement,
             state_vector=diagnosis_state_vector,
-            result_state=result_state,
-            result_initial_state=result_initial_state,
             controls=controls,
             n=n,
             cache=cache,
@@ -1326,6 +1270,11 @@ def _native_floats(raw: Mapping[str, object], key: str) -> tuple[float, ...]:
 def _native_ints(raw: Mapping[str, object], key: str) -> tuple[int, ...]:
 
     return tuple(int(_native_number(value, key)) for value in _native_sequence(raw, key))
+
+
+def _native_strings(raw: Mapping[str, object], key: str) -> tuple[str, ...]:
+
+    return tuple(str(value) for value in _native_sequence(raw, key))
 
 
 def _native_number(value: object, key: str) -> int | float | str:
