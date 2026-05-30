@@ -64,8 +64,19 @@ From the repo root:
 research/performance/tracing/record-lauka-forward-model.sh
 ```
 
+The script uses the pinned Lauka checkout described in:
+
+```text
+research/performance/tracing/lauka.lock
+```
+
+If the pinned binary is missing, the script bootstraps Lauka into ignored local
+storage under `out/tools/lauka/`. The lock pins a project Lauka fork commit
+that contains the child-pid PMU filter fix, so Lauka measures the workload
+process instead of Lauka's own wait loop.
+
 The default counter set is restricted to counters reported as supported by
-`lauka counters --details` on the current Apple Silicon machine:
+`lauka counters --details` for Apple Silicon PMU collection:
 
 ```text
 fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred
@@ -79,13 +90,21 @@ zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast
 ```
 
 It then records the forward-model executable with Lauka. The wrapper is
-forward-only: it does not run the optimal-estimation retrieval loop.
+forward-only: it does not run the optimal-estimation retrieval loop. It records
+both a serial run with `ZDISAMAR_WORKER_LIMIT=1` and a threaded run with the
+normal worker count, then writes a compact PMU summary with IPC, L1D miss, and
+branch-miss metrics.
 
-Lauka must be on `PATH`, and on Apple Silicon it normally needs `sudo` for PMU
-counters. Pass `--no-sudo` only if your local Lauka setup does not require it.
+Apple Silicon PMU counters normally require `sudo`.
 
 Generated Lauka outputs are written under:
 
 ```text
 research/performance/tracing/output/lauka-forward/
+```
+
+Raw Lauka reports are ignored. The compact retained summary is:
+
+```text
+research/performance/tracing/output/lauka-forward/pmu-summary.json
 ```

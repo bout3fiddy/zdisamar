@@ -22,6 +22,7 @@ python/zdisamar/reference_data/assets/
 research/performance/where-is-the-bottleneck/primitive-codegen/outputs/*.asm
 research/performance/tracing/output/captures/*.tracy
 research/performance/tracing/output/lauka-forward/*
+!research/performance/tracing/output/lauka-forward/pmu-summary.json
 !research/performance/tracing/output/lauka-forward/forward-run/
 research/performance/tracing/output/lauka-forward/forward-run/*
 !research/performance/tracing/output/lauka-forward/forward-run/summary.json

@@ -1,214 +1,184 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  cat <<'USAGE'
-Usage:
-  research/performance/tracing/record-lauka-forward-model.sh [options]
+# Record Apple Silicon PMU counters around the O2 A LABOS forward model.
+# The run shape is intentionally fixed: one serial pass for clean per-kernel
+# ratios and one threaded pass for the real forward workload.
 
-Options:
-  --runs N             Measured Lauka runs. Default: 7.
-  --warmup N           Lauka warmup runs before measurement. Default: 1.
-  --measurements LIST  Comma-separated Lauka counters.
-  --output-dir DIR     Output directory. Default: research/performance/tracing/output/lauka-forward.
-  --no-sudo            Run Lauka without sudo.
-  -h, --help           Show this help.
+serial_runs=3
+threaded_runs=7
+warmup=1
+measurements="fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred"
 
-The measured child command is the ReleaseFast O2 A LABOS forward-model harness
-built without ztracy. That keeps the PMU counters focused on the forward path,
-not Tracy instrumentation or the optimal-estimation retrieval loop. The default
-measurements use supported Apple/ARM counters:
-fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,
-arm_br_mis_pred,arm_br_pred.
-USAGE
-}
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../../.." && pwd)"
+out_dir="$repo_root/research/performance/tracing/output/lauka-forward"
+serial_run_dir="$out_dir/serial-run"
+threaded_run_dir="$out_dir/threaded-run"
+serial_report="$out_dir/lauka-serial.txt"
+threaded_report="$out_dir/lauka-threaded.txt"
+summary_json="$out_dir/pmu-summary.json"
 
-quote_command() {
-  local quoted=()
-  local arg
-  for arg in "$@"; do
-    quoted+=("$(printf '%q' "$arg")")
-  done
-  printf '%s' "${quoted[*]}"
-}
+lauka_bin="$("$script_dir/bootstrap-lauka.sh")"
 
-json_string() {
-  local value="$1"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  value="${value//$'\n'/\\n}"
-  printf '"%s"' "$value"
-}
-
-require_positive_int() {
-  local name="$1"
-  local value="$2"
-  case "$value" in
-    ''|*[!0-9]*)
-      echo "$name must be a positive integer" >&2
-      exit 2
-      ;;
-    0)
-      echo "$name must be greater than zero" >&2
-      exit 2
-      ;;
-  esac
-}
-
-default_measurements="fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred"
-
-runs="${RUNS:-7}"
-warmup="${WARMUP:-1}"
-measurements="${MEASUREMENTS:-$default_measurements}"
-output_dir=""
-use_sudo=1
-
-while (($#)); do
-  case "$1" in
-    --runs)
-      if (($# < 2)); then
-        echo "missing value for --runs" >&2
-        exit 2
-      fi
-      runs="$2"
-      shift 2
-      ;;
-    --warmup)
-      if (($# < 2)); then
-        echo "missing value for --warmup" >&2
-        exit 2
-      fi
-      warmup="$2"
-      shift 2
-      ;;
-    --measurements)
-      if (($# < 2)); then
-        echo "missing value for --measurements" >&2
-        exit 2
-      fi
-      measurements="$2"
-      shift 2
-      ;;
-    --output-dir)
-      if (($# < 2)); then
-        echo "missing value for --output-dir" >&2
-        exit 2
-      fi
-      output_dir="$2"
-      shift 2
-      ;;
-    --no-sudo)
-      use_sudo=0
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "unsupported argument: $1" >&2
-      usage >&2
-      exit 2
-      ;;
-  esac
-done
-
-require_positive_int "--runs" "$runs"
-case "$warmup" in
-  ''|*[!0-9]*)
-    echo "--warmup must be a non-negative integer" >&2
-    exit 2
-    ;;
-esac
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-if [[ -z "$output_dir" ]]; then
-  output_dir="$repo_root/research/performance/tracing/output/lauka-forward"
-elif [[ "$output_dir" != /* ]]; then
-  output_dir="$repo_root/$output_dir"
-fi
-
-lauka_bin="${LAUKA:-lauka}"
-if ! lauka_path="$(command -v "$lauka_bin")"; then
-  echo "lauka is not on PATH. Build/install https://github.com/verte-zerg/lauka or set LAUKA=/path/to/lauka." >&2
-  exit 127
-fi
-
-if ((use_sudo)) && ! command -v sudo >/dev/null 2>&1; then
-  echo "sudo is required by Lauka for Apple Silicon PMU counters. Pass --no-sudo only if your Lauka setup does not need it." >&2
-  exit 127
-fi
-
-mkdir -p "$output_dir"
-forward_output_dir="$output_dir/forward-run"
-mkdir -p "$forward_output_dir"
-
-report_path="$output_dir/lauka-forward.txt"
-manifest_path="$output_dir/manifest.json"
-command_path="$output_dir/command.txt"
-rm -f "$report_path" "$manifest_path" "$command_path"
+mkdir -p "$serial_run_dir" "$threaded_run_dir"
+rm -f "$serial_report" "$threaded_report" "$summary_json"
 
 (
   cd "$repo_root"
   zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast
 )
-
 forward_exe="$repo_root/zig-out/bin/labos-bottleneck-trace"
 if [[ ! -x "$forward_exe" ]]; then
   echo "expected executable not found: $forward_exe" >&2
   exit 1
 fi
 
-child_args=("$forward_exe" --output-dir "$forward_output_dir")
-child_command="$(quote_command "${child_args[@]}")"
-printf '%s\n' "$child_command" >"$command_path"
+# Lauka treats each token after `--` as a separate benchmark command, so each
+# measured child command is passed as one string.
+serial_command="env ZDISAMAR_WORKER_LIMIT=1 $forward_exe --output-dir $serial_run_dir"
+threaded_command="$forward_exe --output-dir $threaded_run_dir"
 
-cat >"$manifest_path" <<JSON
-{
-  "tool": "lauka",
-  "target": "o2a_forward_model",
-  "runs": $runs,
-  "warmup": $warmup,
-  "measurements": $(json_string "$measurements"),
-  "command": $(json_string "$child_command"),
-  "report": $(json_string "$report_path"),
-  "forward_summary": $(json_string "$forward_output_dir/summary.json")
+echo "[1/2] serial PMU pass: ZDISAMAR_WORKER_LIMIT=1"
+sudo "$lauka_bin" record --color never --runs "$serial_runs" --warmup "$warmup" \
+  --measurements "$measurements" \
+  -- "$serial_command" | tee "$serial_report"
+
+echo
+echo "[2/2] threaded PMU pass: default worker count"
+sudo "$lauka_bin" record --color never --runs "$threaded_runs" --warmup "$warmup" \
+  --measurements "$measurements" \
+  -- "$threaded_command" | tee "$threaded_report"
+
+python3 - "$summary_json" "$serial_report" "$threaded_report" \
+  "$serial_run_dir/summary.json" "$threaded_run_dir/summary.json" \
+  "$serial_runs" "$threaded_runs" "$warmup" "$measurements" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+serial_report = Path(sys.argv[2])
+threaded_report = Path(sys.argv[3])
+serial_forward_summary = Path(sys.argv[4])
+threaded_forward_summary = Path(sys.argv[5])
+serial_runs = int(sys.argv[6])
+threaded_runs = int(sys.argv[7])
+warmup = int(sys.argv[8])
+measurements = sys.argv[9]
+
+SCALE = {
+    "": 1.0,
+    "K": 1.0e3,
+    "M": 1.0e6,
+    "G": 1.0e9,
+    "T": 1.0e12,
+    "s": 1.0,
+    "ms": 1.0e-3,
+    "us": 1.0e-6,
+    "ns": 1.0e-9,
+    "KB": 1.0e3,
+    "MB": 1.0e6,
+    "GB": 1.0e9,
 }
-JSON
 
-echo "recording forward-model PMU counters to $report_path"
-echo "child command: $child_command"
 
-lauka_args=(
-  record
-  --color never
-  --runs "$runs"
-  --warmup "$warmup"
-  --measurements "$measurements"
-  --
-  "${child_args[@]}"
-)
+def parse_lauka_report(path: Path) -> dict[str, float]:
+    values: dict[str, float] = {}
+    pattern = re.compile(
+        r"^\s*(wall_time|peak_rss|fixed_cycles|fixed_instructions|"
+        r"arm_l1d_cache_refill|arm_l1d_cache|arm_br_mis_pred|arm_br_pred)"
+        r"\s+([0-9.]+)([A-Za-z]*)\b"
+    )
+    for line in path.read_text().splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+        name, number, unit = match.groups()
+        values[name] = float(number) * SCALE[unit]
+    return values
 
-if ((use_sudo)); then
-  sudo "$lauka_path" "${lauka_args[@]}" | tee "$report_path"
-else
-  "$lauka_path" "${lauka_args[@]}" | tee "$report_path"
-fi
 
-if [[ -f "$forward_output_dir/summary.json" ]]; then
-  echo
-  echo "forward summary"
-  awk -F ': ' '
-    /"trace_enabled"/ { trace_enabled = $2 }
-    /"prepare_s"/ { prepare = $2 }
-    /"forward_wall_s"/ { forward = $2 }
-    END {
-      gsub(/[, ]/, "", trace_enabled)
-      gsub(/[, ]/, "", prepare)
-      gsub(/[, ]/, "", forward)
-      printf "  trace_enabled:          %s\n", trace_enabled
-      printf "  prepare_s:              %s\n", prepare
-      printf "  forward_wall_s:         %s\n", forward
+def load_forward_summary(path: Path) -> dict[str, object]:
+    with path.open() as handle:
+        return json.load(handle)
+
+
+def derived(values: dict[str, float]) -> dict[str, float]:
+    cycles = values["fixed_cycles"]
+    instructions = values["fixed_instructions"]
+    l1d = values["arm_l1d_cache"]
+    l1d_refill = values["arm_l1d_cache_refill"]
+    branch_pred = values["arm_br_pred"]
+    branch_miss = values["arm_br_mis_pred"]
+    return {
+        "ipc": instructions / cycles,
+        "l1d_miss_rate": l1d_refill / l1d,
+        "l1d_mpki": 1000.0 * l1d_refill / instructions,
+        "branch_mispredict_rate": branch_miss / branch_pred,
+        "branch_mpki": 1000.0 * branch_miss / instructions,
     }
-  ' "$forward_output_dir/summary.json"
-fi
+
+
+serial = parse_lauka_report(serial_report)
+threaded = parse_lauka_report(threaded_report)
+serial_forward = load_forward_summary(serial_forward_summary)
+threaded_forward = load_forward_summary(threaded_forward_summary)
+
+serial_instructions = serial["fixed_instructions"]
+threaded_instructions = threaded["fixed_instructions"]
+scope_ratio = threaded_instructions / serial_instructions
+scope_ok = serial_instructions >= 1.0e9 and scope_ratio >= 0.5
+
+summary = {
+    "schema": 1,
+    "tool": "lauka",
+    "boundary": "o2a_forward_model",
+    "build": "zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast",
+    "measurements": measurements.split(","),
+    "warmup": warmup,
+    "serial": {
+        "runs": serial_runs,
+        "command": "env ZDISAMAR_WORKER_LIMIT=1 labos-bottleneck-trace",
+        "forward_summary": str(serial_forward_summary),
+        "forward_wall_s": serial_forward["forward_wall_s"],
+        "counters": serial,
+        "derived": derived(serial),
+    },
+    "threaded": {
+        "runs": threaded_runs,
+        "command": "labos-bottleneck-trace",
+        "forward_summary": str(threaded_forward_summary),
+        "forward_wall_s": threaded_forward["forward_wall_s"],
+        "counters": threaded,
+        "derived": derived(threaded),
+    },
+    "scope_check": {
+        "serial_instruction_floor": 1.0e9,
+        "threaded_to_serial_instruction_ratio": scope_ratio,
+        "ok": scope_ok,
+    },
+}
+
+summary_path.parent.mkdir(parents=True, exist_ok=True)
+summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+
+print()
+print("================ O2 A forward PMU: serial vs threaded ================")
+print(f"{'metric':24s} {'serial (1 worker)':>18s} {'threaded':>18s}")
+print(f"{'forward_wall_s':24s} {serial_forward['forward_wall_s']:18.3f} {threaded_forward['forward_wall_s']:18.3f}")
+print(f"{'fixed_cycles':24s} {serial['fixed_cycles'] / 1e9:17.2f}G {threaded['fixed_cycles'] / 1e9:17.2f}G")
+print(f"{'fixed_instructions':24s} {serial_instructions / 1e9:17.2f}G {threaded_instructions / 1e9:17.2f}G")
+print(f"{'IPC':24s} {derived(serial)['ipc']:18.3f} {derived(threaded)['ipc']:18.3f}")
+print(f"{'L1D miss rate':24s} {100 * derived(serial)['l1d_miss_rate']:17.2f}% {100 * derived(threaded)['l1d_miss_rate']:17.2f}%")
+print(f"{'L1D MPKI':24s} {derived(serial)['l1d_mpki']:18.2f} {derived(threaded)['l1d_mpki']:18.2f}")
+print(f"{'branch miss rate':24s} {100 * derived(serial)['branch_mispredict_rate']:17.2f}% {100 * derived(threaded)['branch_mispredict_rate']:17.2f}%")
+print(f"{'branch MPKI':24s} {derived(serial)['branch_mpki']:18.2f} {derived(threaded)['branch_mpki']:18.2f}")
+print("=====================================================================")
+print(f"wrote compact PMU summary to {summary_path}")
+
+if not scope_ok:
+    print("PMU scope check failed: Lauka did not capture the workload process/thread set.", file=sys.stderr)
+    sys.exit(1)
+PY
