@@ -1,13 +1,13 @@
 {
-  "trace_enabled": true,
-  "prepare_ns": 45664709,
-  "forward_wall_ns": 2443696791,
-  "prepare_s": 0.045664709,
-  "forward_wall_s": 2.443696791,
+  "trace_enabled": false,
+  "prepare_ns": 46633292,
+  "forward_wall_ns": 1135791084,
+  "prepare_s": 0.046633292,
+  "forward_wall_s": 1.135791084,
   "sample_count": 701,
   "wavelength_start_nm": 755.00000000,
   "wavelength_end_nm": 776.00000000,
-  "mean_radiance": 1.27882454557708180e13,
+  "mean_radiance": 1.27882454557709860e13,
   "mean_irradiance": 4.75946650953468060e14,
-  "mean_reflectance": 1.69299446204588800e-1
+  "mean_reflectance": 1.69299446204591400e-1
 }
