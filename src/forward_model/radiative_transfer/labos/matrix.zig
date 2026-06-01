@@ -31,7 +31,8 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     // smul ---------------------------------------------------------------------------------------------------|
-    // General LABOS matrix product. Uses the fixed 12x10 kernel when the common stream layout matches.        |
+    // Small matrix multiply: C = A * B for the LABOS small dense Mat type.                                    |
+    // Uses the fixed 12x10 kernel when the common stream layout matches.                                      |
     //                                                                                                         |
     // Steps:                                                                                                  |
     //   1. use Gaussian-block traces to skip products that are below threshold_mul                            |
@@ -226,7 +227,7 @@ inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
 }
 
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
-    // smul12x10Into ------------------------------------------------------------------------------------------|
+    // smul12x10Into (small matrix multiply, fixed 12x10) -----------------------------------------------------|
     // Fixed n=12, n_gauss=10 product for the LABOS hot path.                                                  |
     //                                                                                                         |
     // The loop writes one output row at a time and two neighboring columns per @Vector(2, f64).               |
@@ -247,6 +248,15 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
+
+        // A row broadcasts -----------------------------------------------------------------------------------|
+        // Read A[i,0..9], the Gaussian part of row i. Each scalar is copied into both SIMD lanes so one       |
+        // multiply contributes to C[i,j] and C[i,j+1] at the same time.                                       |
+        //                                                                                                     |
+        //   a0 = [A[i,0], A[i,0]]                                                                             |
+        //   a1 = [A[i,1], A[i,1]]                                                                             |
+        //   ...                                                                                               |
+        //   a9 = [A[i,9], A[i,9]]                                                                             |
         const a0: @Vector(2, f64) = @splat(a.data[row]);
         const a1: @Vector(2, f64) = @splat(a.data[row + 1]);
         const a2: @Vector(2, f64) = @splat(a.data[row + 2]);
@@ -257,6 +267,16 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         const a7: @Vector(2, f64) = @splat(a.data[row + 7]);
         const a8: @Vector(2, f64) = @splat(a.data[row + 8]);
         const a9: @Vector(2, f64) = @splat(a.data[row + 9]);
+        // ----------------------------------------------------------------------------------------------------|
+
+        // B Gaussian rows ------------------------------------------------------------------------------------|
+        // b0..b9 are the B rows that participate in the Gaussian sum. Each slice is one full row with         |
+        // 12 output columns, including the two extra view/solar columns.                                      |
+        //                                                                                                     |
+        //   b0 = B[0, 0..12]                                                                                  |
+        //   b1 = B[1, 0..12]                                                                                  |
+        //   ...                                                                                               |
+        //   b9 = B[9, 0..12]                                                                                  |
         const b0 = b.data[0..12];
         const b1 = b.data[12..24];
         const b2 = b.data[24..36];
@@ -267,8 +287,29 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         const b7 = b.data[84..96];
         const b8 = b.data[96..108];
         const b9 = b.data[108..120];
+        // ----------------------------------------------------------------------------------------------------|
+
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
+
+            // Two-column dot product -------------------------------------------------------------------------|
+            // This computes two output columns at a time:                                                     |
+            //                                                                                                 |
+            //   C[i, j : j + 2] = sum k=0..9 A[i,k] * B[k, j : j + 2]                                         |
+            //                                                                                                 |
+            // k = 0..9 are the Gaussian directions.                                                           |
+            // j = 0, 2, 4, 6, 8, 10 covers all 12 output columns as six vector pairs.                         |
+            //                                                                                                 |
+            // One vector lane pair:                                                                           |
+            //                                                                                                 |
+            //   A[i,k]                      B[k,j]        B[k,j+1]                                            |
+            //      |                           |               |                                              |
+            //      v                           v               v                                              |
+            //   splat(A[i,k])       *       @Vector(2, f64) load                                              |
+            //                                                                                                 |
+            // This is visually repetitive because it is deliberately unrolled for the n=12, n_gauss=10        |
+            // LABOS hot path.                                                                                 |
+
             var s = a0 * loadPair(b0, j);
             s += a1 * loadPair(b1, j);
             s += a2 * loadPair(b2, j);
@@ -279,6 +320,17 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
             s += a7 * loadPair(b7, j);
             s += a8 * loadPair(b8, j);
             s += a9 * loadPair(b9, j);
+
+            // ARM64 SIMD codegen proof -----------------------------------------------------------------------|
+            // Current ReleaseFast codegen for this dot-product shape:                                         |
+            //                                                                                                 |
+            //   ldp       q0, q2, [x2]              load 128-bit vector registers                             |
+            //   fmul.2d   v0, v0, v9[0]             multiply two f64 lanes                                    |
+            //   fadd.2d   v0, v0, v1                add two f64 lanes                                         |
+            //                                                                                                 |
+            // q/v registers are ARM64 vector registers. The .2d suffix means two double-precision lanes.      |
+            // ------------------------------------------------------------------------------------------------|
+
             result.data[row + j] = s[0];
             result.data[row + j + 1] = s[1];
         }
