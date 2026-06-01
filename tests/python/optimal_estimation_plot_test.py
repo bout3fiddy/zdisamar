@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
-from zdisamar.plot.axes import finite_padded_scale, scaled_y
 from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
 from zdisamar.plot.optimal_estimation import (
     JACOBIAN_PANEL_SPACING,
@@ -152,10 +152,32 @@ def main() -> int:
     assert "dR/d\\u03c4" in jacobian_spec
     assert "dR/dp (hPa\\u207b\\u00b9)" in jacobian_spec
 
-    _, _, plain_tiny_y = scaled_y({"tiny": [1.0e-5, 2.0e-5]}, "tiny", "Tiny")
-    assert "labelExpr" not in json.dumps(plain_tiny_y.to_dict())
+    tiny_panel = SvgPanel(
+        title="Tiny",
+        x_title="x",
+        y_title="Tiny",
+        series=(SvgSeries.line("tiny", [0.0, 1.0], [1.0e-5, 2.0e-5]),),
+    )
+    tiny = SvgFigure(title="Tiny", panels=(tiny_panel,))
+    tiny_spec = tiny.to_dict()
+    tiny_panels = cast(list[dict[str, object]], tiny_spec["panels"])
+    assert "labelExpr" not in json.dumps(tiny_spec)
+    assert tiny_panels[0]["axis_multiplier"] is None
+    assert "x1e-5" not in tiny._repr_svg_()
 
-    flat_tiny_domain = finite_padded_scale([1.0e-5, 1.0e-5]).to_dict()["domain"]
+    flat_tiny = SvgFigure(
+        title="Flat tiny",
+        panels=(
+            SvgPanel(
+                title="Flat tiny",
+                x_title="x",
+                y_title="Tiny",
+                series=(SvgSeries.line("tiny", [0.0, 1.0], [1.0e-5, 1.0e-5]),),
+            ),
+        ),
+    )
+    flat_tiny_panels = cast(list[dict[str, object]], flat_tiny.to_dict()["panels"])
+    flat_tiny_domain = cast(list[float], flat_tiny_panels[0]["y_domain"])
     assert flat_tiny_domain[0] > 0.0
     assert flat_tiny_domain[1] < 2.0e-5
 
