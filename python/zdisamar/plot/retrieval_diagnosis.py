@@ -65,7 +65,7 @@ class RetrievalDiagnosisFigure:
     def to_dict(self) -> dict[str, object]:
         """Return a compact plot description for tests."""
 
-        clusters = endpoint_clusters(self.diagnosis, plot_domains(self.diagnosis))
+        clusters = endpoint_clusters(self.diagnosis, retrieval_basin_domains(self.diagnosis))
 
         return {
             "type": "zdisamar-svg",
