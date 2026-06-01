@@ -615,9 +615,9 @@ def diagnosis_paths(diagnosis: RetrievalDiagnosis) -> tuple[tuple[tuple[float, .
 def diagnosis_plot_domains(
     diagnosis: RetrievalDiagnosis,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
-    """Return the first two diagnosis domains used for basin grouping and plots."""
+    """Return the first two diagnosis domains used for path plots."""
 
-    if not retrieval_basin_axes_available(diagnosis):
+    if not diagnosis_plot_axes_available(diagnosis):
         return (0.0, 1.0), (0.0, 1.0)
 
     x_values = list(diagnosis.start_bounds[0])
@@ -659,7 +659,7 @@ def diagnosis_plot_domains(
 def retrieval_basin_domains(
     diagnosis: RetrievalDiagnosis,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
-    """Return axis domains for basin clustering, excluding failed path outliers."""
+    """Return axis domains for two-state basin clustering."""
 
     if not retrieval_basin_axes_available(diagnosis):
         return (0.0, 1.0), (0.0, 1.0)
@@ -736,7 +736,13 @@ def retrieval_basins(
 
 
 def retrieval_basin_axes_available(diagnosis: RetrievalDiagnosis) -> bool:
-    """Return whether the diagnosis has the two axes needed for retrieval basins."""
+    """Return whether basin summaries can represent every active state axis."""
+
+    return len(diagnosis.state_names) == 2 and len(diagnosis.start_bounds) == 2
+
+
+def diagnosis_plot_axes_available(diagnosis: RetrievalDiagnosis) -> bool:
+    """Return whether the diagnosis has two axes available for path plots."""
 
     return len(diagnosis.state_names) >= 2 and len(diagnosis.start_bounds) >= 2
 

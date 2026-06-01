@@ -344,6 +344,24 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     assert one_axis_sweep.basins() == ()
     assert one_axis_sweep.to_dict()["basin_count"] == 0
 
+    three_axis_sweep = RetrievalDiagnosis(
+        state_names=(
+            "aerosol_optical_depth",
+            "aerosol_layer_mid_pressure_hpa",
+            "surface_albedo",
+        ),
+        start_state=((0.1, 300.0, 0.0), (0.1, 300.0, 1.0)),
+        retrieved_state=((0.1, 300.0, 0.0), (0.1, 300.0, 1.0)),
+        iterations=(3, 3),
+        converged=(True, True),
+        retrieval_paths=(((0.1, 300.0, 0.0),), ((0.1, 300.0, 1.0),)),
+        start_bounds=((0.02, 2.0), (0.0, 1000.0), (0.0, 1.0)),
+        batch_workers=1,
+    )
+    assert three_axis_sweep.basins() == ()
+    assert three_axis_sweep.to_dict()["basin_count"] == 0
+    assert three_axis_sweep.plot().to_dict()["endpoint_clusters"] == 0
+
     surface_basin_sweep = RetrievalDiagnosis(
         state_names=("aerosol_optical_depth", "surface_albedo"),
         start_state=((0.1, 0.0), (0.1, 1.0)),
