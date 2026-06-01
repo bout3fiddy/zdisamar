@@ -31,6 +31,7 @@ BOUNDARY_BISECTION_NEIGHBORS = 2
 BOUNDARY_BISECTION_ENDPOINT_DISTANCE = 0.10
 BOUNDARY_BISECTION_SCORE_THRESHOLD = 4.0
 BOUNDARY_BISECTION_FRACTIONS = (0.5, 0.25, 0.125, 0.75, 0.0625, 0.875, 0.9375)
+RETRIEVAL_BASIN_CLUSTER_RADIUS = 0.055
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,66 @@ class DiagnosisBatchSummary:
     fast_stage_converged: tuple[bool, ...] | None
     full_correction_iterations: tuple[int, ...] | None
     full_correction_converged: tuple[bool, ...] | None
+
+
+@dataclass(frozen=True)
+class RetrievalBasin:
+    """Converged endpoint group from a multi-start retrieval."""
+
+    state_names: tuple[StateName, ...]
+    indices: tuple[int, ...]
+    starts: tuple[tuple[float, ...], ...]
+    points: tuple[tuple[float, ...], ...]
+    centroid: tuple[float, ...]
+    iterations: tuple[int, ...]
+
+    @property
+    def run_count(self) -> int:
+        """Return the number of starts that reached this basin."""
+
+        return len(self.indices)
+
+    @property
+    def start_indices(self) -> tuple[int, ...]:
+        """Return one-based start row indices in this basin."""
+
+        return tuple(index + 1 for index in self.indices)
+
+    def value(self, name: StateName) -> float:
+        """Return one centroid coordinate by state name."""
+
+        return float(self.centroid[self.state_names.index(name)])
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a notebook-friendly basin summary."""
+
+        return {
+            "runs": self.run_count,
+            "start_indices": list(self.start_indices),
+            "retrieved": {
+                name: float(self.centroid[index]) for index, name in enumerate(self.state_names)
+            },
+            "retrieved_spread": {
+                name: numeric_stats(tuple(point[index] for point in self.points))
+                for index, name in enumerate(self.state_names)
+            },
+            "start_range": {
+                name: {
+                    "min": min(start[index] for start in self.starts),
+                    "max": max(start[index] for start in self.starts),
+                }
+                for index, name in enumerate(self.state_names)
+            },
+            "iterations": numeric_stats(self.iterations),
+        }
+
+    def __repr__(self) -> str:
+
+        retrieved = ", ".join(
+            f"{name}={self.centroid[index]:.4g}" for index, name in enumerate(self.state_names)
+        )
+
+        return f"RetrievalBasin(runs={self.run_count}, {retrieved})"
 
 
 @dataclass(frozen=True)
@@ -129,6 +190,11 @@ class RetrievalDiagnosis(NotebookDisplay):
 
         return ("ok",) * len(self.start_state)
 
+    def basins(self) -> tuple[RetrievalBasin, ...]:
+        """Return converged endpoint groups shown as basin markers in the plot."""
+
+        return retrieval_basins(self)
+
     def to_dict(self) -> dict[str, object]:
         """Return a compact diagnosis summary."""
 
@@ -156,11 +222,14 @@ class RetrievalDiagnosis(NotebookDisplay):
             )
             if status != "ok" or not converged
         )
+        basins = self.basins()
 
         return {
             "runs": len(self.start_state),
             "converged": sum(1 for value in self.converged if value),
             "non_converged": non_converged,
+            "basin_count": len(basins),
+            "basins": [basin.to_dict() for basin in basins],
             "batch_workers": self.batch_workers,
             "native_worker_limit": self.native_worker_limit,
             "elapsed_s": self.elapsed_s,
@@ -522,6 +591,221 @@ def combine_optional_bools(
         return None
 
     return first + second
+
+
+def diagnosis_paths(diagnosis: RetrievalDiagnosis) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    """Return retrieval paths, falling back to start-to-result lines when needed."""
+
+    if diagnosis.retrieval_paths:
+        return tuple(
+            (start, *path) if path else (start,)
+            for start, path in zip(
+                diagnosis.start_state,
+                diagnosis.retrieval_paths,
+                strict=True,
+            )
+        )
+
+    return tuple(
+        (start, end)
+        for start, end in zip(diagnosis.start_state, diagnosis.retrieved_state, strict=True)
+    )
+
+
+def diagnosis_plot_domains(
+    diagnosis: RetrievalDiagnosis,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return the first two diagnosis domains used for path plots."""
+
+    if not diagnosis_plot_axes_available(diagnosis):
+        return (0.0, 1.0), (0.0, 1.0)
+
+    x_values = list(diagnosis.start_bounds[0])
+    y_values = list(diagnosis.start_bounds[1])
+
+    for path in diagnosis_paths(diagnosis):
+        for point in path:
+            if finite_plot_point(point):
+                x_values.append(float(point[0]))
+                y_values.append(float(point[1]))
+
+    if diagnosis.truth_state is not None:
+        x_values.append(float(diagnosis.truth_state[0]))
+        y_values.append(float(diagnosis.truth_state[1]))
+
+    x_lower_floor = 0.0 if diagnosis.state_names[0] == AEROSOL_OPTICAL_DEPTH else None
+    x_upper_floor = 2.25 if diagnosis.state_names[0] == AEROSOL_OPTICAL_DEPTH else None
+    y_lower_floor = 0.0 if diagnosis.state_names[1] == AEROSOL_LAYER_MID_PRESSURE_HPA else None
+    y_upper_floor = 1000.0 if diagnosis.state_names[1] == AEROSOL_LAYER_MID_PRESSURE_HPA else None
+
+    return (
+        axis_domain(
+            diagnosis.start_bounds[0],
+            x_values,
+            lower_floor=x_lower_floor,
+            upper_floor=x_upper_floor,
+            padding_fraction=0.12,
+        ),
+        axis_domain(
+            diagnosis.start_bounds[1],
+            y_values,
+            lower_floor=y_lower_floor,
+            upper_floor=y_upper_floor,
+            padding_fraction=0.02,
+        ),
+    )
+
+
+def retrieval_basin_domains(
+    diagnosis: RetrievalDiagnosis,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return axis domains for two-state basin clustering."""
+
+    if not retrieval_basin_axes_available(diagnosis):
+        return (0.0, 1.0), (0.0, 1.0)
+
+    x_values = list(diagnosis.start_bounds[0])
+    y_values = list(diagnosis.start_bounds[1])
+
+    for path, status, converged in zip(
+        diagnosis_paths(diagnosis),
+        diagnosis.resolved_start_status(),
+        diagnosis.converged,
+        strict=True,
+    ):
+        if status == "ok" and converged and path and finite_plot_point(path[-1]):
+            x_values.append(float(path[-1][0]))
+            y_values.append(float(path[-1][1]))
+
+    return (
+        axis_domain(diagnosis.start_bounds[0], x_values),
+        axis_domain(diagnosis.start_bounds[1], y_values),
+    )
+
+
+def retrieval_basins(
+    diagnosis: RetrievalDiagnosis,
+    *,
+    domains: tuple[tuple[float, float], tuple[float, float]] | None = None,
+    radius: float = RETRIEVAL_BASIN_CLUSTER_RADIUS,
+) -> tuple[RetrievalBasin, ...]:
+    """Cluster converged finite endpoints in normalized plotted coordinates."""
+
+    if not retrieval_basin_axes_available(diagnosis):
+        return ()
+
+    active_domains = retrieval_basin_domains(diagnosis) if domains is None else domains
+    basins: list[RetrievalBasin] = []
+    paths = diagnosis_paths(diagnosis)
+
+    for index, (path, status, converged) in enumerate(
+        zip(paths, diagnosis.resolved_start_status(), diagnosis.converged, strict=True)
+    ):
+        if status != "ok" or not converged or not path or not finite_plot_point(path[-1]):
+            continue
+
+        endpoint = tuple(float(value) for value in path[-1])
+        start = tuple(float(value) for value in diagnosis.start_state[index])
+        iterations = (int(diagnosis.iterations[index]),)
+
+        for basin_index, basin in enumerate(basins):
+            if plot_distance(endpoint, basin.centroid, active_domains) <= radius:
+                points = (*basin.points, endpoint)
+                basins[basin_index] = RetrievalBasin(
+                    state_names=diagnosis.state_names,
+                    indices=(*basin.indices, index),
+                    starts=(*basin.starts, start),
+                    points=points,
+                    centroid=centroid_of(points),
+                    iterations=basin.iterations + iterations,
+                )
+                break
+        else:
+            basins.append(
+                RetrievalBasin(
+                    state_names=diagnosis.state_names,
+                    indices=(index,),
+                    starts=(start,),
+                    points=(endpoint,),
+                    centroid=endpoint,
+                    iterations=iterations,
+                )
+            )
+
+    return tuple(sorted(basins, key=lambda basin: (basin.centroid[0], basin.centroid[1])))
+
+
+def retrieval_basin_axes_available(diagnosis: RetrievalDiagnosis) -> bool:
+    """Return whether basin summaries can represent every active state axis."""
+
+    return len(diagnosis.state_names) == 2 and len(diagnosis.start_bounds) == 2
+
+
+def diagnosis_plot_axes_available(diagnosis: RetrievalDiagnosis) -> bool:
+    """Return whether the diagnosis has two axes available for path plots."""
+
+    return len(diagnosis.state_names) >= 2 and len(diagnosis.start_bounds) >= 2
+
+
+def finite_plot_point(point: Sequence[float]) -> bool:
+    """Return whether a point contains finite first-two plot coordinates."""
+
+    return len(point) >= 2 and all(math.isfinite(float(value)) for value in point[:2])
+
+
+def axis_domain(
+    bounds: tuple[float, float],
+    values: Sequence[float],
+    *,
+    lower_floor: float | None = None,
+    upper_floor: float | None = None,
+    padding_fraction: float = 0.0,
+) -> tuple[float, float]:
+    """Return a finite domain from explicit bounds and optional plot padding."""
+
+    finite = [float(value) for value in values if math.isfinite(float(value))]
+    lower = min((float(bounds[0]), *finite))
+    upper = max((float(bounds[1]), *finite))
+
+    if lower_floor is not None:
+        lower = min(lower, float(lower_floor))
+
+    if upper_floor is not None:
+        upper = max(upper, float(upper_floor))
+
+    if not upper > lower:
+        padding = max(abs(lower) * 0.05, 1.0e-12)
+
+        return lower - padding, upper + padding
+
+    if padding_fraction > 0.0:
+        upper += (upper - lower) * padding_fraction
+
+    return lower, upper
+
+
+def plot_distance(
+    first: Sequence[float],
+    second: Sequence[float],
+    domains: tuple[tuple[float, float], tuple[float, float]],
+) -> float:
+    """Return plotted-coordinate distance between two state-space points."""
+
+    first_point = tuple(first[index] for index in range(2))
+    second_point = tuple(second[index] for index in range(2))
+
+    return point_distance(
+        plot_normalized_point(first_point, domains),
+        plot_normalized_point(second_point, domains),
+    )
+
+
+def centroid_of(points: Sequence[tuple[float, ...]]) -> tuple[float, ...]:
+    """Return the coordinate centroid for a non-empty endpoint group."""
+
+    return tuple(
+        statistics.fmean(point[index] for point in points) for index in range(len(points[0]))
+    )
 
 
 def adaptive_coarse_side(start_count: int) -> int:

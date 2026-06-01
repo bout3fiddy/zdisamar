@@ -1,6 +1,6 @@
 """Optimal-estimation retrieval API."""
 
-from .diagnosis import RetrievalDiagnosis
+from .diagnosis import RetrievalBasin, RetrievalDiagnosis
 from .measurement import WavelengthGridMismatchError
 from .o2a import (
     attach_diagnosis,
@@ -41,6 +41,7 @@ __all__ = [
     "RtmEvaluation",
     "Iteration",
     "Measurement",
+    "RetrievalBasin",
     "RetrievalDiagnosis",
     "RetrievalControls",
     "Result",

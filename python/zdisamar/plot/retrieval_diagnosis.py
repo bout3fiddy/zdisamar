@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
-from ..inverse_method.optimal_estimation.diagnosis import RetrievalDiagnosis
+from ..inverse_method.optimal_estimation.diagnosis import (
+    RETRIEVAL_BASIN_CLUSTER_RADIUS,
+    RetrievalBasin,
+    RetrievalDiagnosis,
+    diagnosis_paths,
+    diagnosis_plot_domains,
+    finite_plot_point,
+    retrieval_basin_domains,
+    retrieval_basins,
+)
 from .optimal_estimation import STATE_AXIS_TITLES
 from .properties import PLOT
 from .svg import format_tick
@@ -18,17 +27,10 @@ PANEL_Y = 88
 PANEL_WIDTH = 890
 PANEL_HEIGHT = 650
 AOD_PSEUDO_LOG_SCALE = 0.08
-PATH_DENSITY_BANDWIDTH = 0.055
-ENDPOINT_CLUSTER_RADIUS = 0.055
-
-
-@dataclass(frozen=True)
-class EndpointCluster:
-    """Converged endpoint group shown as one basin marker."""
-
-    indices: tuple[int, ...]
-    points: tuple[tuple[float, ...], ...]
-    centroid: tuple[float, ...]
+ENDPOINT_CLUSTER_RADIUS = RETRIEVAL_BASIN_CLUSTER_RADIUS
+ARROWHEAD_LENGTH = 5.0
+ARROWHEAD_SPREAD_DEG = 21.0
+ARROWHEAD_MIN_SEGMENT_LENGTH = 20.0
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,7 @@ class RetrievalDiagnosisFigure:
     def to_dict(self) -> dict[str, object]:
         """Return a compact plot description for tests."""
 
-        clusters = endpoint_clusters(self.diagnosis, plot_domains(self.diagnosis))
+        clusters = endpoint_clusters(self.diagnosis, retrieval_basin_domains(self.diagnosis))
 
         return {
             "type": "zdisamar-svg",
@@ -85,10 +87,10 @@ class RetrievalDiagnosisFigure:
         """Return notebook-display SVG."""
 
         x_domain, y_domain = plot_domains(self.diagnosis)
-        clusters = endpoint_clusters(self.diagnosis, (x_domain, y_domain))
+        clusters = endpoint_clusters(self.diagnosis, retrieval_basin_domains(self.diagnosis))
+        reference_paths = diagnosis_paths(self.diagnosis)
         plot_paths = trimmed_plot_paths(self.diagnosis, clusters, (x_domain, y_domain))
-        path_segments = segments(plot_paths)
-        densities = segment_densities(path_segments, (x_domain, y_domain))
+        path_segments = segments(plot_paths, (x_domain, y_domain), reference_paths)
         elements = [
             (
                 f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.width}" '
@@ -110,7 +112,7 @@ class RetrievalDiagnosisFigure:
         ]
         elements.extend(axis_svg(self.diagnosis, x_domain, y_domain))
         elements.append('<g clip-path="url(#diagnosis-plot-clip)">')
-        elements.extend(path_svg(path_segments, densities, x_domain, y_domain))
+        elements.extend(path_svg(path_segments, x_domain, y_domain))
         elements.extend(start_marker_svg(self.diagnosis, x_domain, y_domain))
         elements.extend(non_converged_svg(self.diagnosis, plot_paths, x_domain, y_domain))
         elements.extend(cluster_marker_svg(clusters, x_domain, y_domain))
@@ -139,7 +141,7 @@ class RetrievalDiagnosisFigure:
             ".axis { stroke: black; stroke-width: 1; }"
             f".grid {{ stroke: {PLOT.colors['grid']}; stroke-opacity: {PLOT.grid_opacity}; }}"
             ".minor-grid { stroke: #d0d0d0; stroke-opacity: 0.22; stroke-width: 0.7; }"
-            ".diagnosis-start { fill: white; stroke: #111111; stroke-width: 1.6; opacity: 0.92; }"
+            ".diagnosis-start { fill: white; stroke: #111111; stroke-width: 1.25; opacity: 0.86; }"
             ".diagnosis-non-converged { stroke: #b00020; stroke-width: 2.2; opacity: 0.9; }"
             ".diagnosis-truth { fill: none; stroke: #111111; stroke-width: 2.4; }"
             ".cluster-marker { fill: white; stroke: #1261a6; stroke-width: 2.4; opacity: 0.95; }"
@@ -160,81 +162,21 @@ def retrieval_diagnosis_figure(
 def plot_domains(diagnosis: RetrievalDiagnosis) -> tuple[tuple[float, float], tuple[float, float]]:
     """Return padded axis domains, with pressure increasing downward."""
 
-    x_values = [0.0, diagnosis.start_bounds[0][1]]
-    y_values = [0.0, diagnosis.start_bounds[1][1]]
-
-    for path in diagnosis_paths(diagnosis):
-        for point in path:
-            if finite_point(point):
-                x_values.append(float(point[0]))
-                y_values.append(float(point[1]))
-
-    if diagnosis.truth_state is not None:
-        x_values.append(float(diagnosis.truth_state[0]))
-        y_values.append(float(diagnosis.truth_state[1]))
-
-    x_high = max(2.25, max(x_values) * 1.12)
-    y_high = max(1000.0, max(y_values) * 1.02)
-
-    return (0.0, x_high), (0.0, y_high)
-
-
-def diagnosis_paths(diagnosis: RetrievalDiagnosis) -> tuple[tuple[tuple[float, ...], ...], ...]:
-    """Return plotted paths, falling back to start-to-result lines when needed."""
-
-    if diagnosis.retrieval_paths:
-        return tuple(
-            (start, *path) if path else (start,)
-            for start, path in zip(
-                diagnosis.start_state,
-                diagnosis.retrieval_paths,
-                strict=True,
-            )
-        )
-
-    return tuple(
-        (start, end)
-        for start, end in zip(diagnosis.start_state, diagnosis.retrieved_state, strict=True)
-    )
+    return diagnosis_plot_domains(diagnosis)
 
 
 def endpoint_clusters(
     diagnosis: RetrievalDiagnosis,
     domains: tuple[tuple[float, float], tuple[float, float]],
-) -> tuple[EndpointCluster, ...]:
+) -> tuple[RetrievalBasin, ...]:
     """Cluster converged finite endpoints in normalized panel coordinates."""
 
-    clusters: list[EndpointCluster] = []
-    paths = diagnosis_paths(diagnosis)
-
-    for index, (path, status, converged) in enumerate(
-        zip(paths, diagnosis.resolved_start_status(), diagnosis.converged, strict=True)
-    ):
-        if status != "ok" or not converged or not path or not finite_point(path[-1]):
-            continue
-
-        endpoint = tuple(float(value) for value in path[-1])
-
-        for cluster_index, cluster in enumerate(clusters):
-            if normalized_distance(endpoint, cluster.centroid, domains) <= ENDPOINT_CLUSTER_RADIUS:
-                points = (*cluster.points, endpoint)
-                clusters[cluster_index] = EndpointCluster(
-                    indices=(*cluster.indices, index),
-                    points=points,
-                    centroid=centroid_of(points),
-                )
-                break
-        else:
-            clusters.append(
-                EndpointCluster(indices=(index,), points=(endpoint,), centroid=endpoint)
-            )
-
-    return tuple(clusters)
+    return retrieval_basins(diagnosis, domains=domains)
 
 
 def trimmed_plot_paths(
     diagnosis: RetrievalDiagnosis,
-    clusters: Sequence[EndpointCluster],
+    clusters: Sequence[RetrievalBasin],
     domains: tuple[tuple[float, float], tuple[float, float]],
 ) -> tuple[tuple[tuple[float, ...], ...], ...]:
     """Stop paths at the endpoint-cluster boundary to avoid dense arrow knots."""
@@ -266,7 +208,7 @@ def trimmed_plot_paths(
     return tuple(trimmed)
 
 
-def cluster_for_path(index: int, clusters: Sequence[EndpointCluster]) -> EndpointCluster | None:
+def cluster_for_path(index: int, clusters: Sequence[RetrievalBasin]) -> RetrievalBasin | None:
     """Return the endpoint cluster containing one path index."""
 
     for cluster in clusters:
@@ -276,74 +218,77 @@ def cluster_for_path(index: int, clusters: Sequence[EndpointCluster]) -> Endpoin
     return None
 
 
-def centroid_of(points: Sequence[tuple[float, ...]]) -> tuple[float, ...]:
-    """Return the coordinate centroid for endpoint labels."""
-
-    return tuple(
-        sum(point[index] for point in points) / len(points) for index in range(len(points[0]))
-    )
-
-
 def segments(
     paths: Sequence[Sequence[Sequence[float]]],
-) -> tuple[tuple[Sequence[float], Sequence[float]], ...]:
-    """Return finite path segments."""
-
-    return tuple(
-        (first, second)
-        for path in paths
-        for first, second in zip(path, path[1:], strict=False)
-        if finite_point(first) and finite_point(second)
-    )
-
-
-def segment_densities(
-    path_segments: Sequence[tuple[Sequence[float], Sequence[float]]],
     domains: tuple[tuple[float, float], tuple[float, float]],
-) -> tuple[float, ...]:
-    """Return local overlap density for each actual path segment."""
+    reference_paths: Sequence[Sequence[Sequence[float]]] = (),
+) -> tuple[tuple[Sequence[float], Sequence[float], float], ...]:
+    """Return finite path segments scored by proximity to the final endpoint."""
 
-    midpoints = [segment_midpoint(first, second) for first, second in path_segments]
+    scored_segments = []
 
-    return tuple(
-        sum(
-            math.exp(
-                -0.5
-                * normalized_distance2(midpoint, other, domains)
-                / (PATH_DENSITY_BANDWIDTH * PATH_DENSITY_BANDWIDTH)
-            )
-            for other in midpoints
+    for path_index, path in enumerate(paths):
+        finite_path = tuple(point for point in path if finite_plot_point(point))
+
+        if len(finite_path) < 2:
+            continue
+
+        endpoint = reference_endpoint(path_index, reference_paths)
+
+        if endpoint is None:
+            endpoint = finite_path[-1]
+
+        reference_distance = max(
+            normalized_distance(point, endpoint, domains) for point in finite_path[:-1]
         )
-        for midpoint in midpoints
-    )
+
+        for first, second in zip(finite_path, finite_path[1:], strict=False):
+            proximity = 1.0
+
+            if reference_distance > 0.0:
+                proximity = 1.0 - min(
+                    1.0,
+                    normalized_distance(second, endpoint, domains) / reference_distance,
+                )
+
+            scored_segments.append((first, second, proximity))
+
+    return tuple(scored_segments)
 
 
-def segment_midpoint(first: Sequence[float], second: Sequence[float]) -> tuple[float, float]:
-    """Return one segment midpoint in state coordinates."""
+def reference_endpoint(
+    path_index: int,
+    reference_paths: Sequence[Sequence[Sequence[float]]],
+) -> Sequence[float] | None:
+    """Return the actual final retrieved point for one trimmed plotted path."""
 
-    return ((float(first[0]) + float(second[0])) * 0.5, (float(first[1]) + float(second[1])) * 0.5)
+    if path_index >= len(reference_paths):
+        return None
+
+    finite_path = tuple(point for point in reference_paths[path_index] if finite_plot_point(point))
+
+    if not finite_path:
+        return None
+
+    return finite_path[-1]
 
 
 def path_svg(
-    path_segments: Sequence[tuple[Sequence[float], Sequence[float]]],
-    densities: Sequence[float],
+    path_segments: Sequence[tuple[Sequence[float], Sequence[float], float]],
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
-    """Render density-colored path segments and sparse arrowheads."""
+    """Render path segments colored by closeness to their final retrieved state."""
 
     if not path_segments:
         return []
 
-    low = min(densities)
-    high = max(densities)
     elements = []
 
-    for (first, second), density in zip(path_segments, densities, strict=True):
-        normalized = 0.35 if high <= low else math.log1p(density - low) / math.log1p(high - low)
-        color = density_color(normalized)
-        stroke_width = 1.15 + 2.35 * normalized
-        opacity = 0.35 + 0.46 * normalized
+    for first, second, proximity in path_segments:
+        color = proximity_color(proximity)
+        stroke_width = 1.15 + 1.25 * proximity
+        opacity = 0.34 + 0.50 * proximity
         x1 = x_value(first[0], x_domain)
         y1 = y_value(first[1], y_domain)
         x2 = x_value(second[0], x_domain)
@@ -353,7 +298,7 @@ def path_svg(
             f'stroke="{color}" stroke-width="{stroke_width:.3f}" '
             f'stroke-linecap="round" opacity="{opacity:.3f}" />'
         )
-        elements.extend(arrowhead_svg(x1, y1, x2, y2, color, max(1.15, stroke_width * 0.64)))
+        elements.extend(arrowhead_svg(x1, y1, x2, y2, color, max(0.65, stroke_width * 0.36)))
 
     return elements
 
@@ -368,12 +313,12 @@ def arrowhead_svg(
 ) -> list[str]:
     """Render one compact arrowhead unless the segment is too short."""
 
-    if math.hypot(x2 - x1, y2 - y1) < 18.0:
+    if math.hypot(x2 - x1, y2 - y1) < ARROWHEAD_MIN_SEGMENT_LENGTH:
         return []
 
     angle = math.atan2(y2 - y1, x2 - x1)
-    length = 8.0
-    spread = math.radians(28.0)
+    length = ARROWHEAD_LENGTH
+    spread = math.radians(ARROWHEAD_SPREAD_DEG)
     left = (x2 - math.cos(angle - spread) * length, y2 - math.sin(angle - spread) * length)
     right = (x2 - math.cos(angle + spread) * length, y2 - math.sin(angle + spread) * length)
     attrs = (
@@ -386,10 +331,10 @@ def arrowhead_svg(
     ]
 
 
-def density_color(normalized: float) -> str:
-    """Map path density to a blue-yellow-red ramp without rendering a colorbar."""
+def proximity_color(proximity: float) -> str:
+    """Map endpoint proximity to a blue-yellow-red ramp without rendering a colorbar."""
 
-    value = max(0.0, min(1.0, normalized))
+    value = max(0.0, min(1.0, proximity))
 
     if value < 0.5:
         amount = value / 0.5
@@ -420,9 +365,9 @@ def start_marker_svg(
 
     return [
         f'<circle class="diagnosis-start" cx="{x_value(start[0], x_domain):.3f}" '
-        f'cy="{y_value(start[1], y_domain):.3f}" r="5.1" />'
+        f'cy="{y_value(start[1], y_domain):.3f}" r="3.8" />'
         for start in diagnosis.start_state
-        if finite_point(start)
+        if finite_plot_point(start)
     ]
 
 
@@ -447,14 +392,14 @@ def non_converged_svg(
 
         point = path[-1] if path else ()
 
-        if finite_point(point):
+        if finite_plot_point(point):
             elements.extend(cross_svg(point, x_domain, y_domain))
 
     return elements
 
 
 def cluster_marker_svg(
-    clusters: Sequence[EndpointCluster],
+    clusters: Sequence[RetrievalBasin],
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
@@ -474,7 +419,7 @@ def cluster_marker_svg(
 
 
 def cluster_label_svg(
-    clusters: Sequence[EndpointCluster],
+    clusters: Sequence[RetrievalBasin],
     x_domain: tuple[float, float],
     y_domain: tuple[float, float],
 ) -> list[str]:
@@ -547,12 +492,6 @@ def non_converged_paths(diagnosis: RetrievalDiagnosis) -> list[tuple[tuple[float
         )
         if status != "ok" or not converged
     ]
-
-
-def finite_point(point: Sequence[float]) -> bool:
-    """Return whether a plotted state-space point is finite."""
-
-    return len(point) >= 2 and all(math.isfinite(float(value)) for value in point[:2])
 
 
 def axis_svg(

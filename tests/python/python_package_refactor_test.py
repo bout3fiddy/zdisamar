@@ -276,7 +276,19 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     payload = sweep.to_dict()
     assert payload["runs"] == 2
     assert payload["non_converged"] == 1
+    assert payload["basin_count"] == 1
+    basin_payloads = cast(list[dict[str, object]], payload["basins"])
+    assert len(basin_payloads) == 1
+    assert basin_payloads[0]["runs"] == 1
+    assert basin_payloads[0]["start_indices"] == [1]
     assert payload["native_worker_limit"] is None
+    basins = sweep.basins()
+    assert len(basins) == 1
+    assert basins[0].run_count == 1
+    assert basins[0].value("aerosol_layer_mid_pressure_hpa") == 340.0
+    assert repr(basins[0]) == (
+        "RetrievalBasin(runs=1, aerosol_optical_depth=0.12, aerosol_layer_mid_pressure_hpa=340)"
+    )
     figure = sweep.plot()
     figure_payload = figure.to_dict()
     assert figure_payload["runs"] == 2
@@ -292,9 +304,90 @@ def assert_optimal_estimation_diagnosis_display() -> None:
     assert ">AOD at 550 nm</text>" in diagnosis_svg
     assert ">0.01</text>" not in diagnosis_svg
     assert ">truth (0.2, 600 hPa)</text>" in diagnosis_svg
-    assert 'class="density-cell"' not in diagnosis_svg
     assert 'class="cluster-label"' in diagnosis_svg
     assert diagnosis_svg.count('class="diagnosis-non-converged"') == 2
+    assert 'r="3.8"' in diagnosis_svg
+
+    basin_sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        start_state=((0.1, 225.0), (0.11, 255.0), (0.8, 700.0), (0.9, 900.0)),
+        retrieved_state=((0.1, 240.0), (0.105, 243.0), (0.6, 720.0), (0.7, 900.0)),
+        iterations=(3, 4, 5, 6),
+        converged=(True, True, True, True),
+        retrieval_paths=(
+            ((0.1, 240.0),),
+            ((0.105, 243.0),),
+            ((0.6, 720.0),),
+            ((0.7,),),
+        ),
+        start_bounds=((0.02, 2.0), (50.0, 1000.0)),
+        batch_workers=1,
+    )
+    grouped_basins = basin_sweep.basins()
+    assert len(grouped_basins) == 2
+    assert [basin.run_count for basin in grouped_basins] == [2, 1]
+    assert grouped_basins[0].start_indices == (1, 2)
+    assert grouped_basins[1].start_indices == (3,)
+    grouped_payload = basin_sweep.to_dict()
+    assert grouped_payload["basin_count"] == 2
+
+    one_axis_sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth",),
+        start_state=((0.1,), (0.2,)),
+        retrieved_state=((0.12,), (0.22,)),
+        iterations=(3, 4),
+        converged=(True, True),
+        retrieval_paths=(((0.12,),), ((0.22,),)),
+        start_bounds=((0.02, 2.0),),
+        batch_workers=1,
+    )
+    assert one_axis_sweep.basins() == ()
+    assert one_axis_sweep.to_dict()["basin_count"] == 0
+
+    three_axis_sweep = RetrievalDiagnosis(
+        state_names=(
+            "aerosol_optical_depth",
+            "aerosol_layer_mid_pressure_hpa",
+            "surface_albedo",
+        ),
+        start_state=((0.1, 300.0, 0.0), (0.1, 300.0, 1.0)),
+        retrieved_state=((0.1, 300.0, 0.0), (0.1, 300.0, 1.0)),
+        iterations=(3, 3),
+        converged=(True, True),
+        retrieval_paths=(((0.1, 300.0, 0.0),), ((0.1, 300.0, 1.0),)),
+        start_bounds=((0.02, 2.0), (0.0, 1000.0), (0.0, 1.0)),
+        batch_workers=1,
+    )
+    assert three_axis_sweep.basins() == ()
+    assert three_axis_sweep.to_dict()["basin_count"] == 0
+    assert three_axis_sweep.plot().to_dict()["endpoint_clusters"] == 0
+
+    surface_basin_sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth", "surface_albedo"),
+        start_state=((0.1, 0.0), (0.1, 1.0)),
+        retrieved_state=((0.1, 0.0), (0.1, 1.0)),
+        iterations=(3, 3),
+        converged=(True, True),
+        retrieval_paths=(((0.1, 0.0),), ((0.1, 1.0),)),
+        start_bounds=((0.02, 2.0), (0.0, 1.0)),
+        batch_workers=1,
+    )
+    assert len(surface_basin_sweep.basins()) == 2
+    assert surface_basin_sweep.plot().to_dict()["endpoint_clusters"] == 2
+
+    failed_outlier_sweep = RetrievalDiagnosis(
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        start_state=((0.1, 300.0), (0.1, 360.0), (0.1, 900.0)),
+        retrieved_state=((0.1, 300.0), (0.1, 360.0), (0.1, 2000.0)),
+        iterations=(3, 3, 0),
+        converged=(True, True, False),
+        retrieval_paths=(((0.1, 300.0),), ((0.1, 360.0),), ((0.1, 2000.0),)),
+        start_bounds=((0.02, 2.0), (0.0, 1000.0)),
+        batch_workers=1,
+        start_status=("ok", "ok", "failed"),
+    )
+    assert len(failed_outlier_sweep.basins()) == 2
+    assert failed_outlier_sweep.plot().to_dict()["endpoint_clusters"] == 2
 
     no_truth = replace(sweep, truth_state=None)
     no_truth_figure = no_truth.plot()
