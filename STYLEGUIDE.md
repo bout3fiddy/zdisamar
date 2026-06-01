@@ -26,6 +26,16 @@ to go past 100 columns when alignment makes the block easier to scan.
 
 Close general boxes with a plain fence, not `end name`.
 
+## Line Length
+
+Keep ordinary code and prose within the readable width. Box rails are allowed to
+be wider so the `|` stays aligned.
+
+- Default soft limit for non-box lines: 120 columns.
+- Wrap long calls by putting one argument per line.
+- If a named value block makes `break :label` too wide, shorten the label
+  without making it vague.
+
 ## File Maps
 
 At the top of dense files, show what the file coordinates, who calls it, the
@@ -91,6 +101,23 @@ fn layerResolvedSolveWithWorkspace(...) Result {
 
 Use sections only when they help. Good sections are `hot path`, `calls`, and
 `math`.
+
+## Value Blocks
+
+When a block chooses one value from several paths, name the block after the
+choice. Avoid `blk` for non-trivial decisions.
+
+```zig
+const phase_limit = choose_phase_limit: {
+    if (has_cached_limit) break :choose_phase_limit cached_limit;
+    if (has_grid_limit) break :choose_phase_limit grid_limit;
+    break :choose_phase_limit layer_limit;
+};
+```
+
+Good labels start with the job: `choose_`, `build_`, `find_`, `compute_`,
+`reuse_`, or `load_`. Keep `blk` only for tiny local blocks where the label
+would not make the code clearer.
 
 ## Math
 
