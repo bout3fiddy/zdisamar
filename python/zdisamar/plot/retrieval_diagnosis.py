@@ -12,6 +12,7 @@ from ..inverse_method.optimal_estimation.diagnosis import (
     RetrievalDiagnosis,
     diagnosis_paths,
     diagnosis_plot_domains,
+    finite_plot_point,
     retrieval_basin_domains,
     retrieval_basins,
 )
@@ -227,7 +228,7 @@ def segments(
     scored_segments = []
 
     for path_index, path in enumerate(paths):
-        finite_path = tuple(point for point in path if finite_point(point))
+        finite_path = tuple(point for point in path if finite_plot_point(point))
 
         if len(finite_path) < 2:
             continue
@@ -264,7 +265,7 @@ def reference_endpoint(
     if path_index >= len(reference_paths):
         return None
 
-    finite_path = tuple(point for point in reference_paths[path_index] if finite_point(point))
+    finite_path = tuple(point for point in reference_paths[path_index] if finite_plot_point(point))
 
     if not finite_path:
         return None
@@ -366,7 +367,7 @@ def start_marker_svg(
         f'<circle class="diagnosis-start" cx="{x_value(start[0], x_domain):.3f}" '
         f'cy="{y_value(start[1], y_domain):.3f}" r="3.8" />'
         for start in diagnosis.start_state
-        if finite_point(start)
+        if finite_plot_point(start)
     ]
 
 
@@ -391,7 +392,7 @@ def non_converged_svg(
 
         point = path[-1] if path else ()
 
-        if finite_point(point):
+        if finite_plot_point(point):
             elements.extend(cross_svg(point, x_domain, y_domain))
 
     return elements
@@ -491,12 +492,6 @@ def non_converged_paths(diagnosis: RetrievalDiagnosis) -> list[tuple[tuple[float
         )
         if status != "ok" or not converged
     ]
-
-
-def finite_point(point: Sequence[float]) -> bool:
-    """Return whether a plotted state-space point is finite."""
-
-    return len(point) >= 2 and all(math.isfinite(float(value)) for value in point[:2])
 
 
 def axis_svg(
