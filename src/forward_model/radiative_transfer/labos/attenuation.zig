@@ -750,7 +750,8 @@ pub fn fillAttenuationTangentDynamic(
                     imu,
                     ilFrom_idx - 1,
                     ilTo,
-                    atten.get(imu, ilFrom_idx, ilTo) * trans + cumulativeBaseTransmittance(layers, geo, imu, ilFrom_idx, ilTo) * dtrans,
+                    atten.get(imu, ilFrom_idx, ilTo) * trans +
+                        cumulativeBaseTransmittance(layers, geo, imu, ilFrom_idx, ilTo) * dtrans,
                 );
             }
         }

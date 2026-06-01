@@ -46,12 +46,16 @@ main paths, important names, and memory ownership.
 Put the reader's path near the top:
 
 - imports, file map, constants, and small data structs needed for signatures
-- public entry points and major stage functions
+- public entry points and major stage functions, ordered by importance
 - public support helpers
 - private helpers, small math/indexing routines, and local cache helpers
 
 Zig lets top-level functions call helpers written later in the same file. Use
 that freedom to keep important routines easy to find.
+
+If a private optimized kernel is the real implementation behind a public entry
+point, keep it close to that entry point. Do not make readers scroll through
+minor helpers before they see the main path.
 
 ## Function Maps
 

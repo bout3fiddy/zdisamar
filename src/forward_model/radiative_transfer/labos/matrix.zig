@@ -4,14 +4,41 @@ const Mat = types.Mat;
 const Vec = types.Vec;
 
 const threshold_q: f64 = 1.0e-3;
+const lu_diagonal_floor: f64 = 1.0e-30;
 
-// hot path:
-//   when: dynamic LABOS matrix products are selected by stream count or route shape
-//   work: multiplies small dense RT matrices with thresholded nonzero handling
-//   data: Mat cell arrays, n/n_gauss dimensions, product threshold
-//   follow: smulInto variants and dynamic q-series callers
-//   math: C_ij = sum_{k < n_gauss} A_ik B_kj; skip to zero when |trace_gauss(A)*trace_gauss(B)| <= threshold.
+// matrix.zig -------------------------------------------------------------------------------------------------|
+// Small dense matrix kernels used by LABOS layer doubling and q-series solves.                                |
+//                                                                                                             |
+// stream layout                                                                                               |
+//   n=12 means 10 Gaussian quadrature directions plus 2 extra directions.                                     |
+//   Mat.data is row-major: index = row * n + column.                                                          |
+//                                                                                                             |
+// common fast path                                                                                            |
+//   fixed 12x10 kernels keep the Gaussian sum unrolled and process two columns per vector.                    |
+//   generic kernels keep the same formulas for other stream counts.                                           |
+//                                                                                                             |
+// math                                                                                                        |
+//   C_ij = sum over Gaussian k of A_ik * B_kj.                                                                |
+//   Q(AB) = inverse(I - AB_gg) - I on the Gaussian block.                                                     |
+//                                                                                                             |
+// numbers                                                                                                     |
+//   threshold_q skips q-series inversion when the AB trace is already tiny.                                   |
+//   lu_diagonal_floor is the singular-pivot fallback for LU factorization.                                    |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Mat stores [144]f64 plus n: 1160 B (1.133 KiB), no unused bits.                                           |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    // smul ---------------------------------------------------------------------------------------------------|
+    // General LABOS matrix product. Uses the fixed 12x10 kernel when the common stream layout matches.        |
+    //                                                                                                         |
+    // Steps:                                                                                                  |
+    //   1. use Gaussian-block traces to skip products that are below threshold_mul                            |
+    //   2. multiply C_ij = sum over Gaussian k of A_ik * B_kj                                                 |
+    //   3. return a row-major Mat with the same n                                                             |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
         tra += a.data[13];
@@ -47,20 +74,25 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
 
     var result = Mat{ .data = undefined, .n = n };
+
     for (0..n) |j| {
         if (n_gauss == 0) break;
+
         const b0j = b.data[j];
         var idx = j;
         var a_idx: usize = 0;
+
         for (0..n) |_| {
             result.data[idx] = a.data[a_idx] * b0j;
             idx += n;
             a_idx += n;
         }
+
         for (1..n_gauss) |k| {
             const bkj = b.data[k * n + j];
             idx = j;
             a_idx = k;
+
             for (0..n) |_| {
                 result.data[idx] += a.data[a_idx] * bkj;
                 idx += n;
@@ -68,10 +100,18 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
             }
         }
     }
+
     return result;
 }
 
-pub inline fn smulInto(noalias out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
+pub inline fn smulInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    b: *const Mat,
+) void {
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
         tra += a.data[13];
@@ -139,19 +179,71 @@ pub inline fn smulIntoKnownTracesIfNonzero(
     return true;
 }
 
+pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    // qseries ------------------------------------------------------------------------------------------------|
+    // Build AB over Gaussian streams, then apply the LABOS q-series transform.                                |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const ab = smul(n, n_gauss, threshold_mul, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+    // qseriesKnownNonzeroProduct -----------------------------------------------------------------------------|
+    // Same q-series transform after the caller has already passed the product threshold.                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const ab = smulNonzeroProduct(n, n_gauss, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+pub inline fn qseriesKnownNonzeroProductInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    // qseriesKnownNonzeroProductInto -------------------------------------------------------------------------|
+    // Build AB, then turn it into the LABOS q-series matrix in caller-owned storage.                          |
+    // The caller has already decided the product should not be thresholded to zero.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    @setEvalBranchQuota(20_000);
+    var ab: Mat = undefined;
+    if (n == 12 and n_gauss == 10) {
+        smul12x10Into(&ab, a, b);
+    } else {
+        ab = smulNonzeroProduct(n, n_gauss, a, b);
+    }
+    qseriesFromProductInto(out, n, n_gauss, &ab);
+}
+
 inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     smul12x10Into(&result, a, b);
     return result;
 }
 
-// hot path:
-//   when: fixed 12x10 LABOS layer-doubling path multiplies RT matrices
-//   work: writes matrix products directly into caller-owned storage
-//   data: fixed Mat cells, left/right matrix operands, noalias result storage
-//   follow: doDouble12x10Step and fixed-shape product composition
-//   math: fixed-shape C_ij = sum_{k=0}^{9} A_ik B_kj, vectorized across two columns at a time.
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
+    // smul12x10Into ------------------------------------------------------------------------------------------|
+    // Fixed n=12, n_gauss=10 product for the LABOS hot path.                                                  |
+    //                                                                                                         |
+    // The loop writes one output row at a time and two neighboring columns per @Vector(2, f64).               |
+    // A row has 10 Gaussian columns plus 2 extra columns used for view/solar directions.                      |
+    //                                                                                                         |
+    // row-major slots for one n=12 row:                                                                       |
+    //   [row + 0 .. row + 9]   Gaussian columns used in the k-sum                                             |
+    //   [row + 10]              extra direction 0                                                             |
+    //   [row + 11]              extra direction 1                                                             |
+    //                                                                                                         |
+    // vector pair at column j:                                                                                |
+    //   |-- [j]                 first output column                                                           |
+    //   |-- [j + 1]             second output column                                                          |
+    //                                                                                                         |
+    // Keep the multiply/add sequence explicit; @mulAdd becomes a compiler-rt fma call on generic x86_64.      |
+    // --------------------------------------------------------------------------------------------------------|
+
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -177,10 +269,6 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         const b9 = b.data[108..120];
         inline for (0..6) |pair_index| {
             const j = pair_index * 2;
-            // TARGET:
-            //   Keep this as separate vector multiply/add. In the generic
-            //   x86_64 Linux wheel, `@mulAdd` lowers to compiler-rt `fma`
-            //   calls unless hardware FMA is part of the target contract.
             var s = a0 * loadPair(b0, j);
             s += a1 * loadPair(b1, j);
             s += a2 * loadPair(b2, j);
@@ -198,6 +286,11 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
 }
 
 inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
+    // loadPair -----------------------------------------------------------------------------------------------|
+    // Read two adjacent row values as one @Vector(2, f64).                                                    |
+    // align(1) is deliberate: Mat rows are contiguous, but the slice is not promised to be vector-aligned.    |
+    // --------------------------------------------------------------------------------------------------------|
+
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&row[j]);
     return pair.*;
 }
@@ -213,6 +306,7 @@ pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+
             // math: left diagonal multiply C_ij = e_i * A_ij.
             result.data[idx] = e.data[i] * a.data[idx];
             idx += n;
@@ -228,6 +322,7 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+
             // math: right diagonal multiply C_ij = A_ij * e_j.
             result.data[idx] = a.data[idx] * ej;
             idx += n;
@@ -238,18 +333,26 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
 
 pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = n };
+
     // math: C = A + B elementwise.
     for (0..n * n) |idx| result.data[idx] = a.data[idx] + b.data[idx];
     return result;
 }
 
-pub inline fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+pub inline fn matAddSemul3(
+    n: usize,
+    a: *const Mat,
+    b: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+) Mat {
     if (n == 12) return matAddSemul3_12(a, b, e, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+
             // math: C_ij = A_ij + B_ij * e_j + C_ij(input).
             result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += n;
@@ -258,7 +361,15 @@ pub inline fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec
     return result;
 }
 
-pub inline fn smulAddSemul3(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat) Mat {
+pub inline fn smulAddSemul3(
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+) Mat {
+
     // math: result = C + A*diag(e) + A*C over the Gaussian subspace.
     if (n == 12 and n_gauss == 10) return smulAddSemul3_12(threshold_mul, a, e, c);
     var product: Mat = undefined;
@@ -266,7 +377,15 @@ pub inline fn smulAddSemul3(n: usize, n_gauss: usize, threshold_mul: f64, a: *co
     return matAddSemul3(n, c, a, e, &product);
 }
 
-pub inline fn smulAddSemul3KnownRightTrace(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, trace_c: f64) Mat {
+pub inline fn smulAddSemul3KnownRightTrace(
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trace_c: f64,
+) Mat {
     if (n == 12 and n_gauss == 10) return smulAddSemul3_12KnownRightTrace(threshold_mul, a, e, c, trace_c);
 
     var trace_a: f64 = 0.0;
@@ -289,16 +408,25 @@ pub inline fn smulAddSemul3KnownRightTraceInto(
     c: *const Mat,
     trace_c: f64,
 ) void {
-    if (n == 12 and n_gauss == 10) return smulAddSemul3_12KnownRightTraceInto(out, threshold_mul, a, e, c, trace_c);
+    if (n == 12 and n_gauss == 10) {
+        return smulAddSemul3_12KnownRightTraceInto(out, threshold_mul, a, e, c, trace_c);
+    }
     out.* = smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, a, e, c, trace_c);
 }
 
-pub inline fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+pub inline fn matAddEsmul3(
+    n: usize,
+    a: *const Mat,
+    e: *const Vec,
+    b: *const Mat,
+    c: *const Mat,
+) Mat {
     if (n == 12) return matAddEsmul3_12(a, e, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+
             // math: C_ij = A_ij + e_i * B_ij + C_ij(input).
             result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
             idx += n;
@@ -324,6 +452,7 @@ pub inline fn matAddEsmul3ProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += c.data[i * n + k] * b.data[k * n + j];
             const idx = i * n + j;
+
             // math: out_ij = A_ij + e_i * B_ij + sum_k C_ik B_kj.
             out.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + product;
         }
@@ -336,6 +465,7 @@ pub inline fn matAddEsmul(n: usize, a: *const Mat, e: *const Vec, b: *const Mat)
     for (0..n) |j| {
         var idx = j;
         for (0..n) |i| {
+
             // math: C_ij = A_ij + e_i * B_ij.
             result.data[idx] = a.data[idx] + e.data[i] * b.data[idx];
             idx += n;
@@ -344,7 +474,13 @@ pub inline fn matAddEsmul(n: usize, a: *const Mat, e: *const Vec, b: *const Mat)
     return result;
 }
 
-pub inline fn matAddEsmulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec, b: *const Mat) void {
+pub inline fn matAddEsmulInto(
+    noalias out: *Mat,
+    n: usize,
+    a: *const Mat,
+    e: *const Vec,
+    b: *const Mat,
+) void {
     if (n == 12) return matAddEsmul12Into(out, a, e, b);
     out.* = matAddEsmul(n, a, e, b);
 }
@@ -356,6 +492,7 @@ pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Ma
         const ej = e.data[j];
         var idx = j;
         for (0..n) |_| {
+
             // math: C_ij = A_ij * e_j + B_ij.
             result.data[idx] = a.data[idx] * ej + b.data[idx];
             idx += n;
@@ -381,6 +518,7 @@ pub inline fn semulAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += a.data[i * n + k] * b.data[k * n + j];
             const idx = i * n + j;
+
             // math: out_ij = A_ij * e_j + sum_k A_ik B_kj.
             out.data[idx] = a.data[idx] * ej + product;
         }
@@ -392,13 +530,19 @@ pub inline fn semulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Ve
     out.* = semul(n, a, e);
 }
 
-pub inline fn esmulSemul(n: usize, e: *const Vec, a: *const Mat, b: *const Mat) Mat {
+pub inline fn esmulSemul(
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) Mat {
     if (n == 12) return esmulSemul12(e, a, b);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+
             // math: C_ij = e_i * A_ij + B_ij * e_j.
             result.data[idx] = e.data[i] * a.data[idx] + b.data[idx] * ej;
             idx += n;
@@ -407,7 +551,13 @@ pub inline fn esmulSemul(n: usize, e: *const Vec, a: *const Mat, b: *const Mat) 
     return result;
 }
 
-pub inline fn esmulSemulInto(noalias out: *Mat, n: usize, e: *const Vec, a: *const Mat, b: *const Mat) void {
+pub inline fn esmulSemulInto(
+    noalias out: *Mat,
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) void {
     if (n == 12) return esmulSemul12Into(out, e, a, b);
     out.* = esmulSemul(n, e, a, b);
 }
@@ -419,6 +569,7 @@ pub inline fn esmulSemulSelfInto(noalias out: *Mat, n: usize, e: *const Vec, a: 
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+
             // math: C_ij = A_ij * (e_i + e_j).
             out.data[idx] = a.data[idx] * (e.data[i] + ej);
             idx += n;
@@ -426,13 +577,20 @@ pub inline fn esmulSemulSelfInto(noalias out: *Mat, n: usize, e: *const Vec, a: 
     }
 }
 
-pub inline fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+pub inline fn esmulSemulAdd(
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+    c: *const Mat,
+) Mat {
     if (n == 12) return esmulSemulAdd12(e, a, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
         var idx = j;
         for (0..n) |i| {
+
             // math: C_ij = e_i * A_ij + B_ij * e_j + C_ij(input).
             result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += n;
@@ -458,7 +616,8 @@ pub inline fn esmulSemulAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += b.data[i * n + k] * a.data[k * n + j];
             const idx = i * n + j;
-            // math: out_ij = e_i*A_ij + B_ij*e_j + sum_k B_ik A_kj.
+
+            // math: out_ij = e_i * A_ij + B_ij * e_j + sum_k B_ik A_kj.
             out.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + product;
         }
     }
@@ -480,7 +639,8 @@ pub inline fn esmulSemulSelfAddProductKnownNonzeroInto(
             var product: f64 = 0.0;
             for (0..n_gauss) |k| product += a.data[i * n + k] * a.data[k * n + j];
             const idx = i * n + j;
-            // math: out_ij = A_ij*(e_i + e_j) + sum_k A_ik A_kj.
+
+            // math: out_ij = A_ij * (e_i + e_j) + sum_k A_ik A_kj.
             out.data[idx] = a.data[idx] * (e.data[i] + ej) + product;
         }
     }
@@ -554,7 +714,13 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
     return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
 }
 
-fn smulAddSemul3_12KnownRightTrace(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, trc: f64) Mat {
+fn smulAddSemul3_12KnownRightTrace(
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trc: f64,
+) Mat {
     var tra = a.data[0];
     tra += a.data[13];
     tra += a.data[26];
@@ -569,7 +735,14 @@ fn smulAddSemul3_12KnownRightTrace(threshold_mul: f64, a: *const Mat, e: *const 
     return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
 }
 
-fn smulAddSemul3_12KnownRightTraceInto(noalias result: *Mat, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, trc: f64) void {
+fn smulAddSemul3_12KnownRightTraceInto(
+    noalias result: *Mat,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trc: f64,
+) void {
     var tra = a.data[0];
     tra += a.data[13];
     tra += a.data[26];
@@ -584,13 +757,28 @@ fn smulAddSemul3_12KnownRightTraceInto(noalias result: *Mat, threshold_mul: f64,
     smulAddSemul3_12KnownTracesInto(result, threshold_mul, a, e, c, tra, trc);
 }
 
-fn smulAddSemul3_12KnownTraces(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) Mat {
+fn smulAddSemul3_12KnownTraces(
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    tra: f64,
+    trc: f64,
+) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     smulAddSemul3_12KnownTracesInto(&result, threshold_mul, a, e, c, tra, trc);
     return result;
 }
 
-fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) void {
+fn smulAddSemul3_12KnownTracesInto(
+    noalias result: *Mat,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    tra: f64,
+    trc: f64,
+) void {
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     if (@abs(tra * trc) <= threshold_mul) {
@@ -661,13 +849,24 @@ fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: 
     }
 }
 
-fn matAddEsmul3_12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) Mat {
+fn matAddEsmul3_12(
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     matAddEsmul3_12Into(&result, a, e, b, c);
     return result;
 }
 
-fn matAddEsmul3_12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) void {
+fn matAddEsmul3_12Into(
+    noalias result: *Mat,
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -685,7 +884,12 @@ fn matAddEsmul12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const
     return result;
 }
 
-fn matAddEsmul12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+fn matAddEsmul12Into(
+    noalias result: *Mat,
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -697,7 +901,13 @@ fn matAddEsmul12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *co
     }
 }
 
-fn matAddEsmul3ProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) void {
+fn matAddEsmul3ProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) void {
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -772,7 +982,12 @@ fn semulAdd12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const
     }
 }
 
-fn semulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+fn semulAddProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+) void {
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -858,13 +1073,24 @@ fn esmulSemulSelf12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: 
     }
 }
 
-fn esmulSemulAdd12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat, noalias c: *const Mat) Mat {
+fn esmulSemulAdd12(
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     esmulSemulAdd12Into(&result, e, a, b, c);
     return result;
 }
 
-fn esmulSemulAdd12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat, noalias c: *const Mat) void {
+fn esmulSemulAdd12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -877,7 +1103,12 @@ fn esmulSemulAdd12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *
     }
 }
 
-fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) void {
+fn esmulSemulAddProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+) void {
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -928,13 +1159,19 @@ fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *c
             product += b7v * loadPair(a7, j);
             product += b8v * loadPair(a8, j);
             product += b9v * loadPair(a9, j);
-            const value = (ei * loadPair(a_row, j) + loadPair(b_row, j) * loadPair(e.data[0..], j)) + product;
+            const value =
+                (ei * loadPair(a_row, j) + loadPair(b_row, j) * loadPair(e.data[0..], j)) +
+                product;
             storePair(result_row, j, value);
         }
     }
 }
 
-fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat) void {
+fn esmulSemulSelfAddProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+) void {
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -990,35 +1227,11 @@ fn esmulSemulSelfAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e
     }
 }
 
-pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
-    // math: qseries(A,B) first forms AB over Gaussian streams, then applies Q(AB).
-    const ab = smul(n, n_gauss, threshold_mul, a, b);
-    return qseriesFromProduct(n, n_gauss, &ab);
-}
-
-pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
-    const ab = smulNonzeroProduct(n, n_gauss, a, b);
-    return qseriesFromProduct(n, n_gauss, &ab);
-}
-
-// hot path:
-//   when: LABOS layer doubling computes q-series from a known-nonzero product
-//   work: forms and factorizes the q-series matrix for reflection/transmission updates
-//   data: input product matrices, q-series output, stream dimensions, known-nonzero shape
-//   follow: dynamic doDouble and qseriesFromProductInto
-//   math: Q(AB) = (I - AB_gg)^-1 - I on Gaussian block, with extra rows/cols propagated by the same inverse.
-pub inline fn qseriesKnownNonzeroProductInto(noalias out: *Mat, n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) void {
-    @setEvalBranchQuota(20_000);
-    var ab: Mat = undefined;
-    if (n == 12 and n_gauss == 10) {
-        smul12x10Into(&ab, a, b);
-    } else {
-        ab = smulNonzeroProduct(n, n_gauss, a, b);
-    }
-    qseriesFromProductInto(out, n, n_gauss, &ab);
-}
-
 inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, noalias ab: *const Mat) void {
+    // qseriesFromProductInto ---------------------------------------------------------------------------------|
+    // Caller-owned-output wrapper around qseriesFromProduct.                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (n == 12 and n_gauss == 10) {
         qseriesFromProduct12x10Into(out, ab);
         return;
@@ -1027,25 +1240,23 @@ inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, no
 }
 
 inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
+    // qseriesFromProduct -------------------------------------------------------------------------------------|
+    // Turn AB into the LABOS q-series matrix.                                                                 |
+    //                                                                                                         |
+    // Split AB by stream kind:                                                                                |
+    //   [ gg | gx ]                                                                                           |
+    //   [ xg | xx ]                                                                                           |
+    //                                                                                                         |
+    // Q_gg = inverse(I - AB_gg) - I                                                                           |
+    // Q_gx = inverse(I - AB_gg) * AB_gx                                                                       |
+    // Q_xg = AB_xg * inverse(I - AB_gg)                                                                       |
+    // Q_xx = AB_xx + Q_xg * AB_gx                                                                             |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab);
 
-    const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
-        var trace = ab.data[0];
-        trace += ab.data[13];
-        trace += ab.data[26];
-        trace += ab.data[39];
-        trace += ab.data[52];
-        trace += ab.data[65];
-        trace += ab.data[78];
-        trace += ab.data[91];
-        trace += ab.data[104];
-        trace += ab.data[117];
-        break :blk trace;
-    } else blk: {
-        var trace: f64 = 0.0;
-        for (0..n_gauss) |k| trace += ab.data[k * n + k];
-        break :blk trace;
-    };
+    var trab: f64 = 0.0;
+    for (0..n_gauss) |k| trab += ab.data[k * n + k];
     if (@abs(trab) < threshold_q) return ab.*;
 
     const n_extra = n - n_gauss;
@@ -1054,6 +1265,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
+
             // math: factorization target M = I - AB restricted to Gaussian streams.
             one_minus_ab_gg[i * n_gauss + j] = delta - ab.data[i * n + j];
         }
@@ -1077,24 +1289,30 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
                 max_row = row;
             }
         }
+
         if (max_row != col) {
             const tmp = pivot[col];
             pivot[col] = pivot[max_row];
             pivot[max_row] = tmp;
+
             const tmp_offset = pivot_offset[col];
             pivot_offset[col] = pivot_offset[max_row];
             pivot_offset[max_row] = tmp_offset;
         }
+
         const diag = one_minus_ab_gg[pivot_offset[col] + col];
-        if (@abs(diag) < 1.0e-30) return ab.*;
+        if (@abs(diag) < lu_diagonal_floor) return ab.*;
+
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;
+
         for (col + 1..n_gauss) |row| {
             const row_offset = pivot_offset[row];
             const col_offset = pivot_offset[col];
             const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
             one_minus_ab_gg[row_offset + col] = factor;
             for (col + 1..n_gauss) |k| {
+
                 // math: LU elimination update M_row,k -= factor * M_col,k.
                 one_minus_ab_gg[row_offset + k] -=
                     factor * one_minus_ab_gg[col_offset + k];
@@ -1128,6 +1346,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
+
             // math: Gaussian block Q_ij = inverse(I - AB)_ij - delta_ij.
             result.data[i * n + j] = inverse[i * n_gauss + j] - delta;
         }
@@ -1138,6 +1357,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
         for (0..n_gauss) |i| {
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += inverse[i * n_gauss + k] * ab.data[k * n + j];
+
             // math: upper-extra block = inverse(I - AB)_gg * AB_gx.
             result.data[i * n + j] = s;
         }
@@ -1149,6 +1369,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += ab.data[(n_gauss + ia) * n + k] * inverse[k * n_gauss + j];
             tmp[ia * n_gauss + j] = s;
+
             // math: lower-Gaussian block = AB_xg * inverse(I - AB)_gg.
             result.data[(n_gauss + ia) * n + j] = s;
         }
@@ -1160,6 +1381,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
             const j = n_gauss + ja;
             var s: f64 = 0.0;
             for (0..n_gauss) |k| s += tmp[ia * n_gauss + k] * ab.data[k * n + j];
+
             // math: extra-extra block = AB_xx + AB_xg * inverse(I - AB)_gg * AB_gx.
             result.data[i * n + j] = s + ab.data[i * n + j];
         }
@@ -1174,13 +1396,15 @@ fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
     return result;
 }
 
-// hot path:
-//   when: fixed 12x10 LABOS layer doubling computes the q-series matrix
-//   work: factorizes the fixed-shape product used by doubling reflection/transmission updates
-//   data: fixed Mat product, q-series result matrix, known fixed stream dimensions
-//   follow: qseriesFromProduct12x10Into callers inside doDouble12x10Step
-//   math: fixed 12x10 Q(AB) applies the same (I - AB_gg)^-1 - I q-series transform as qseriesFromProduct.
 fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) void {
+    // qseriesFromProduct12x10Into ----------------------------------------------------------------------------|
+    // Fixed n=12, n_gauss=10 version of qseriesFromProduct.                                                   |
+    // Works on the same gg/gx/xg/xx split but keeps loop bounds constant for the compiler.                    |
+    //                                                                                                         |
+    // The first 10 rows/columns are Gaussian streams. The final 2 are extra directions.                       |
+    // The 10x10 Gaussian block is LU-factorized, inverted, then used to fill all four blocks.                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     result.* = .{ .data = undefined, .n = 12 };
     var trab = ab.data[0];
     trab += ab.data[13];
@@ -1221,10 +1445,12 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
                 max_row = row;
             }
         }
+
         if (max_row != col) {
             const tmp = pivot[col];
             pivot[col] = pivot[max_row];
             pivot[max_row] = tmp;
+
             // Previous-column LU factors belong to the pivoted row too.
             inline for (0..10) |k| {
                 const lhs = col * 10 + k;
@@ -1234,14 +1460,17 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
                 one_minus_ab_gg[rhs] = matrix_tmp;
             }
         }
+
         const diag = one_minus_ab_gg[col * 10 + col];
-        if (@abs(diag) < 1.0e-30) {
+        if (@abs(diag) < lu_diagonal_floor) {
             result.* = ab.*;
             return;
         }
+
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;
         const col_offset = col * 10;
+
         for (col + 1..10) |row| {
             const row_offset = row * 10;
             const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
@@ -1328,7 +1557,9 @@ inline fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const 
             const bkj = b.data[k * n + j];
             idx = j;
             a_idx = k;
+
             for (0..n) |_| {
+
                 // math: nonzero product C_ij += A_ik B_kj.
                 result.data[idx] += a.data[a_idx] * bkj;
                 idx += n;

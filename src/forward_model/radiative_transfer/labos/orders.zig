@@ -250,6 +250,7 @@ fn transportToOtherLevels(
 
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
+
             // upward transported current order adds attenuated previous-level upward source.
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
             out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
@@ -272,6 +273,7 @@ fn transportToOtherLevels(
 
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
+
             // downward transported current order adds attenuated next-level downward source.
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
@@ -301,7 +303,12 @@ fn isRuntimeAttenPointer(comptime T: type) bool {
     };
 }
 
-fn dynamicAttenAt(atten: *const attenuation_mod.DynamicAttenArray, stream_stride: usize, imu: usize, level_offset: usize) f64 {
+fn dynamicAttenAt(
+    atten: *const attenuation_mod.DynamicAttenArray,
+    stream_stride: usize,
+    imu: usize,
+    level_offset: usize,
+) f64 {
     // dynamicAttenAt -----------------------------------------------------------------------------------------|
     // Dynamic attenuation is laid out as [direction, from_level, to_level].                                   |
     // --------------------------------------------------------------------------------------------------------|
@@ -511,6 +518,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel - 1, ilevel);
+
             // dU_level = dU_local_level + dT * U_(level - 1) + T * dU_(level - 1).
             out_u0[imu] = local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
             out_u1[imu] = local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
@@ -537,6 +545,7 @@ fn transportToOtherLevelsTangent(
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel + 1, ilevel);
+
             // dD_level = dD_local_level + dT * D_(level + 1) + T * dD_(level + 1).
             out_d0[imu] = local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
             out_d1[imu] = local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
@@ -570,6 +579,7 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     }
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
+
         // dotGauss(row, v) = sum over k of mat[row, k] * v[k].
         s += mat.data[row_offset + k] * vec_col.data[k];
     }
@@ -965,6 +975,7 @@ fn ordersScatInternal(
 
             for (0..nmutot) |imu| {
                 const att = atten.get(imu, end_level, ilevel);
+
                 // E_level(mu) = T_mu(top_level -> level), the direct attenuation to each level.
                 e_data[imu] = att;
             }
@@ -984,6 +995,7 @@ fn ordersScatInternal(
                 var rt_idx = col_idx;
 
                 for (0..nmutot) |imu| {
+
                     // initial local downward source uses the solar/view column of T_layer
                     // multiplied by attenuation down to this layer.
                     local_d[imu] = rt_t.data[rt_idx] * att;
@@ -1006,6 +1018,7 @@ fn ordersScatInternal(
                 var rt_idx = col_idx;
 
                 for (0..nmutot) |imu| {
+
                     // initial local upward source uses the solar/view column of R_layer
                     // multiplied by attenuation down to this level.
                     local_u[imu] = rt_r.data[rt_idx] * att;
@@ -1041,14 +1054,14 @@ fn ordersScatInternal(
     // instrumentation: perturbation: initial stop ------------------------------------------------------------|
     // captures: initial-order convergence decision                                                            |
     // why: test sensitivity of the single-scattering early return.                                            |
-    const initial_stop = if (controls.scattering != .multiple)
-        true
-    else
-        Perturbation.decision(
+    var initial_stop = controls.scattering != .multiple;
+    if (!initial_stop) {
+        initial_stop = Perturbation.decision(
             .orders_initial_convergence,
             .{ .order_index = 1 },
             max_value < controls.performance_thresholds.threshold_conv_first,
         );
+    }
     // end instrumentation: perturbation: initial stop --------------------------------------------------------|
 
     if (initial_stop) {
@@ -1130,6 +1143,7 @@ fn ordersScatInternal(
                 for (0..nmutot) |imu| {
                     const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                     const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+
                     // local downward order = R * previous_up + T * previous_down.
                     local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
                     local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
@@ -1162,6 +1176,7 @@ fn ordersScatInternal(
 
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+
                     // lower-bound local upward source = R * previous_down.
                     local_u_start0[imu] = r_dot_d.col0;
                     local_u_start1[imu] = r_dot_d.col1;
@@ -1197,6 +1212,7 @@ fn ordersScatInternal(
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                     const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+
                     // local upward order = R * previous_down + T * previous_up.
                     local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
                     local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
@@ -1222,14 +1238,14 @@ fn ordersScatInternal(
         // captures: multiple-order stop margin and forced stop experiments                                    |
         // why: identify scattering orders that are safe to skip by tolerance.                                 |
         const hit_iteration_cap = num_orders >= num_orders_max;
-        const multiple_stop = if (hit_iteration_cap)
-            true
-        else
-            Perturbation.decision(
+        var multiple_stop = hit_iteration_cap;
+        if (!multiple_stop) {
+            multiple_stop = Perturbation.decision(
                 .orders_multiple_convergence,
                 .{ .order_index = @intCast(num_orders) },
                 max_value < controls.performance_thresholds.threshold_conv_mult,
             );
+        }
         // end instrumentation: telemetry and perturbation: multiple stop -------------------------------------|
 
         if (multiple_stop) {
@@ -1658,6 +1674,7 @@ pub fn ordersScatTangent(
 
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
+
                 // dD_local = dT_layer * attenuation + T_layer * d attenuation.
                 tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
                 rt_idx += rt_t.n;
@@ -1690,6 +1707,7 @@ pub fn ordersScatTangent(
 
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
+
                 // dU_local = dR_layer * attenuation + R_layer * d attenuation.
                 tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
                 rt_idx += rt_r.n;
@@ -1698,13 +1716,25 @@ pub fn ordersScatTangent(
     }
 
     transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
-    transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+    transportToOtherLevelsTangent(
+        start_level,
+        end_level,
+        nmutot,
+        atten,
+        atten_tangent,
+        base_local,
+        tangent_local,
+        base_orde,
+        tangent_orde,
+    );
 
     copyTransportedOrderIntoOutput(base_ud, base_orde, start_level, end_level);
     copyTransportedOrderIntoOutput(result.ud, tangent_orde, start_level, end_level);
 
     var max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
-    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) return result;
+    const first_order_converged =
+        max_value < controls.performance_thresholds.threshold_conv_first;
+    if (controls.scattering != .multiple or first_order_converged) return result;
 
     var num_orders: usize = 1;
     while (true) {
@@ -1771,7 +1801,13 @@ pub fn ordersScatTangent(
                 local_u_start1[imu] = r_dot_d.col1;
 
                 const dr_dot_d = dotGaussPair(&rt_tangent[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
-                const r_dot_dd = dotGaussPair(&rt[start_level].R, imu, tangent_prev_d_start0, tangent_prev_d_start1, n_gauss);
+                const r_dot_dd = dotGaussPair(
+                    &rt[start_level].R,
+                    imu,
+                    tangent_prev_d_start0,
+                    tangent_prev_d_start1,
+                    n_gauss,
+                );
 
                 // lower-bound dU_local = dR * D + R * dD.
                 tangent_u_start0[imu] = dr_dot_d.col0 + r_dot_dd.col0;
@@ -1830,14 +1866,44 @@ pub fn ordersScatTangent(
         }
 
         transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
-        transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+        transportToOtherLevelsTangent(
+            start_level,
+            end_level,
+            nmutot,
+            atten,
+            atten_tangent,
+            base_local,
+            tangent_local,
+            base_orde,
+            tangent_orde,
+        );
 
         max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
 
-        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) break;
+        const order_converged =
+            max_value < controls.performance_thresholds.threshold_conv_mult;
+        if (order_converged or num_orders >= num_orders_max) break;
 
-        accumulateOrderContribution(false, base_ud, base_ud_sum_local, base_orde, base_local, start_level, end_level, nmutot);
-        accumulateOrderContribution(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, start_level, end_level, nmutot);
+        accumulateOrderContribution(
+            false,
+            base_ud,
+            base_ud_sum_local,
+            base_orde,
+            base_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
+        accumulateOrderContribution(
+            false,
+            result.ud,
+            result.ud_sum_local,
+            tangent_orde,
+            tangent_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
     }
 
     return result;

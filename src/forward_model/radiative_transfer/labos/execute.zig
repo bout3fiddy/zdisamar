@@ -138,12 +138,15 @@ fn directSurfaceOnly(
     const direct = math.exp(-input.optical_depth / mu0) * math.exp(-input.optical_depth / muv);
 
     const reflectance = input.surface_albedo * direct;
+    const should_report_surface_albedo =
+        compute_surface_albedo_tangent and
+        reflectance >= 0.0 and
+        reflectance < 2.0;
+    const surface_albedo_tangent = if (should_report_surface_albedo) direct else 0.0;
+
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
-        .surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0)
-            direct
-        else
-            0.0,
+        .surface_albedo_tangent = surface_albedo_tangent,
     };
 }
 
@@ -176,28 +179,30 @@ fn directSurfaceOnlyResolvedWithWorkspace(
     var owned_geo: Geometry = undefined;
     const geo = if (workspace) |scratch|
         scratch.geometry(controls.nGauss(), mu0, muv)
-    else blk: {
+    else choose_owned_geometry: {
         owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
-        break :blk &owned_geo;
+        break :choose_owned_geometry &owned_geo;
     };
 
     // Direct reflection still needs Beer-Lambert survival through the layers.
     const owned_atten = workspace == null;
-    var atten = if (workspace) |scratch|
-        try scratch.attenuation(
+    var atten: attenuation.DynamicAttenArray = undefined;
+    if (workspace) |scratch| {
+        atten = try scratch.attenuation(
             input.layers,
             input.pseudo_spherical_grid,
             geo,
             controls.use_spherical_correction,
-        )
-    else
-        try fillAttenuationDynamicWithGrid(
+        );
+    } else {
+        atten = try fillAttenuationDynamicWithGrid(
             allocator,
             input.layers,
             input.pseudo_spherical_grid,
             geo,
             controls.use_spherical_correction,
         );
+    }
     defer if (owned_atten) atten.deinit();
 
     // View and solar rays are stored as extra directions in Geometry.
@@ -217,9 +222,13 @@ fn directSurfaceOnlyResolvedWithWorkspace(
 
     // Once reflectance is clamped outside [0,2], the albedo tangent should not
     // report sensitivity from the unclamped expression.
-    const surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0) blk: {
+    const should_report_surface_albedo =
+        compute_surface_albedo_tangent and
+        reflectance >= 0.0 and
+        reflectance < 2.0;
+    const surface_albedo_tangent = if (should_report_surface_albedo) choose_surface_tangent: {
         const surface_derivative = fillSurface(0, 1.0, geo);
-        break :blk surface_derivative.R.get(view_idx, solar_idx) * path;
+        break :choose_surface_tangent surface_derivative.R.get(view_idx, solar_idx) * path;
     } else 0.0;
 
     return .{
@@ -273,32 +282,53 @@ pub fn executeWithWorkspace(
     // state. This function only chooses the LABOS calculation path.
     const controls = route.rtm_controls;
     const compute_jacobian = route.derivative_mode != .none;
-    const wants_surface_albedo = compute_jacobian and jacobian.includes(route.derivative_state_mask, .surface_albedo);
+    const wants_surface_albedo =
+        compute_jacobian and
+        jacobian.includes(route.derivative_state_mask, .surface_albedo);
 
     // Pick the smallest calculation that still matches the requested physics.
-    const computation = if (controls.scattering == .none) blk: {
-        const direct = try directSurfaceOnlyResolvedWithWorkspace(
+    const computation = choose_labos_path: {
+        if (controls.scattering == .none) {
+            const direct = try directSurfaceOnlyResolvedWithWorkspace(
+                allocator,
+                input,
+                controls,
+                workspace,
+                wants_surface_albedo,
+            );
+
+            // With scattering disabled, the only supported derivative here is
+            // surface albedo.
+            var direct_jacobian = jacobian.zero();
+            if (wants_surface_albedo) {
+                jacobian.set(&direct_jacobian, .surface_albedo, direct.surface_albedo_tangent);
+            }
+
+            break :choose_labos_path LabosComputation{
+                .reflectance = direct.reflectance,
+                .jacobian = direct_jacobian,
+            };
+        }
+
+        if (input.layers.len > 0) {
+            break :choose_labos_path try layerResolvedLabosWithWorkspace(
+                allocator,
+                input,
+                controls,
+                compute_jacobian,
+                route.derivative_state_mask,
+                workspace,
+            );
+        }
+
+        break :choose_labos_path try singleLayerLabos(
             allocator,
             input,
             controls,
-            workspace,
-            wants_surface_albedo,
+            compute_jacobian,
+            route.derivative_state_mask,
         );
-
-        // With scattering disabled, the only supported derivative here is
-        // surface albedo.
-        var direct_jacobian = jacobian.zero();
-        if (wants_surface_albedo) {
-            jacobian.set(&direct_jacobian, .surface_albedo, direct.surface_albedo_tangent);
-        }
-        break :blk LabosComputation{
-            .reflectance = direct.reflectance,
-            .jacobian = direct_jacobian,
-        };
-    } else if (input.layers.len > 0)
-        try layerResolvedLabosWithWorkspace(allocator, input, controls, compute_jacobian, route.derivative_state_mask, workspace)
-    else
-        try singleLayerLabos(allocator, input, controls, compute_jacobian, route.derivative_state_mask);
+    };
 
     // Keep route metadata with the reflectance so callers can audit which RTM
     // path produced the result.
@@ -385,9 +415,9 @@ fn layerResolvedLabosWithWorkspace(
     var owned_geo: Geometry = undefined;
     const geo = if (workspace) |scratch|
         scratch.geometry(controls.nGauss(), mu0, muv)
-    else blk: {
+    else choose_owned_geometry: {
         owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
-        break :blk &owned_geo;
+        break :choose_owned_geometry &owned_geo;
     };
 
     // Integrated-source reflectance only reads adjacent-layer and top-to-level
@@ -426,23 +456,31 @@ fn layerResolvedLabosWithWorkspace(
     // RT_fc uses one surface slot plus one slot for each optical layer.
     const rt = if (workspace) |scratch|
         try scratch.layerRt(nlayer + 1)
-    else blk: {
+    else choose_owned_rt: {
         const owned_rt = try allocator.alloc(LayerRT, nlayer + 1);
-        break :blk owned_rt;
+        break :choose_owned_rt owned_rt;
     };
     defer if (workspace == null) allocator.free(rt);
 
     // The loop bounds come from the actual layer optics and phase support.
-    const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
+    const num_orders_max: usize = @intCast(
+        controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)),
+    );
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
     const plm_cache_max = @min(phase_max, fourier_max);
     const phase_suffix_stride = plm_cache_max + 1;
 
     // Only requested derivative states are accumulated.
-    const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
-    const wants_aerosol_optical_depth = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
-    const wants_aerosol_layer_mid_pressure = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
+    const wants_surface_albedo =
+        compute_jacobian and
+        jacobian.includes(derivative_state_mask, .surface_albedo);
+    const wants_aerosol_optical_depth =
+        compute_jacobian and
+        jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
+    const wants_aerosol_layer_mid_pressure =
+        compute_jacobian and
+        jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
 
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
@@ -456,63 +494,82 @@ fn layerResolvedLabosWithWorkspace(
     const needs_order_local_sum = use_integrated_source and compute_jacobian;
     var owned_orders_workspace: ?orders_mod.OrdersWorkspace = null;
     defer if (owned_orders_workspace) |*orders_workspace| orders_workspace.deinit();
-    const orders_workspace = if (workspace) |scratch|
-        try scratch.ordersWorkspace(nlayer + 1, needs_order_local_sum)
-    else blk: {
-        owned_orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, nlayer + 1, needs_order_local_sum);
-        break :blk &(owned_orders_workspace.?);
-    };
+
+    var orders_workspace: *orders_mod.OrdersWorkspace = undefined;
+    if (workspace) |scratch| {
+        orders_workspace = try scratch.ordersWorkspace(nlayer + 1, needs_order_local_sum);
+    } else {
+        owned_orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(
+            allocator,
+            nlayer + 1,
+            needs_order_local_sum,
+        );
+        orders_workspace = &(owned_orders_workspace.?);
+    }
 
     // calcRTlayersIntoWithBasis saves the phase row for each RT layer while it
     // builds RT_fc. Integrated-source reflectance can reuse that row for a
     // matching source level. layer_phase_row_valid is false when the layer was
     // skipped and the saved row must not be read.
-    const layer_phase_rows: ?[]basis.PhaseKernelRow = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseRowCache(nlayer + 1) else try allocator.alloc(basis.PhaseKernelRow, nlayer + 1)
-    else
-        null;
-    defer if (workspace == null) if (layer_phase_rows) |cache| allocator.free(cache);
+    var layer_phase_rows: ?[]basis.PhaseKernelRow = null;
+    var layer_phase_row_valid: ?[]bool = null;
+    if (use_integrated_source) {
+        if (workspace) |scratch| {
+            layer_phase_rows = try scratch.phaseRowCache(nlayer + 1);
+            layer_phase_row_valid = try scratch.phaseRowValid(nlayer + 1);
+        } else {
+            layer_phase_rows = try allocator.alloc(basis.PhaseKernelRow, nlayer + 1);
+            layer_phase_row_valid = try allocator.alloc(bool, nlayer + 1);
+        }
+    }
 
-    const layer_phase_row_valid: ?[]bool = if (use_integrated_source)
-        if (workspace) |scratch| try scratch.phaseRowValid(nlayer + 1) else try allocator.alloc(bool, nlayer + 1)
-    else
-        null;
+    defer if (workspace == null) if (layer_phase_rows) |cache| allocator.free(cache);
     defer if (workspace == null) if (layer_phase_row_valid) |valid| allocator.free(valid);
 
     // The RT layer builder and integrated-source reflectance both need the
     // highest useful phase coefficient per layer. Compute it once per solve.
-    const layer_phase_max_indices = if (workspace) |scratch| blk: {
+    var layer_phase_max_indices: ?[]usize = null;
+    if (workspace) |scratch| {
         const indices = try scratch.layerPhaseMaxIndices(nlayer);
         fillLayerPhaseMaxIndices(indices, input.layers);
-        break :blk indices;
-    } else null;
+        layer_phase_max_indices = indices;
+    }
 
     // For each layer and Fourier term, this stores the largest remaining phase
     // coefficient used by layer doubling: suffix_m = max_{l>=m} |beta_l|/(2l+1).
     // beta_l is the layer phase coefficient at order l.
-    const layer_effective_scattering_suffixes = if (workspace) |scratch| blk: {
+    var layer_effective_scattering_suffixes: ?[]f64 = null;
+    if (workspace) |scratch| {
         if (layer_phase_max_indices) |indices| {
-            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer, phase_suffix_stride);
-            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices, phase_suffix_stride);
-            break :blk suffixes;
+            const suffixes = try scratch.layerEffectiveScatteringSuffix(
+                nlayer,
+                phase_suffix_stride,
+            );
+            fillLayerEffectiveScatteringSuffixes(
+                suffixes,
+                input.layers,
+                indices,
+                phase_suffix_stride,
+            );
+            layer_effective_scattering_suffixes = suffixes;
         }
-        break :blk null;
-    } else null;
+    }
 
     // Integrated-source reflectance is evaluated at level interfaces, so it
     // needs the phase limit from the layers touching each interface.
-    const adjacent_layer_phase_max_indices = if (workspace) |scratch| blk: {
+    var adjacent_layer_phase_max_indices: ?[]usize = null;
+    if (workspace) |scratch| {
         if (layer_phase_max_indices) |layer_indices| {
             const indices = try scratch.sourcePhaseMaxIndices(nlayer + 1);
             fillAdjacentLayerPhaseMaxIndices(indices, layer_indices);
-            break :blk indices;
+            adjacent_layer_phase_max_indices = indices;
         }
-        break :blk null;
-    } else null;
+    }
 
     for (0..fourier_max + 1) |i_fourier| {
         var stop_fourier_loop = false;
         {
+
             // One Fourier term follows the DISAMAR order:
             // Plm basis -> RT_fc -> surface -> UD_fc -> refl_fc -> sum.
 
@@ -539,16 +596,22 @@ fn layerResolvedLabosWithWorkspace(
                 // why: separate Fourier basis setup from RT layer and order propagation.                      |
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
-                break :plm_basis if (workspace) |scratch| blk: {
-                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, plm_cache_max, geo);
-                } else blk: {
+                break :plm_basis if (workspace) |scratch| choose_workspace_plm: {
+                    break :choose_workspace_plm try scratch.fourierPlmBasis(
+                        i_fourier,
+                        phase_max,
+                        plm_cache_max,
+                        geo,
+                    );
+                } else choose_owned_plm: {
                     owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
-                    break :blk &owned_plm_basis;
+                    break :choose_owned_plm &owned_plm_basis;
                 };
                 // end instrumentation: trace zone: PLM basis -------------------------------------------------|
             };
 
             {
+
                 // Build RT_fc for the surface/layer stack at this Fourier term
                 // before order transport starts.
 
@@ -577,7 +640,9 @@ fn layerResolvedLabosWithWorkspace(
             // Surface reflection is represented as layer index 0, matching
             // DISAMAR's RT layer convention.
             rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
-            if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
+            if (workspace != null) {
+                orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
+            }
 
             const orders_result = orders_result: {
 
@@ -586,21 +651,26 @@ fn layerResolvedLabosWithWorkspace(
                 // why: keep multiple-scattering transport separate from layer setup.                          |
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
-                break :orders_result if (use_integrated_source) blk: {
+                break :orders_result if (use_integrated_source) choose_integrated_orders: {
                     if (runtime_atten) |*atten| {
+
                         // Workspace runs pass orders.zig the layers that are
                         // active for this Fourier term. That list is filled
                         // while RT_fc is built.
-                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithActiveLocalSum(
-                            orders_workspace,
-                            0,
-                            nlayer,
-                            geo,
-                            atten,
-                            rt,
-                            controls,
-                            num_orders_max,
-                        ) else orders_mod.ordersScatIntoWithActive(
+                        if (compute_jacobian) {
+                            break :choose_integrated_orders orders_mod.ordersScatIntoWithActiveLocalSum(
+                                orders_workspace,
+                                0,
+                                nlayer,
+                                geo,
+                                atten,
+                                rt,
+                                controls,
+                                num_orders_max,
+                            );
+                        }
+
+                        break :choose_integrated_orders orders_mod.ordersScatIntoWithActive(
                             orders_workspace,
                             0,
                             nlayer,
@@ -611,19 +681,25 @@ fn layerResolvedLabosWithWorkspace(
                             num_orders_max,
                         );
                     }
+
                     if (dynamic_atten) |*atten| {
+
                         // Runs without a workspace let orders.zig decide the
                         // active layers again.
-                        break :blk if (compute_jacobian) orders_mod.ordersScatIntoWithLocalSum(
-                            orders_workspace,
-                            0,
-                            nlayer,
-                            geo,
-                            atten,
-                            rt,
-                            controls,
-                            num_orders_max,
-                        ) else orders_mod.ordersScatInto(
+                        if (compute_jacobian) {
+                            break :choose_integrated_orders orders_mod.ordersScatIntoWithLocalSum(
+                                orders_workspace,
+                                0,
+                                nlayer,
+                                geo,
+                                atten,
+                                rt,
+                                controls,
+                                num_orders_max,
+                            );
+                        }
+
+                        break :choose_integrated_orders orders_mod.ordersScatInto(
                             orders_workspace,
                             0,
                             nlayer,
@@ -634,20 +710,25 @@ fn layerResolvedLabosWithWorkspace(
                             num_orders_max,
                         );
                     }
+
                     unreachable;
-                } else blk: {
+                } else choose_non_integrated_orders: {
+
                     // Non-integrated reflectance takes the transported UD_fc
                     // field directly from the scattering-order solve.
-                    if (dynamic_atten) |*atten| break :blk orders_mod.ordersScatTransportInto(
-                        orders_workspace,
-                        0,
-                        nlayer,
-                        geo,
-                        atten,
-                        rt,
-                        controls,
-                        num_orders_max,
-                    );
+                    if (dynamic_atten) |*atten| {
+                        break :choose_non_integrated_orders orders_mod.ordersScatTransportInto(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        );
+                    }
+
                     unreachable;
                 };
                 // end instrumentation: trace zone: scattering orders -----------------------------------------|
@@ -701,6 +782,7 @@ fn layerResolvedLabosWithWorkspace(
             // end instrumentation: perturbation: reflectance term --------------------------------------------|
 
             if (wants_surface_albedo and i_fourier == 0) {
+
                 // Surface albedo only contributes through the zero-Fourier
                 // surface reflection term.
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
@@ -780,19 +862,21 @@ fn layerResolvedLabosWithWorkspace(
                             plm_basis,
                             adjacent_layer_phase_max_indices,
                         )
-                    else blk: {
-                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
-                            allocator,
-                            input.layers,
-                            .aerosol_optical_depth,
-                            i_fourier,
-                            geo,
-                            atten,
-                            rt,
-                            controls,
-                            plm_basis,
-                            num_orders_max,
-                        );
+                    else choose_non_integrated_aod_tangent: {
+                        if (dynamic_atten) |*atten| {
+                            break :choose_non_integrated_aod_tangent try nonIntegratedReflectanceTangent(
+                                allocator,
+                                input.layers,
+                                .aerosol_optical_depth,
+                                i_fourier,
+                                geo,
+                                atten,
+                                rt,
+                                controls,
+                                plm_basis,
+                                num_orders_max,
+                            );
+                        }
                         unreachable;
                     };
                     // end instrumentation: trace zone: AOD weighting -----------------------------------------|
@@ -819,30 +903,37 @@ fn layerResolvedLabosWithWorkspace(
                     // why: isolate derivative work for pressure-placement retrieval.                          |
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
                     defer zone.end();
-                    break :pressure_tangent_refl_fc if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
-                        input.layers,
-                        input.rtm_quadrature,
-                        orders_result.ud,
-                        orders_result.ud_sum_local,
-                        nlayer,
-                        i_fourier,
-                        controls.use_spherical_correction,
-                        geo,
-                        plm_basis,
-                    ) else blk: {
-                        if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
-                        if (dynamic_atten) |*atten| break :blk try nonIntegratedReflectanceTangent(
-                            allocator,
+                    break :pressure_tangent_refl_fc if (use_integrated_source)
+                        calcAerosolLayerPressureShiftWeightingWithBasis(
                             input.layers,
-                            .aerosol_layer_mid_pressure_hpa,
+                            input.rtm_quadrature,
+                            orders_result.ud,
+                            orders_result.ud_sum_local,
+                            nlayer,
                             i_fourier,
+                            controls.use_spherical_correction,
                             geo,
-                            atten,
-                            rt,
-                            controls,
                             plm_basis,
-                            num_orders_max,
-                        );
+                        )
+                    else choose_non_integrated_pressure_tangent: {
+                        if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) {
+                            return error.UnsupportedDerivativeMode;
+                        }
+
+                        if (dynamic_atten) |*atten| {
+                            break :choose_non_integrated_pressure_tangent try nonIntegratedReflectanceTangent(
+                                allocator,
+                                input.layers,
+                                .aerosol_layer_mid_pressure_hpa,
+                                i_fourier,
+                                geo,
+                                atten,
+                                rt,
+                                controls,
+                                plm_basis,
+                                num_orders_max,
+                            );
+                        }
                         unreachable;
                     };
                     // end instrumentation: trace zone: pressure weighting ------------------------------------|

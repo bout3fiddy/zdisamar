@@ -55,7 +55,7 @@ class Finding:
 
     def to_json(self) -> dict[str, object]:
 
-        result = {
+        result: dict[str, object] = {
             "path": str(self.path),
             "line_start": self.line_start,
             "line_end": self.line_end,
@@ -240,6 +240,9 @@ def check_comment_shape(path: Path, lines: Sequence[str]) -> Iterable[Finding]:
         if not stripped.startswith("//"):
             continue
 
+        if is_box_line(line):
+            continue
+
         if FORBIDDEN_COMMENT_LABEL_RE.search(stripped):
             yield Finding(
                 path=path,
@@ -252,9 +255,6 @@ def check_comment_shape(path: Path, lines: Sequence[str]) -> Iterable[Finding]:
                 metrics={},
                 suggestions=("Rewrite the line as plain explanation without a label prefix.",),
             )
-
-        if is_box_line(line):
-            continue
 
         if index == 0:
             continue
