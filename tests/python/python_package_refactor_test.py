@@ -310,14 +310,15 @@ def assert_optimal_estimation_diagnosis_display() -> None:
 
     basin_sweep = RetrievalDiagnosis(
         state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
-        start_state=((0.1, 225.0), (0.11, 255.0), (0.8, 700.0)),
-        retrieved_state=((0.1, 240.0), (0.105, 243.0), (0.6, 720.0)),
-        iterations=(3, 4, 5),
-        converged=(True, True, True),
+        start_state=((0.1, 225.0), (0.11, 255.0), (0.8, 700.0), (0.9, 900.0)),
+        retrieved_state=((0.1, 240.0), (0.105, 243.0), (0.6, 720.0), (0.7, 900.0)),
+        iterations=(3, 4, 5, 6),
+        converged=(True, True, True, True),
         retrieval_paths=(
             ((0.1, 240.0),),
             ((0.105, 243.0),),
             ((0.6, 720.0),),
+            ((0.7,),),
         ),
         start_bounds=((0.02, 2.0), (50.0, 1000.0)),
         batch_workers=1,

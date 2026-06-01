@@ -648,7 +648,7 @@ def retrieval_basins(
     for index, (path, status, converged) in enumerate(
         zip(paths, diagnosis.resolved_start_status(), diagnosis.converged, strict=True)
     ):
-        if status != "ok" or not converged or not path or not finite_values(path[-1]):
+        if status != "ok" or not converged or not path or not finite_plot_point(path[-1]):
             continue
 
         endpoint = tuple(float(value) for value in path[-1])
