@@ -617,8 +617,11 @@ def diagnosis_plot_domains(
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Return the first two diagnosis domains used for basin grouping and plots."""
 
-    x_values = [0.0, diagnosis.start_bounds[0][1]]
-    y_values = [0.0, diagnosis.start_bounds[1][1]]
+    if not retrieval_basin_axes_available(diagnosis):
+        return (0.0, 1.0), (0.0, 1.0)
+
+    x_values = list(diagnosis.start_bounds[0])
+    y_values = list(diagnosis.start_bounds[1])
 
     for path in diagnosis_paths(diagnosis):
         for point in path:
@@ -630,7 +633,54 @@ def diagnosis_plot_domains(
         x_values.append(float(diagnosis.truth_state[0]))
         y_values.append(float(diagnosis.truth_state[1]))
 
-    return (0.0, max(2.25, max(x_values) * 1.12)), (0.0, max(1000.0, max(y_values) * 1.02))
+    x_lower_floor = 0.0 if diagnosis.state_names[0] == AEROSOL_OPTICAL_DEPTH else None
+    x_upper_floor = 2.25 if diagnosis.state_names[0] == AEROSOL_OPTICAL_DEPTH else None
+    y_lower_floor = 0.0 if diagnosis.state_names[1] == AEROSOL_LAYER_MID_PRESSURE_HPA else None
+    y_upper_floor = 1000.0 if diagnosis.state_names[1] == AEROSOL_LAYER_MID_PRESSURE_HPA else None
+
+    return (
+        axis_domain(
+            diagnosis.start_bounds[0],
+            x_values,
+            lower_floor=x_lower_floor,
+            upper_floor=x_upper_floor,
+            padding_fraction=0.12,
+        ),
+        axis_domain(
+            diagnosis.start_bounds[1],
+            y_values,
+            lower_floor=y_lower_floor,
+            upper_floor=y_upper_floor,
+            padding_fraction=0.02,
+        ),
+    )
+
+
+def retrieval_basin_domains(
+    diagnosis: RetrievalDiagnosis,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return axis domains for basin clustering, excluding failed path outliers."""
+
+    if not retrieval_basin_axes_available(diagnosis):
+        return (0.0, 1.0), (0.0, 1.0)
+
+    x_values = list(diagnosis.start_bounds[0])
+    y_values = list(diagnosis.start_bounds[1])
+
+    for path, status, converged in zip(
+        diagnosis_paths(diagnosis),
+        diagnosis.resolved_start_status(),
+        diagnosis.converged,
+        strict=True,
+    ):
+        if status == "ok" and converged and path and finite_plot_point(path[-1]):
+            x_values.append(float(path[-1][0]))
+            y_values.append(float(path[-1][1]))
+
+    return (
+        axis_domain(diagnosis.start_bounds[0], x_values),
+        axis_domain(diagnosis.start_bounds[1], y_values),
+    )
 
 
 def retrieval_basins(
@@ -641,7 +691,10 @@ def retrieval_basins(
 ) -> tuple[RetrievalBasin, ...]:
     """Cluster converged finite endpoints in normalized plotted coordinates."""
 
-    active_domains = diagnosis_plot_domains(diagnosis) if domains is None else domains
+    if not retrieval_basin_axes_available(diagnosis):
+        return ()
+
+    active_domains = retrieval_basin_domains(diagnosis) if domains is None else domains
     basins: list[RetrievalBasin] = []
     paths = diagnosis_paths(diagnosis)
 
@@ -682,10 +735,47 @@ def retrieval_basins(
     return tuple(sorted(basins, key=lambda basin: (basin.centroid[0], basin.centroid[1])))
 
 
+def retrieval_basin_axes_available(diagnosis: RetrievalDiagnosis) -> bool:
+    """Return whether the diagnosis has the two axes needed for retrieval basins."""
+
+    return len(diagnosis.state_names) >= 2 and len(diagnosis.start_bounds) >= 2
+
+
 def finite_plot_point(point: Sequence[float]) -> bool:
     """Return whether a point contains finite first-two plot coordinates."""
 
     return len(point) >= 2 and all(math.isfinite(float(value)) for value in point[:2])
+
+
+def axis_domain(
+    bounds: tuple[float, float],
+    values: Sequence[float],
+    *,
+    lower_floor: float | None = None,
+    upper_floor: float | None = None,
+    padding_fraction: float = 0.0,
+) -> tuple[float, float]:
+    """Return a finite domain from explicit bounds and optional plot padding."""
+
+    finite = [float(value) for value in values if math.isfinite(float(value))]
+    lower = min((float(bounds[0]), *finite))
+    upper = max((float(bounds[1]), *finite))
+
+    if lower_floor is not None:
+        lower = min(lower, float(lower_floor))
+
+    if upper_floor is not None:
+        upper = max(upper, float(upper_floor))
+
+    if not upper > lower:
+        padding = max(abs(lower) * 0.05, 1.0e-12)
+
+        return lower - padding, upper + padding
+
+    if padding_fraction > 0.0:
+        upper += (upper - lower) * padding_fraction
+
+    return lower, upper
 
 
 def plot_distance(

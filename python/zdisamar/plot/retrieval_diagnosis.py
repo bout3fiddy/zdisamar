@@ -12,6 +12,7 @@ from ..inverse_method.optimal_estimation.diagnosis import (
     RetrievalDiagnosis,
     diagnosis_paths,
     diagnosis_plot_domains,
+    retrieval_basin_domains,
     retrieval_basins,
 )
 from .optimal_estimation import STATE_AXIS_TITLES
@@ -85,7 +86,7 @@ class RetrievalDiagnosisFigure:
         """Return notebook-display SVG."""
 
         x_domain, y_domain = plot_domains(self.diagnosis)
-        clusters = endpoint_clusters(self.diagnosis, (x_domain, y_domain))
+        clusters = endpoint_clusters(self.diagnosis, retrieval_basin_domains(self.diagnosis))
         reference_paths = diagnosis_paths(self.diagnosis)
         plot_paths = trimmed_plot_paths(self.diagnosis, clusters, (x_domain, y_domain))
         path_segments = segments(plot_paths, (x_domain, y_domain), reference_paths)
