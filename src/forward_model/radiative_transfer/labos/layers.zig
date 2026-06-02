@@ -71,7 +71,6 @@ fn locateLowerIndex(values: []const f64, target: f64) usize {
     return index;
 }
 
-// PUB FOR TEST: re-exported via labos/internal.zig.
 pub fn zeroFourierIntegral(
     zplus: *const basis.Mat,
     zmin: *const basis.Mat,
@@ -80,6 +79,7 @@ pub fn zeroFourierIntegral(
 ) f64 {
     // zeroFourierIntegral ------------------------------------------------------------------------------------|
     // Integrate one zero-Fourier phase column over the Gaussian streams.                                      |
+    // Re-exported via labos/internal.zig for tests.                                                           |
     //                                                                                                         |
     // The phase rows are stored with stream weights folded in. Divide by the row and column weights before    |
     // summing with Gaussian quadrature weights.                                                               |
@@ -102,7 +102,6 @@ pub fn zeroFourierIntegral(
     return integral;
 }
 
-// PUB FOR TEST: re-exported via labos/internal.zig.
 pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
@@ -110,6 +109,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
 ) void {
     // renormalizeZeroFourierPhaseKernel ----------------------------------------------------------------------|
     // Adjust zero-Fourier phase rows so their Gaussian integral is 2.                                         |
+    // Re-exported via labos/internal.zig for tests.                                                           |
     //                                                                                                         |
     // Steps:                                                                                                  |
     //   1. copy Zplus into a weight-normalized work table                                                     |

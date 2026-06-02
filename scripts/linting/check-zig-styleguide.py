@@ -202,6 +202,8 @@ def check_path(
     lines = path.read_text(encoding="utf-8").splitlines()
 
     yield from check_comment_shape(path, lines)
+    yield from check_function_header_comments(path, lines)
+    yield from check_instrumentation_spacing(path, lines)
     yield from check_box_rails(path, lines)
     yield from check_line_lengths(path, lines, max_line_length=max_line_length)
     yield from check_dense_paragraphs(path, lines, min_lines=min_lines, min_score=min_score)
@@ -276,6 +278,71 @@ def check_comment_shape(path: Path, lines: Sequence[str]) -> Iterable[Finding]:
             suggestions=("Add one blank line before the comment.",),
             performance_safety=("Whitespace and comments do not affect compiler output.",),
         )
+
+
+def check_function_header_comments(path: Path, lines: Sequence[str]) -> Iterable[Finding]:
+
+    for index, line in enumerate(lines):
+        if FN_RE.search(strip_line_comment(line)) is None:
+            continue
+
+        if index == 0:
+            continue
+
+        previous = lines[index - 1]
+
+        if not previous.lstrip().startswith("//"):
+            continue
+
+        yield Finding(
+            path=path,
+            line_start=index,
+            line_end=index + 1,
+            rule="ZIGFNCOMMENT",
+            severity="warning",
+            category="mechanical",
+            message="comment sits immediately above a function definition",
+            metrics={},
+            suggestions=(
+                "Move the comment into the function box as the first body statement.",
+                "Leave a blank line before fn only when the previous comment belongs to another block.",
+            ),
+            performance_safety=("Moving comments does not affect compiler output.",),
+        )
+
+
+def check_instrumentation_spacing(path: Path, lines: Sequence[str]) -> Iterable[Finding]:
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+
+        if stripped.startswith("// instrumentation:") and index > 0 and lines[index - 1].strip() != "":
+            yield Finding(
+                path=path,
+                line_start=index + 1,
+                line_end=index + 1,
+                rule="ZIGINSTRUMENTSPACE",
+                severity="warning",
+                category="readability",
+                message="instrumentation header is packed against previous code",
+                metrics={},
+                suggestions=("Add one blank line before the instrumentation header.",),
+                performance_safety=("Whitespace and comments do not affect compiler output.",),
+            )
+
+        if stripped.startswith("// end instrumentation:") and index + 1 < len(lines) and lines[index + 1].strip() != "":
+            yield Finding(
+                path=path,
+                line_start=index + 1,
+                line_end=index + 2,
+                rule="ZIGINSTRUMENTSPACE",
+                severity="warning",
+                category="readability",
+                message="instrumentation footer is packed against following code",
+                metrics={},
+                suggestions=("Add one blank line after the instrumentation footer.",),
+                performance_safety=("Whitespace and comments do not affect compiler output.",),
+            )
 
 
 def check_line_lengths(

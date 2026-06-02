@@ -1536,13 +1536,21 @@ fn semulAdd12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Ma
     return result;
 }
 
-fn semulAdd12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+fn semulAdd12Into(
+    noalias result: *Mat,
+    noalias a: *const Mat,
+    noalias e: *const Vec,
+    noalias b: *const Mat,
+) void {
     // semulAdd12Into (right diagonal scale plus add, fixed n=12) ---------------------------------------------|
     // Fixed-shape right-diagonal scale plus add.                                                              |
     //                                                                                                         |
     //   out[i,j] = A[i,j] * e[j] + B[i,j]                                                                     |
     //                                                                                                         |
-    // The column scale e[j] is loaded once, then reused down that column.                                     |
+    // Column walk                                                                                             |
+    //   j chooses one output column.                                                                          |
+    //   e[j] is loaded once for that column.                                                                  |
+    //   idx starts at j, then idx += 12 walks row-major storage down that column.                             |
     // --------------------------------------------------------------------------------------------------------|
 
     result.* = .{ .data = undefined, .n = 12 };
@@ -1668,12 +1676,21 @@ fn esmulSemul12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const 
     return result;
 }
 
-fn esmulSemul12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) void {
+fn esmulSemul12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+) void {
     // esmulSemul12Into (left and right diagonal scales, fixed n=12) ------------------------------------------|
     // Fixed-shape two-sided diagonal scale.                                                                   |
     //                                                                                                         |
     //   left term  : e[i] * A[i,j]                                                                            |
     //   right term : B[i,j] * e[j]                                                                            |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   i chooses one row and loads e[i] once.                                                                |
+    //   j walks the 12 columns in that row and loads e[j] for the right-scale term.                           |
     // --------------------------------------------------------------------------------------------------------|
 
     result.* = .{ .data = undefined, .n = 12 };
@@ -1688,11 +1705,19 @@ fn esmulSemul12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *con
     }
 }
 
-fn esmulSemulSelf12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat) void {
+fn esmulSemulSelf12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+) void {
     // esmulSemulSelf12Into (self left and right diagonal scales, fixed n=12) ---------------------------------|
     // Same matrix appears on both sides of the diagonal scale.                                                |
     //                                                                                                         |
     //   out[i,j] = A[i,j] * (e[i] + e[j])                                                                     |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   e[i] is reused across the row.                                                                        |
+    //   e[j] changes with each column, giving the symmetric scale for A[i,j].                                 |
     // --------------------------------------------------------------------------------------------------------|
 
     result.* = .{ .data = undefined, .n = 12 };
@@ -1735,6 +1760,11 @@ fn esmulSemulAdd12Into(
     //   left term  : e[i] * A[i,j]                                                                            |
     //   right term : B[i,j] * e[j]                                                                            |
     //   add term   : C[i,j]                                                                                   |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   e[i] is reused across one row.                                                                        |
+    //   e[j] changes with each column.                                                                        |
+    //   the add term C[i,j] uses the same row-major slot as the two scaled terms.                             |
     // --------------------------------------------------------------------------------------------------------|
 
     result.* = .{ .data = undefined, .n = 12 };
@@ -2029,6 +2059,14 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     var pivot_offset: [types.max_gauss]usize = undefined;
     var inverse_diag: [types.max_gauss]f64 = undefined;
 
+    // Generic LU storage -------------------------------------------------------------------------------------|
+    // one_minus_ab_gg holds M = I - AB_gg in a flat n_gauss by n_gauss table.                                 |
+    //                                                                                                         |
+    // pivot[i]        tells which original row now sits at factorization row i.                               |
+    // pivot_offset[i] is pivot[i] * n_gauss, precomputed so inner loops do not repeat that multiply.          |
+    // inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
     // Pivot bookkeeping --------------------------------------------------------------------------------------|
     // Generic n keeps row swaps as offsets into M. That avoids moving an entire max_gauss row for every pivot.|
     // --------------------------------------------------------------------------------------------------------|
@@ -2094,6 +2132,8 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
 
     // Inverse columns ----------------------------------------------------------------------------------------|
     // Solve M * x = one basis column at a time. Forward substitution builds y, back substitution builds x.    |
+    //                                                                                                         |
+    // rhs_col chooses one column of inverse(M). The solved x is written into inverse[:, rhs_col].             |
     // --------------------------------------------------------------------------------------------------------|
 
     var inverse: [types.max_gauss * types.max_gauss]f64 = undefined;
@@ -2251,6 +2291,16 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
 
     var pivot: [types.max_gauss]usize = undefined;
     var inverse_diag: [types.max_gauss]f64 = undefined;
+
+    // Fixed LU storage ---------------------------------------------------------------------------------------|
+    // one_minus_ab_gg holds M = I - AB_gg as a flat 10 by 10 table.                                           |
+    //                                                                                                         |
+    // pivot[i]        tells which original row now sits at factorization row i.                               |
+    // inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                            |
+    //                                                                                                         |
+    // This fixed route swaps the row contents directly, so it does not need pivot_offset.                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     inline for (0..10) |i| {
         pivot[i] = i;
     }
@@ -2317,6 +2367,8 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
 
     // Inverse columns ----------------------------------------------------------------------------------------|
     // Solve M * x = one basis column at a time. Forward substitution builds y, back substitution builds x.    |
+    //                                                                                                         |
+    // rhs_col chooses one column of inverse(M). The solved x is written into inverse[:, rhs_col].             |
     // --------------------------------------------------------------------------------------------------------|
 
     var inverse: [types.max_gauss * types.max_gauss]f64 = undefined;

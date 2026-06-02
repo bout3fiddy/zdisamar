@@ -608,6 +608,7 @@ fn layerResolvedLabosWithWorkspace(
                     break :choose_owned_plm &owned_plm_basis;
                 };
                 // end instrumentation: trace zone: PLM basis -------------------------------------------------|
+
             };
 
             {
@@ -635,6 +636,7 @@ fn layerResolvedLabosWithWorkspace(
                     if (workspace != null) orders_workspace.rt_active else null,
                 );
                 // end instrumentation: trace zone: RT layer build --------------------------------------------|
+
             }
 
             // Surface reflection is represented as layer index 0, matching
@@ -732,6 +734,7 @@ fn layerResolvedLabosWithWorkspace(
                     unreachable;
                 };
                 // end instrumentation: trace zone: scattering orders -----------------------------------------|
+
             };
 
             // Convert the internal radiation field into rho_m, the
@@ -760,6 +763,7 @@ fn layerResolvedLabosWithWorkspace(
                 else
                     calcReflectance(orders_result.ud, nlayer, geo);
                 // end instrumentation: trace zone: reflectance integral --------------------------------------|
+
             };
 
             // c_0 = 1. For m > 0, c_m = 2 * cos(m * dphi).
@@ -802,6 +806,7 @@ fn layerResolvedLabosWithWorkspace(
             const wants_pressure_tangent = wants_aerosol_layer_mid_pressure and evaluate_aerosol_tangent;
             const use_paired_aerosol_weighting =
                 use_integrated_source and wants_aod_tangent and wants_pressure_tangent;
+            // end tradeoff: aerosol tangent Fourier cap ------------------------------------------------------|
 
             // The integrated-source route can calculate AOD and pressure
             // weighting in one shared pass when both are requested.
@@ -825,6 +830,7 @@ fn layerResolvedLabosWithWorkspace(
                         plm_basis,
                     );
                     // end instrumentation: trace zone: paired aerosol weighting ------------------------------|
+
                 };
 
                 // instrumentation: perturbation: paired aerosol tangents -------------------------------------|
@@ -847,6 +853,7 @@ fn layerResolvedLabosWithWorkspace(
                     fourier_weight * tangent_refl_fc.aerosol_layer_mid_pressure_hpa,
                 );
                 // end instrumentation: perturbation: paired aerosol tangents ---------------------------------|
+
             } else if (wants_aod_tangent) {
                 const tangent_refl_fc = tangent_refl_fc: {
 
@@ -886,6 +893,7 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                     // end instrumentation: trace zone: AOD weighting -----------------------------------------|
+
                 };
 
                 // instrumentation: perturbation: AOD tangent -------------------------------------------------|
@@ -900,6 +908,7 @@ fn layerResolvedLabosWithWorkspace(
                     fourier_weight * tangent_refl_fc,
                 );
                 // end instrumentation: perturbation: AOD tangent ---------------------------------------------|
+
             }
             if (!use_paired_aerosol_weighting and wants_pressure_tangent) {
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
@@ -943,6 +952,7 @@ fn layerResolvedLabosWithWorkspace(
                         unreachable;
                     };
                     // end instrumentation: trace zone: pressure weighting ------------------------------------|
+
                 };
 
                 // instrumentation: perturbation: pressure tangent --------------------------------------------|
@@ -957,8 +967,8 @@ fn layerResolvedLabosWithWorkspace(
                     fourier_weight * pressure_tangent_refl_fc,
                 );
                 // end instrumentation: perturbation: pressure tangent ----------------------------------------|
+
             }
-            // end tradeoff: aerosol tangent Fourier cap ------------------------------------------------------|
 
             // ------------------------------------------------------------------------------------------------|
             // ------------------------------------------------------------------------------------------------|
@@ -992,6 +1002,7 @@ fn layerResolvedLabosWithWorkspace(
                 tail_break,
             );
             // end instrumentation: calculation telemetry: Fourier contribution -------------------------------|
+
             if (tail_break) {
 
                 // instrumentation: trace counter: tail break -------------------------------------------------|
@@ -999,11 +1010,13 @@ fn layerResolvedLabosWithWorkspace(
                 // why: validate the tail-pruning threshold against observed exits.                            |
                 Trace.plotU("fourier_tail_breaks", 1);
                 // end instrumentation: trace counter: tail break ---------------------------------------------|
+
                 stop_fourier_loop = true;
             }
             // end tradeoff: Fourier tail stop ----------------------------------------------------------------|
 
             // end instrumentation: trace zone: Fourier term --------------------------------------------------|
+
         }
 
         if (stop_fourier_loop) break;
@@ -1024,6 +1037,7 @@ fn layerResolvedLabosWithWorkspace(
         jacobian.set(&assembled, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
         break :result_jacobian assembled;
         // end instrumentation: trace zone: Jacobian assembly -------------------------------------------------|
+
     };
 
     // Public reflectance is clamped to the range expected by forward-model
@@ -1039,6 +1053,7 @@ fn layerResolvedLabosWithWorkspace(
         Telemetry.labosResult(reflectance, clamped_reflectance, jacobian_norm1);
     }
     // end instrumentation: calculation telemetry: LABOS result -----------------------------------------------|
+
     return .{
         .reflectance = clamped_reflectance,
         .jacobian = result_jacobian,

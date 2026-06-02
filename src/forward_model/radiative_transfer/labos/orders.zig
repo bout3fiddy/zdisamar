@@ -1039,6 +1039,7 @@ fn ordersScatInternal(
             }
         }
         // end instrumentation: trace zone: initial sources ---------------------------------------------------|
+
     }
 
     {
@@ -1050,6 +1051,7 @@ fn ordersScatInternal(
         defer zone.end();
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
         // end instrumentation: trace zone: initial transport -------------------------------------------------|
+
     }
 
     copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
@@ -1141,6 +1143,7 @@ fn ordersScatInternal(
                     // why: quantify savings from layer pre-partitioning and active masks.                     |
                     Trace.plotU("orders_inactive_down_layers", 1);
                     // end instrumentation: trace counter: inactive down layer --------------------------------|
+
                     continue;
                 }
 
@@ -1167,6 +1170,7 @@ fn ordersScatInternal(
             }
             ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
             // end instrumentation: trace zone: local down ----------------------------------------------------|
+
         }
 
         {
@@ -1210,6 +1214,7 @@ fn ordersScatInternal(
                     // why: quantify savings from layer pre-partitioning and active masks.                     |
                     Trace.plotU("orders_inactive_up_layers", 1);
                     // end instrumentation: trace counter: inactive up layer ----------------------------------|
+
                     continue;
                 }
 
@@ -1235,6 +1240,7 @@ fn ordersScatInternal(
                 }
             }
             // end instrumentation: trace zone: local up ------------------------------------------------------|
+
         }
 
         {
@@ -1246,6 +1252,7 @@ fn ordersScatInternal(
             defer zone.end();
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
             // end instrumentation: trace zone: order transport -----------------------------------------------|
+
         }
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
@@ -1295,6 +1302,7 @@ fn ordersScatInternal(
             // That current below-threshold order is not added to `UD_fc`.
             multiple_loop_zone.end();
             // end instrumentation: trace zone: multiple order ------------------------------------------------|
+
             break;
         }
 
@@ -1316,9 +1324,11 @@ fn ordersScatInternal(
                 nmutot,
             );
             // end instrumentation: trace zone: accepted order accumulation -----------------------------------|
+
         }
         multiple_loop_zone.end();
         // end instrumentation: trace zone: multiple order ----------------------------------------------------|
+
     }
 
     return .{

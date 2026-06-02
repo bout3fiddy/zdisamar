@@ -52,6 +52,15 @@ const common = @import("../root.zig");
 pub const max_levels: usize = 65;
 // end tradeoff: fixed level scratch cap ----------------------------------------------------------------------|
 
+// numerical guards -------------------------------------------------------------------------------------------|
+// direction_cosine_floor keeps exp(-tau / mu) finite for near-grazing directions.                             |
+// spherical_denominator_floor keeps curved-path fractions finite when the ray skims a level radius.           |
+// earth_radius_km is the spherical-shell radius used by the pseudo-spherical support-grid path.               |
+// ------------------------------------------------------------------------------------------------------------|
+const direction_cosine_floor: f64 = 1.0e-6;
+const spherical_denominator_floor: f64 = 1.0e-12;
+const earth_radius_km: f64 = 6371.0;
+
 // DynamicAttenArray ------------------------------------------------------------------------------------------|
 // Full attenuation matrix for all direction/from/to level pairs.                                              |
 // Some transport paths need arbitrary level-pair lookups, not only adjacent or top-to-level paths.            |
@@ -94,6 +103,10 @@ pub const DynamicAttenArray = struct {
     }
 
     pub fn deinit(self: *DynamicAttenArray) void {
+        // DynamicAttenArray.deinit ---------------------------------------------------------------------------|
+        // Release the owned full attenuation table.                                                           |
+        // ----------------------------------------------------------------------------------------------------|
+
         self.allocator.free(self.data);
         self.* = undefined;
     }
@@ -107,10 +120,18 @@ pub const DynamicAttenArray = struct {
     }
 
     pub fn get(self: *const DynamicAttenArray, imu: usize, from: usize, to: usize) f64 {
+        // DynamicAttenArray.get ------------------------------------------------------------------------------|
+        // Read T(from -> to) from the full [direction, from, to] table.                                       |
+        // ----------------------------------------------------------------------------------------------------|
+
         return self.data[self.index(imu, from, to)];
     }
 
     pub fn set(self: *DynamicAttenArray, imu: usize, from: usize, to: usize, value: f64) void {
+        // DynamicAttenArray.set ------------------------------------------------------------------------------|
+        // Write T(from -> to) into the full [direction, from, to] table.                                      |
+        // ----------------------------------------------------------------------------------------------------|
+
         self.data[self.index(imu, from, to)] = value;
     }
 };
@@ -207,24 +228,27 @@ fn fillLayerTransmittance(
     // Convert per-layer optical depth into one-layer direct-beam survival for                                 |
     // every direction.                                                                                        |
     //                                                                                                         |
-    // T_layer(imu, layer) = exp(-tau_layer / mu_imu)                                                          |
-    //                                                                                                         |
     // Later routines reuse these exponentials while building top-to-level and                                 |
     // level-pair products.                                                                                    |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   T_layer(imu, layer)                                                                                   |
+    //     = exp(-tau_layer / max(mu_imu, direction_cosine_floor))                                             |
+    //                                                                                                         |
+    // direction_cosine_floor keeps grazing directions finite.                                                 |
     //                                                                                                         |
     // hot path                                                                                                |
     //   runs     : before LABOS order transport builds dynamic/runtime attenuation caches                     |
     //   does     : converts layer optical depths into per-stream transmittance rows                           |
     //   reads    : layer optical depths, geometry stream cosines, layer transmittance output                  |
     //   feeds    : fillRuntimeTopToLevelFromLayerCache and fillDynamicAttenuationFromLayerCache               |
-    // T_layer(imu, layer) = exp(-tau_layer / max(mu_imu, 1.0e-6)).                                            |
     // --------------------------------------------------------------------------------------------------------|
 
     const nlayer = layers.len;
     std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
 
     for (0..geo.nmutot) |imu| {
-        const u = @max(geo.u[imu], 1.0e-6);
+        const u = @max(geo.u[imu], direction_cosine_floor);
 
         for (layers, 0..) |layer, layer_index| {
             layer_transmittance[layerTransmittanceIndex(nlayer, imu, layer_index)] =
@@ -273,7 +297,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamic(
         while (level > 0) {
             level -= 1;
 
-            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), direction_cosine_floor);
 
             // pseudo-spherical top attenuation multiplies exp(-tau_layer / directional_mu_layer).
             cumulative *= math.exp(-layers[level].optical_depth / u);
@@ -343,7 +367,7 @@ fn applyPseudoSphericalRuntimeTopToLevel(
         while (level > 0) {
             level -= 1;
 
-            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), direction_cosine_floor);
 
             // pseudo-spherical top_to_level multiplies exp(-tau_layer / directional_mu_layer).
             cumulative *= math.exp(-layers[level].optical_depth / u);
@@ -426,8 +450,6 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     }
     // end tradeoff: pseudo-spherical prepared-grid cap -------------------------------------------------------|
 
-    const rearth_km = 6371.0;
-
     for (0..geo.nmutot) |imu| {
         const u = std.math.clamp(geo.u[imu], -1.0, 1.0);
         const sin2theta = @max(1.0 - u * u, 0.0);
@@ -437,7 +459,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
         while (level > 0) {
             level -= 1;
 
-            const level_radius = rearth_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
+            const level_radius = earth_radius_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
             const sqrx_sin2theta = sin2theta * level_radius * level_radius;
             var sumkext: f64 = 0.0;
 
@@ -446,7 +468,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
 
                 if (sample.optical_depth <= 0.0) continue;
 
-                const sample_radius = rearth_km + sample.altitude_km;
+                const sample_radius = earth_radius_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
                 const numerator = sample.optical_depth * sample_radius;
 
@@ -454,8 +476,8 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
                 //              tau_sample * r_sample
                 //   -------------------------------------------
                 //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)
-                // denominator floor = 1.0e-12, used only to keep grazing paths finite.
-                sumkext += numerator / @max(denominator, 1.0e-12);
+                // denominator floor keeps grazing paths finite.
+                sumkext += numerator / @max(denominator, spherical_denominator_floor);
             }
 
             // T(top -> level) = exp(-sum of spherical slant optical depths).
@@ -496,7 +518,6 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
     }
     // end tradeoff: runtime pseudo-spherical prepared-grid cap -----------------------------------------------|
 
-    const rearth_km = 6371.0;
     const nlevel = top_level + 1;
 
     for (0..geo.nmutot) |imu| {
@@ -509,7 +530,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
         while (level > 0) {
             level -= 1;
 
-            const level_radius = rearth_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
+            const level_radius = earth_radius_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
             const sqrx_sin2theta = sin2theta * level_radius * level_radius;
             var sumkext: f64 = 0.0;
 
@@ -518,7 +539,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
 
                 if (sample.optical_depth <= 0.0) continue;
 
-                const sample_radius = rearth_km + sample.altitude_km;
+                const sample_radius = earth_radius_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
                 const numerator = sample.optical_depth * sample_radius;
 
@@ -526,8 +547,8 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
                 //              tau_sample * r_sample
                 //   -------------------------------------------
                 //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)
-                // denominator floor = 1.0e-12, used only to keep grazing paths finite.
-                sumkext += numerator / @max(denominator, 1.0e-12);
+                // denominator floor keeps grazing paths finite.
+                sumkext += numerator / @max(denominator, spherical_denominator_floor);
             }
 
             // top_to_level = exp(-sum of spherical slant optical depths).
@@ -565,7 +586,6 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
     //   feeds    : sample order from forward_input pseudo-spherical buffers                                   |
     // --------------------------------------------------------------------------------------------------------|
 
-    const rearth_km = 6371.0;
     const nlevel = top_level + 1;
     var level_radius_sq: [max_levels]f64 = undefined;
     var sample_radius_sq: [max_pseudo_spherical_fast_samples]f64 = undefined;
@@ -574,12 +594,12 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
     // level_radius_sq is indexed by level. sample_* arrays are indexed by the
     // original support-sample order.
     for (0..nlevel) |level| {
-        const radius = rearth_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
+        const radius = earth_radius_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
         level_radius_sq[level] = radius * radius;
     }
 
     for (pseudo_spherical_grid.samples, 0..) |sample, index| {
-        const radius = rearth_km + sample.altitude_km;
+        const radius = earth_radius_km + sample.altitude_km;
         sample_radius_sq[index] = radius * radius;
         sample_weighted_radius[index] = if (sample.optical_depth > 0.0) sample.optical_depth * radius else 0.0;
     }
@@ -601,8 +621,8 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
 
                 // Same fraction as the full grid path; numerator and radius
-                // squares are already precomputed. denominator floor = 1.0e-12.
-                sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
+                // squares are already precomputed. The denominator floor keeps grazing paths finite.
+                sumkext += sample_weighted_radius[index] / @max(denominator, spherical_denominator_floor);
             }
 
             top_to_level[top_offset + level] = math.exp(-sumkext);
@@ -629,7 +649,6 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
     //   feeds    : applyPseudoSphericalTopLevelAttenuationDynamicWithGrid callers                             |
     // --------------------------------------------------------------------------------------------------------|
 
-    const rearth_km = 6371.0;
     const nlevel = top_level + 1;
     const stream_stride = nlevel * nlevel;
     var level_radius_sq: [max_levels]f64 = undefined;
@@ -639,12 +658,12 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
     // These local arrays mirror the runtime prepared-grid path so the inner
     // loop only does the level-dependent denominator and sum.
     for (0..nlevel) |level| {
-        const radius = rearth_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
+        const radius = earth_radius_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
         level_radius_sq[level] = radius * radius;
     }
 
     for (pseudo_spherical_grid.samples, 0..) |sample, index| {
-        const radius = rearth_km + sample.altitude_km;
+        const radius = earth_radius_km + sample.altitude_km;
         sample_radius_sq[index] = radius * radius;
         sample_weighted_radius[index] = if (sample.optical_depth > 0.0) sample.optical_depth * radius else 0.0;
     }
@@ -666,8 +685,8 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
 
                 // Same fraction as the full grid path; numerator and radius
-                // squares are already precomputed. denominator floor = 1.0e-12.
-                sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
+                // squares are already precomputed. The denominator floor keeps grazing paths finite.
+                sumkext += sample_weighted_radius[index] / @max(denominator, spherical_denominator_floor);
             }
 
             values[top_level * nlevel + level] = math.exp(-sumkext);
@@ -774,7 +793,7 @@ pub fn fillAttenuationTangentDynamic(
             const layer_idx = ilFrom_idx - 1;
 
             for (0..geo.nmutot) |imu| {
-                const u = @max(geo.u[imu], 1.0e-6);
+                const u = @max(geo.u[imu], direction_cosine_floor);
                 const trans = math.exp(-layers[layer_idx].optical_depth / u);
                 const dtrans = trans * (-common.Jacobian.get(layers[layer_idx].optical_depth_jacobian, state) / u);
 
@@ -818,7 +837,7 @@ fn cumulativeBaseTransmittance(
     var value: f64 = 1.0;
     if (from_level >= to_level) return value;
 
-    const u = @max(geo.u[imu], 1.0e-6);
+    const u = @max(geo.u[imu], direction_cosine_floor);
 
     for (from_level..to_level) |layer_idx| {
         if (layer_idx >= layers.len) break;
@@ -1067,7 +1086,7 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
             const layer_idx = ilFrom_idx - 1;
 
             for (0..geo.nmutot) |imu| {
-                const u = @max(geo.u[imu], 1.0e-6);
+                const u = @max(geo.u[imu], direction_cosine_floor);
                 const atten_lay = math.exp(-layers[layer_idx].optical_depth / u);
 
                 // dynamic fallback T(from - 1 -> to) = T(from -> to) * exp(-tau_layer / mu).

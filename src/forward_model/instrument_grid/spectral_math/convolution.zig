@@ -91,12 +91,23 @@ fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: 
 }
 
 fn kernelSum(kernel: []const f64) f64 {
+    // kernelSum ----------------------------------------------------------------------------------------------|
+    // Sum kernel weights once so interior samples can reuse the same normalization.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     var sum: f64 = 0.0;
     for (kernel) |weight| sum += weight;
     return sum;
 }
 
 inline fn loadPair(values: []const f64, index: usize) @Vector(2, f64) {
+    // loadPair (two adjacent f64 values as one vector) -------------------------------------------------------|
+    // Read values[index] and values[index + 1] as one two-lane vector. The convolution interior uses this for |
+    // two signal*kernel products at a time.                                                                   |
+    //                                                                                                         |
+    // align(1) is deliberate: slices are contiguous, but this helper does not require vector-aligned storage. |
+    // --------------------------------------------------------------------------------------------------------|
+
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&values[index]);
     return pair.*;
 }

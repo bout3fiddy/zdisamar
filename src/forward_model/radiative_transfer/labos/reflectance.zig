@@ -272,6 +272,12 @@ pub fn calcIntegratedReflectanceWithBasis(
     const use_rtm_quadrature = rtm_quadrature.isValidFor(layers.len);
 
     for (0..end_level + 1) |ilevel| {
+
+        // Source data route ----------------------------------------------------------------------------------|
+        // RTM quadrature levels carry their own source weights and phase mixture.                             |
+        // Source-interface inputs are used only when the RTM grid is absent. On the RTM route this is null.   |
+        // ----------------------------------------------------------------------------------------------------|
+
         var fallback_source_interface: common.SourceInterfaceInput = undefined;
         const source_interface = choose_source_interface: {
             if (use_rtm_quadrature) break :choose_source_interface null;
@@ -283,6 +289,11 @@ pub fn calcIntegratedReflectanceWithBasis(
             fallback_source_interface = common.sourceInterfaceFromLayers(layers, ilevel);
             break :choose_source_interface &fallback_source_interface;
         };
+
+        // Source strength ------------------------------------------------------------------------------------|
+        // Prefer RTM quadrature source data when present. Otherwise use prepared interface quadrature with    |
+        // positive weight and scattering coefficient, then fall back to the legacy interface weight.          |
+        // ----------------------------------------------------------------------------------------------------|
 
         const use_source_interface_quadrature =
             !use_rtm_quadrature and
@@ -304,6 +315,12 @@ pub fn calcIntegratedReflectanceWithBasis(
         if (source_rtm_weight <= 0.0 or source_ksca <= 0.0) {
             continue;
         }
+
+        // Phase ceiling --------------------------------------------------------------------------------------|
+        // Do not build a source row for Fourier orders that cannot be present at this level.                  |
+        // Workspace-prepared adjacent limits are cheapest; otherwise derive the ceiling from layers, RTM      |
+        // quadrature data, or source-interface data.                                                          |
+        // ----------------------------------------------------------------------------------------------------|
 
         const source_max_phase_index = choose_source_phase_limit: {
             if (adjacent_layer_phase_max_indices) |indices| {
@@ -1143,6 +1160,15 @@ fn absorptionInterfaceWeighting(
         while (level_index > 0) {
             level_index -= 1;
 
+            // Curved solar path ------------------------------------------------------------------------------|
+            // y_k is the radius of the interface being weighted. y_l is the radius of the absorbing level.    |
+            // The fraction below is the spherical slant-path inverse used for the direct solar beam.          |
+            //                                                                                                 |
+            //                         y_k                                                                     |
+            //   -------------------------------------------------                                             |
+            //         sqrt(y_k^2 - y_l^2 * (1 - solar_mu^2))                                                  |
+            // ------------------------------------------------------------------------------------------------|
+
             const y_l = earth_radius_km + rtm_quadrature.levels[level_index].altitude_km;
             const denominator = @sqrt(@abs(y_k * y_k - y_l * y_l * (1.0 - solar_mu * solar_mu)));
             const solar_slant_inverse = if (denominator > 0.0) y_k / denominator else 0.0;
@@ -1154,7 +1180,6 @@ fn absorptionInterfaceWeighting(
                 direct_solar_at_level *
                 solar_slant_inverse;
 
-            // Curved solar path through one absorbing interface.
             pseudo_direct_sum += curved_direct_path;
         }
 
