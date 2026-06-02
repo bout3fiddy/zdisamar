@@ -41,9 +41,16 @@ const common = @import("../root.zig");
 //   imu = geo.viewIdx()     viewing direction                                                                 |
 //   imu = geo.n_gauss + 1   solar direction                                                                   |
 // ------------------------------------------------------------------------------------------------------------|
-pub const max_levels: usize = 65;
 
-// Some helpers keep temporary arrays with room for 65 levels. More layers use the slower fallback.
+// ------------------------------------------------------------------------------------------------------------|
+// ------------------------------------------------------------------------------------------------------------|
+// tradeoff: fixed level scratch cap                                                                           |
+// Keep stack scratch arrays at max_levels = 65; larger layer counts use generic fallback loops.               |
+// ------------------------------------------------------------------------------------------------------------|
+// The fallback uses the same attenuation math. The tradeoff is memory and speed: common O2 A routes get       |
+// small fixed local arrays, while unusual larger grids avoid writing past those arrays.                       |
+pub const max_levels: usize = 65;
+// end tradeoff: fixed level scratch cap ----------------------------------------------------------------------|
 
 // DynamicAttenArray ------------------------------------------------------------------------------------------|
 // Full attenuation matrix for all direction/from/to level pairs.                                              |
@@ -390,7 +397,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     // spherical slant optical depth adds this fraction                                                        |
     //                                                                                                         |
     //              tau_sample * r_sample                                                                      |
-    //   -------------------------------------------                                                           |
+    //   ------------------------------------------------------------------------------------------------------|
     //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)                                                           |
     //                                                                                                         |
     // The support grid follows the curved path more closely than one layer-wide                               |
@@ -400,6 +407,14 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     // --------------------------------------------------------------------------------------------------------|
 
     const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: pseudo-spherical prepared-grid cap                                                            |
+    // Use the prepared-grid fast path only for <= 65 levels and <= 512 support samples.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // The fallback below uses the same spherical slant optical-depth formula. The cap keeps local radius      |
+    // caches bounded on the stack; larger support grids pay the slower generic loop instead.                  |
     if (top_level + 1 <= max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
         applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
             atten,
@@ -409,6 +424,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
         );
         return;
     }
+    // end tradeoff: pseudo-spherical prepared-grid cap -------------------------------------------------------|
 
     const rearth_km = 6371.0;
 
@@ -438,6 +454,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
                 //              tau_sample * r_sample
                 //   -------------------------------------------
                 //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)
+                // denominator floor = 1.0e-12, used only to keep grazing paths finite.
                 sumkext += numerator / @max(denominator, 1.0e-12);
             }
 
@@ -460,6 +477,14 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
     // --------------------------------------------------------------------------------------------------------|
 
     const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: runtime pseudo-spherical prepared-grid cap                                                    |
+    // Use the prepared-grid fast path only for <= 65 levels and <= 512 support samples.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // The fallback below writes the same top-to-level attenuation values. The cap keeps the precomputed       |
+    // radius arrays bounded; larger support grids use the generic loop instead of oversized stack arrays.     |
     if (top_level + 1 <= max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
         applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
             top_to_level,
@@ -469,6 +494,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
         );
         return;
     }
+    // end tradeoff: runtime pseudo-spherical prepared-grid cap -----------------------------------------------|
 
     const rearth_km = 6371.0;
     const nlevel = top_level + 1;
@@ -500,6 +526,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
                 //              tau_sample * r_sample
                 //   -------------------------------------------
                 //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)
+                // denominator floor = 1.0e-12, used only to keep grazing paths finite.
                 sumkext += numerator / @max(denominator, 1.0e-12);
             }
 
@@ -509,9 +536,15 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
     }
 }
 
-// Prepared-grid fast paths use fixed local arrays capped by this value.
-// Larger support grids use the generic loop over samples.
+// ------------------------------------------------------------------------------------------------------------|
+// ------------------------------------------------------------------------------------------------------------|
+// tradeoff: fixed pseudo-spherical sample cap                                                                 |
+// Keep prepared-grid sample scratch arrays at max_pseudo_spherical_fast_samples = 512.                        |
+// ------------------------------------------------------------------------------------------------------------|
+// Larger support grids use the generic loop. That preserves the spherical-path calculation while avoiding     |
+// oversized stack arrays for rare grids.                                                                      |
 const max_pseudo_spherical_fast_samples: usize = 512;
+// end tradeoff: fixed pseudo-spherical sample cap ------------------------------------------------------------|
 
 fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
     top_to_level: []f64,
@@ -568,7 +601,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
 
                 // Same fraction as the full grid path; numerator and radius
-                // squares are already precomputed.
+                // squares are already precomputed. denominator floor = 1.0e-12.
                 sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
             }
 
@@ -633,7 +666,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid(
                 const denominator = @sqrt(@abs(sample_radius_sq[index] - sqrx_sin2theta));
 
                 // Same fraction as the full grid path; numerator and radius
-                // squares are already precomputed.
+                // squares are already precomputed. denominator floor = 1.0e-12.
                 sumkext += sample_weighted_radius[index] / @max(denominator, 1.0e-12);
             }
 
@@ -813,6 +846,13 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     // to avoid fixed local arrays that are too small.                                                         |
     // --------------------------------------------------------------------------------------------------------|
 
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: dynamic attenuation cache cap                                                                 |
+    // Use the layer-transmittance cache only when layers.len <= max_levels = 65.                              |
+    // --------------------------------------------------------------------------------------------------------|
+    // The cached path avoids repeated exponentials while expanding the full dynamic attenuation table.        |
+    // Larger layer counts use the repeated-exp fallback below so the fixed local cache cannot overflow.       |
     if (layers.len <= max_levels) {
         var layer_transmittance: [basis.max_nmutot * max_levels]f64 = undefined;
 
@@ -826,6 +866,7 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
             use_spherical_correction,
         );
     }
+    // end tradeoff: dynamic attenuation cache cap ------------------------------------------------------------|
 
     return fillAttenuationDynamicWithGridInBufferRepeatedExp(
         allocator,

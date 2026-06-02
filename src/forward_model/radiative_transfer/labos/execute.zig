@@ -788,8 +788,14 @@ fn layerResolvedLabosWithWorkspace(
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
 
-            // Aerosol weighting functions are Fourier-weighted just like
-            // reflectance. Integrated-source routes reuse UDsumLocal_fc.
+            // ------------------------------------------------------------------------------------------------|
+            // ------------------------------------------------------------------------------------------------|
+            // tradeoff: aerosol tangent Fourier cap                                                           |
+            // Skip aerosol Jacobian Fourier terms above aerosol_tangent_order_cap when that cap is set.       |
+            // ------------------------------------------------------------------------------------------------|
+            // Aerosol weighting functions are Fourier-weighted just like reflectance. By default the cap is   |
+            // null, so every retained Fourier term is evaluated. Fastmode research uses cap = 11 to reduce    |
+            // derivative work while keeping the retrieval correction small enough for that route.             |
             const evaluate_aerosol_tangent =
                 controls.performance_thresholds.shouldEvaluateAerosolTangent(i_fourier);
             const wants_aod_tangent = wants_aerosol_optical_depth and evaluate_aerosol_tangent;
@@ -952,9 +958,18 @@ fn layerResolvedLabosWithWorkspace(
                 );
                 // end instrumentation: perturbation: pressure tangent ----------------------------------------|
             }
+            // end tradeoff: aerosol tangent Fourier cap ------------------------------------------------------|
 
-            // Fourier tail stop is the local telemetry expression:
-            // tail_break = m >= fourier_floor_scalar and abs(rho_m) <= epsilon.
+            // ------------------------------------------------------------------------------------------------|
+            // ------------------------------------------------------------------------------------------------|
+            // tradeoff: Fourier tail stop                                                                     |
+            // Stop the Fourier loop when the current term is below fourier_tail_reflectance_epsilon.          |
+            // ------------------------------------------------------------------------------------------------|
+            // The stop is only allowed after fourier_floor_scalar = 2. The reflectance epsilon is 3.0e-14 by  |
+            // generic default and in O2 A. Lower epsilon keeps more Fourier terms; higher epsilon stops       |
+            // sooner and drops more of the azimuthal tail.                                                    |
+            //                                                                                                 |
+            // tail_break = m >= fourier_floor_scalar and abs(rho_m) <= epsilon.                               |
 
             // instrumentation: telemetry and perturbation: tail break ----------------------------------------|
             // captures: Fourier tail-stop decision and term magnitude                                         |
@@ -986,6 +1001,8 @@ fn layerResolvedLabosWithWorkspace(
                 // end instrumentation: trace counter: tail break ---------------------------------------------|
                 stop_fourier_loop = true;
             }
+            // end tradeoff: Fourier tail stop ----------------------------------------------------------------|
+
             // end instrumentation: trace zone: Fourier term --------------------------------------------------|
         }
 

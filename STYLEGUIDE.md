@@ -103,8 +103,9 @@ fn layerResolvedSolveWithWorkspace(...) Result {
     // --------------------------------------------------------------------------------------------------------|
 ```
 
-Use sections only when they help. Good sections are `hot path`, `calls`, and
-`math`.
+Use sections only when they help. Good sections are `hot path`, `calls`,
+`math`, and `instrumentation`. If a function has many trace or telemetry blocks,
+the function map should say what they measure and why they exist.
 
 ## Value Blocks
 
@@ -184,8 +185,15 @@ const Result = struct {
 ## Instrumentation
 
 Only box real instrumentation code. Leave a blank line before the
-`instrumentation:` header. Put trace details next to the trace, not in a hot-path
-summary.
+`instrumentation:` header and after the `end instrumentation:` footer. Put trace
+details next to the trace, not in a hot-path summary.
+
+`Trace.*`, `Telemetry.*`, and `Perturbation.*` are all instrumentation.
+Perturbation hooks are especially important to box because they can replace a
+branch result during experiments.
+
+Use `instrumentation: perturbation: <decision>` for perturbation hooks and
+`instrumentation: calculation telemetry: <event>` for telemetry rows.
 
 ```zig
 // instrumentation: trace zone: cache lookup ------------------------------------------------------------------|
@@ -194,6 +202,31 @@ summary.
 const zone = Trace.deepStaticZone(@src(), "path.cache_lookup");
 defer zone.end();
 // end instrumentation: trace zone: cache lookup --------------------------------------------------------------|
+
+useCachedPath();
+```
+
+## Tradeoffs
+
+Use a stronger box when the code deliberately trades accuracy for speed, memory,
+or a safety cap. Explain what is dropped or approximated and which threshold or
+control owns the decision.
+
+If a threshold appears, name the value near the branch. Include the important
+configured default when there is one. If research or measurement chose the
+threshold, add the short result beside the code instead of making the reader
+search for it.
+
+```zig
+// ------------------------------------------------------------------------------------------------------------|
+// ------------------------------------------------------------------------------------------------------------|
+// tradeoff: tiny contribution cutoff                                                                          |
+// Treat a contribution below contribution_floor = 1.0e-8 as zero.                                             |
+// ------------------------------------------------------------------------------------------------------------|
+// contribution_floor is the accuracy/speed knob. Lower values keep more work. Higher values skip more work.   |
+// The measured route kept spectrum error below the stated tolerance at 1.0e-8.                                |
+if (abs_contribution <= cutoff) return zero;
+// end tradeoff: tiny contribution cutoff ---------------------------------------------------------------------|
 ```
 
 ## Whitespace

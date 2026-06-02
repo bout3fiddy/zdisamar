@@ -56,10 +56,12 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     if (n == 12 and n_gauss == 10) {
         // Fixed trace gate -----------------------------------------------------------------------------------|
         // The Gaussian block is the first 10x10 part of a 12x12 stream matrix.                                |
-        // In row-major storage, its diagonal is:                                                              |
+        // Mat.data is row-major, so element M[row,col] is stored at row*12 + col. On the diagonal, row=col=k, |
+        // so the index is k*12 + k = k*13.                                                                    |
         //                                                                                                     |
-        //   k       : 0   1   2   3   4   5   6   7    8    9                                                 |
-        //   index   : 0  13  26  39  52  65  78  91  104  117                                                 |
+        //   k          : 0   1   2   3   4   5   6   7    8    9                                              |
+        //   A[k,k] idx : 0  13  26  39  52  65  78  91  104  117                                              |
+        //   B[k,k] idx : 0  13  26  39  52  65  78  91  104  117                                              |
         //                                                                                                     |
         // trace(A_gg) * trace(B_gg) is the cheap product-size test used before running the unrolled 12x10     |
         // multiply.                                                                                           |
@@ -74,6 +76,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         tra += a.data[104];
         tra += a.data[117];
 
+        // Same diagonal indexes, now in B. b.data[13] is B[1,1], not a special column.
         var trb = b.data[0];
         trb += b.data[13];
         trb += b.data[26];
@@ -84,9 +87,20 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         trb += b.data[91];
         trb += b.data[104];
         trb += b.data[117];
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: fixed small-multiply trace gate                                                           |
+        // Return zero when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                   |
+        // ----------------------------------------------------------------------------------------------------|
+        // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2 A. This skips a       |
+        // full 12x10 product when the Gaussian trace estimate says the product is too small to matter.        |
         if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
+        // end tradeoff: fixed small-multiply trace gate ------------------------------------------------------|
 
         // Retained fixed product -----------------------------------------------------------------------------|
+        // Use the hand-shaped kernel documented below.                                                        |
+        // ----------------------------------------------------------------------------------------------------|
+
         return smul12x10(a, b);
     }
 
@@ -99,8 +113,15 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         tra += a.data[idx];
         trb += b.data[idx];
     }
-    if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
     // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: generic small-multiply trace gate                                                             |
+    // Return zero when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // This is the same accuracy/speed cutoff as the fixed 12x10 path, but with runtime n and n_gauss.         |
+    // It avoids the full product when the caller's threshold says the product is negligible.                  |
+    if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
+    // end tradeoff: generic small-multiply trace gate --------------------------------------------------------|
 
     var result = Mat{ .data = undefined, .n = n };
 
@@ -168,6 +189,13 @@ pub inline fn smulInto(
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == 12 and n_gauss == 10) {
+        // Fixed trace gate, caller-owned output --------------------------------------------------------------|
+        // Same 10x10 Gaussian diagonal as smul. Mat.data is row-major, so diagonal M[k,k] is stored at        |
+        // k*12 + k = k*13: indexes 0, 13, 26, ..., 117. The B trace uses the same positions in b.data.        |
+        // This branch repeats the scan so a retained product can write directly into out with smul12x10Into.  |
+        // If the trace product is tiny, out receives the zero matrix and no multiply is run.                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         var tra = a.data[0];
         tra += a.data[13];
         tra += a.data[26];
@@ -178,6 +206,8 @@ pub inline fn smulInto(
         tra += a.data[91];
         tra += a.data[104];
         tra += a.data[117];
+
+        // Same diagonal indexes, now in B. b.data[13] is B[1,1], not a special column.
         var trb = b.data[0];
         trb += b.data[13];
         trb += b.data[26];
@@ -188,13 +218,29 @@ pub inline fn smulInto(
         trb += b.data[91];
         trb += b.data[104];
         trb += b.data[117];
+
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: caller-output fixed trace gate                                                            |
+        // Write zero when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        // This is the caller-owned-output version of the same 12x10 product skip. It avoids the multiply and  |
+        // writes a zero matrix into out.                                                                      |
         if (@abs(tra * trb) <= threshold_mul) {
             out.* = Mat.zero(n);
             return;
         }
+        // end tradeoff: caller-output fixed trace gate -------------------------------------------------------|
+
+        // Retained fixed product -----------------------------------------------------------------------------|
+        // Use the hand-shaped kernel and write directly into the caller's Mat.                                |
+        // ----------------------------------------------------------------------------------------------------|
+
         smul12x10Into(out, a, b);
         return;
     }
+
+    // Generic route delegates to smul, then copies the returned Mat into caller-owned storage.
     out.* = smul(n, n_gauss, threshold_mul, a, b);
 }
 
@@ -239,9 +285,18 @@ pub inline fn smulIntoKnownTracesIfNonzero(
     // --------------------------------------------------------------------------------------------------------|
 
     @setEvalBranchQuota(10_000);
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: known-trace product gate                                                                      |
+    // Return false when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    // The caller already paid for the traces, so this keeps fused kernels from doing a product they will      |
+    // immediately treat as negligible.                                                                        |
     if (@abs(trace_a * trace_b) <= threshold_mul) {
         return false;
     }
+    // end tradeoff: known-trace product gate -----------------------------------------------------------------|
+
     if (n == 12 and n_gauss == 10) {
         smul12x10Into(out, a, b);
         return true;
@@ -1147,6 +1202,14 @@ fn smulAddSemul3_12KnownTracesInto(
 
     @setEvalBranchQuota(20_000);
     result.* = .{ .data = undefined, .n = 12 };
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: fixed fused-product trace gate                                                                |
+    // Skip A*C when abs(trace(A_gg) * trace(C_gg)) <= threshold_mul.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2 A. The skipped path       |
+    // keeps the base C + A*diag(e) term and drops only the small Gaussian product contribution.               |
     if (@abs(tra * trc) <= threshold_mul) {
         // Product skipped ------------------------------------------------------------------------------------|
         // The Gaussian product A*C is small enough to ignore. Write only the base term:                       |
@@ -1173,6 +1236,7 @@ fn smulAddSemul3_12KnownTracesInto(
         }
         return;
     }
+    // end tradeoff: fixed fused-product trace gate -----------------------------------------------------------|
 
     inline for (0..12) |i| {
         const row = i * 12;
@@ -1932,13 +1996,18 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
 
     if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab);
 
-    // Product trace gate -------------------------------------------------------------------------------------|
-    // A tiny trace means AB already has negligible Gaussian feedback, so the q-series correction is skipped.  |
     // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: q-series trace gate                                                                           |
+    // Return AB directly when abs(trace(AB_gg)) < threshold_q = 1.0e-3.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // Q adds repeated-reflection feedback from inverse(I - AB_gg). When the Gaussian trace is tiny, this      |
+    // skips the inversion and keeps AB as the q-series result.                                                |
 
     var trab: f64 = 0.0;
     for (0..n_gauss) |k| trab += ab.data[k * n + k];
     if (@abs(trab) < threshold_q) return ab.*;
+    // end tradeoff: q-series trace gate ----------------------------------------------------------------------|
 
     const n_extra = n - n_gauss;
 
@@ -1995,7 +2064,16 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
         }
 
         const diag = one_minus_ab_gg[pivot_offset[col] + col];
+
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: LU pivot floor                                                                            |
+        // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
+        // ----------------------------------------------------------------------------------------------------|
+        // This avoids unstable division while inverting I - AB_gg. The fallback keeps the pre-inversion       |
+        // product instead of producing a numerically explosive q-series correction.                           |
         if (@abs(diag) < lu_diagonal_floor) return ab.*;
+        // end tradeoff: LU pivot floor -----------------------------------------------------------------------|
 
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;
@@ -2131,9 +2209,13 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
 
     result.* = .{ .data = undefined, .n = 12 };
 
-    // Product trace gate -------------------------------------------------------------------------------------|
-    // A tiny trace means AB already has negligible Gaussian feedback, so the q-series correction is skipped.  |
     // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: fixed q-series trace gate                                                                     |
+    // Return AB directly when abs(trace(AB_gg)) < threshold_q = 1.0e-3.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // Same cutoff as the generic route, but with fixed 10x10 Gaussian diagonal indexes. It avoids the fixed   |
+    // LU solve when the repeated-reflection correction is already negligible.                                 |
 
     var trab = ab.data[0];
     trab += ab.data[13];
@@ -2149,6 +2231,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         result.* = ab.*;
         return;
     }
+    // end tradeoff: fixed q-series trace gate ----------------------------------------------------------------|
 
     // Factorization matrix -----------------------------------------------------------------------------------|
     // Build the fixed 10x10 matrix M = I - AB_gg. The final two rows/columns are handled after the inverse.   |
@@ -2203,10 +2286,19 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         }
 
         const diag = one_minus_ab_gg[col * 10 + col];
+
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: fixed LU pivot floor                                                                      |
+        // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
+        // ----------------------------------------------------------------------------------------------------|
+        // This avoids unstable division in the fixed 10x10 inverse. The fallback keeps the pre-inversion      |
+        // product instead of producing a numerically explosive q-series correction.                           |
         if (@abs(diag) < lu_diagonal_floor) {
             result.* = ab.*;
             return;
         }
+        // end tradeoff: fixed LU pivot floor -----------------------------------------------------------------|
 
         const inv_diag = 1.0 / diag;
         inverse_diag[col] = inv_diag;

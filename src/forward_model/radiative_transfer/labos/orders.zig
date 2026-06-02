@@ -1056,6 +1056,15 @@ fn ordersScatInternal(
 
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: first-order convergence stop                                                                  |
+    // Return after the first transported order when max outgoing upward light is below threshold_conv_first.  |
+    // --------------------------------------------------------------------------------------------------------|
+    // threshold_conv_first = 1.0e-6 by generic default and 1.5e-7 in O2 A. Lower values keep more             |
+    // scattering-order work. Higher values stop earlier and drop more weak multiple-scattering feedback.      |
+    // If scattering is not multiple, the return is requested physics rather than a tolerance shortcut.        |
+
     // instrumentation: perturbation: initial stop ------------------------------------------------------------|
     // captures: initial-order convergence decision                                                            |
     // why: test sensitivity of the single-scattering early return.                                            |
@@ -1068,6 +1077,8 @@ fn ordersScatInternal(
         );
     }
     // end instrumentation: perturbation: initial stop --------------------------------------------------------|
+
+    // end tradeoff: first-order convergence stop -------------------------------------------------------------|
 
     if (initial_stop) {
 
@@ -1239,7 +1250,16 @@ fn ordersScatInternal(
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
-        // instrumentation: telemetry and perturbation: multiple stop -----------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: multiple-order convergence stop                                                           |
+        // Stop adding scattering orders when the order field is below threshold_conv_mult or the cap is hit.  |
+        // ----------------------------------------------------------------------------------------------------|
+        // threshold_conv_mult = 1.0e-4 by generic default and 1.5e-9 in O2 A. num_orders_max is the hard cap; |
+        // when it is zero, the resolved cap is roughly max(scattering optical depth, 0) + 15. Lower threshold |
+        // values keep more scattering orders. Higher values stop earlier and drop more weak order feedback.   |
+
+        // instrumentation: perturbation: multiple stop -------------------------------------------------------|
         // captures: multiple-order stop margin and forced stop experiments                                    |
         // why: identify scattering orders that are safe to skip by tolerance.                                 |
         const hit_iteration_cap = num_orders >= num_orders_max;
@@ -1251,7 +1271,9 @@ fn ordersScatInternal(
                 max_value < controls.performance_thresholds.threshold_conv_mult,
             );
         }
-        // end instrumentation: telemetry and perturbation: multiple stop -------------------------------------|
+        // end instrumentation: perturbation: multiple stop ---------------------------------------------------|
+
+        // end tradeoff: multiple-order convergence stop ------------------------------------------------------|
 
         if (multiple_stop) {
 
