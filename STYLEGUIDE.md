@@ -136,6 +136,10 @@ Write formulas like a person will read them:
 - Include units when units matter.
 - If a formula follows a reference implementation, name the routine or source
   when known.
+- Use small matrix diagrams when the code is implementing matrix algebra.
+  Keep only the entries that explain the local code path.
+- Make the local code the actor. Say `this builds the scalar version of the
+  reference formula`, not `the reference builds`.
 
 ## Numbers
 
@@ -152,6 +156,17 @@ Write formulas like a person will read them:
 //              tau_sample * r_sample
 //   -------------------------------------------
 //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)
+```
+
+```zig
+// scalar reduction from a larger reference matrix:
+//
+//       | alpha1  beta1    0       0    |
+//   S = | beta1   alpha2   0       0    |
+//       |   0       0    alpha3  beta2  |
+//       |   0       0   -beta2   alpha4 |
+//
+// scalar path keeps S[0,0] = alpha1.
 ```
 
 ## Layout

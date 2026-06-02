@@ -305,7 +305,8 @@ def check_function_header_comments(path: Path, lines: Sequence[str]) -> Iterable
             metrics={},
             suggestions=(
                 "Move the comment into the function box as the first body statement.",
-                "Leave a blank line before fn only when the previous comment belongs to another block.",
+                "Leave a blank line before fn only when the previous comment "
+                "belongs to another block.",
             ),
             performance_safety=("Moving comments does not affect compiler output.",),
         )
@@ -316,7 +317,11 @@ def check_instrumentation_spacing(path: Path, lines: Sequence[str]) -> Iterable[
     for index, line in enumerate(lines):
         stripped = line.strip()
 
-        if stripped.startswith("// instrumentation:") and index > 0 and lines[index - 1].strip() != "":
+        if (
+            stripped.startswith("// instrumentation:")
+            and index > 0
+            and lines[index - 1].strip() != ""
+        ):
             yield Finding(
                 path=path,
                 line_start=index + 1,
@@ -330,7 +335,11 @@ def check_instrumentation_spacing(path: Path, lines: Sequence[str]) -> Iterable[
                 performance_safety=("Whitespace and comments do not affect compiler output.",),
             )
 
-        if stripped.startswith("// end instrumentation:") and index + 1 < len(lines) and lines[index + 1].strip() != "":
+        if (
+            stripped.startswith("// end instrumentation:")
+            and index + 1 < len(lines)
+            and lines[index + 1].strip() != ""
+        ):
             yield Finding(
                 path=path,
                 line_start=index + 1,

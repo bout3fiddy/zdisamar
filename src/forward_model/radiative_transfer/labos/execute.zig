@@ -21,6 +21,10 @@ const Trace = @import("../../performance_trace.zig");
 // exported by                                                                                                 |
 //   labos/root.zig as execute and executeWithWorkspace                                                        |
 //                                                                                                             |
+// reference order                                                                                             |
+//   zdisamar mirrors LabosModule.f90 layerBasedOrdersScattering: attenuation, PLM basis, RT_fc, surface,      |
+//   scattering orders, reflectance, then requested weighting functions.                                       |
+//                                                                                                             |
 // main paths                                                                                                  |
 //   execute                                                                                                   |
 //     -> executeWithWorkspace                                                                                 |
@@ -39,7 +43,7 @@ const Trace = @import("../../performance_trace.zig");
 //   3. add Fourier-weighted rho_m into total reflectance                                                      |
 //   4. calculate requested Jacobians                                                                          |
 //                                                                                                             |
-// DISAMAR names                                                                                               |
+// reference names                                                                                             |
 //   RT_fc         : layer reflection/transmission matrices                                                    |
 //   UD_fc         : radiation fields from scattering orders                                                   |
 //   UDsumLocal_fc : local source sums used by integrated-source Jacobians                                     |
@@ -570,7 +574,7 @@ fn layerResolvedLabosWithWorkspace(
         var stop_fourier_loop = false;
         {
 
-            // One Fourier term follows the DISAMAR order:
+            // One Fourier term follows the reference order:
             // Plm basis -> RT_fc -> surface -> UD_fc -> refl_fc -> sum.
 
             // instrumentation: trace zone: Fourier term ------------------------------------------------------|
@@ -639,8 +643,8 @@ fn layerResolvedLabosWithWorkspace(
 
             }
 
-            // Surface reflection is represented as layer index 0, matching
-            // DISAMAR's RT layer convention.
+            // Surface reflection is represented as layer index 0, matching the
+            // reference RT layer convention.
             rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
             if (workspace != null) {
                 orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;

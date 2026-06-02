@@ -32,9 +32,20 @@ const common = @import("../root.zig");
 //   transmittance = exp(-optical_depth / mu)                                                                  |
 //   mu is the cosine of the ray zenith angle                                                                  |
 //                                                                                                             |
+//   pseudo-spherical top paths use                                                                            |
+//                                                                                                             |
+//              tau_sample * r_sample                                                                          |
+//   -------------------------------------------                                                               |
+//   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)                                                               |
+//                                                                                                             |
+//                                                                                                             |
 // storage                                                                                                     |
 //   dynamic path : full [direction, from_level, to_level] table                                               |
 //   runtime path : adjacent-layer table plus top-to-level table                                               |
+//                                                                                                             |
+// reference note                                                                                              |
+//   atten(imu, from, to) is not symmetric in a spherical-shell atmosphere: top -> level and level -> top can  |
+//   follow different slant paths.                                                                             |
 //                                                                                                             |
 // direction index                                                                                             |
 //   imu = 0 .. n_gauss - 1  Gauss quadrature directions                                                       |
@@ -421,7 +432,7 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     // spherical slant optical depth adds this fraction                                                        |
     //                                                                                                         |
     //              tau_sample * r_sample                                                                      |
-    //   ------------------------------------------------------------------------------------------------------|
+    //   -------------------------------------------                                                           |
     //   sqrt(r_sample^2 - r_level^2 * sin(theta)^2)                                                           |
     //                                                                                                         |
     // The support grid follows the curved path more closely than one layer-wide                               |

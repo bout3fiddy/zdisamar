@@ -28,6 +28,19 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 //   C[i,j] = sum over Gaussian k of A[i,k] * B[k,j].                                                          |
 //   Q(AB) = inverse(I - AB_gg) - I on the Gaussian block.                                                     |
 //                                                                                                             |
+// q-series block shape                                                                                        |
+//   AB is split into Gaussian streams g and extra view/solar streams x:                                       |
+//                                                                                                             |
+//        | AB_gg  AB_gx |                                                                                     |
+//   AB = | AB_xg  AB_xx |                                                                                     |
+//                                                                                                             |
+//   Q_gg = inverse(I - AB_gg) - I                                                                             |
+//   Q_gx = inverse(I - AB_gg) * AB_gx                                                                         |
+//   Q_xg = AB_xg * inverse(I - AB_gg)                                                                         |
+//   Q_xx = AB_xx + Q_xg * AB_gx                                                                               |
+//                                                                                                             |
+//   The reference q-series comment points to Hovenier, van der Mee, and Domke, 2004, Appendix F.              |
+//                                                                                                             |
 // numbers                                                                                                     |
 //   threshold_q skips q-series inversion when the AB trace is already tiny.                                   |
 //   lu_diagonal_floor is the singular-pivot fallback for LU factorization.                                    |
@@ -2010,6 +2023,13 @@ inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, no
 inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *const Mat) Mat {
     // qseriesFromProduct (build Q(AB) from a retained AB product) --------------------------------------------|
     // Turn an already-built AB product into the LABOS q-series matrix.                                        |
+    //                                                                                                         |
+    // zdisamar uses the same repeated-reflection shape as the reference `Qseries`:                            |
+    //                                                                                                         |
+    //   AB + AB * AB + AB * AB * AB + ...                                                                     |
+    //                                                                                                         |
+    // Instead of summing terms directly, it inverts the Gaussian block of I - AB and then fills the extra     |
+    // view/solar rows and columns from that inverse.                                                          |
     //                                                                                                         |
     // Split AB by stream kind:                                                                                |
     //   [ gg | gx ]                                                                                           |

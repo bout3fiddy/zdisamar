@@ -27,12 +27,19 @@ const Trace = @import("../../performance_trace.zig");
 //   calcRTlayersTangentIntoWithBasis                                                                          |
 //     -> central-difference RT layer derivative for one Jacobian state                                        |
 //                                                                                                             |
-// DISAMAR names                                                                                               |
+// reference names                                                                                             |
 //   RT_fc : layer reflection/transmission matrices for one Fourier term                                       |
 //   R     : layer reflection matrix                                                                           |
 //   T     : layer transmission matrix                                                                         |
 //   E     : direct attenuation through the current layer                                                      |
 //   Zplus/Zmin : phase kernels used by transmission/reflection single scatter                                 |
+//                                                                                                             |
+// reference layer formulas                                                                                    |
+//   Rsingle: R[i,j] = omega * Zmin[i,j]  * (1 - E[i] * E[j]) * dmu_plus[i,j]                                  |
+//   Tsingle: T[i,j] = omega * Zplus[i,j] * EET[i,j]             * dmu_min[i,j]                                |
+//                                                                                                             |
+//   EET[i,j] = tau_start * E[i]     when mu_i ~= mu_j                                                         |
+//            = E[i] - E[j]          otherwise                                                                 |
 //                                                                                                             |
 // numbers                                                                                                     |
 //   phase_normalization_floor keeps phase normalization divisions finite                                      |
@@ -123,6 +130,12 @@ pub fn renormalizeZeroFourierPhaseKernel(
     //                                                                                                         |
     // math                                                                                                    |
     //   integral_mu (Zplus + Zmin) = 2                                                                        |
+    //                                                                                                         |
+    // reference renorm target                                                                                 |
+    //   sum over Gaussian mu_i of wg_i * (Zplus(i,j) + Zmin(i,j)) = 2                                         |
+    //                                                                                                         |
+    // For a Gaussian column, the diagonal Zplus value is adjusted. For an extra view/solar column, the        |
+    // correction is placed on the nearest Gaussian direction because there is no matching quadrature point.   |
     // --------------------------------------------------------------------------------------------------------|
 
     if (geo.n_gauss == 0 or geo.nmutot == 0) return;
@@ -432,6 +445,15 @@ fn doDouble(
     //                                                                                                         |
     // math                                                                                                    |
     //   each step combines two identical sublayers into one thicker layer                                     |
+    //                                                                                                         |
+    // reference double step                                                                                   |
+    //   Rst = transform_top_bottom(R)                                                                         |
+    //   Tst = transform_top_bottom(T)                                                                         |
+    //   Q   = Qseries(Rst, R)                                                                                 |
+    //   D   = T + Q * E + Q * T                                                                               |
+    //   U   = R * E + R * D                                                                                   |
+    //   R   = R + E * U + Tst * U                                                                             |
+    //   T   = E * D + T * E + T * D                                                                           |
     //                                                                                                         |
     // instrumentation                                                                                         |
     //   traces which doubling steps keep Q/R-D/T-U/T-D matrix products and which steps use cheaper paths      |
@@ -1576,8 +1598,8 @@ pub fn calcRTlayersIntoWithBasis(
         // tradeoff: optional phase renormalization                                                            |
         // Run the zero-Fourier phase normalization pass only when the route asks for it.                      |
         // ----------------------------------------------------------------------------------------------------|
-        // controls.renorm_phase_function defaults to true. This correction improves DISAMAR parity for        |
-        // doubled zero-Fourier phase kernels. It costs an extra pass over Zplus/Zmin. If the control is       |
+        // controls.renorm_phase_function defaults to true. This correction improves parity with the           |
+        // reference zero-Fourier phase kernels. It costs an extra pass over Zplus/Zmin. If the control is     |
         // false, the solver keeps the faster raw phase kernel and skips that normalization correction.        |
         const needs_renormalized_phase =
             doubling_decision.uses_doubling and i_fourier == 0 and controls.renorm_phase_function;
@@ -1610,7 +1632,7 @@ pub fn calcRTlayersIntoWithBasis(
 
                 // instrumentation: trace zone: phase renormalization -----------------------------------------|
                 // captures: zero-Fourier phase renormalization wall time                                      |
-                // why: make this optional DISAMAR-parity correction visible.                                  |
+                // why: make this optional reference-parity correction visible.                                |
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
                 defer zone.end();
                 renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);

@@ -11,8 +11,9 @@ const Trace = @import("../../performance_trace.zig");
 // LABOS scattering-order transport. RT_fc plus attenuation becomes U/D fields for reflectance.                |
 //                                                                                                             |
 // source                                                                                                      |
-//   follows DISAMAR LabosModule.f90 ordersScat and transportToOtherLevels                                     |
+//   zdisamar follows LabosModule.f90 ordersScat and transportToOtherLevels                                    |
 //   successive scattering orders are built locally, transported, accumulated, then tested                     |
+//   orders are between layers, not volume elements; the reflecting surface is handled as a layer              |
 //                                                                                                             |
 // used by                                                                                                     |
 //   execute.zig calls these entry points inside one Fourier term after attenuation and RT_fc are ready        |
@@ -33,7 +34,7 @@ const Trace = @import("../../performance_trace.zig");
 //   ordersScatTangent                                                                                         |
 //     -> non-integrated Jacobian path with base and derivative U/D fields                                     |
 //                                                                                                             |
-// DISAMAR names                                                                                               |
+// reference names                                                                                             |
 //   E              : direct top-to-level attenuation                                                          |
 //   U              : upward diffuse light                                                                     |
 //   D              : downward diffuse light                                                                   |
@@ -44,6 +45,7 @@ const Trace = @import("../../performance_trace.zig");
 //                                                                                                             |
 // convergence                                                                                                 |
 //   stop when max_outgoing_upward < threshold_conv                                                            |
+//   the reference notes a geometric-tail approximation for remaining orders at the order cap                  |
 //   telemetry name: orders_convergence                                                                        |
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -210,7 +212,7 @@ fn transportToOtherLevels(
     // Upward:   U_level = U_local_level + atten(mu, level - 1, level) * U_(level - 1)                         |
     // Downward: D_level = D_local_level + atten(mu, level + 1, level) * D_(level + 1)                         |
     //                                                                                                         |
-    // Same recurrence as DISAMAR `transportToOtherLevels`.                                                    |
+    // Same recurrence as the reference `transportToOtherLevels`.                                              |
     //                                                                                                         |
     // Dispatches to fixed 12-stream helpers when the geometry has the common                                  |
     // max-stream shape.                                                                                       |
@@ -913,7 +915,7 @@ fn ordersScatInternal(
     // ordersScatInternal -------------------------------------------------------------------------------------|
     // Core scattering-order solver.                                                                           |
     //                                                                                                         |
-    // Follows `LabosModule.f90` `ordersScat`:                                                                 |
+    // zdisamar follows `LabosModule.f90` `ordersScat`:                                                        |
     // copy attenuation into E, build the first local U/D source, transport it,                                |
     // then build each later local source from the previous transported order.                                 |
     //                                                                                                         |
@@ -928,6 +930,18 @@ fn ordersScatInternal(
     // knows which layer RT matrices are nonzero.                                                              |
     // track_sum_local controls whether UDsumLocal_fc-style local sources are                                  |
     // accumulated for integrated-source Jacobian weighting.                                                   |
+    //                                                                                                         |
+    // One later scattering order uses the same local-source/transport split as the reference:                 |
+    //                                                                                                         |
+    //   1. local source at each layer                                                                         |
+    //        D_local = Rst * U_previous + T   * D_previous                                                    |
+    //        U_local = R   * D_previous + Tst * U_previous                                                    |
+    //                                                                                                         |
+    //   2. transport that local source to all levels with attenuation                                         |
+    //        U_level = U_local_level + atten(previous -> level) * U_previous_level                            |
+    //        D_level = D_local_level + atten(next     -> level) * D_next_level                                |
+    //                                                                                                         |
+    //   3. add the transported order into UD_fc and, when requested, add local source into UDsumLocal_fc      |
     //                                                                                                         |
     // This function does not allocate. Public wrappers decide whether storage is                              |
     // workspace-backed or owned by the returned result.                                                       |

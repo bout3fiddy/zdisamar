@@ -30,7 +30,7 @@ const math = std.math;
 //   calcAerosolLayerPressureShiftWeightingWithBasis                                                           |
 //     -> aerosol layer-pressure weighting only                                                                |
 //                                                                                                             |
-// DISAMAR names                                                                                               |
+// reference names                                                                                             |
 //   rho_m          : refl_fc before execute.zig applies the Fourier weight                                    |
 //   UD_fc          : internal upward/downward radiation fields                                                |
 //   UDsumLocal_fc  : accumulated local source fields for spherical absorption weighting                       |
@@ -41,6 +41,13 @@ const math = std.math;
 // math                                                                                                        |
 //   rho_m += RTMweight * E_view * k_sca * (PminusD + PplusU)                                                  |
 //   execute.zig later adds Fourier weight * rho_m into total reflectance                                      |
+//                                                                                                             |
+// reference source-function shape                                                                             |
+//   dR/dz = k_sca(z) * E_view * [ P- * (E_solar + D_solar) + P+ * U_solar ]                                   |
+//                                                                                                             |
+//   scalar effective phase factors                                                                            |
+//     P- = 0.25 * Zmin  / (mu_view * mu_source)                                                               |
+//     P+ = 0.25 * Zplus / (mu_view * mu_source)                                                               |
 // ------------------------------------------------------------------------------------------------------------|
 
 // numerical floors -------------------------------------------------------------------------------------------|
@@ -49,7 +56,7 @@ const math = std.math;
 //                                                                                                             |
 // phase_support_floor ignores tiny phase coefficients when choosing the highest active Fourier term.          |
 // direction_cosine_floor clamps mu before 1 / mu terms for grazing directions.                                |
-// near_normal_mu_delta uses the DISAMAR scalar-Fourier shortcut when mu is close to 1.                        |
+// near_normal_mu_delta uses the reference scalar-Fourier shortcut when mu is close to 1.                      |
 // ------------------------------------------------------------------------------------------------------------|
 const phase_support_floor: f64 = 1.0e-12;
 const direction_cosine_floor: f64 = 1.0e-12;
@@ -161,7 +168,7 @@ pub fn calcReflectance(
     // calcReflectance ----------------------------------------------------------------------------------------|
     // Non-integrated LABOS reflectance for one Fourier term.                                                  |
     //                                                                                                         |
-    // DISAMAR `CalcReflectance` does this when `integrateSourceFunction` is false:                            |
+    // zdisamar matches `CalcReflectance` when `integrateSourceFunction` is false:                             |
     // read the ordinary upward field at the top level, solar column, viewing direction.                       |
     // --------------------------------------------------------------------------------------------------------|
 
@@ -255,13 +262,16 @@ pub fn calcIntegratedReflectanceWithBasis(
     // math                                                                                                    |
     //   rho_m += RTMweight * E_view * k_sca * (PminusD + PplusU)                                              |
     //                                                                                                         |
+    //   Pminus = 0.25 * Zmin  / (mu_view * mu_source)                                                         |
+    //   Pplus  = 0.25 * Zplus / (mu_view * mu_source)                                                         |
+    //                                                                                                         |
     //   PminusD = sum_mu Pminus(view, mu) * D_solar(mu)                                                       |
     //           + Pminus(view, solar) * E_solar                                                               |
     //                                                                                                         |
     //   PplusU  = sum_mu Pplus(view, mu) * U_solar(mu)                                                        |
     //                                                                                                         |
     // source                                                                                                  |
-    //   follows DISAMAR LabosModule.f90 CalcReflectance integrated-source branch                              |
+    //   zdisamar follows LabosModule.f90 CalcReflectance integrated-source branch                             |
     // --------------------------------------------------------------------------------------------------------|
 
     const solar_col: usize = 1;
@@ -341,8 +351,8 @@ pub fn calcIntegratedReflectanceWithBasis(
             break :choose_source_phase_limit maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);
         };
 
-        // DISAMAR gates an integrated-source level by the max phase order
-        // of its adjacent reduced layers.
+        // zdisamar uses the same reference gate: an integrated-source level
+        // is skipped when adjacent layers cannot support this Fourier order.
         if (i_fourier > source_max_phase_index) continue;
 
         // Integrated-source weighting needs one phase row for this source level.
@@ -431,15 +441,15 @@ pub fn calcIntegratedReflectanceWithBasis(
             pplusst_u += pplusst * level_u[imu];
         }
 
-        // DISAMAR forms the level source as E * ksca * (...), then applies
-        // RTMweight in a separate altitude reduction.
+        // zdisamar keeps the reference source split: first E * ksca * (...),
+        // then RTMweight in a separate altitude reduction.
         const contribution = level.E.data[view_idx] *
             source_ksca *
             (pmin_ed + pplusst_u);
         reflectance += source_rtm_weight * contribution;
     }
 
-    // Keep the DISAMAR scalar direct term in the zero-Fourier closure.
+    // Keep the reference scalar direct term in the zero-Fourier closure.
     if (i_fourier == 0) {
         reflectance += ud[0].E.get(view_idx) * ud[0].U.col[solar_col].get(view_idx);
     }
@@ -877,7 +887,7 @@ pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.Radiative
     if (input.layers.len == 0) return 0;
 
     // Near-nadir and near-normal geometries collapse to the scalar Fourier
-    // term in the DISAMAR path.
+    // term in the reference path.
     if ((1.0 - input.muv) < near_normal_mu_delta or
         (1.0 - input.mu0) < near_normal_mu_delta)
     {
@@ -1123,7 +1133,7 @@ fn absorptionInterfaceWeighting(
     //      sqrt(y_k^2 - y_l^2 * (1 - mu0^2))                                                                  |
     //                                                                                                         |
     // source                                                                                                  |
-    //   follows DISAMAR LabosModule.f90 CalcDerivdRdkabs                                                      |
+    //   zdisamar follows LabosModule.f90 CalcDerivdRdkabs                                                     |
     // --------------------------------------------------------------------------------------------------------|
 
     const view_col: usize = 0;
@@ -1203,6 +1213,16 @@ inline fn scatteringSourceRowSums(
 ) ScatteringSourceRowSums {
     // scatteringSourceRowSums --------------------------------------------------------------------------------|
     // Build the four solar-column source sums for one output row from scaled phase coefficients.              |
+    //                                                                                                         |
+    // This builds the scalar version of the four reference aerosol-weighting phase contractions:              |
+    //                                                                                                         |
+    //   PplusplusD : Zplus row against downward solar diffuse field plus direct solar beam                    |
+    //   PminplusD  : Zmin  row against downward solar diffuse field plus direct solar beam                    |
+    //   PminminU   : Zplus row against upward diffuse field in scalar mode                                    |
+    //   PplusminU  : Zmin  row against upward diffuse field in scalar mode                                    |
+    //                                                                                                         |
+    // The full polarized reference path applies top/bottom Stokes transforms. zdisamar's scalar O2 A path     |
+    // collapses those transforms to the same Zplus/Zmin rows used here.                                       |
     // --------------------------------------------------------------------------------------------------------|
 
     const solar_col: usize = 1;
