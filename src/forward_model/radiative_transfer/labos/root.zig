@@ -6,6 +6,11 @@ const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
 
+// root.zig --------------------------------------------------------------------------------------------------|
+// Public LABOS facade for the wider radiative-transfer package. Implementation details stay in the sibling   |
+// files; this file chooses which names are part of the LABOS API.                                            |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub const max_gauss = basis.max_gauss;
 pub const max_extra = basis.max_extra;
 pub const max_nmutot = basis.max_nmutot;
