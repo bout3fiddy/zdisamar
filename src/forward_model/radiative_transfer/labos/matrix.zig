@@ -2007,7 +2007,7 @@ inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, no
     out.* = qseriesFromProduct(n, n_gauss, ab);
 }
 
-inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
+inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *const Mat) Mat {
     // qseriesFromProduct (build Q(AB) from a retained AB product) --------------------------------------------|
     // Turn an already-built AB product into the LABOS q-series matrix.                                        |
     //                                                                                                         |
@@ -2024,7 +2024,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     // rows because its bounds are constant.                                                                   |
     // --------------------------------------------------------------------------------------------------------|
 
-    if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab);
+    if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab_product);
 
     // --------------------------------------------------------------------------------------------------------|
     // --------------------------------------------------------------------------------------------------------|
@@ -2034,74 +2034,81 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     // Q adds repeated-reflection feedback from inverse(I - AB_gg). When the Gaussian trace is tiny, this      |
     // skips the inversion and keeps AB as the q-series result.                                                |
 
-    var trab: f64 = 0.0;
-    for (0..n_gauss) |k| trab += ab.data[k * n + k];
-    if (@abs(trab) < threshold_q) return ab.*;
+    var gaussian_trace: f64 = 0.0;
+    for (0..n_gauss) |gaussian_index| {
+        gaussian_trace += ab_product.data[gaussian_index * n + gaussian_index];
+    }
+    if (@abs(gaussian_trace) < threshold_q) return ab_product.*;
     // end tradeoff: q-series trace gate ----------------------------------------------------------------------|
 
-    const n_extra = n - n_gauss;
+    const n_extra_streams = n - n_gauss;
 
     // Factorization matrix -----------------------------------------------------------------------------------|
     // Build M = I - AB_gg. Only the Gaussian block is inverted; the extra rows/columns are filled afterward.  |
     // --------------------------------------------------------------------------------------------------------|
 
-    var one_minus_ab_gg: [types.max_gauss * types.max_gauss]f64 = undefined;
-    for (0..n_gauss) |i| {
-        for (0..n_gauss) |j| {
-            const delta: f64 = if (i == j) 1.0 else 0.0;
+    var factor_matrix: [types.max_gauss * types.max_gauss]f64 = undefined;
+    for (0..n_gauss) |gaussian_row| {
+        const factor_row_offset = gaussian_row * n_gauss;
+        const product_row_offset = gaussian_row * n;
+
+        for (0..n_gauss) |gaussian_col| {
+            const identity_value: f64 = if (gaussian_row == gaussian_col) 1.0 else 0.0;
 
             // Factorization target: M = I - AB restricted to Gaussian streams.
-            one_minus_ab_gg[i * n_gauss + j] = delta - ab.data[i * n + j];
+            factor_matrix[factor_row_offset + gaussian_col] =
+                identity_value - ab_product.data[product_row_offset + gaussian_col];
         }
     }
 
-    var pivot: [types.max_gauss]usize = undefined;
-    var pivot_offset: [types.max_gauss]usize = undefined;
-    var inverse_diag: [types.max_gauss]f64 = undefined;
+    var pivot_row: [types.max_gauss]usize = undefined;
+    var pivot_row_offset: [types.max_gauss]usize = undefined;
+    var upper_inverse_diag: [types.max_gauss]f64 = undefined;
 
     // Generic LU storage -------------------------------------------------------------------------------------|
-    // one_minus_ab_gg holds M = I - AB_gg in a flat n_gauss by n_gauss table.                                 |
+    // factor_matrix holds M = I - AB_gg in a flat n_gauss by n_gauss table.                                   |
     //                                                                                                         |
-    // pivot[i]        tells which original row now sits at factorization row i.                               |
-    // pivot_offset[i] is pivot[i] * n_gauss, precomputed so inner loops do not repeat that multiply.          |
-    // inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                            |
+    // pivot_row[i]        tells which original row now sits at factorization row i.                           |
+    // pivot_row_offset[i] is pivot_row[i] * n_gauss, so inner loops avoid that multiply.                      |
+    // upper_inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                      |
     // --------------------------------------------------------------------------------------------------------|
 
     // Pivot bookkeeping --------------------------------------------------------------------------------------|
     // Generic n keeps row swaps as offsets into M. That avoids moving an entire max_gauss row for every pivot.|
     // --------------------------------------------------------------------------------------------------------|
 
-    for (0..n_gauss) |i| {
-        pivot[i] = i;
-        pivot_offset[i] = i * n_gauss;
+    for (0..n_gauss) |factor_row| {
+        pivot_row[factor_row] = factor_row;
+        pivot_row_offset[factor_row] = factor_row * n_gauss;
     }
 
     // Pivoted LU ---------------------------------------------------------------------------------------------|
     // Factor M into L and U in-place. A near-zero pivot falls back to AB instead of producing unstable Q.     |
     // --------------------------------------------------------------------------------------------------------|
 
-    for (0..n_gauss) |col| {
-        var max_val: f64 = @abs(one_minus_ab_gg[pivot_offset[col] + col]);
-        var max_row: usize = col;
-        for (col + 1..n_gauss) |row| {
-            const val = @abs(one_minus_ab_gg[pivot_offset[row] + col]);
-            if (val > max_val) {
-                max_val = val;
-                max_row = row;
+    for (0..n_gauss) |pivot_col| {
+        var best_pivot_abs: f64 = @abs(factor_matrix[pivot_row_offset[pivot_col] + pivot_col]);
+        var best_factor_row: usize = pivot_col;
+
+        for (pivot_col + 1..n_gauss) |candidate_row| {
+            const candidate_abs = @abs(factor_matrix[pivot_row_offset[candidate_row] + pivot_col]);
+            if (candidate_abs > best_pivot_abs) {
+                best_pivot_abs = candidate_abs;
+                best_factor_row = candidate_row;
             }
         }
 
-        if (max_row != col) {
-            const tmp = pivot[col];
-            pivot[col] = pivot[max_row];
-            pivot[max_row] = tmp;
+        if (best_factor_row != pivot_col) {
+            const saved_pivot_row = pivot_row[pivot_col];
+            pivot_row[pivot_col] = pivot_row[best_factor_row];
+            pivot_row[best_factor_row] = saved_pivot_row;
 
-            const tmp_offset = pivot_offset[col];
-            pivot_offset[col] = pivot_offset[max_row];
-            pivot_offset[max_row] = tmp_offset;
+            const saved_pivot_offset = pivot_row_offset[pivot_col];
+            pivot_row_offset[pivot_col] = pivot_row_offset[best_factor_row];
+            pivot_row_offset[best_factor_row] = saved_pivot_offset;
         }
 
-        const diag = one_minus_ab_gg[pivot_offset[col] + col];
+        const diag = factor_matrix[pivot_row_offset[pivot_col] + pivot_col];
 
         // ----------------------------------------------------------------------------------------------------|
         // ----------------------------------------------------------------------------------------------------|
@@ -2110,52 +2117,73 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
         // ----------------------------------------------------------------------------------------------------|
         // This avoids unstable division while inverting I - AB_gg. The fallback keeps the pre-inversion       |
         // product instead of producing a numerically explosive q-series correction.                           |
-        if (@abs(diag) < lu_diagonal_floor) return ab.*;
+        if (@abs(diag) < lu_diagonal_floor) return ab_product.*;
         // end tradeoff: LU pivot floor -----------------------------------------------------------------------|
 
         const inv_diag = 1.0 / diag;
-        inverse_diag[col] = inv_diag;
+        upper_inverse_diag[pivot_col] = inv_diag;
+        const pivot_col_offset = pivot_row_offset[pivot_col];
 
-        for (col + 1..n_gauss) |row| {
-            const row_offset = pivot_offset[row];
-            const col_offset = pivot_offset[col];
-            const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
-            one_minus_ab_gg[row_offset + col] = factor;
-            for (col + 1..n_gauss) |k| {
+        for (pivot_col + 1..n_gauss) |target_row| {
+            const target_row_offset = pivot_row_offset[target_row];
+            const lower_factor = factor_matrix[target_row_offset + pivot_col] * inv_diag;
+            factor_matrix[target_row_offset + pivot_col] = lower_factor;
+
+            for (pivot_col + 1..n_gauss) |update_col| {
 
                 // LU elimination update: M[row,k] -= factor * M[col,k].
-                one_minus_ab_gg[row_offset + k] -=
-                    factor * one_minus_ab_gg[col_offset + k];
+                factor_matrix[target_row_offset + update_col] -=
+                    lower_factor * factor_matrix[pivot_col_offset + update_col];
             }
         }
     }
 
     // Inverse columns ----------------------------------------------------------------------------------------|
-    // Solve M * x = one basis column at a time. Forward substitution builds y, back substitution builds x.    |
+    // Invert M by solving one identity-column right-hand side at a time.                                      |
     //                                                                                                         |
-    // rhs_col chooses one column of inverse(M). The solved x is written into inverse[:, rhs_col].             |
+    // For one inverse column:                                                                                 |
+    //                                                                                                         |
+    //   pivoted identity column -> solve L*y -> solve U*x -> store x in inverse[:, column]                    |
+    //                                                                                                         |
+    // The factor_matrix array now contains both L and U: L below the diagonal, U on and above the diagonal.   |
     // --------------------------------------------------------------------------------------------------------|
 
     var inverse: [types.max_gauss * types.max_gauss]f64 = undefined;
-    for (0..n_gauss) |rhs_col| {
-        var y: [types.max_gauss]f64 = undefined;
-        for (0..n_gauss) |i| {
-            var s: f64 = if (pivot[i] == rhs_col) 1.0 else 0.0;
-            const row_offset = pivot_offset[i];
-            for (0..i) |j| s -= one_minus_ab_gg[row_offset + j] * y[j];
-            y[i] = s;
+    for (0..n_gauss) |inverse_col| {
+
+        // Forward solve: L * y = pivoted identity column.
+        var forward_solution: [types.max_gauss]f64 = undefined;
+        for (0..n_gauss) |factor_row| {
+            var residual: f64 = if (pivot_row[factor_row] == inverse_col) 1.0 else 0.0;
+            const factor_row_offset = pivot_row_offset[factor_row];
+
+            for (0..factor_row) |known_col| {
+                residual -= factor_matrix[factor_row_offset + known_col] * forward_solution[known_col];
+            }
+
+            forward_solution[factor_row] = residual;
         }
 
-        var x: [types.max_gauss]f64 = undefined;
-        var ii: usize = n_gauss;
-        while (ii > 0) {
-            ii -= 1;
-            var s: f64 = y[ii];
-            const row_offset = pivot_offset[ii];
-            for (ii + 1..n_gauss) |j| s -= one_minus_ab_gg[row_offset + j] * x[j];
-            x[ii] = s * inverse_diag[ii];
+        // Back solve: U * x = y. Walk upward because each row uses
+        // already-solved rows below it.
+        var inverse_column: [types.max_gauss]f64 = undefined;
+        var reverse_row = n_gauss;
+        while (reverse_row > 0) {
+            reverse_row -= 1;
+
+            var residual: f64 = forward_solution[reverse_row];
+            const factor_row_offset = pivot_row_offset[reverse_row];
+
+            for (reverse_row + 1..n_gauss) |known_col| {
+                residual -= factor_matrix[factor_row_offset + known_col] * inverse_column[known_col];
+            }
+
+            inverse_column[reverse_row] = residual * upper_inverse_diag[reverse_row];
         }
-        for (0..n_gauss) |i| inverse[i * n_gauss + rhs_col] = x[i];
+
+        for (0..n_gauss) |factor_row| {
+            inverse[factor_row * n_gauss + inverse_col] = inverse_column[factor_row];
+        }
     }
 
     // Gaussian block -----------------------------------------------------------------------------------------|
@@ -2163,43 +2191,78 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     // --------------------------------------------------------------------------------------------------------|
 
     var result = Mat{ .data = undefined, .n = n };
-    for (0..n_gauss) |i| {
-        for (0..n_gauss) |j| {
-            const delta: f64 = if (i == j) 1.0 else 0.0;
+    for (0..n_gauss) |gaussian_row| {
+        const result_row_offset = gaussian_row * n;
+        const inverse_row_offset = gaussian_row * n_gauss;
+
+        for (0..n_gauss) |gaussian_col| {
+            const identity_value: f64 = if (gaussian_row == gaussian_col) 1.0 else 0.0;
 
             // Gaussian block: Q[i,j] = inverse(I - AB)[i,j] - delta[i,j].
-            result.data[i * n + j] = inverse[i * n_gauss + j] - delta;
+            result.data[result_row_offset + gaussian_col] =
+                inverse[inverse_row_offset + gaussian_col] - identity_value;
         }
     }
 
     // Gaussian-to-extra block --------------------------------------------------------------------------------|
-    // Q_gx = inverse(I - AB_gg) * AB_gx.                                                                      |
+    // Fill the upper-right q-series block. This is one ordinary matrix multiply, but only for the             |
+    // Gaussian rows and extra-stream columns.                                                                 |
+    //                                                                                                         |
+    //   Q_gx = inverse(I - AB_gg) * AB_gx                                                                     |
+    //                                                                                                         |
+    // One output cell:                                                                                        |
+    //                                                                                                         |
+    //   Q[row, extra_col] = sum k=0..n_gauss-1 inverse[row,k] * AB[k, extra_col]                              |
+    //                                                                                                         |
+    // Loop order:                                                                                             |
+    //   1. choose one extra output column: n_gauss + extra_col_index                                          |
+    //   2. choose one Gaussian output row                                                                     |
+    //   3. dot across Gaussian columns k=0..n_gauss-1                                                         |
+    //                                                                                                         |
+    // For n=11 and n_gauss=9, this writes 9 rows x 2 extra columns = 18 output cells.                         |
     // --------------------------------------------------------------------------------------------------------|
+    for (0..n_extra_streams) |extra_col_index| {
+        const output_col = n_gauss + extra_col_index;
 
-    for (0..n_extra) |ja| {
-        const j = n_gauss + ja;
-        for (0..n_gauss) |i| {
-            var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += inverse[i * n_gauss + k] * ab.data[k * n + j];
+        for (0..n_gauss) |gaussian_row| {
+            const inverse_row_offset = gaussian_row * n_gauss;
+            var dot_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_col| {
+                dot_sum += inverse[inverse_row_offset + gaussian_col] *
+                    ab_product.data[gaussian_col * n + output_col];
+            }
 
             // Upper-extra block: Q_gx = inverse(I - AB_gg) * AB_gx.
-            result.data[i * n + j] = s;
+            result.data[gaussian_row * n + output_col] = dot_sum;
         }
     }
 
     // Extra-to-Gaussian block --------------------------------------------------------------------------------|
-    // Q_xg = AB_xg * inverse(I - AB_gg). Keep it in tmp too; Q_xx uses it next.                               |
+    // Q_xg = AB_xg * inverse(I - AB_gg). extra_to_gaussian is reused when filling Q_xx.                       |
     // --------------------------------------------------------------------------------------------------------|
 
-    var tmp: [types.max_extra * types.max_gauss]f64 = undefined;
-    for (0..n_extra) |ia| {
-        for (0..n_gauss) |j| {
-            var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += ab.data[(n_gauss + ia) * n + k] * inverse[k * n_gauss + j];
-            tmp[ia * n_gauss + j] = s;
+    var extra_to_gaussian: [types.max_extra * types.max_gauss]f64 = undefined;
+
+    // The nested loops are one block multiply:
+    //   output extra row -> output Gaussian column -> Gaussian dot product.
+    for (0..n_extra_streams) |extra_row_index| {
+        const output_row = n_gauss + extra_row_index;
+        const product_row_offset = output_row * n;
+        const extra_to_gaussian_row_offset = extra_row_index * n_gauss;
+
+        for (0..n_gauss) |gaussian_col| {
+            var dot_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_inner| {
+                dot_sum += ab_product.data[product_row_offset + gaussian_inner] *
+                    inverse[gaussian_inner * n_gauss + gaussian_col];
+            }
+
+            extra_to_gaussian[extra_to_gaussian_row_offset + gaussian_col] = dot_sum;
 
             // Lower-Gaussian block: Q_xg = AB_xg * inverse(I - AB_gg).
-            result.data[(n_gauss + ia) * n + j] = s;
+            result.data[product_row_offset + gaussian_col] = dot_sum;
         }
     }
 
@@ -2207,15 +2270,26 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     // Q_xx = AB_xx + Q_xg * AB_gx.                                                                            |
     // --------------------------------------------------------------------------------------------------------|
 
-    for (0..n_extra) |ia| {
-        const i = n_gauss + ia;
-        for (0..n_extra) |ja| {
-            const j = n_gauss + ja;
-            var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += tmp[ia * n_gauss + k] * ab.data[k * n + j];
+    // The nested loops are one block multiply:
+    //   output extra row -> output extra column -> Gaussian feedback dot product.
+    for (0..n_extra_streams) |extra_row_index| {
+        const output_row = n_gauss + extra_row_index;
+        const result_row_offset = output_row * n;
+        const extra_to_gaussian_row_offset = extra_row_index * n_gauss;
 
-            // Extra-extra block: Q_xx = AB_xx + AB_xg * inverse(I - AB_gg) * AB_gx.
-            result.data[i * n + j] = s + ab.data[i * n + j];
+        for (0..n_extra_streams) |extra_col_index| {
+            const output_col = n_gauss + extra_col_index;
+            var feedback_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_col| {
+                feedback_sum += extra_to_gaussian[extra_to_gaussian_row_offset + gaussian_col] *
+                    ab_product.data[gaussian_col * n + output_col];
+            }
+
+            // Extra-extra block:
+            // Q_xx = AB_xx + AB_xg * inverse(I - AB_gg) * AB_gx.
+            result.data[result_row_offset + output_col] =
+                feedback_sum + ab_product.data[result_row_offset + output_col];
         }
     }
 
