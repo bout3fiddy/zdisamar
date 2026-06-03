@@ -59,7 +59,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     // below threshold_mul, the full multiply is skipped and a zero matrix is returned.                        |
     // Fixed n=12, n_gauss=10 uses the hand-shaped vector-pair kernel below.                                   |
     //                                                                                                         |
-    // Generic route:                                                                                          |
+    // Generic rtm_config:                                                                                     |
     //   1. choose output column j                                                                             |
     //   2. initialize C[:,j] with the k=0 Gaussian term                                                       |
     //   3. add the remaining Gaussian terms k=1..n_gauss-1                                                    |
@@ -118,7 +118,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     }
 
     // Generic trace gate -------------------------------------------------------------------------------------|
-    // Same test as the fixed route, but the diagonal stride is n+1 instead of the literal 13 above.           |
+    // Same test as the fixed rtm_config, but the diagonal stride is n+1 instead of the literal 13 above.      |
     var tra: f64 = 0.0;
     var trb: f64 = 0.0;
     for (0..n_gauss) |k| {
@@ -197,8 +197,9 @@ pub inline fn smulInto(
     //                                                                                                         |
     //   out = A * B over Gaussian k                                                                           |
     //                                                                                                         |
-    // This avoids returning a Mat by value inside scattering-order loops. The fixed 12x10 route repeats the   |
-    // trace scan here so it can call smul12x10Into directly when the product is retained.                     |
+    // This avoids returning a Mat by value inside scattering-order loops.                                     |
+    // The fixed 12x10 rtm_config repeats the trace scan here so it can call smul12x10Into                     |
+    // directly when the product is retained.                                                                  |
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == 12 and n_gauss == 10) {
@@ -253,7 +254,7 @@ pub inline fn smulInto(
         return;
     }
 
-    // Generic route delegates to smul, then copies the returned Mat into caller-owned storage.
+    // Generic rtm_config delegates to smul, then copies the returned Mat into caller-owned storage.
     out.* = smul(n, n_gauss, threshold_mul, a, b);
 }
 
@@ -623,7 +624,7 @@ pub inline fn smulAddSemul3(
     //   out[i,j]     = C[i,j] + A[i,j] * e[j] + product[i,j]                                                  |
     //                                                                                                         |
     // `smul` supplies the Gaussian product. `semul` supplies the right diagonal scale. The trace gate can     |
-    // skip product and fall back to the cheaper right-scale add route.                                        |
+    // skip product and fall back to the cheaper right-scale add rtm_config.                                   |
     // --------------------------------------------------------------------------------------------------------|
 
     // Fused update: out = C + A*diag(e) + A*C over Gaussian k.
@@ -1240,7 +1241,7 @@ fn smulAddSemul3_12KnownTracesInto(
 
                 // Paired base path ---------------------------------------------------------------------------|
                 // No Gaussian product is retained here. loadPair still handles columns j and j+1 together, so |
-                // the skipped-product route keeps the same two-lane store shape for the base term.            |
+                // the skipped-product rtm_config keeps the same two-lane store shape for the base term.       |
                 // --------------------------------------------------------------------------------------------|
 
                 const value = loadPair(c_row, j) + loadPair(a_row, j) * loadPair(e.data[0..], j);
@@ -2040,8 +2041,8 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *cons
     //   Q_xg = AB_xg * inverse(I - AB_gg)                                                                     |
     //   Q_xx = AB_xx + Q_xg * AB_gx                                                                           |
     //                                                                                                         |
-    // The generic route keeps row swaps as pivot offsets. The fixed 12x10 route below swaps full 10-wide      |
-    // rows because its bounds are constant.                                                                   |
+    // The generic rtm_config keeps row swaps as pivot offsets.                                                |
+    // The fixed 12x10 rtm_config below swaps full 10-wide rows because its bounds are constant.               |
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab_product);
@@ -2348,8 +2349,8 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     // tradeoff: fixed q-series trace gate                                                                     |
     // Return AB directly when abs(trace(AB_gg)) < threshold_q = 1.0e-3.                                       |
     // --------------------------------------------------------------------------------------------------------|
-    // Same cutoff as the generic route, but with fixed 10x10 Gaussian diagonal indexes. It avoids the fixed   |
-    // LU solve when the repeated-reflection correction is already negligible.                                 |
+    // Same cutoff as the generic rtm_config, but with fixed 10x10 Gaussian diagonal indexes.                  |
+    // This avoids the fixed LU solve when the repeated-reflection correction is already negligible.           |
 
     var trab = ab.data[0];
     trab += ab.data[13];
@@ -2392,7 +2393,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     // pivot[i]        tells which original row now sits at factorization row i.                               |
     // inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                            |
     //                                                                                                         |
-    // This fixed route swaps the row contents directly, so it does not need pivot_offset.                     |
+    // This fixed rtm_config swaps the row contents directly, so it does not need pivot_offset.                |
     // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..10) |i| {

@@ -146,7 +146,6 @@ pub fn buildWavelengthSampling(
     resolved_axis: *const grid.ResolvedAxis,
     radiance_calibration: calibration.Calibration,
     irradiance_calibration: calibration.Calibration,
-    implementations: Types.Implementations,
 ) Error!OwnedWavelengthSampling {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try resolved_axis.validate();
@@ -154,8 +153,7 @@ pub fn buildWavelengthSampling(
     errdefer allocator.free(plans);
     var kernel_storage_builder = KernelStorageBuilder.init(sample_count * 2);
     defer kernel_storage_builder.deinit(allocator);
-    const can_cache_adaptive_plan = prepared.spectroscopy_lines != null and
-        std.mem.eql(u8, implementations.instrument.id, "builtin.generic_response");
+    const can_cache_adaptive_plan = prepared.spectroscopy_lines != null;
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     if (can_cache_adaptive_plan) {

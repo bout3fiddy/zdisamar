@@ -59,7 +59,7 @@ fn mainInner() !void {
 
     // instrumentation: calculation telemetry activation
     // captures: all enabled facade hooks
-    // why: route model events into Parquet tables for this process.
+    // why: rtm_config model events into Parquet tables for this process.
     var collector = try TelemetrySink.CollectorHandle.init(allocator, config.output_dir);
     defer collector.deinit();
     TelemetrySink.setCollector(&collector);
@@ -100,8 +100,7 @@ fn mainInner() !void {
     const prepare_ns = prepare_timer.read();
     defer prepared_case.deinit(allocator);
 
-    const route = telemetryRoute(prepared_case.route, config.jacobian);
-    const implementations = internal.forward_model.implementations.exact();
+    const rtm_config = telemetrySolveConfig(prepared_case.rtm_config, config.jacobian);
     var storage: InstrumentGrid.ProductStorage = .{};
     defer storage.deinit(allocator);
 
@@ -110,9 +109,8 @@ fn mainInner() !void {
         allocator,
         &storage,
         &prepared_case.scene,
-        route,
+        rtm_config,
         &prepared_case.prepared,
-        implementations,
     );
     const forward_ns = forward_timer.read();
 
@@ -130,11 +128,16 @@ fn mainInner() !void {
     );
 }
 
-// instrumentation: calculation telemetry scope
-// captures: forward-only or two-state Jacobian path
-// why: choose which math expressions appear in the dataset.
-fn telemetryRoute(route: RadiativeTransfer.Route, include_jacobian: bool) RadiativeTransfer.Route {
-    var resolved = route;
+fn telemetrySolveConfig(
+    rtm_config: RadiativeTransfer.SolveConfig,
+    include_jacobian: bool,
+) RadiativeTransfer.SolveConfig {
+
+    // instrumentation: calculation telemetry scope
+    // captures: forward-only or two-state Jacobian path
+    // why: choose which math expressions appear in the dataset.
+
+    var resolved = rtm_config;
     if (!include_jacobian) {
         resolved.derivative_mode = .none;
         resolved.derivative_state_mask = 0;

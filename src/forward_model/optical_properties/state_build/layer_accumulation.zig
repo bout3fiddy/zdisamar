@@ -656,7 +656,7 @@ fn populateParitySupportRows(
 }
 
 // hot path:
-//   when: during parity-route support-row preparation across worker chunks
+//   when: during parity-rtm_config support-row preparation across worker chunks
 //   work: fills independent support rows for later wavelength carrier caching
 //   data: support-row arrays, layer/sublayer descriptors, active absorber state
 //   follow: paritySupportRowWorkerMain and reduceParityLayer

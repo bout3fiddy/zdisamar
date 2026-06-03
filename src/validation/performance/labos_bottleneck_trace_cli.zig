@@ -129,8 +129,6 @@ fn runSingleTrace(
     const zone = Trace.staticZone(@src(), "trace_cli.single_trace");
     defer zone.end();
 
-    const implementations = internal.forward_model.implementations.exact();
-
     var storage: InstrumentGrid.ProductStorage = .{};
     defer storage.deinit(allocator);
 
@@ -145,9 +143,8 @@ fn runSingleTrace(
             allocator,
             &storage,
             &prepared_case.scene,
-            prepared_case.route,
+            prepared_case.rtm_config,
             &prepared_case.prepared,
-            implementations,
         );
     };
     const forward_ns = forward_timer.read();
@@ -170,7 +167,7 @@ fn runDerivativeSweep(
     prepared_case: anytype,
 ) !void {
     // instrumentation: trace sweep
-    // captures: forward and Jacobian route variants
+    // captures: forward and Jacobian rtm_config variants
     // why: compare derivative-state cost at the same scene boundary.
     var summary_file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer summary_file.close();
@@ -192,9 +189,7 @@ fn runDerivativeSweep(
     );
 
     for (derivative_variants, 0..) |variant, variant_index| {
-        const implementations = internal.forward_model.implementations.exact();
-
-        const route = derivativeRoute(prepared_case.route, variant);
+        const rtm_config = derivativeSolveConfig(prepared_case.rtm_config, variant);
         var storage: InstrumentGrid.ProductStorage = .{};
         defer storage.deinit(allocator);
 
@@ -203,9 +198,8 @@ fn runDerivativeSweep(
             allocator,
             &storage,
             &prepared_case.scene,
-            route,
+            rtm_config,
             &prepared_case.prepared,
-            implementations,
         );
         const forward_ns = forward_timer.read();
 
@@ -237,8 +231,11 @@ fn runDerivativeSweep(
     );
 }
 
-fn derivativeRoute(route: RadiativeTransfer.Route, variant: TraceVariant) RadiativeTransfer.Route {
-    var resolved = route;
+fn derivativeSolveConfig(
+    rtm_config: RadiativeTransfer.SolveConfig,
+    variant: TraceVariant,
+) RadiativeTransfer.SolveConfig {
+    var resolved = rtm_config;
     if (variant.states.len == 0) {
         resolved.derivative_mode = .none;
         resolved.derivative_state_mask = 0;

@@ -65,7 +65,7 @@ pub const Workspace = struct {
 
     pub fn init(allocator: Allocator) Workspace {
         // Workspace.init ------------------------------------------------------------------------------------|
-        // Start an empty workspace. Buffers are allocated lazily by the first route that needs them.         |
+        // Start an empty workspace. Buffers are allocated lazily by the first rtm_config that needs them.    |
         // ---------------------------------------------------------------------------------------------------|
 
         return .{ .allocator = allocator };
@@ -298,7 +298,7 @@ pub const Workspace = struct {
         needs_local_sum: bool,
     ) !*orders_mod.OrdersWorkspace {
         // Workspace.ordersWorkspace -------------------------------------------------------------------------|
-        // Return scattering-order workspace with enough level storage for the requested route.               |
+        // Return scattering-order workspace with enough level storage for the requested rtm_config.          |
         //                                                                                                    |
         // cache hit                                                                                          |
         //   existing order fields are reused when the level count still fits.                                |
@@ -320,7 +320,7 @@ pub const Workspace = struct {
             self.orders = null;
         }
 
-        self.orders = try orders_mod.OrdersWorkspace.initForRoute(
+        self.orders = try orders_mod.OrdersWorkspace.initWithLocalSumStorage(
             self.allocator,
             nlevel,
             needs_local_sum,

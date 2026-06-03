@@ -210,44 +210,19 @@ pub const RadiativeTransferControls = struct {
     };
 };
 
-pub const TransportFamily = enum {
-    labos,
-};
-
-pub const Regime = SceneModel.ObservationRegime;
-
-pub const ExecutionMode = enum {
-    scalar,
-};
-
 pub const DerivativeMode = SceneModel.DerivativeMode;
 
 // layout(64-bit):
 //   size: 80 B, align: 8 B
-//   field storage: 75 B across 4 fields; largest: rtm_controls=72 B, regime=1 B, execution_mode=1 B; padding: 5 B (40 bits)
+//   field storage:
+//     75 B across 4 fields; largest: rtm_controls=72 B, regime=1 B, derivative_mode=1 B
+//     padding: 5 B (40 bits)
 //   unused bits: 40 padding + 0 bool-storage slack = 40 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
-pub const DispatchRequest = struct {
-    regime: Regime = .nadir,
-    execution_mode: ExecutionMode = .scalar,
+pub const SolveConfig = struct {
     derivative_mode: DerivativeMode = .none,
-    rtm_controls: RadiativeTransferControls = .{},
-};
-
-// layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: 77 B across 6 fields; largest: rtm_controls=72 B, derivative_state_mask=1 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
-pub const Route = struct {
-    family: TransportFamily,
-    regime: Regime,
-    execution_mode: ExecutionMode,
-    derivative_mode: DerivativeMode,
     derivative_state_mask: jacobian.StateMask = jacobian.all_states_mask,
     rtm_controls: RadiativeTransferControls = .{},
 };
@@ -434,26 +409,13 @@ pub const ForwardInput = struct {
     rtm_controls: RadiativeTransferControls = .{},
 };
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: 43 B across 6 fields; largest: jacobian=32 B, toa_reflectance_factor=8 B, regime=1 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
 pub const ForwardResult = struct {
-    family: TransportFamily,
-    regime: Regime,
-    execution_mode: ExecutionMode,
-    derivative_mode: DerivativeMode,
     toa_reflectance_factor: f64,
     jacobian: ?jacobian.Vector,
 };
 
 pub const PrepareError = error{
-    UnsupportedExecutionMode,
     UnsupportedDerivativeMode,
-    UnsupportedTransportSolver,
-    UnsupportedObservationRegime,
     UnsupportedRadiativeTransferControls,
 };
 
@@ -467,45 +429,35 @@ pub const Error = ExecuteError;
 
 pub const Jacobian = jacobian;
 
-pub fn prepareRoute(request: DispatchRequest) PrepareError!Route {
-    if (request.regime != .nadir) return Error.UnsupportedObservationRegime;
-    if (request.derivative_mode == .numerical) return Error.UnsupportedDerivativeMode;
-    try request.rtm_controls.validate();
-    return .{
-        .family = .labos,
-        .regime = request.regime,
-        .execution_mode = request.execution_mode,
-        .derivative_mode = request.derivative_mode,
-        .rtm_controls = request.rtm_controls,
-    };
+pub fn prepareSolveConfig(config: SolveConfig) PrepareError!SolveConfig {
+    try config.rtm_controls.validate();
+    return config;
 }
 
 pub fn executePrepared(
     allocator: std.mem.Allocator,
-    route: Route,
+    rtm_config: SolveConfig,
     input: ForwardInput,
 ) ExecuteError!ForwardResult {
-    return executePreparedWithLabosWorkspace(allocator, route, input, null);
+    return executePreparedWithLabosWorkspace(allocator, rtm_config, input, null);
 }
 
 pub fn executePreparedWithLabosWorkspace(
     allocator: std.mem.Allocator,
-    route: Route,
+    rtm_config: SolveConfig,
     input: ForwardInput,
     workspace: ?*labos.Workspace,
 ) ExecuteError!ForwardResult {
-    if (route.regime != .nadir) return Error.UnsupportedObservationRegime;
-    if (route.derivative_mode == .numerical) return Error.UnsupportedDerivativeMode;
-    return labos.executeWithWorkspace(allocator, route, input, workspace);
+    return labos.executeWithWorkspace(allocator, rtm_config, input, workspace);
 }
 
 pub fn execute(
     allocator: std.mem.Allocator,
-    request: DispatchRequest,
+    config: SolveConfig,
     input: ForwardInput,
 ) ExecuteError!ForwardResult {
-    const route = try prepareRoute(request);
-    return executePrepared(allocator, route, input);
+    const rtm_config = try prepareSolveConfig(config);
+    return executePrepared(allocator, rtm_config, input);
 }
 
 pub fn sourceInterfaceFromLayers(

@@ -24,6 +24,10 @@ CSV_PATH = OUTPUTS_DIR / "zdisamar_o2a_sweep_runs.csv"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
+from validation.common.native_binding import sync_release_fast_binding  # noqa: E402
+
+sync_release_fast_binding(REPO_ROOT)
+
 from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.wavelength_bands import o2a  # noqa: E402

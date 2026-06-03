@@ -11,7 +11,7 @@ pub const IntegrationKernel = types.IntegrationKernel;
 pub const default_integration_sample_count = types.default_integration_sample_count;
 pub const max_integration_sample_count = types.max_integration_sample_count;
 pub const Error = error{
-    DisamarKernelRealizationFailed,
+    InstrumentKernelRealizationFailed,
 };
 
 // layout(64-bit):
@@ -42,24 +42,6 @@ pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralCh
         response.instrument_line_shape_table.nominal_count > 0;
 }
 
-pub fn integrationForWavelength(
-    scene: *const Scene,
-    prepared: ?*const PreparedOpticalState,
-    channel: SpectralChannel,
-    nominal_wavelength_nm: f64,
-    kernel: *IntegrationKernel,
-) void {
-    integrationForWavelengthChecked(
-        scene,
-        prepared,
-        channel,
-        nominal_wavelength_nm,
-        kernel,
-    ) catch {
-        response_support.writeIdentityKernel(kernel, false);
-    };
-}
-
 pub fn integrationForWavelengthChecked(
     scene: *const Scene,
     prepared: ?*const PreparedOpticalState,
@@ -75,26 +57,6 @@ pub fn integrationForWavelengthChecked(
         null,
         kernel,
     );
-}
-
-pub fn integrationForWavelengthWithAdaptiveCache(
-    scene: *const Scene,
-    prepared: ?*const PreparedOpticalState,
-    channel: SpectralChannel,
-    nominal_wavelength_nm: f64,
-    cached_adaptive_kernel: ?*const AdaptiveKernelCache,
-    kernel: *IntegrationKernel,
-) void {
-    integrationForWavelengthWithAdaptiveCacheChecked(
-        scene,
-        prepared,
-        channel,
-        nominal_wavelength_nm,
-        cached_adaptive_kernel,
-        kernel,
-    ) catch {
-        response_support.writeIdentityKernel(kernel, false);
-    };
 }
 
 // hot path:
@@ -148,104 +110,47 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
         return;
     }
 
-    if (response.integration_mode == .disamar_hr_grid) {
-        if (prepared) |prepared_state| {
-            if (cached_adaptive_kernel) |cache| {
-                if (buildAdaptiveIntegrationKernelFromCache(
+    switch (response.integration_mode) {
+        .disamar_hr_grid => {
+            const wrote_kernel = writeDisamarHighResolutionKernel(
+                scene,
+                prepared,
+                response,
+                nominal_wavelength_nm,
+                channel,
+                cached_adaptive_kernel,
+                kernel,
+            );
+            if (wrote_kernel) return;
+
+            return Error.InstrumentKernelRealizationFailed;
+        },
+
+        .explicit_hr_grid => {
+            const wrote_kernel = writeExplicitGridKernel(response, kernel);
+            if (wrote_kernel) return;
+
+            return Error.InstrumentKernelRealizationFailed;
+        },
+
+        .adaptive => {
+            if (prepared) |prepared_state| {
+                const wrote_kernel = adaptiveIntegrationFromPrepared(
+                    scene,
+                    prepared_state,
                     response,
                     nominal_wavelength_nm,
-                    cache,
-                    channel == .irradiance,
+                    channel,
+                    cached_adaptive_kernel,
                     kernel,
-                )) {
-                    return;
-                }
+                );
+                if (wrote_kernel) return;
             }
-            if (adaptive_plan.buildAdaptiveIntegrationKernel(
-                scene,
-                prepared_state,
-                response,
-                nominal_wavelength_nm,
-                channel == .irradiance,
-                kernel,
-            )) {
-                return;
-            }
-        } else if (adaptive_plan.buildDisamarRealizedKernel(
-            scene,
-            response,
-            nominal_wavelength_nm,
-            channel == .irradiance,
-            kernel,
-        )) {
-            return;
-        }
-        return Error.DisamarKernelRealizationFailed;
-    }
 
-    const prefer_explicit_hr_grid = switch (response.integration_mode) {
-        .auto, .explicit_hr_grid => true,
-        .adaptive => false,
-        .disamar_hr_grid => false,
-    };
-    const prefer_adaptive_grid = response.integration_mode == .adaptive;
+            return Error.InstrumentKernelRealizationFailed;
+        },
 
-    if (prefer_explicit_hr_grid and response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
-        const step_nm = response.high_resolution_step_nm;
-        const half_span_nm = response.high_resolution_half_span_nm;
-        var sample_count: usize = 0;
-        var offset_nm = -half_span_nm;
-        while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
-            kernel.offsets_nm[sample_count] = offset_nm;
-            // math: raw w(delta) = response(delta); normalized below as w_j / sum_k w_k.
-            const response_weight = response_support.spectralResponseWeight(response, offset_nm);
-            kernel.weights[sample_count] = response_weight;
-            sample_count += 1;
-        }
-        if (sample_count == 0) {
-            response_support.writeIdentityKernel(kernel, true);
-            return;
-        }
-        var total_weight: f64 = 0.0;
-        for (0..sample_count) |index| total_weight += kernel.weights[index];
-        if (total_weight <= 0.0) {
-            response_support.writeIdentityKernel(kernel, true);
-            sample_count = 1;
-        } else {
-            for (0..sample_count) |index| kernel.weights[index] /= total_weight;
-        }
-        // PARITY:
-        //   High-resolution measurement routines are normalized in place rather
-        //   than routed through the legacy slit-convolution stage.
-        kernel.enabled = true;
-        kernel.sample_count = sample_count;
-        return;
-    }
-
-    if (prepared) |prepared_state| {
-        if (cached_adaptive_kernel) |cache| {
-            if (buildAdaptiveIntegrationKernelFromCache(
-                response,
-                nominal_wavelength_nm,
-                cache,
-                channel == .irradiance,
-                kernel,
-            )) {
-                return;
-            }
-        }
-        if (prefer_adaptive_grid or response.high_resolution_step_nm == 0.0 or response.high_resolution_half_span_nm == 0.0) {
-            if (adaptive_plan.buildAdaptiveIntegrationKernel(
-                scene,
-                prepared_state,
-                response,
-                nominal_wavelength_nm,
-                channel == .irradiance,
-                kernel,
-            )) {
-                return;
-            }
-        }
+        .default_kernel => {},
     }
 
     switch (scene.observation_model.sampling) {
@@ -268,6 +173,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     var total_weight: f64 = 0.0;
     for (offsets_nm, 0..) |offset_nm, index| {
         kernel.offsets_nm[index] = offset_nm;
+
         // math: fallback raw w_j = response(delta_j), normalized so sum_j w_j = 1.
         kernel.weights[index] = response_support.spectralResponseWeight(response, offset_nm);
         total_weight += kernel.weights[index];
@@ -275,6 +181,103 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     for (0..default_integration_sample_count) |index| kernel.weights[index] /= total_weight;
     kernel.enabled = true;
     kernel.sample_count = default_integration_sample_count;
+}
+
+fn writeDisamarHighResolutionKernel(
+    scene: *const Scene,
+    prepared: ?*const PreparedOpticalState,
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    channel: SpectralChannel,
+    cached_adaptive_kernel: ?*const AdaptiveKernelCache,
+    kernel: *IntegrationKernel,
+) bool {
+    if (prepared) |prepared_state| {
+        return adaptiveIntegrationFromPrepared(
+            scene,
+            prepared_state,
+            response,
+            nominal_wavelength_nm,
+            channel,
+            cached_adaptive_kernel,
+            kernel,
+        );
+    }
+
+    return adaptive_plan.buildDisamarRealizedKernel(
+        scene,
+        response,
+        nominal_wavelength_nm,
+        channel == .irradiance,
+        kernel,
+    );
+}
+
+fn writeExplicitGridKernel(
+    response: InstrumentModel.SpectralResponse,
+    kernel: *IntegrationKernel,
+) bool {
+    if (response.high_resolution_step_nm <= 0.0 or response.high_resolution_half_span_nm <= 0.0) {
+        return false;
+    }
+
+    const step_nm = response.high_resolution_step_nm;
+    const half_span_nm = response.high_resolution_half_span_nm;
+    var sample_count: usize = 0;
+    var offset_nm = -half_span_nm;
+    while (offset_nm <= half_span_nm + (step_nm * 0.5) and
+        sample_count < max_integration_sample_count) : (offset_nm += step_nm)
+    {
+        kernel.offsets_nm[sample_count] = offset_nm;
+
+        // math: raw w(delta) = response(delta); normalized below as w_j / sum_k w_k.
+        const response_weight = response_support.spectralResponseWeight(response, offset_nm);
+        kernel.weights[sample_count] = response_weight;
+        sample_count += 1;
+    }
+    if (sample_count == 0) return false;
+
+    var total_weight: f64 = 0.0;
+    for (0..sample_count) |index| total_weight += kernel.weights[index];
+    if (!std.math.isFinite(total_weight) or total_weight <= 0.0) return false;
+
+    for (0..sample_count) |index| kernel.weights[index] /= total_weight;
+
+    // High-resolution measurement routines are normalized in place rather
+    // than routed through the legacy slit-convolution stage.
+    kernel.enabled = true;
+    kernel.sample_count = sample_count;
+    return true;
+}
+
+fn adaptiveIntegrationFromPrepared(
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    channel: SpectralChannel,
+    cached_adaptive_kernel: ?*const AdaptiveKernelCache,
+    kernel: *IntegrationKernel,
+) bool {
+    if (cached_adaptive_kernel) |cache| {
+        if (buildAdaptiveIntegrationKernelFromCache(
+            response,
+            nominal_wavelength_nm,
+            cache,
+            channel == .irradiance,
+            kernel,
+        )) {
+            return true;
+        }
+    }
+    return adaptive_plan.buildAdaptiveIntegrationKernel(
+        scene,
+        prepared,
+        response,
+        nominal_wavelength_nm,
+        channel == .irradiance,
+        kernel,
+    );
 }
 
 // hot path:

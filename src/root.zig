@@ -9,17 +9,13 @@ const radiative_transfer_diagnostics = @import("output/radiative_transfer_diagno
 const report_json = @import("output/json.zig");
 const radiative_transfer = @import("forward_model/radiative_transfer/root.zig");
 const measurement = @import("forward_model/instrument_grid/root.zig");
-const implementations = @import("forward_model/implementations/root.zig");
 pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
 pub const Input = @import("input/Scene.zig").Scene;
 pub const O2AInput = o2a_reference.O2AInput;
 pub const ReferenceData = bundled_data.Data;
 pub const OpticalProperties = @import("forward_model/optical_properties/root.zig").PreparedOpticalState;
-pub const Method = enum {
-    exact,
-};
-pub const CalculationStorage = measurement.SummaryStorage;
+pub const CalculationStorage = measurement.ProductStorage;
 pub const Output = measurement.InstrumentGridProduct;
 pub const PreparedO2A = o2a_reference.PreparedO2A;
 pub const O2ASessionStorage = o2a_reference.SessionStorage;
@@ -84,16 +80,9 @@ pub fn prepare(
 pub fn run(
     allocator: std.mem.Allocator,
     prepared: *PreparedInput,
-    method: Method,
     rtm_controls: RadiativeTransferControls,
 ) !Output {
-    switch (method) {
-        .exact => {},
-    }
-
-    const route = try radiative_transfer.prepareRoute(.{
-        .regime = prepared.input.observation_model.regime,
-        .execution_mode = .scalar,
+    const rtm_config = try radiative_transfer.prepareSolveConfig(.{
         .derivative_mode = .none,
         .rtm_controls = rtm_controls,
     });
@@ -102,9 +91,8 @@ pub fn run(
         allocator,
         &prepared.storage,
         &prepared.input,
-        route,
+        rtm_config,
         &prepared.optical_properties,
-        implementations.exact(),
     );
     return view.toOwned(allocator);
 }
@@ -195,7 +183,7 @@ pub fn buildRadiativeTransferDiagnostics(
     allocator: std.mem.Allocator,
     input: *const Input,
     optical_properties: *const OpticalProperties,
-    route: radiative_transfer.Route,
+    rtm_config: radiative_transfer.SolveConfig,
     wavelengths_nm: []const f64,
     spectrum_view: ?RadiativeTransferSpectrumView,
 ) ![]RadiativeTransferDiagnosticRow {
@@ -203,7 +191,7 @@ pub fn buildRadiativeTransferDiagnostics(
         allocator,
         input,
         optical_properties,
-        route,
+        rtm_config,
         wavelengths_nm,
         spectrum_view,
     );

@@ -16,7 +16,7 @@ const Trace = @import("../../performance_trace.zig");
 // Then reflectance and optional Jacobian output are packed into the public result.                            |
 //                                                                                                             |
 // called by                                                                                                   |
-//   radiative_transfer/root.zig after route preparation                                                       |
+//   radiative_transfer/root.zig after RTM config preparation                                                  |
 //                                                                                                             |
 // exported by                                                                                                 |
 //   radiative_transfer/root.zig under the labos namespace                                                     |
@@ -243,7 +243,7 @@ fn directSurfaceOnlyResolvedWithWorkspace(
 
 pub fn execute(
     allocator: std.mem.Allocator,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     input: common.ForwardInput,
 ) common.ExecuteError!common.ForwardResult {
     // execute ------------------------------------------------------------------------------------------------|
@@ -251,22 +251,22 @@ pub fn execute(
     // Passes null workspace so executeWithWorkspace allocates its temporary memory.                           |
     // --------------------------------------------------------------------------------------------------------|
 
-    return executeWithWorkspace(allocator, route, input, null);
+    return executeWithWorkspace(allocator, rtm_config, input, null);
 }
 
 pub fn executeWithWorkspace(
     allocator: std.mem.Allocator,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     input: common.ForwardInput,
     workspace: ?*workspace_mod.Workspace,
 ) common.ExecuteError!common.ForwardResult {
     // executeWithWorkspace -----------------------------------------------------------------------------------|
-    // Called once per high-resolution forward sample after route preparation. Steps:                          |
+    // Called once per high-resolution forward sample after RTM config preparation. Steps:                     |
     //                                                                                                         |
-    //   1. choose the cheapest LABOS route that still matches the requested physics                           |
-    //   2. return route metadata, reflectance, and the requested Jacobian                                     |
+    //   1. choose the cheapest LABOS path that still matches the requested physics                            |
+    //   2. return reflectance and the requested Jacobian                                                      |
     //                                                                                                         |
-    // route choice                                                                                            |
+    // path choice                                                                                             |
     // controls.scattering == none -> direct surface reflection                                                |
     // input.layers.len > 0       -> layer-resolved LABOS Fourier loop                                         |
     // otherwise                  -> scalar input converted to one LayerInput                                  |
@@ -275,20 +275,17 @@ pub fn executeWithWorkspace(
     // keep dispatch cheap; real work is in the selected LABOS path                                            |
     // pass workspace through so lower layers can reuse scratch memory                                         |
     //                                                                                                         |
-    // assumes                                                                                                 |
-    // route.family == .labos                                                                                  |
-    // no file I/O, input parsing, or hidden global state                                                      |
+    // boundary                                                                                                |
+    // no solver dispatch, file I/O, input parsing, or hidden global state                                     |
     // --------------------------------------------------------------------------------------------------------|
 
-    if (route.family != .labos) unreachable;
-
-    // Route preparation has already selected LABOS controls and derivative
-    // state. This function only chooses the LABOS calculation path.
-    const controls = route.rtm_controls;
-    const compute_jacobian = route.derivative_mode != .none;
+    // SolveConfig preparation has already validated the controls and derivative
+    // state. This function only chooses the concrete LABOS calculation path.
+    const controls = rtm_config.rtm_controls;
+    const compute_jacobian = rtm_config.derivative_mode != .none;
     const wants_surface_albedo =
         compute_jacobian and
-        jacobian.includes(route.derivative_state_mask, .surface_albedo);
+        jacobian.includes(rtm_config.derivative_state_mask, .surface_albedo);
 
     // Pick the smallest calculation that still matches the requested physics.
     const computation = choose_labos_path: {
@@ -320,7 +317,7 @@ pub fn executeWithWorkspace(
                 input,
                 controls,
                 compute_jacobian,
-                route.derivative_state_mask,
+                rtm_config.derivative_state_mask,
                 workspace,
             );
         }
@@ -330,22 +327,15 @@ pub fn executeWithWorkspace(
             input,
             controls,
             compute_jacobian,
-            route.derivative_state_mask,
+            rtm_config.derivative_state_mask,
         );
     };
 
-    // Keep route metadata with the reflectance so callers can audit which RTM
-    // path produced the result.
     return .{
-        .family = route.family,
-        .regime = route.regime,
-        .execution_mode = route.execution_mode,
-        .derivative_mode = route.derivative_mode,
         .toa_reflectance_factor = computation.reflectance,
-        .jacobian = switch (route.derivative_mode) {
+        .jacobian = switch (rtm_config.derivative_mode) {
             .none => null,
             .semi_analytical => computation.jacobian,
-            .numerical => computation.jacobian,
         },
     };
 }
@@ -378,7 +368,7 @@ fn layerResolvedLabosWithWorkspace(
     //              scattering-order propagation                                                               |
     //              reflectance integral                                                                       |
     //   Jacobian : aerosol weighting, only when requested                                                     |
-    //   memory   : workspace buffers reused when this route allows                                            |
+    //   memory   : workspace buffers reused when this config allows                                           |
     //                                                                                                         |
     // calls                                                                                                   |
     //   calcRTlayersIntoWithBasis                                                                             |
@@ -407,7 +397,7 @@ fn layerResolvedLabosWithWorkspace(
             input.rtm_quadrature.isValidFor(input.layers.len));
 
     // The pseudo-spherical derivative path is implemented for integrated
-    // source weighting. The non-integrated tangent route rejects it here.
+    // source weighting. The non-integrated tangent rtm_config rejects it here.
     if (compute_jacobian and !use_integrated_source and controls.use_spherical_correction) {
         return error.UnsupportedDerivativeMode;
     }
@@ -426,7 +416,7 @@ fn layerResolvedLabosWithWorkspace(
 
     // Integrated-source reflectance only reads adjacent-layer and top-to-level
     // transmittance. With a workspace, that smaller table is enough. The
-    // non-integrated tangent route still needs attenuation for any direction
+    // non-integrated tangent rtm_config still needs attenuation for any direction
     // and any pair of levels, so it keeps the full table.
     var runtime_atten: ?attenuation.RuntimeAttenArray = null;
     var dynamic_atten: ?attenuation.DynamicAttenArray = null;
@@ -503,7 +493,7 @@ fn layerResolvedLabosWithWorkspace(
     if (workspace) |scratch| {
         orders_workspace = try scratch.ordersWorkspace(nlayer + 1, needs_order_local_sum);
     } else {
-        owned_orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(
+        owned_orders_workspace = try orders_mod.OrdersWorkspace.initWithLocalSumStorage(
             allocator,
             nlayer + 1,
             needs_order_local_sum,
@@ -803,7 +793,7 @@ fn layerResolvedLabosWithWorkspace(
             // ------------------------------------------------------------------------------------------------|
             // Aerosol weighting functions are Fourier-weighted just like reflectance. By default the cap is   |
             // null, so every retained Fourier term is evaluated. Fastmode research uses cap = 11 to reduce    |
-            // derivative work while keeping the retrieval correction small enough for that route.             |
+            // derivative work while keeping the retrieval correction small enough for that config.            |
             const evaluate_aerosol_tangent =
                 controls.performance_thresholds.shouldEvaluateAerosolTangent(i_fourier);
             const wants_aod_tangent = wants_aerosol_optical_depth and evaluate_aerosol_tangent;
@@ -812,7 +802,7 @@ fn layerResolvedLabosWithWorkspace(
                 use_integrated_source and wants_aod_tangent and wants_pressure_tangent;
             // end tradeoff: aerosol tangent Fourier cap ------------------------------------------------------|
 
-            // The integrated-source route can calculate AOD and pressure
+            // The integrated-source rtm_config can calculate AOD and pressure
             // weighting in one shared pass when both are requested.
             if (use_paired_aerosol_weighting) {
                 const tangent_refl_fc = tangent_refl_fc: {
@@ -1194,7 +1184,7 @@ fn singleLayerLabos(
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
 
-    var orders_workspace = try orders_mod.OrdersWorkspace.initForRoute(allocator, 2, false);
+    var orders_workspace = try orders_mod.OrdersWorkspace.initWithLocalSumStorage(allocator, 2, false);
     defer orders_workspace.deinit();
 
     // Same per-Fourier sequence as the layer-resolved path, with one optical
@@ -1227,7 +1217,7 @@ fn singleLayerLabos(
         }
     }
 
-    // The scalar one-layer route only fills the surface-albedo derivative.
+    // The scalar one-layer rtm_config only fills the surface-albedo derivative.
     var result_jacobian = jacobian.zero();
     if (wants_surface_albedo) {
         jacobian.set(&result_jacobian, .surface_albedo, surface_albedo_tangent);

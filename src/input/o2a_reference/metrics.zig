@@ -3,9 +3,8 @@ const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const OpticsPrepare = @import("../../forward_model/optical_properties/root.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
 const Scene = @import("../../input/Scene.zig").Scene;
-const implementations = @import("../../forward_model/implementations/root.zig");
 const runtime = @import("run.zig");
-const Route = @import("../../forward_model/radiative_transfer/root.zig").Route;
+const SolveConfig = @import("../../forward_model/radiative_transfer/root.zig").SolveConfig;
 
 pub const ReferenceData = ReferenceDataModel;
 pub const ReferenceSample = runtime.ReferenceSample;
@@ -122,7 +121,7 @@ pub const AssessmentOutcome = struct {
 pub const VendorO2AReflectanceCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
-    route: Route,
+    rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
     product: InstrumentGrid.InstrumentGridProduct,
 
@@ -137,7 +136,7 @@ pub const VendorO2AReflectanceCase = struct {
 
 // layout(64-bit):
 //   size: 3824 B, align: 8 B
-//   field storage: reference=16 B, scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: reference carry references/descriptors; referenced storage is not included in size
 //   cache span: 60 cache line(s) at 64 B per line
@@ -146,7 +145,7 @@ pub const VendorO2AReflectanceCase = struct {
 pub const VendorO2APreparedCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
-    route: Route,
+    rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
 
     pub fn deinit(self: *VendorO2APreparedCase, allocator: std.mem.Allocator) void {
@@ -163,14 +162,13 @@ pub const VendorO2APreparedCase = struct {
         var product = try InstrumentGrid.simulateProduct(
             allocator,
             &self.scene,
-            self.route,
+            self.rtm_config,
             &self.prepared,
-            implementations.exact(),
         );
         errdefer product.deinit(allocator);
 
         const prepared = self.prepared;
-        const route = self.route;
+        const rtm_config = self.rtm_config;
         const scene = self.scene;
         const reference = self.reference;
         self.* = undefined;
@@ -178,7 +176,7 @@ pub const VendorO2APreparedCase = struct {
         return .{
             .reference = reference,
             .scene = scene,
-            .route = route,
+            .rtm_config = rtm_config,
             .prepared = prepared,
             .product = product,
         };
@@ -193,7 +191,7 @@ pub fn runResolvedVendorO2AReflectanceCase(
     return .{
         .reference = runtime_case.reference,
         .scene = runtime_case.scene,
-        .route = runtime_case.route,
+        .rtm_config = runtime_case.rtm_config,
         .prepared = runtime_case.prepared,
         .product = runtime_case.product,
     };
@@ -207,7 +205,7 @@ pub fn prepareResolvedVendorO2ACase(
     return .{
         .reference = runtime_case.reference,
         .scene = runtime_case.scene,
-        .route = runtime_case.route,
+        .rtm_config = runtime_case.rtm_config,
         .prepared = runtime_case.prepared,
     };
 }

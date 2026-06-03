@@ -28,9 +28,7 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
             "description": "DISAMAR O2 A reference case defined in Python.",
         },
         plan={
-            "model_family": "disamar_standard",
-            "transport_solver": "dispatcher",
-            "execution_derivative_mode": "none",
+            "derivative_mode": "none",
         },
         reference_assets=band.ReferenceAssets(
             atmosphere_profile=asset(

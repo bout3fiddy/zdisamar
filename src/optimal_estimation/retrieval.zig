@@ -1,7 +1,6 @@
 const std = @import("std");
 const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
 const OpticsPrepare = @import("../forward_model/optical_properties/root.zig");
-const implementations = @import("../forward_model/implementations/root.zig");
 const jacobian = @import("../forward_model/jacobian/root.zig");
 const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
@@ -520,7 +519,7 @@ const ProfilePreparationSession = struct {
 };
 
 // Retrieval-owned preparation for one inverse problem. State evaluations still
-// rebuild the state-dependent scene and optical state, but route selection and
+// rebuild the state-dependent scene and optical state, but rtm_config selection and
 // long-lived input/measurement ownership are outside the iteration loop.
 const RetrievalPreparedCase = struct {
     state_specs: []const StateSpec,
@@ -533,7 +532,7 @@ const RetrievalPreparedCase = struct {
     weak_cutoff_grid: o2a_runtime.WeakCutoffGridCache = .{},
     solar_rewindowed: bool = false,
     profile_preparation: ProfilePreparationSession = .{},
-    route: o2a_types.Route,
+    rtm_config: o2a_types.SolveConfig,
 
     fn init(
         allocator: Allocator,
@@ -577,7 +576,7 @@ const RetrievalPreparedCase = struct {
             .mutable_input = mutable_input,
             .mutable_intervals = mutable_intervals,
             .scene = scene,
-            .route = try o2a_runtime.prepareResolvedVendorO2ARouteFromResolved(base_input),
+            .rtm_config = try o2a_runtime.prepareResolvedVendorO2ASolveConfigFromResolved(base_input),
         };
     }
 
@@ -1236,8 +1235,8 @@ fn runPreparedO2ACore(
 
     const state_space = try initializeStateSpace(state_specs, full_result);
     var state = state_space.state;
-    prepared_case.route.derivative_mode = .semi_analytical;
-    prepared_case.route.derivative_state_mask = state_space.derivative_state_mask;
+    prepared_case.rtm_config.derivative_mode = .semi_analytical;
+    prepared_case.rtm_config.derivative_state_mask = state_space.derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
@@ -1390,8 +1389,8 @@ pub fn correctPreparedO2A(
 
     const state_space = try initializeStateSpace(state_specs, &result);
     var prepared = prepared_case.*;
-    prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = state_space.derivative_state_mask;
+    prepared.rtm_config.derivative_mode = .semi_analytical;
+    prepared.rtm_config.derivative_state_mask = state_space.derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
@@ -1403,9 +1402,8 @@ pub fn correctPreparedO2A(
             allocator,
             forward_storage,
             &prepared.scene,
-            prepared.route,
+            prepared.rtm_config,
             &prepared.prepared,
-            implementations.exact(),
         );
         break :traced_evaluation ForwardEvaluation{
             .view = view,
@@ -1602,9 +1600,8 @@ fn evaluateO2AState(
             allocator,
             prepared_case.forward_storage,
             &prepared_case.scene,
-            prepared_case.route,
+            prepared_case.rtm_config,
             &prepared_optics,
-            implementations.exact(),
         );
     };
     prepared_case.profile_preparation.captureFromPrepared(&prepared_optics);

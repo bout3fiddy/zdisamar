@@ -27,9 +27,13 @@ pub const Error =
 
 // layout(64-bit):
 //   size: 280 B, align: 8 B
-//   field storage: 273 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B; padding: 7 B (56 bits)
+//   field storage:
+//     273 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B
+//     padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: wavelength/product slices are always active; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
+//   out-of-line:
+//     wavelength/product slices are always active
+//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are rtm_config-gated
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
@@ -50,29 +54,33 @@ pub const Buffers = struct {
     jacobian_state_mask: jacobian.StateMask = 0,
 };
 
-pub fn routeMayUseSourceInterfaces(scene: *const Scene, route: common.Route) bool {
-    if (!route.rtm_controls.integrate_source_function) return false;
+pub fn configMayUseSourceInterfaces(scene: *const Scene, rtm_config: common.SolveConfig) bool {
+    if (!rtm_config.rtm_controls.integrate_source_function) return false;
     return scene.atmosphere.interval_grid.semantics == .none;
 }
 
-pub fn routeUsesRtmQuadrature(route: common.Route) bool {
-    return route.rtm_controls.integrate_source_function;
+pub fn configUsesRtmQuadrature(rtm_config: common.SolveConfig) bool {
+    return rtm_config.rtm_controls.integrate_source_function;
 }
 
-pub fn routeUsesPseudoSphericalGrid(route: common.Route) bool {
-    return route.rtm_controls.use_spherical_correction;
+pub fn configUsesPseudoSphericalGrid(rtm_config: common.SolveConfig) bool {
+    return rtm_config.rtm_controls.use_spherical_correction;
 }
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
 //   size: 560 B, align: 8 B
-//   field storage: 540 B across 26 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B, wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
+//   field storage:
+//     540 B across 26 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
+//     wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
 //   unused bits: 160 padding + 28 bool-storage slack = 188 bits
-//   out-of-line: product/cache/result slices carry backing storage; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are route-gated
+//   out-of-line:
+//     product/cache/result slices carry backing storage
+//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are rtm_config-gated
 //   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 560 B (0.547 KiB); total also includes referenced storage above
-pub const SummaryStorage = struct {
+pub const ProductStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
@@ -101,7 +109,7 @@ pub const SummaryStorage = struct {
     forward_prefetch_pool_worker_threads: usize = 0,
     forward_prefetch_pool_valid: bool = false,
 
-    pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
+    pub fn deinit(self: *ProductStorage, allocator: Allocator) void {
         if (self.forward_prefetch_pool_valid) {
             self.forward_prefetch_pool.deinit();
         }
@@ -127,7 +135,7 @@ pub const SummaryStorage = struct {
     }
 
     pub fn forwardPrefetchPool(
-        self: *SummaryStorage,
+        self: *ProductStorage,
         allocator: Allocator,
         worker_count: usize,
     ) ?*std.Thread.Pool {
@@ -156,7 +164,7 @@ pub const SummaryStorage = struct {
         return &self.forward_prefetch_pool;
     }
 
-    pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {
+    pub fn invalidateWavelengthPlan(self: *ProductStorage, allocator: Allocator) void {
         self.wavelength_sampling.deinit(allocator);
         self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
@@ -170,7 +178,7 @@ pub const SummaryStorage = struct {
         self.profile_spectroscopy_cache_valid = false;
     }
 
-    pub fn spectralCache(self: *SummaryStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
+    pub fn spectralCache(self: *ProductStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
         if (self.evaluation_cache == null) {
             self.evaluation_cache = Cache.SpectralEvaluationCache.init(allocator);
         }
@@ -179,7 +187,7 @@ pub const SummaryStorage = struct {
     }
 
     pub fn forwardResultBuffer(
-        self: *SummaryStorage,
+        self: *ProductStorage,
         allocator: Allocator,
         capacity: usize,
     ) Error![]Types.ForwardIntegratedSample {
@@ -193,24 +201,28 @@ pub const SummaryStorage = struct {
     }
 
     pub fn buffers(
-        self: *SummaryStorage,
+        self: *ProductStorage,
         allocator: Allocator,
         scene: *const Scene,
-        route: common.Route,
+        rtm_config: common.SolveConfig,
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-        const layer_count = transportLayerCountHint(scene, route);
-        const needs_source_interfaces = routeMayUseSourceInterfaces(scene, route);
-        const needs_rtm_quadrature = routeUsesRtmQuadrature(route);
-        const needs_pseudo_spherical_grid = routeUsesPseudoSphericalGrid(route);
+        const layer_count = transportLayerCountHint(scene, rtm_config);
+
+        const needs_source_interfaces = configMayUseSourceInterfaces(scene, rtm_config);
+        const needs_rtm_quadrature = configUsesRtmQuadrature(rtm_config);
+        const needs_pseudo_spherical_grid = configUsesPseudoSphericalGrid(rtm_config);
+
         const pseudo_spherical_sample_count = if (needs_pseudo_spherical_grid)
-            pseudoSphericalSampleCountHint(scene, route)
+            pseudoSphericalSampleCountHint(scene, rtm_config)
         else
             0;
-        const active_jacobian_mask = if (route.derivative_mode != .none)
-            jacobian.sanitizedMask(route.derivative_state_mask)
+
+        const active_jacobian_mask = if (rtm_config.derivative_mode != .none)
+            jacobian.sanitizedMask(rtm_config.derivative_state_mask)
         else
             0;
+
         const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
         const wants_jacobian = active_jacobian_count != 0;
 
@@ -249,6 +261,30 @@ pub const SummaryStorage = struct {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
         }
 
+        const source_interface_view: []common.SourceInterfaceInput = if (needs_source_interfaces)
+            self.source_interfaces[0 .. layer_count + 1]
+        else
+            @constCast(&[_]common.SourceInterfaceInput{});
+        const rtm_quadrature_view: []common.RtmQuadratureLevel = if (needs_rtm_quadrature)
+            self.rtm_quadrature_levels[0 .. layer_count + 1]
+        else
+            @constCast(&[_]common.RtmQuadratureLevel{});
+
+        var pseudo_spherical_samples_view: []common.PseudoSphericalSample =
+            @constCast(&[_]common.PseudoSphericalSample{});
+        var pseudo_spherical_starts_view: []usize = @constCast(&[_]usize{});
+        var pseudo_spherical_altitudes_view: []f64 = @constCast(&[_]f64{});
+        if (needs_pseudo_spherical_grid) {
+            pseudo_spherical_samples_view = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count];
+            pseudo_spherical_starts_view = self.pseudo_spherical_level_starts[0 .. layer_count + 1];
+            pseudo_spherical_altitudes_view = self.pseudo_spherical_level_altitudes[0 .. layer_count + 1];
+        }
+
+        const jacobian_view = if (wants_jacobian)
+            self.jacobian[0 .. sample_count * active_jacobian_count]
+        else
+            null;
+
         return .{
             .wavelengths = self.wavelengths[0..sample_count],
             .radiance = self.radiance[0..sample_count],
@@ -257,27 +293,25 @@ pub const SummaryStorage = struct {
             .scratch = self.scratch[0..sample_count],
             .scratch_aux = self.scratch_aux[0..sample_count],
             .layer_inputs = self.layer_inputs[0..layer_count],
-            .source_interfaces = if (needs_source_interfaces) self.source_interfaces[0 .. layer_count + 1] else &.{},
-            .rtm_quadrature_levels = if (needs_rtm_quadrature) self.rtm_quadrature_levels[0 .. layer_count + 1] else &.{},
-            .pseudo_spherical_samples = if (needs_pseudo_spherical_grid) self.pseudo_spherical_samples[0..pseudo_spherical_sample_count] else &.{},
-            .pseudo_spherical_level_starts = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_starts[0 .. layer_count + 1] else &.{},
-            .pseudo_spherical_level_altitudes = if (needs_pseudo_spherical_grid) self.pseudo_spherical_level_altitudes[0 .. layer_count + 1] else &.{},
-            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * active_jacobian_count] else null,
+            .source_interfaces = source_interface_view,
+            .rtm_quadrature_levels = rtm_quadrature_view,
+            .pseudo_spherical_samples = pseudo_spherical_samples_view,
+            .pseudo_spherical_level_starts = pseudo_spherical_starts_view,
+            .pseudo_spherical_level_altitudes = pseudo_spherical_altitudes_view,
+            .jacobian = jacobian_view,
             .jacobian_state_mask = if (wants_jacobian) active_jacobian_mask else 0,
         };
     }
 };
 
-// Reusable full-product storage that shares the same backing buffers as the
-// summary path.
-pub const ProductStorage = SummaryStorage;
+pub fn transportLayerCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
+    _ = rtm_config;
 
-pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
-    _ = route;
     if (scene.atmosphere.interval_grid.enabled()) {
         const uses_disamar_shared_rtm_grid =
             scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
             scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
+
         var total_count: usize = 0;
         for (scene.atmosphere.interval_grid.intervals) |interval| {
             total_count += if (uses_disamar_shared_rtm_grid)
@@ -285,29 +319,34 @@ pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
             else
                 @max(@as(usize, interval.altitude_divisions), 1);
         }
+
         return @max(total_count, 1);
     }
+
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
-pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
-    const layer_count = transportLayerCountHint(scene, route);
+pub fn pseudoSphericalSampleCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
+    const layer_count = transportLayerCountHint(scene, rtm_config);
     return layer_count * (pseudoSphericalSubgridDivisions(scene) + 2);
 }
 
-pub fn resolvedTransportLayerCount(route: common.Route, prepared: *const OpticsPreparation.PreparedOpticalState) usize {
-    _ = route;
+pub fn resolvedTransportLayerCount(
+    rtm_config: common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+) usize {
+    _ = rtm_config;
     return prepared.transportLayerCount();
 }
 
 pub fn resolvedPseudoSphericalSampleCount(
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
 ) usize {
     if (prepared.intervalSemanticsUseReducedSharedRtmLayers() and
-        prepared.shared_rtm_geometry.isValidFor(resolvedTransportLayerCount(route, prepared)))
+        prepared.shared_rtm_geometry.isValidFor(resolvedTransportLayerCount(rtm_config, prepared)))
     {
         var sample_count: usize = 0;
         for (prepared.shared_rtm_geometry.layers) |layer| {
@@ -316,45 +355,58 @@ pub fn resolvedPseudoSphericalSampleCount(
         }
         return sample_count;
     }
-    return resolvedTransportLayerCount(route, prepared) * pseudoSphericalSubgridDivisions(scene);
+    return resolvedTransportLayerCount(rtm_config, prepared) * pseudoSphericalSubgridDivisions(scene);
 }
 
 fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
     return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
-pub fn validateBuffers(scene: *const Scene, route: common.Route, sample_count: usize, buffers: Buffers) Error!void {
-    // INVARIANT:
-    //   The always-active summary buffers and the route-selected transport
-    //   carriers must stay shape-compatible for a single sweep.
-    if (sample_count == 0 or
-        buffers.wavelengths.len != sample_count or
-        buffers.radiance.len != sample_count or
-        buffers.irradiance.len != sample_count or
-        buffers.reflectance.len != sample_count or
-        buffers.scratch.len != sample_count or
-        buffers.scratch_aux.len != sample_count or
-        buffers.layer_inputs.len == 0)
-    {
+pub fn validateBuffers(
+    scene: *const Scene,
+    rtm_config: common.SolveConfig,
+    sample_count: usize,
+    buffers: Buffers,
+) Error!void {
+
+    // The always-active summary buffers and the rtm_config-selected transport
+    // carriers must stay shape-compatible for a single sweep.
+    const summary_buffers_match =
+        sample_count != 0 and
+        buffers.wavelengths.len == sample_count and
+        buffers.radiance.len == sample_count and
+        buffers.irradiance.len == sample_count and
+        buffers.reflectance.len == sample_count and
+        buffers.scratch.len == sample_count and
+        buffers.scratch_aux.len == sample_count and
+        buffers.layer_inputs.len != 0;
+    if (!summary_buffers_match) {
         return error.ShapeMismatch;
     }
-    if (routeMayUseSourceInterfaces(scene, route) and
-        buffers.source_interfaces.len != buffers.layer_inputs.len + 1)
-    {
+
+    const source_interfaces_match =
+        !configMayUseSourceInterfaces(scene, rtm_config) or
+        buffers.source_interfaces.len == buffers.layer_inputs.len + 1;
+    if (!source_interfaces_match) {
         return error.ShapeMismatch;
     }
-    if (routeUsesRtmQuadrature(route) and
-        buffers.rtm_quadrature_levels.len != buffers.layer_inputs.len + 1)
-    {
+
+    const rtm_quadrature_matches =
+        !configUsesRtmQuadrature(rtm_config) or
+        buffers.rtm_quadrature_levels.len == buffers.layer_inputs.len + 1;
+    if (!rtm_quadrature_matches) {
         return error.ShapeMismatch;
     }
-    if (routeUsesPseudoSphericalGrid(route) and
-        (buffers.pseudo_spherical_samples.len == 0 or
-            buffers.pseudo_spherical_level_starts.len != buffers.layer_inputs.len + 1 or
-            buffers.pseudo_spherical_level_altitudes.len != buffers.layer_inputs.len + 1))
-    {
+
+    const pseudo_spherical_grid_matches =
+        !configUsesPseudoSphericalGrid(rtm_config) or
+        (buffers.pseudo_spherical_samples.len != 0 and
+            buffers.pseudo_spherical_level_starts.len == buffers.layer_inputs.len + 1 and
+            buffers.pseudo_spherical_level_altitudes.len == buffers.layer_inputs.len + 1);
+    if (!pseudo_spherical_grid_matches) {
         return error.ShapeMismatch;
     }
+
     if (buffers.jacobian) |values| {
         const active_jacobian_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
         if (active_jacobian_count == 0 or values.len != sample_count * active_jacobian_count) return error.ShapeMismatch;

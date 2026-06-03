@@ -35,9 +35,13 @@ const forward_prefetch_pooled_chunk_size: usize = 8;
 //   follow: reuse inside prefetchForwardWorkerMain across forward misses
 // layout(64-bit):
 //   size: 3304 B, align: 8 B
-//   field storage: 3304 B across 8 fields; largest: labos_workspace=3168 B, support_carrier_cache=40 B, layer_inputs=16 B; padding: 0 B (0 bits)
+//   field storage:
+//     3304 B across 8 fields; largest: labos_workspace=3168 B, support_carrier_cache=40 B
+//     layer_inputs=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layer_inputs always owns transport rows; source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are route-gated and may be empty
+//   out-of-line:
+//     layer_inputs always owns transport rows
+//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are rtm_config-gated
 //   cache span: 52 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 3304 B (3.227 KiB); total also includes referenced storage above
@@ -54,15 +58,15 @@ const ForwardSampleScratch = struct {
     fn init(
         allocator: Allocator,
         scene: *const Scene,
-        route: common.Route,
+        rtm_config: common.SolveConfig,
         prepared: *const OpticsPreparation.PreparedOpticalState,
     ) !ForwardSampleScratch {
-        const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
-        const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
+        const layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
+        const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
         const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
-        const needs_source_interfaces = Storage.routeMayUseSourceInterfaces(scene, route);
-        const needs_rtm_quadrature = Storage.routeUsesRtmQuadrature(route);
-        const needs_pseudo_spherical_grid = Storage.routeUsesPseudoSphericalGrid(route);
+        const needs_source_interfaces = Storage.configMayUseSourceInterfaces(scene, rtm_config);
+        const needs_rtm_quadrature = Storage.configUsesRtmQuadrature(rtm_config);
+        const needs_pseudo_spherical_grid = Storage.configUsesPseudoSphericalGrid(rtm_config);
 
         const layer_inputs = try allocator.alloc(common.LayerInput, layer_count);
         errdefer allocator.free(layer_inputs);
@@ -138,16 +142,22 @@ const ForwardPrefetchErrorState = struct {
 
 // layout(product 64-bit):
 //   size: 184 B, align: 8 B
-//   field storage: 184 B across 11 product fields; largest: route=80 B, misses=16 B, profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
+//   field storage:
+//     184 B across 11 product fields; largest: rtm_config=80 B, misses=16 B
+//     profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors; referenced storage is not included in size
+//   out-of-line:
+//     scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors
+//     referenced storage is not included in size
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 184 B (0.180 KiB); total also includes referenced storage above
-//   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
+//   telemetry:
+//     telemetry_context is zero-size in product builds
+//     validation telemetry builds use it for row attribution
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
@@ -172,32 +182,32 @@ fn radianceScaleFromForward(
 
 fn integratedSampleFromForward(
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     wavelength_nm: f64,
     forward: common.ForwardResult,
 ) ForwardIntegratedSample {
     const scale = radianceScaleFromForward(scene, wavelength_nm);
+    var radiance_jacobian = jacobian.zero();
+    if (forward.jacobian) |reflectance_jacobian| {
+        radiance_jacobian = jacobian.scaleMasked(
+            reflectance_jacobian,
+            scale,
+            rtm_config.derivative_state_mask,
+        );
+    }
+
     return .{
         // math: L(lambda) = reflectance_factor(lambda) * scale(lambda).
         .radiance = forward.toa_reflectance_factor * scale,
         // math: dL/dx = scale(lambda) * d(reflectance_factor)/dx for each active retrieval state x.
-        .jacobian = if (forward.jacobian) |reflectance_jacobian|
-            jacobian.scaleMasked(reflectance_jacobian, scale, route.derivative_state_mask)
-        else
-            jacobian.zero(),
+        .jacobian = radiance_jacobian,
     };
 }
 
-// hot path:
-//   when: once per high-resolution wavelength cache miss in forward/retrieval runs
-//   work: builds wavelength-specific forward input and executes LABOS transport
-//   data: layer inputs, carrier cache arrays, pseudo-spherical buffers, labos workspace
-//   follow: ForwardInput.configuredForwardInput and executePreparedWithLabosWorkspace
-//   math: lambda -> optical layers(lambda) -> LABOS reflectance_factor(lambda) -> L(lambda) via solar/BRDF scaling
 fn computeForwardSampleAtWavelengthWithScratch(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
     layer_inputs: []common.LayerInput,
@@ -210,6 +220,16 @@ fn computeForwardSampleAtWavelengthWithScratch(
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
+
+    // hot path:
+    //   when: once per high-resolution wavelength cache miss in forward/retrieval runs
+    //   work: builds wavelength-specific forward input and executes LABOS transport
+    //   Uses layer inputs, carrier cache arrays, pseudo-spherical buffers, and labos workspace.
+    //   follow: ForwardInput.configuredForwardInput and executePreparedWithLabosWorkspace
+    //   math:
+    //     lambda -> optical layers(lambda) -> LABOS reflectance_factor(lambda)
+    //     then L(lambda) via solar/BRDF scaling
+
     // instrumentation: trace zone
     // captures: one high-resolution forward-sample solve
     // why: separate per-miss optical input setup and LABOS execution from nominal-grid assembly.
@@ -228,7 +248,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
         defer zone.end();
         break :input try ForwardInput.configuredForwardInput(
             scene,
-            route,
+            rtm_config,
             prepared,
             wavelength_nm,
             layer_inputs,
@@ -241,17 +261,22 @@ fn computeForwardSampleAtWavelengthWithScratch(
             profile_spectroscopy_cache,
         );
     };
-    var effective_route = route;
-    effective_route.rtm_controls = input.rtm_controls;
+    var effective_config = rtm_config;
+    effective_config.rtm_controls = input.rtm_controls;
     const forward = forward: {
         // instrumentation: trace zone
         // captures: LABOS transport execution for one forward sample
         // why: keep the radiative-transfer solve separate from surrounding input and scaling work.
         const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
         defer zone.end();
-        break :forward try common.executePreparedWithLabosWorkspace(allocator, effective_route, input, labos_workspace);
+        break :forward try common.executePreparedWithLabosWorkspace(
+            allocator,
+            effective_config,
+            input,
+            labos_workspace,
+        );
     };
-    return integratedSampleFromForward(scene, route, wavelength_nm, forward);
+    return integratedSampleFromForward(scene, rtm_config, wavelength_nm, forward);
 }
 
 // hot path:
@@ -286,7 +311,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     var scratch = ForwardSampleScratch.init(
         allocator,
         worker.scene,
-        worker.route,
+        worker.rtm_config,
         worker.prepared,
     ) catch |err| {
         worker.error_state.store(err);
@@ -309,7 +334,8 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                     &worker.profile_spectroscopy_caches[index]
                 else
                     null;
-                worker.results[index] = result: {
+
+                worker.results[index] = compute_sample: {
                     const previous_context = Telemetry.currentContext();
                     Telemetry.setContext(telemetrySampleContext(
                         worker.telemetry_context,
@@ -317,10 +343,10 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                         miss.wavelength_nm,
                     ));
                     defer Telemetry.setContext(previous_context);
-                    break :result computeForwardSampleAtWavelengthWithScratch(
+                    break :compute_sample computeForwardSampleAtWavelengthWithScratch(
                         allocator,
                         worker.scene,
-                        worker.route,
+                        worker.rtm_config,
                         worker.prepared,
                         miss.wavelength_nm,
                         scratch.layer_inputs,
@@ -361,7 +387,7 @@ fn nextForwardPrefetchChunk(worker: *ForwardPrefetchWorker) ?work_partition.Rang
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
@@ -384,13 +410,14 @@ pub fn prefetchForwardSamples(
     const telemetry_context = Telemetry.currentContext();
 
     if (worker_count == 1) {
-        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
+        var scratch = try ForwardSampleScratch.init(allocator, scene, rtm_config, prepared);
         defer scratch.deinit(allocator);
         for (misses, results, 0..) |miss, *result, miss_index| {
             const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
                 &profile_spectroscopy_caches[miss_index]
             else
                 null;
+
             result.* = result_value: {
                 const previous_context = Telemetry.currentContext();
                 Telemetry.setContext(telemetrySampleContext(
@@ -402,7 +429,7 @@ pub fn prefetchForwardSamples(
                 break :result_value try computeForwardSampleAtWavelengthWithScratch(
                     allocator,
                     scene,
-                    route,
+                    rtm_config,
                     prepared,
                     miss.wavelength_nm,
                     scratch.layer_inputs,
@@ -428,7 +455,7 @@ pub fn prefetchForwardSamples(
         const range = work_partition.staticRange(misses.len, worker_count, worker_index);
         workers[worker_index] = .{
             .scene = scene,
-            .route = route,
+            .rtm_config = rtm_config,
             .prepared = prepared,
             .misses = misses,
             .profile_spectroscopy_caches = profile_spectroscopy_caches,

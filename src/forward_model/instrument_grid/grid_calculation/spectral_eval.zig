@@ -38,7 +38,7 @@ fn irradianceAtWavelength(
 //   follow: buildForwardMissPlan and spectral_forward.prefetchForwardSamples
 //   math: L_i = sum_j w_ij L(lambda_i + delta_ij); dL_i/dx = sum_j w_ij dL(lambda_i + delta_ij)/dx
 pub fn integratePrefetchedForwardAtNominal(
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     results: []const ForwardIntegratedSample,
     row_ref: Plan.ForwardSampleIndexRef,
     sample_indices: []const u32,
@@ -67,14 +67,15 @@ pub fn integratePrefetchedForwardAtNominal(
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian.zero();
-    const wants_jacobian = route.derivative_mode != .none and jacobian.activeStateCount(route.derivative_state_mask) != 0;
+    const active_state_count = jacobian.activeStateCount(rtm_config.derivative_state_mask);
+    const wants_jacobian = rtm_config.derivative_mode != .none and active_state_count != 0;
     for (indices, samples.weights) |result_index_u32, weight| {
         const result_index: usize = @intCast(result_index_u32);
         if (result_index >= results.len) return error.ShapeMismatch;
         const sample = results[result_index];
         radiance_sum += weight * sample.radiance;
         if (wants_jacobian) {
-            jacobian.addScaledMasked(&jacobian_sum, sample.jacobian, weight, route.derivative_state_mask);
+            jacobian.addScaledMasked(&jacobian_sum, sample.jacobian, weight, rtm_config.derivative_state_mask);
         }
     }
 
@@ -129,7 +130,7 @@ pub fn integrateIrradianceAtNominal(
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
@@ -142,7 +143,7 @@ pub fn prefetchForwardSamples(
     try spectral_forward.prefetchForwardSamples(
         allocator,
         scene,
-        route,
+        rtm_config,
         prepared,
         misses,
         profile_spectroscopy_caches,

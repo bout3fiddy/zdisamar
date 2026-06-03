@@ -3,7 +3,7 @@ const internal = @import("internal");
 
 const common = internal.forward_model.radiative_transfer;
 const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
-const prepareRoute = common.prepareRoute;
+const prepareSolveConfig = common.prepareSolveConfig;
 const fillSourceInterfacesFromLayers = common.fillSourceInterfacesFromLayers;
 
 test "radiative-transfer thresholds keep tangent order cap opt-in" {
@@ -18,51 +18,30 @@ test "radiative-transfer thresholds keep tangent order cap opt-in" {
     try std.testing.expect(!fast_tangent_thresholds.shouldEvaluateAerosolTangent(12));
 }
 
-test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical derivative paths executable" {
-    const labos_route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
+test "prepare config accepts current derivative modes" {
+    const value_config = try prepareSolveConfig(.{
         .derivative_mode = .none,
     });
-    try std.testing.expectEqual(common.TransportFamily.labos, labos_route.family);
-    try std.testing.expectEqual(common.DerivativeMode.none, labos_route.derivative_mode);
+    try std.testing.expectEqual(common.DerivativeMode.none, value_config.derivative_mode);
 
-    const twenty_stream_route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const twenty_stream_config = try prepareSolveConfig(.{
         .derivative_mode = .none,
         .rtm_controls = .{ .n_streams = 20 },
     });
-    try std.testing.expectEqual(@as(u16, 20), twenty_stream_route.rtm_controls.n_streams);
+    try std.testing.expectEqual(@as(u16, 20), twenty_stream_config.rtm_controls.n_streams);
 
-    try std.testing.expectError(common.Error.UnsupportedObservationRegime, prepareRoute(.{
-        .regime = .limb,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
-    }));
-    const jacobian_route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const jacobian_config = try prepareSolveConfig(.{
         .derivative_mode = .semi_analytical,
     });
-    try std.testing.expectEqual(common.DerivativeMode.semi_analytical, jacobian_route.derivative_mode);
-    try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .numerical,
-    }));
+    try std.testing.expectEqual(common.DerivativeMode.semi_analytical, jacobian_config.derivative_mode);
 }
 
-test "execute prepared route uses LABOS for the O2A scalar forward mode" {
-    const route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
+test "execute prepared config returns reflectance without jacobian for value mode" {
+    const rtm_config = try prepareSolveConfig(.{
         .derivative_mode = .none,
     });
-    try std.testing.expectEqual(common.TransportFamily.labos, route.family);
 
-    const result = try common.executePrepared(std.testing.allocator, route, .{});
-    try std.testing.expectEqual(common.TransportFamily.labos, result.family);
+    const result = try common.executePrepared(std.testing.allocator, rtm_config, .{});
     try std.testing.expect(result.jacobian == null);
 }
 

@@ -8,23 +8,32 @@ const AdaptiveReferenceGrid = @import("Instrument.zig").AdaptiveReferenceGrid;
 const InstrumentLineShape = @import("Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTable;
 const OperationalBandSupport = @import("Instrument.zig").Instrument.OperationalBandSupport;
-const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
-const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpectrum;
-const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 const Allocator = std.mem.Allocator;
 
 pub const ObservationRegime = enum {
     nadir,
-    limb,
-    occultation,
+};
+
+const ResolvedHighResolutionGrid = struct {
+    step_nm: f64,
+    half_span_nm: f64,
+
+    fn enabled(self: ResolvedHighResolutionGrid) bool {
+        return self.step_nm > 0.0 and self.half_span_nm > 0.0;
+    }
 };
 
 // layout(64-bit):
 //   size: 40 B, align: 8 B
-//   field storage: xsec_strong_absorption_bands=16 B, polynomial_degree_bands=16 B, use_effective_cross_section_oe=1 B, use_polynomial_expansion=1 B; padding: 6 B (48 bits)
+//   field storage:
+//     xsec_strong_absorption_bands=16 B, polynomial_degree_bands=16 B
+//     use_effective_cross_section_oe=1 B, use_polynomial_expansion=1 B
+//     padding: 6 B (48 bits)
 //   unused bits: 48 padding + 14 bool-storage slack = 62 bits
-//   out-of-line: xsec_strong_absorption_bands, polynomial_degree_bands carry references/descriptors; referenced storage is not included in size
+//   out-of-line:
+//     xsec_strong_absorption_bands and polynomial_degree_bands carry slice descriptors
+//     referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 pub const CrossSectionFitControls = struct {
@@ -95,14 +104,6 @@ pub const CrossSectionFitControls = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 600 B, align: 8 B
-//   field storage: 596 B across 25 fields; largest: o2o2_operational_lut=72 B, o2_operational_lut=72 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 14 bool-storage slack = 46 bits
-//   out-of-line: measured_wavelengths_nm and operational_band_support carry references/descriptors; referenced storage is not included in size
-//   cache span: 10 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 600 B (0.586 KiB); total also includes referenced storage above
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
@@ -112,18 +113,10 @@ pub const ObservationModel = struct {
     stray_light: f64 = 0.0,
     instrument_line_fwhm_nm: f64 = 0.0,
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
-    high_resolution_step_nm: f64 = 0.0,
-    high_resolution_half_span_nm: f64 = 0.0,
-    integration_mode: Instrument.SpectralResponse.IntegrationMode = .auto,
+    integration_mode: Instrument.SpectralResponse.RequestedIntegrationMode = .auto,
     adaptive_reference_grid: AdaptiveReferenceGrid = .{},
     solar_spectrum_source: Binding = .none,
     weighted_reference_grid_source: Binding = .none,
-    instrument_line_shape: InstrumentLineShape = .{},
-    instrument_line_shape_table: InstrumentLineShapeTable = .{},
-    operational_refspec_grid: OperationalReferenceGrid = .{},
-    operational_solar_spectrum: OperationalSolarSpectrum = .{},
-    o2_operational_lut: OperationalCrossSectionLut = .{},
-    o2o2_operational_lut: OperationalCrossSectionLut = .{},
     operational_band_support: []const OperationalBandSupport = &.{},
     owns_operational_band_support: bool = false,
     cross_section_fit: CrossSectionFitControls = .{},
@@ -134,67 +127,89 @@ pub const ObservationModel = struct {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
         try self.instrument.validate();
+
         if (!std.math.isFinite(self.multiplicative_offset) or self.multiplicative_offset <= 0.0) {
             return errors.Error.InvalidRequest;
         }
         if (!std.math.isFinite(self.stray_light)) {
             return errors.Error.InvalidRequest;
         }
+
         if (self.measured_wavelengths_nm.len != 0) {
             var previous_wavelength: ?f64 = null;
             for (self.measured_wavelengths_nm) |wavelength_nm| {
                 if (!std.math.isFinite(wavelength_nm)) return errors.Error.InvalidRequest;
+
                 if (previous_wavelength) |previous| {
                     if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
                 }
+
                 previous_wavelength = wavelength_nm;
             }
         }
+
         if (self.instrument_line_fwhm_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
-        if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
-            return errors.Error.InvalidRequest;
-        }
-        if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
-            // GOTCHA:
-            //   High-resolution sampling is an all-or-nothing contract. A single nonzero field
-            //   would under-specify the convolution support grid.
-            return errors.Error.InvalidRequest;
+
+        const high_resolution_grid = resolvedHighResolutionGrid(self);
+        const has_explicit_hr_grid =
+            high_resolution_grid.step_nm > 0.0 and high_resolution_grid.half_span_nm > 0.0;
+        const has_instrument_width = self.instrument_line_fwhm_nm > 0.0;
+
+        switch (self.integration_mode) {
+            .auto, .default_kernel => {},
+
+            .explicit_hr_grid => {
+                if (!has_explicit_hr_grid) {
+                    return errors.Error.InvalidRequest;
+                }
+            },
+
+            .disamar_hr_grid => {
+                if (!has_instrument_width) return errors.Error.InvalidRequest;
+            },
+
+            .adaptive => {
+                const has_adaptive_grid = self.adaptive_reference_grid.enabled();
+                if (!has_instrument_width or !has_adaptive_grid) {
+                    return errors.Error.InvalidRequest;
+                }
+            },
         }
         try self.adaptive_reference_grid.validate();
-        try self.instrument_line_shape.validate();
-        try self.instrument_line_shape_table.validate();
-        try self.operational_refspec_grid.validate();
-        try self.operational_solar_spectrum.validate();
-        try self.o2_operational_lut.validate();
-        try self.o2o2_operational_lut.validate();
+
         if (self.operational_band_support.len > 1) {
-            // GOTCHA:
-            //   Runtime consumers still resolve one operational support record per scene. Reject
-            //   multi-band support until optics/measurement prep becomes truly band-indexed rather
-            //   than silently dropping enabled replacements for bands > 0.
+
+            // Runtime consumers still resolve one operational support record per scene.
+            // Reject multi-band support until optics and measurement prep are truly band-indexed
+            // instead of silently dropping enabled replacements for bands after the first.
             return errors.Error.InvalidRequest;
         }
+
         for (self.operational_band_support, 0..) |*support, index| {
             try support.validate();
             for (self.operational_band_support[index + 1 ..]) |other| {
                 if (std.mem.eql(u8, support.id, other.id)) return errors.Error.InvalidRequest;
             }
         }
+
         try self.cross_section_fit.validate();
     }
 
-    pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
-        return legacyChannelControls(self, channel);
+    pub fn resolvedChannelControls(
+        self: *const ObservationModel,
+        channel: SpectralChannel,
+    ) Instrument.SpectralChannelControls {
+        return channelControls(self, channel);
     }
 
     pub fn operationalBandCount(self: *const ObservationModel) usize {
-        return operationalBandCountFromLegacy(self);
+        return self.operational_band_support.len;
     }
 
     pub fn primaryOperationalBandSupport(self: *const ObservationModel) OperationalBandSupport {
-        return primaryOperationalBandSupportFromLegacy(self);
+        return self.resolvedOperationalBandSupport(0) orelse .{};
     }
 
     pub fn lutSamplingHalfSpanNm(self: *const ObservationModel) f64 {
@@ -205,7 +220,8 @@ pub const ObservationModel = struct {
         self: *const ObservationModel,
         band_index: usize,
     ) ?OperationalBandSupport {
-        return resolvedOperationalBandSupportFromLegacy(self, band_index);
+        if (band_index < self.operational_band_support.len) return self.operational_band_support[band_index];
+        return null;
     }
 
     pub fn operationalReplacementLabelsOwned(
@@ -259,12 +275,6 @@ pub const ObservationModel = struct {
     }
 
     pub fn deinitOwned(self: *ObservationModel, allocator: Allocator) void {
-        self.instrument_line_shape.deinitOwned(allocator);
-        self.instrument_line_shape_table.deinitOwned(allocator);
-        self.operational_refspec_grid.deinitOwned(allocator);
-        self.operational_solar_spectrum.deinitOwned(allocator);
-        self.o2_operational_lut.deinitOwned(allocator);
-        self.o2o2_operational_lut.deinitOwned(allocator);
         if (self.owns_operational_band_support) {
             for (self.operational_band_support) |support| {
                 var owned = support;
@@ -275,58 +285,36 @@ pub const ObservationModel = struct {
         self.operational_band_support = &.{};
         self.owns_operational_band_support = false;
         self.cross_section_fit.deinitOwned(allocator);
-        if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
+        if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) {
+            allocator.free(self.measured_wavelengths_nm);
+        }
         self.measured_wavelengths_nm = &.{};
         self.owns_measured_wavelengths = false;
     }
 };
-
-fn operationalBandCountFromLegacy(model: *const ObservationModel) usize {
-    if (model.operational_band_support.len != 0) return model.operational_band_support.len;
-    return if (legacyOperationalBandSupport(model).enabled()) 1 else 0;
-}
-
-fn primaryOperationalBandSupportFromLegacy(model: *const ObservationModel) OperationalBandSupport {
-    return resolvedOperationalBandSupportFromLegacy(model, 0) orelse .{};
-}
-
-fn resolvedOperationalBandSupportFromLegacy(
-    model: *const ObservationModel,
-    band_index: usize,
-) ?OperationalBandSupport {
-    if (band_index < model.operational_band_support.len) {
-        return mergedOperationalBandSupport(
-            model.operational_band_support[band_index],
-            legacyOperationalBandSupport(model),
-        );
-    }
-    if (band_index == 0) {
-        const legacy = legacyOperationalBandSupport(model);
-        if (legacy.enabled()) return legacy;
-    }
-    return null;
-}
 
 fn lutSamplingHalfSpanForSupport(support: OperationalBandSupport) f64 {
     if (support.high_resolution_step_nm <= 0.0) return 0.0;
 
     var half_span_nm = support.high_resolution_half_span_nm;
     if (support.instrument_line_shape.sample_count > 0) {
-        for (support.instrument_line_shape.offsets_nm[0..support.instrument_line_shape.sample_count]) |offset_nm| {
+        const line_shape = support.instrument_line_shape;
+        for (line_shape.offsets_nm[0..line_shape.sample_count]) |offset_nm| {
             half_span_nm = @max(half_span_nm, @abs(offset_nm));
         }
     }
     if (support.instrument_line_shape_table.sample_count > 0) {
-        for (support.instrument_line_shape_table.offsets_nm[0..support.instrument_line_shape_table.sample_count]) |offset_nm| {
+        const line_shape_table = support.instrument_line_shape_table;
+        for (line_shape_table.offsets_nm[0..line_shape_table.sample_count]) |offset_nm| {
             half_span_nm = @max(half_span_nm, @abs(offset_nm));
         }
     }
     return half_span_nm;
 }
 
-fn legacyChannelControls(model: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+fn channelControls(model: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
     var controls: Instrument.SpectralChannelControls = .{
-        .response = legacySpectralResponse(model),
+        .response = spectralResponse(model),
         .wavelength_shift_nm = model.wavelength_shift_nm,
     };
     if (channel == .radiance) {
@@ -336,79 +324,62 @@ fn legacyChannelControls(model: *const ObservationModel, channel: SpectralChanne
     return controls;
 }
 
-fn legacySpectralResponse(model: *const ObservationModel) Instrument.SpectralResponse {
-    const support = primaryOperationalBandSupportFromLegacy(model);
-    const resolved_high_resolution_step_nm = if (support.high_resolution_step_nm > 0.0)
-        support.high_resolution_step_nm
-    else
-        model.high_resolution_step_nm;
-    const resolved_high_resolution_half_span_nm = if (support.high_resolution_half_span_nm > 0.0)
-        support.high_resolution_half_span_nm
-    else
-        model.high_resolution_half_span_nm;
+fn spectralResponse(model: *const ObservationModel) Instrument.SpectralResponse {
+    const support = model.primaryOperationalBandSupport();
+    const high_resolution_grid = resolvedHighResolutionGrid(model);
+    const has_line_shape_table = support.instrument_line_shape_table.nominal_count > 0;
+
+    var line_shape: InstrumentLineShape = .{};
+    if (support.instrument_line_shape.sample_count > 0) {
+        line_shape = borrowedLineShape(support.instrument_line_shape);
+    }
+
+    var line_shape_table: InstrumentLineShapeTable = .{};
+    if (has_line_shape_table) {
+        line_shape_table = borrowedLineShapeTable(support.instrument_line_shape_table);
+    }
+
+    const slit_index: Instrument.SlitIndex = switch (model.builtin_line_shape) {
+        .gaussian => if (has_line_shape_table) .table else .gaussian_modulated,
+        .flat_top_n4 => .flat_top_n4,
+        .triple_flat_top_n4 => .triple_flat_top_n4,
+    };
+
     return .{
-        .slit_index = switch (model.builtin_line_shape) {
-            .gaussian => if (support.instrument_line_shape_table.nominal_count > 0 or model.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
-            .flat_top_n4 => .flat_top_n4,
-            .triple_flat_top_n4 => .triple_flat_top_n4,
-        },
+        .slit_index = slit_index,
         .fwhm_nm = model.instrument_line_fwhm_nm,
         .builtin_line_shape = model.builtin_line_shape,
-        .integration_mode = if (model.integration_mode != .auto)
-            model.integration_mode
-        else if (model.adaptive_reference_grid.enabled())
-            .adaptive
-        else if (resolved_high_resolution_step_nm > 0.0 and resolved_high_resolution_half_span_nm > 0.0)
-            .explicit_hr_grid
-        else
-            .auto,
-        .high_resolution_step_nm = resolved_high_resolution_step_nm,
-        .high_resolution_half_span_nm = resolved_high_resolution_half_span_nm,
-        .instrument_line_shape = if (support.instrument_line_shape.sample_count > 0)
-            borrowedLineShape(support.instrument_line_shape)
-        else
-            borrowedLineShape(model.instrument_line_shape),
-        .instrument_line_shape_table = if (support.instrument_line_shape_table.nominal_count > 0)
-            borrowedLineShapeTable(support.instrument_line_shape_table)
-        else
-            borrowedLineShapeTable(model.instrument_line_shape_table),
+        .integration_mode = resolvedIntegrationMode(model, high_resolution_grid),
+        .high_resolution_step_nm = high_resolution_grid.step_nm,
+        .high_resolution_half_span_nm = high_resolution_grid.half_span_nm,
+        .instrument_line_shape = line_shape,
+        .instrument_line_shape_table = line_shape_table,
     };
 }
 
-fn legacyOperationalBandSupport(model: *const ObservationModel) OperationalBandSupport {
+fn resolvedIntegrationMode(
+    model: *const ObservationModel,
+    high_resolution_grid: ResolvedHighResolutionGrid,
+) Instrument.SpectralResponse.IntegrationMode {
+    switch (model.integration_mode) {
+        .auto => {},
+        .default_kernel => return .default_kernel,
+        .explicit_hr_grid => return .explicit_hr_grid,
+        .disamar_hr_grid => return .disamar_hr_grid,
+        .adaptive => return .adaptive,
+    }
+
+    if (model.adaptive_reference_grid.enabled()) return .adaptive;
+    if (high_resolution_grid.enabled()) return .explicit_hr_grid;
+    return .default_kernel;
+}
+
+fn resolvedHighResolutionGrid(model: *const ObservationModel) ResolvedHighResolutionGrid {
+    const support = model.primaryOperationalBandSupport();
     return .{
-        .id = if (model.instrument != .unset) "primary" else "",
-        .high_resolution_step_nm = model.high_resolution_step_nm,
-        .high_resolution_half_span_nm = model.high_resolution_half_span_nm,
-        .instrument_line_shape = borrowedLineShape(model.instrument_line_shape),
-        .instrument_line_shape_table = borrowedLineShapeTable(model.instrument_line_shape_table),
-        .operational_refspec_grid = model.operational_refspec_grid,
-        .operational_solar_spectrum = model.operational_solar_spectrum,
-        .o2_operational_lut = model.o2_operational_lut,
-        .o2o2_operational_lut = model.o2o2_operational_lut,
+        .step_nm = support.high_resolution_step_nm,
+        .half_span_nm = support.high_resolution_half_span_nm,
     };
-}
-
-fn mergedOperationalBandSupport(
-    explicit: OperationalBandSupport,
-    legacy: OperationalBandSupport,
-) OperationalBandSupport {
-    var merged = legacy;
-    if (explicit.id.len != 0) {
-        merged.id = explicit.id;
-        merged.owns_id = explicit.owns_id;
-    }
-    if (explicit.high_resolution_step_nm > 0.0) {
-        merged.high_resolution_step_nm = explicit.high_resolution_step_nm;
-        merged.high_resolution_half_span_nm = explicit.high_resolution_half_span_nm;
-    }
-    if (explicit.instrument_line_shape.sample_count > 0) merged.instrument_line_shape = explicit.instrument_line_shape;
-    if (explicit.instrument_line_shape_table.nominal_count > 0) merged.instrument_line_shape_table = explicit.instrument_line_shape_table;
-    if (explicit.operational_refspec_grid.enabled()) merged.operational_refspec_grid = explicit.operational_refspec_grid;
-    if (explicit.operational_solar_spectrum.enabled()) merged.operational_solar_spectrum = explicit.operational_solar_spectrum;
-    if (explicit.o2_operational_lut.enabled()) merged.o2_operational_lut = explicit.o2_operational_lut;
-    if (explicit.o2o2_operational_lut.enabled()) merged.o2o2_operational_lut = explicit.o2o2_operational_lut;
-    return merged;
 }
 
 fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {

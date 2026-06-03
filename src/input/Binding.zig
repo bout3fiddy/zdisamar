@@ -9,7 +9,6 @@ pub const BindingKind = enum {
     asset,
     ingest,
     stage_product,
-    external_observation,
 };
 
 // layout(64-bit):
@@ -78,7 +77,6 @@ pub const Binding = union(BindingKind) {
     asset: NamedRef,
     ingest: IngestRef,
     stage_product: NamedRef,
-    external_observation: NamedRef,
 
     pub fn enabled(self: Binding) bool {
         return self.kind() != .none;
@@ -93,7 +91,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| value.name,
             .ingest => |value| value.full_name,
             .stage_product => |value| value.name,
-            .external_observation => |value| value.name,
             .none, .atmosphere, .bundle_default => "",
         };
     }
@@ -111,7 +108,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| try value.validate(),
             .ingest => |value| try value.validate(),
             .stage_product => |value| try value.validate(),
-            .external_observation => |value| try value.validate(),
         }
     }
 
@@ -123,7 +119,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| .{ .asset = try value.clone(allocator) },
             .ingest => |value| .{ .ingest = try value.clone(allocator) },
             .stage_product => |value| .{ .stage_product = try value.clone(allocator) },
-            .external_observation => |value| .{ .external_observation = try value.clone(allocator) },
         };
     }
 
@@ -132,7 +127,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| value.deinitOwned(allocator),
             .ingest => |value| value.deinitOwned(allocator),
             .stage_product => |value| value.deinitOwned(allocator),
-            .external_observation => |value| value.deinitOwned(allocator),
             .none, .atmosphere, .bundle_default => {},
         }
         self.* = .none;

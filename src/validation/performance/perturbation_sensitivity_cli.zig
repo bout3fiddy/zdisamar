@@ -213,10 +213,9 @@ fn mainInner() !void {
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(allocator, &input);
     defer prepared_case.deinit(allocator);
 
-    var forward_route = prepared_case.route;
-    forward_route.derivative_mode = .none;
-    forward_route.derivative_state_mask = 0;
-    const implementations = internal.forward_model.implementations.exact();
+    var forward_config = prepared_case.rtm_config;
+    forward_config.derivative_mode = .none;
+    forward_config.derivative_state_mask = 0;
 
     // instrumentation: perturbation baseline
     // captures: unmodified forward and OE outputs
@@ -230,9 +229,8 @@ fn mainInner() !void {
         allocator,
         &baseline_storage,
         &prepared_case.scene,
-        forward_route,
+        forward_config,
         &prepared_case.prepared,
-        implementations,
     );
     const baseline_forward_ns = baseline_forward_timer.read();
 
@@ -334,9 +332,8 @@ fn mainInner() !void {
                 allocator,
                 &storage,
                 &prepared_case.scene,
-                forward_route,
+                forward_config,
                 &prepared_case.prepared,
-                implementations,
             );
             forward_ns = forward_timer.read();
             spectrum_delta = compareSpectra(

@@ -140,18 +140,18 @@ pub const OrdersWorkspace = struct {
         // Allocate the full workspace, including local-source sum storage.                                    |
         // ----------------------------------------------------------------------------------------------------|
 
-        return initForRoute(allocator, nlevel, true);
+        return initWithLocalSumStorage(allocator, nlevel, true);
     }
 
-    pub fn initForRoute(
+    pub fn initWithLocalSumStorage(
         allocator: Allocator,
         nlevel: usize,
         needs_local_sum: bool,
     ) !OrdersWorkspace {
-        // OrdersWorkspace.initForRoute -----------------------------------------------------------------------|
-        // Allocate only the storage needed by the selected route.                                             |
+        // OrdersWorkspace.initWithLocalSumStorage ------------------------------------------------------------|
+        // Allocate only the storage needed by the selected RTM config.                                        |
         //                                                                                                     |
-        // Routes that never return local-source sums keep ud_sum_local empty.                                 |
+        // Configs that never return local-source sums keep ud_sum_local empty.                                |
         // ----------------------------------------------------------------------------------------------------|
 
         const ud = try allocator.alloc(basis.UDField, nlevel);
@@ -175,7 +175,7 @@ pub const OrdersWorkspace = struct {
 
     pub fn ensureLocalSumCapacity(self: *OrdersWorkspace, nlevel: usize) !void {
         // OrdersWorkspace.ensureLocalSumCapacity -------------------------------------------------------------|
-        // Lazily add local-source sum storage when a later route needs it.                                    |
+        // Lazily add local-source sum storage when a later rtm_config needs it.                               |
         // ----------------------------------------------------------------------------------------------------|
 
         if (self.ud_sum_local.len >= nlevel) return;
@@ -221,7 +221,7 @@ fn transportToOtherLevels(
     //   runs     : inside multiple-scattering order propagation across levels                                 |
     //   does     : transports up/down source terms between optical levels                                     |
     //   reads    : attenuation cache, level-indexed U/D source arrays, stream directions                      |
-    //   feeds    : dynamic, runtime12, and fixed12 transport variants selected by route shape                 |
+    //   feeds    : dynamic, runtime12, and fixed12 transport variants selected by rtm_config shape            |
     // The equations above are split by direction so the transport loop can walk                               |
     // upward and downward without rebuilding attenuation products.                                            |
     // --------------------------------------------------------------------------------------------------------|
@@ -328,7 +328,7 @@ fn transportToOtherLevelsDynamic12(
     // transportToOtherLevelsDynamic12 ------------------------------------------------------------------------|
     // Fixed 12-direction transport for the full dynamic attenuation table.                                    |
     //                                                                                                         |
-    // Uses direct table indexing for the common 12-direction dynamic route.                                   |
+    // Uses direct table indexing for the common 12-direction dynamic rtm_config.                              |
     // --------------------------------------------------------------------------------------------------------|
 
     const nlevel = atten.nlevel;
@@ -559,7 +559,7 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     // dotGauss -----------------------------------------------------------------------------------------------|
     // Dot one RT matrix row with one Gauss-stream vector.                                                     |
     //                                                                                                         |
-    // The 10-Gauss route is manually unrolled because this reduction sits inside                              |
+    // The 10-Gauss rtm_config is manually unrolled because this reduction sits inside                         |
     // the scattering-order inner loop.                                                                        |
     // --------------------------------------------------------------------------------------------------------|
 
@@ -655,10 +655,10 @@ inline fn dotGaussPair10(
     // Keeps the common 10-Gauss reduction branchless and short.                                               |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   runs     : fixed 10-stream route evaluates scattering-order reductions                                |
+    //   runs     : fixed 10-stream rtm_config evaluates scattering-order reductions                           |
     //   does     : reduces paired Gauss stream vectors with unrolled fixed-stream access                      |
     //   reads    : one 10-value matrix row and two 10-stream vectors                                          |
-    //   feeds    : fixed-route order accumulation and vector element order                                    |
+    //   feeds    : fixed-rtm_config order accumulation and vector element order                               |
     //                                                                                                         |
     // ARM64 SIMD codegen proof                                                                                |
     //   retained harness codegen_dot_gauss_pair mirrors this 10-Gauss paired reduction                        |
@@ -762,7 +762,7 @@ fn initializeOrdersBuffers(
     // initializeOrdersBuffers --------------------------------------------------------------------------------|
     // Reset all per-level fields before one order solve.                                                      |
     //                                                                                                         |
-    // ud is left undefined because each route writes the fields it returns.                                   |
+    // ud is left undefined because each rtm_config writes the fields it returns.                              |
     // ud_local starts as zero because each order builds local source terms into it.                           |
     //                                                                                                         |
     // hot path                                                                                                |
@@ -1486,10 +1486,10 @@ pub fn ordersScatIntoWithActiveLocalSum(
     num_orders_max: usize,
 ) OrdersResultView {
     // ordersScatIntoWithActiveLocalSum -----------------------------------------------------------------------|
-    // Active-mask route that also returns accumulated local-source sums.                                      |
+    // Active-mask rtm_config that also returns accumulated local-source sums.                                 |
     //                                                                                                         |
     // used by                                                                                                 |
-    //   Runtime-attenuation integrated-source Jacobian route in execute.zig.                                  |
+    //   Runtime-attenuation integrated-source Jacobian rtm_config in execute.zig.                             |
     // `rt_active` is populated by the paired LABOS layer builder for the same                                 |
     // Fourier order. It may conservatively mark zero matrices active, but it                                  |
     // must not mark a nonzero layer inactive.                                                                 |
@@ -1532,7 +1532,7 @@ pub fn ordersScatTransportInto(
     // UD_fc-style field.                                                                                      |
     //                                                                                                         |
     // used by                                                                                                 |
-    //   Non-integrated reflectance and the single-layer LABOS route in execute.zig.                           |
+    //   Non-integrated reflectance and the single-layer LABOS rtm_config in execute.zig.                      |
     // --------------------------------------------------------------------------------------------------------|
 
     const result = ordersScatInternal(
@@ -1570,7 +1570,7 @@ pub fn ordersScat(
     // ordersScat ---------------------------------------------------------------------------------------------|
     // Allocation-based orders solve.                                                                          |
     //                                                                                                         |
-    // Prefer workspace-backed wrappers in repeated runs. This route owns the                                  |
+    // Prefer workspace-backed wrappers in repeated runs. This rtm_config owns the                             |
     // returned arrays and is simpler for one-off callers.                                                     |
     // --------------------------------------------------------------------------------------------------------|
 

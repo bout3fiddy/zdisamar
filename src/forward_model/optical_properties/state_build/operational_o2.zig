@@ -2,7 +2,7 @@ const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
 // hot path:
-//   when: support-row spectroscopy uses the operational O2 LUT route
+//   when: support-row spectroscopy uses the operational O2 LUT rtm_config
 //   work: evaluates LUT sigma and temperature derivative for one wavelength/thermodynamic state
 //   data: operational O2 LUT, wavelength, temperature, pressure
 //   follow: cross_section_lut_eval.evaluate and carrier_eval support-row spectroscopy fields

@@ -13,7 +13,7 @@ const transport_common = @import("../../forward_model/radiative_transfer/root.zi
 const Allocator = std.mem.Allocator;
 const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
 pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
-pub const Route = transport_common.Route;
+pub const SolveConfig = transport_common.SolveConfig;
 pub const RadiativeTransferPerformanceThresholds = transport_common.RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
@@ -72,32 +72,20 @@ pub const ValidationPolicy = struct {
 };
 
 // layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: model_family=16 B, transport_solver=16 B, execution_derivative_mode=16 B; padding: 0 B (0 bits)
+//   size: 1 B, align: 1 B
+//   field storage: derivative_mode=1 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: model_family, transport_solver, execution_derivative_mode carry references/descriptors; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+//   footprint: per instance = 1 B (0.001 KiB); total = per instance * live instance count
 pub const PlanSpec = struct {
-    model_family: []const u8,
-    transport_solver: []const u8,
-    execution_derivative_mode: []const u8,
+    derivative_mode: transport_common.DerivativeMode = .none,
 
     pub fn validate(self: PlanSpec) !void {
-        if (!std.mem.eql(u8, self.model_family, "disamar_standard")) {
-            return error.UnsupportedModelFamily;
-        }
-        if (!std.mem.eql(u8, self.transport_solver, "dispatcher")) {
-            return error.UnsupportedTransportSolver;
-        }
-        _ = try self.derivativeMode();
+        _ = self.derivativeMode();
     }
 
-    pub fn derivativeMode(self: PlanSpec) !transport_common.DerivativeMode {
-        if (std.mem.eql(u8, self.execution_derivative_mode, "none")) return .none;
-        if (std.mem.eql(u8, self.execution_derivative_mode, "semi_analytical")) return .semi_analytical;
-        return error.UnsupportedDerivativeMode;
+    pub fn derivativeMode(self: PlanSpec) transport_common.DerivativeMode {
+        return self.derivative_mode;
     }
 };
 
@@ -154,7 +142,7 @@ pub const AerosolSpec = struct {
 //   footprint: per instance = 88 B (0.086 KiB); total also includes referenced storage above
 pub const ObservationSpec = struct {
     instrument_name: []const u8,
-    regime: ObservationModel.ObservationRegime,
+    regime: ObservationModel.ObservationRegime = .nadir,
     sampling: Instrument.SamplingMode,
     instrument_line_fwhm_nm: f64,
     builtin_line_shape: BuiltinLineShapeKind,

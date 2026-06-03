@@ -13,7 +13,7 @@ const math = std.math;
 //                                                                                                             |
 // main paths                                                                                                  |
 //   calcReflectance                                                                                           |
-//     -> non-integrated route; read top-of-atmosphere U field directly                                        |
+//     -> non-integrated rtm_config; read top-of-atmosphere U field directly                                   |
 //                                                                                                             |
 //   calcIntegratedReflectanceWithBasis                                                                        |
 //     -> integrate level source terms into rho_m                                                              |
@@ -283,9 +283,10 @@ pub fn calcIntegratedReflectanceWithBasis(
 
     for (0..end_level + 1) |ilevel| {
 
-        // Source data route ----------------------------------------------------------------------------------|
+        // Source data choice ---------------------------------------------------------------------------------|
         // RTM quadrature levels carry their own source weights and phase mixture.                             |
-        // Source-interface inputs are used only when the RTM grid is absent. On the RTM route this is null.   |
+        // Source-interface inputs are used only when the RTM grid is absent.                                  |
+        // On the RTM rtm_config this is null.                                                                 |
         // ----------------------------------------------------------------------------------------------------|
 
         var fallback_source_interface: common.SourceInterfaceInput = undefined;
@@ -578,7 +579,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
     // Aerosol optical-depth Jacobian weighting for one Fourier term. Steps:                                   |
     //                                                                                                         |
     //   1. require the RTM quadrature grid; otherwise no integrated-source aerosol weighting is available     |
-    //   2. prefer the active aerosol interval route when top and bottom interfaces are known                  |
+    //   2. prefer the active aerosol interval rtm_config when top and bottom interfaces are known             |
     //   3. reuse common aerosol phase rows across all active interfaces when possible                         |
     //   4. integrate interface weighting over altitude and divide by layer thickness                          |
     //   5. fall back to level.weight * dksca/dtau weighting when no interior interval is available            |
@@ -1626,7 +1627,7 @@ fn interfaceWeightingFromPhaseRows(
     //   3. return source + absorption for scattering coefficient and raw absorption separately                |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : active aerosol interfaces in paired derivative route                                       |
+    //   repeated : active aerosol interfaces in paired derivative rtm_config                                  |
     //   memory   : reuses PhaseRowCache instead of rebuilding Zplus/Zmin rows                                 |
     //                                                                                                         |
     // math                                                                                                    |

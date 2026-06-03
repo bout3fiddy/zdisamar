@@ -12,7 +12,6 @@ const Scene = @import("../../input/Scene.zig").Scene;
 const SpectralGrid = @import("../../input/Spectrum.zig").SpectralGrid;
 const Trace = @import("../../forward_model/performance_trace.zig");
 const bundled_optics = @import("../../input/reference_data/bundled/assets.zig");
-const implementations = @import("../../forward_model/implementations/root.zig");
 const reference_assets = @import("../../input/reference_data/ingest/reference_assets.zig");
 const transport_common = @import("../../forward_model/radiative_transfer/root.zig");
 const reference_types = @import("types.zig");
@@ -22,7 +21,7 @@ const fixed_asset_cache = @import("fixed_asset_cache.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = reference_types.AbsorberSpecies;
-pub const Route = reference_types.Route;
+pub const SolveConfig = reference_types.SolveConfig;
 pub const RadiativeTransferControls = reference_types.RadiativeTransferControls;
 pub const ReferenceSample = reference_types.ReferenceSample;
 pub const ExternalAsset = reference_types.ExternalAsset;
@@ -43,7 +42,7 @@ pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
 // layout(64-bit):
 //   size: 3824 B, align: 8 B
-//   field storage: reference=16 B, scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: reference carry references/descriptors; referenced storage is not included in size
 //   cache span: 60 cache line(s) at 64 B per line
@@ -52,14 +51,14 @@ pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 pub const PreparedRuntimeCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
-    route: Route,
+    rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
 };
 
 // Runtime-prepared O2 A case for repeated native retrieval evaluations.
 // layout(64-bit):
 //   size: 3808 B, align: 8 B
-//   field storage: scene=2680 B, route=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   field storage: scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: scene and prepared carry owned buffers; referenced storage is not included in size
 //   cache span: 60 cache line(s) at 64 B per line
@@ -67,7 +66,7 @@ pub const PreparedRuntimeCase = struct {
 //   footprint: per instance = 3808 B (3.719 KiB); total also includes referenced storage above
 pub const PreparedRuntimeEvaluation = struct {
     scene: Scene,
-    route: Route,
+    rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
 
     pub fn deinit(self: *PreparedRuntimeEvaluation, allocator: Allocator) void {
@@ -362,6 +361,20 @@ pub fn buildResolvedVendorO2AScene(
     var solar_spectrum_owned = true;
     errdefer if (solar_spectrum_owned) solar_spectrum.deinitOwned(allocator);
 
+    const operational_band_support = try allocator.alloc(Instrument.OperationalBandSupport, 1);
+    var operational_band_support_owned = true;
+    errdefer if (operational_band_support_owned) {
+        operational_band_support[0].deinitOwned(allocator);
+        allocator.free(operational_band_support);
+    };
+    operational_band_support[0] = .{
+        .id = "primary",
+        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
+        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
+        .operational_solar_spectrum = solar_spectrum,
+    };
+    solar_spectrum_owned = false;
+
     var absorber_set = try buildO2AbsorberSet(allocator, resolved);
     var absorber_set_owned = true;
     errdefer if (absorber_set_owned) absorber_set.deinitOwned(allocator);
@@ -369,14 +382,14 @@ pub fn buildResolvedVendorO2AScene(
     var scene = sceneFromResolvedO2A(
         resolved,
         absorber_set,
-        solar_spectrum,
+        operational_band_support,
     );
-    solar_spectrum_owned = false;
+    operational_band_support_owned = false;
     absorber_set_owned = false;
     errdefer scene.deinitOwned(allocator);
 
     attachResolvedIntervals(&scene, resolved);
-    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
+    try primaryOperationalBandSupportOwned(&scene).operational_solar_spectrum.prepareInterpolation(allocator);
     return scene;
 }
 
@@ -385,14 +398,18 @@ fn retainSolarSupport(
     resolved: *const ResolvedVendorO2ACase,
     raw_solar_spectrum: []const SolarSpectrumSample,
 ) !InstrumentModel.OperationalSolarSpectrum {
-    const solar_support_start_nm = resolved.spectral_grid.start_nm - (2.0 * resolved.observation.instrument_line_fwhm_nm);
-    const solar_support_end_nm = resolved.spectral_grid.end_nm + (2.0 * resolved.observation.instrument_line_fwhm_nm);
+    const solar_support_margin_nm = 2.0 * resolved.observation.instrument_line_fwhm_nm;
+    const solar_support_start_nm = resolved.spectral_grid.start_nm - solar_support_margin_nm;
+    const solar_support_end_nm = resolved.spectral_grid.end_nm + solar_support_margin_nm;
+
     var retained_solar_count: usize = 0;
     for (raw_solar_spectrum) |sample| {
         if (sample.wavelength_nm <= solar_support_start_nm) continue;
         if (sample.wavelength_nm >= solar_support_end_nm) continue;
+
         retained_solar_count += 1;
     }
+
     if (retained_solar_count < 3) return error.InvalidData;
 
     const solar_wavelengths = try allocator.alloc(f64, retained_solar_count);
@@ -403,6 +420,7 @@ fn retainSolarSupport(
     for (raw_solar_spectrum) |sample| {
         if (sample.wavelength_nm <= solar_support_start_nm) continue;
         if (sample.wavelength_nm >= solar_support_end_nm) continue;
+
         solar_wavelengths[solar_index] = sample.wavelength_nm;
         solar_irradiance[solar_index] = sample.irradiance;
         solar_index += 1;
@@ -455,9 +473,11 @@ fn buildO2AbsorberSet(
 fn sceneFromResolvedO2A(
     resolved: *const ResolvedVendorO2ACase,
     absorber_set: AbsorberModel.AbsorberSet,
-    solar_spectrum: InstrumentModel.OperationalSolarSpectrum,
+    operational_band_support: []Instrument.OperationalBandSupport,
 ) Scene {
     const aerosol = scalarAerosolView(resolved.aerosol);
+    const phase_function_truncation_threshold =
+        resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold;
 
     return .{
         .id = resolved.scene_id,
@@ -494,14 +514,13 @@ fn sceneFromResolvedO2A(
             .sampling = resolved.observation.sampling,
             .instrument_line_fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
             .builtin_line_shape = resolved.observation.builtin_line_shape,
-            .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
-            .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
             .integration_mode = .disamar_hr_grid,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
-            .operational_solar_spectrum = solar_spectrum,
+            .operational_band_support = operational_band_support,
+            .owns_operational_band_support = true,
             .measured_wavelengths_nm = resolved.observation.measured_wavelengths_nm,
         },
-        .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
+        .phase_function_truncation_threshold = phase_function_truncation_threshold,
     };
 }
 
@@ -555,24 +574,16 @@ fn attachResolvedIntervals(scene: *Scene, resolved: *const ResolvedVendorO2ACase
     }
 }
 
-pub fn prepareResolvedVendorO2ARoute(
-    scene: *const Scene,
-    plan: PlanSpec,
-    rtm_controls: RadiativeTransferControls,
-) !Route {
-    return transport_common.prepareRoute(.{
-        .regime = scene.observation_model.regime,
-        .execution_mode = .scalar,
-        .derivative_mode = try plan.derivativeMode(),
+pub fn prepareResolvedVendorO2ASolveConfig(plan: PlanSpec, rtm_controls: RadiativeTransferControls) !SolveConfig {
+    return transport_common.prepareSolveConfig(.{
+        .derivative_mode = plan.derivativeMode(),
         .rtm_controls = rtm_controls,
     });
 }
 
-pub fn prepareResolvedVendorO2ARouteFromResolved(resolved: *const ResolvedVendorO2ACase) !Route {
-    return transport_common.prepareRoute(.{
-        .regime = resolved.observation.regime,
-        .execution_mode = .scalar,
-        .derivative_mode = try resolved.plan.derivativeMode(),
+pub fn prepareResolvedVendorO2ASolveConfigFromResolved(resolved: *const ResolvedVendorO2ACase) !SolveConfig {
+    return transport_common.prepareSolveConfig(.{
+        .derivative_mode = resolved.plan.derivativeMode(),
         .rtm_controls = resolved.rtm_controls,
     });
 }
@@ -581,12 +592,13 @@ pub fn runResolvedVendorO2AReflectanceCase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !struct {
+
     // layout(64-bit):
     //   anonymous success payload: size 4144 B, align 8 B; padding is included in payload size
     //   footprint: per successful return payload = 4144 B (4.047 KiB)
     reference: []ReferenceSample,
     scene: Scene,
-    route: Route,
+    rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
     product: InstrumentGrid.InstrumentGridProduct,
 } {
@@ -600,16 +612,15 @@ pub fn runResolvedVendorO2AReflectanceCase(
     var product = try InstrumentGrid.simulateProduct(
         allocator,
         &prepared_case.scene,
-        prepared_case.route,
+        prepared_case.rtm_config,
         &prepared_case.prepared,
-        implementations.exact(),
     );
     errdefer product.deinit(allocator);
 
     return .{
         .reference = prepared_case.reference,
         .scene = prepared_case.scene,
-        .route = prepared_case.route,
+        .rtm_config = prepared_case.rtm_config,
         .prepared = prepared_case.prepared,
         .product = product,
     };
@@ -620,6 +631,7 @@ pub fn prepareResolvedVendorO2ACase(
     resolved: *const ResolvedVendorO2ACase,
 ) !PreparedRuntimeCase {
     var inputs = inputs: {
+
         // instrumentation: trace zone
         // captures: O2 A reference input loading wall time
         // why: keep file/data preparation separate from model setup in trace runs.
@@ -630,6 +642,7 @@ pub fn prepareResolvedVendorO2ACase(
     defer inputs.deinit(allocator);
 
     var scene = scene: {
+
         // instrumentation: trace zone
         // captures: typed scene construction wall time
         // why: separate input translation from optical-state preparation.
@@ -643,7 +656,13 @@ pub fn prepareResolvedVendorO2ACase(
     inputs.reference = inputs.reference[0..0];
     errdefer allocator.free(reference);
 
+    var collision_induced_absorption: ?*const ReferenceDataModel.CollisionInducedAbsorptionTable = null;
+    if (inputs.cia_table) |*table| {
+        collision_induced_absorption = table;
+    }
+
     var prepared = prepared: {
+
         // instrumentation: trace zone
         // captures: optical-state preparation wall time
         // why: expose setup cost before any instrument-grid simulation.
@@ -653,7 +672,7 @@ pub fn prepareResolvedVendorO2ACase(
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
             .cross_sections = &inputs.cross_sections,
-            .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+            .collision_induced_absorption = collision_induced_absorption,
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
             .aerosol_profile_layers = aerosolProfileLayersForOptics(resolved.aerosol),
@@ -662,6 +681,7 @@ pub fn prepareResolvedVendorO2ACase(
     errdefer prepared.deinit(allocator);
 
     {
+
         // instrumentation: trace zone
         // captures: weak-line cutoff support-grid installation
         // why: isolate retained spectroscopy pruning setup from core optical preparation.
@@ -671,6 +691,7 @@ pub fn prepareResolvedVendorO2ACase(
     }
 
     {
+
         // instrumentation: trace zone
         // captures: solar support rewindowing wall time
         // why: separate instrument-kernel alignment from RTM setup.
@@ -679,19 +700,20 @@ pub fn prepareResolvedVendorO2ACase(
         try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
     }
 
-    const route = route: {
+    const rtm_config = rtm_config: {
+
         // instrumentation: trace zone
-        // captures: RTM route preparation wall time
-        // why: show control/route setup independently from optical data construction.
-        const zone = Trace.staticZone(@src(), "prepare.route");
+        // captures: RTM rtm_config preparation wall time
+        // why: show control/rtm_config setup independently from optical data construction.
+        const zone = Trace.staticZone(@src(), "prepare.rtm_config");
         defer zone.end();
-        break :route try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
+        break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
     };
 
     return .{
         .reference = reference,
         .scene = scene,
-        .route = route,
+        .rtm_config = rtm_config,
         .prepared = prepared,
     };
 }
@@ -704,18 +726,19 @@ pub fn prepareResolvedVendorO2AEvaluationWithInputs(
     var optics = try prepareResolvedVendorO2AOpticsWithInputs(allocator, resolved, inputs);
     errdefer optics.deinit(allocator);
 
-    const route = route: {
+    const rtm_config = rtm_config: {
+
         // instrumentation: trace zone
-        // captures: RTM route preparation wall time
-        // why: measure route setup for input-reuse validation and retrieval lanes.
-        const zone = Trace.staticZone(@src(), "prepare.route");
+        // captures: RTM rtm_config preparation wall time
+        // why: measure rtm_config setup for input-reuse validation and retrieval lanes.
+        const zone = Trace.staticZone(@src(), "prepare.rtm_config");
         defer zone.end();
-        break :route try prepareResolvedVendorO2ARoute(&optics.scene, resolved.plan, resolved.rtm_controls);
+        break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
     };
 
     return .{
         .scene = optics.scene,
-        .route = route,
+        .rtm_config = rtm_config,
         .prepared = optics.prepared,
     };
 }
@@ -754,6 +777,7 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
     weak_cutoff_grid: ?*WeakCutoffGridCache,
 ) !PreparedRuntimeOptics {
     var scene = scene: {
+
         // instrumentation: trace zone
         // captures: typed scene construction wall time
         // why: separate reused loaded inputs from per-scene reconstruction cost.
@@ -829,6 +853,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     solar_rewindowed: *bool,
     borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
 ) !OpticsPrepare.PreparedOpticalState {
+
     // Retrieval sessions own loaded inputs for the full OE run, so each optical
     // refresh can borrow immutable continuum/CIA tables instead of cloning them.
     return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
@@ -880,7 +905,13 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     static_input_table_mode: StaticInputTableMode,
     aerosol_profile_layers: []const AerosolModel.ProfileLayer,
 ) !OpticsPrepare.PreparedOpticalState {
+    var collision_induced_absorption: ?*const ReferenceDataModel.CollisionInducedAbsorptionTable = null;
+    if (inputs.cia_table) |*table| {
+        collision_induced_absorption = table;
+    }
+
     var prepared = prepared: {
+
         // instrumentation: trace zone
         // captures: optical-state preparation wall time
         // why: show setup cost when inputs are reused across retrieval iterations.
@@ -890,7 +921,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
             .cross_sections = &inputs.cross_sections,
-            .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+            .collision_induced_absorption = collision_induced_absorption,
             .spectroscopy_lines = &inputs.line_list,
             .lut = &inputs.lut,
             .borrowed_profile_preparation = borrowed_profile_preparation,
@@ -902,6 +933,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     errdefer prepared.deinit(allocator);
 
     {
+
         // instrumentation: trace zone
         // captures: weak-line cutoff support-grid installation
         // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.
@@ -911,6 +943,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     }
 
     if (!solar_rewindowed.*) {
+
         // instrumentation: trace zone
         // captures: one-time solar support rewindowing wall time
         // why: verify retrieval sessions reuse this instrument-grid setup.
@@ -1033,14 +1066,15 @@ fn rewindowParitySolarSupportToMeasurementKernel(
     scene: *Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !void {
-    if (!scene.observation_model.operational_solar_spectrum.enabled()) return;
+    const operational_band_support = primaryOperationalBandSupportOwned(scene);
+    if (!operational_band_support.operational_solar_spectrum.enabled()) return;
 
     const support = try sharedParityMeasurementSupport(scene, prepared) orelse return;
     const support_start_nm = support.start_nm;
     const support_end_nm = support.end_nm;
     if (!(support_end_nm > support_start_nm)) return;
 
-    const current = scene.observation_model.operational_solar_spectrum;
+    const current = operational_band_support.operational_solar_spectrum;
     var retained_count: usize = 0;
     for (current.wavelengths_nm) |wavelength_nm| {
         if (wavelength_nm < support_start_nm) continue;
@@ -1065,20 +1099,27 @@ fn rewindowParitySolarSupportToMeasurementKernel(
         retained_index += 1;
     }
 
-    scene.observation_model.operational_solar_spectrum.deinitOwned(allocator);
-    scene.observation_model.operational_solar_spectrum = .{
+    operational_band_support.operational_solar_spectrum.deinitOwned(allocator);
+    operational_band_support.operational_solar_spectrum = .{
         .wavelengths_nm = retained_wavelengths_nm,
         .irradiance = retained_irradiance,
     };
     retained_wavelengths_owned = false;
     retained_irradiance_owned = false;
-    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
+    try operational_band_support.operational_solar_spectrum.prepareInterpolation(allocator);
+}
+
+fn primaryOperationalBandSupportOwned(scene: *Scene) *Instrument.OperationalBandSupport {
+    std.debug.assert(scene.observation_model.owns_operational_band_support);
+    std.debug.assert(scene.observation_model.operational_band_support.len > 0);
+    return @constCast(&scene.observation_model.operational_band_support[0]);
 }
 
 fn sharedParityMeasurementSupport(
     scene: *const Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !?struct { start_nm: f64, end_nm: f64 } {
+
     // layout(64-bit):
     //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
     //   footprint: per present payload = 16 B (0.016 KiB)
@@ -1137,11 +1178,16 @@ fn expectParityKernelBoundsMatch(
     lhs: instrument_types.IntegrationKernel,
     rhs: instrument_types.IntegrationKernel,
 ) !void {
-    if (lhs.sample_count != rhs.sample_count) return error.InvalidRequest;
-    if (@abs(lhs.offsets_nm[0] - rhs.offsets_nm[0]) > 1.0e-12) return error.InvalidRequest;
-    if (@abs(lhs.offsets_nm[lhs.sample_count - 1] - rhs.offsets_nm[rhs.sample_count - 1]) > 1.0e-12) {
-        return error.InvalidRequest;
-    }
+    const matching_sample_count = lhs.sample_count == rhs.sample_count;
+    if (!matching_sample_count) return error.InvalidRequest;
+
+    const matching_start = @abs(lhs.offsets_nm[0] - rhs.offsets_nm[0]) <= 1.0e-12;
+    if (!matching_start) return error.InvalidRequest;
+
+    const lhs_end_offset = lhs.offsets_nm[lhs.sample_count - 1];
+    const rhs_end_offset = rhs.offsets_nm[rhs.sample_count - 1];
+    const matching_end = @abs(lhs_end_offset - rhs_end_offset) <= 1.0e-12;
+    if (!matching_end) return error.InvalidRequest;
 }
 
 pub fn loadResolvedVendorO2ALineList(

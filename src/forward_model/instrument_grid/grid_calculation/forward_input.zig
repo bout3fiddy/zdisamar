@@ -12,7 +12,7 @@ const common = @import("../../radiative_transfer/root.zig");
 //   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
 pub fn configuredForwardInput(
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
     layer_inputs: []common.LayerInput,
@@ -24,7 +24,8 @@ pub fn configuredForwardInput(
     support_carrier_cache: *CarrierEval.SupportRowScalarCache,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
-    const compute_jacobian = route.derivative_mode != .none;
+    const compute_jacobian = rtm_config.derivative_mode != .none;
+
     var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
     const resolved_profile_cache = if (profile_spectroscopy_cache) |cache|
         cache
@@ -32,13 +33,16 @@ pub fn configuredForwardInput(
         local_profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
         break :cache &local_profile_cache;
     };
+
     var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
         prepared,
         wavelength_nm,
         support_carrier_cache,
         resolved_profile_cache,
     );
+
     const optical_depths = optical_depths: {
+
         // instrumentation: trace zone
         // captures: wavelength-specific layer optical-depth fill
         // why: measure carrier-backed layer preparation before LABOS transport.
@@ -53,6 +57,7 @@ pub fn configuredForwardInput(
             compute_jacobian,
         );
     };
+
     var input = OpticsPreparation.forward_layers.forwardInputFromOpticalDepths(
         prepared,
         scene,
@@ -60,12 +65,15 @@ pub fn configuredForwardInput(
         optical_depths,
         layer_inputs,
     );
+
     var has_rtm_quadrature = false;
-    if (route.rtm_controls.integrate_source_function) {
+    if (rtm_config.rtm_controls.integrate_source_function) {
+
         // DECISION:
-        //   Only attach RTM quadrature when the route requests integrated
+        //   Only attach RTM quadrature when the rtm_config requests integrated
         //   source-function evaluation.
         {
+
             // instrumentation: trace zone
             // captures: RTM source-function quadrature preparation
             // why: isolate explicit quadrature setup from coarse source-interface fallback.
@@ -80,22 +88,27 @@ pub fn configuredForwardInput(
                 compute_jacobian,
             );
         }
+
         if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
                 .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
                 .aerosol_phase_coefficients = &prepared.aerosol_phase_coefficients,
             };
         } else if (prepared.interval_semantics != .none) {
+
             // INVARIANT:
-            //   The explicit-interval integrated-source route must stay on
+            //   The explicit-interval integrated-source rtm_config must stay on
             //   the RTM-native carrier path instead of silently drifting back
             //   to the coarse source-interface fallback.
             return error.MissingExplicitRtmQuadrature;
         }
     }
-    if (route.rtm_controls.integrate_source_function and !has_rtm_quadrature) {
+
+    if (rtm_config.rtm_controls.integrate_source_function and !has_rtm_quadrature) {
         const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
+
         {
+
             // instrumentation: trace zone
             // captures: source-interface fill wall time
             // why: quantify the fallback source-function boundary when RTM quadrature is unavailable.
@@ -109,15 +122,19 @@ pub fn configuredForwardInput(
                 &wavelength_cache,
             );
         }
+
         input.source_interfaces = source_interface_slice;
     }
-    if (route.rtm_controls.use_spherical_correction) {
+
+    if (rtm_config.rtm_controls.use_spherical_correction) {
+
         // DECISION:
-        //   Pseudo-spherical samples are only attached for routes that request
-        //   the geometric correction. Explicit shared-grid routes rebuild the
+        //   Pseudo-spherical samples are only attached when the RTM config requests
+        //   the geometric correction. Explicit shared-grid cases rebuild the
         //   dense wavelength-specific attenuation contract directly from the
         //   RTM subgrid instead of reusing midpoint-style layer surrogates.
         const has_pseudo_spherical_grid = has_grid: {
+
             // instrumentation: trace zone
             // captures: pseudo-spherical support-grid fill wall time
             // why: keep geometric-correction setup visible in forward-sample traces.
@@ -134,6 +151,7 @@ pub fn configuredForwardInput(
                 &wavelength_cache,
             );
         };
+
         if (has_pseudo_spherical_grid) {
             const pseudo_spherical_sample_count = pseudo_spherical_level_starts[input.layers.len];
             input.pseudo_spherical_grid = .{
@@ -143,6 +161,7 @@ pub fn configuredForwardInput(
             };
         }
     }
-    input.rtm_controls = route.rtm_controls;
+
+    input.rtm_controls = rtm_config.rtm_controls;
     return input;
 }

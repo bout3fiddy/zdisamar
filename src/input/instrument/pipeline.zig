@@ -70,11 +70,18 @@ pub const SlitIndex = enum(u8) {
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
 pub const SpectralResponse = struct {
-    pub const IntegrationMode = enum {
+    pub const RequestedIntegrationMode = enum {
         auto,
+        default_kernel,
         explicit_hr_grid,
         disamar_hr_grid,
         adaptive,
+    };
+    pub const IntegrationMode = enum(u8) {
+        default_kernel = 0,
+        explicit_hr_grid = 1,
+        disamar_hr_grid = 2,
+        adaptive = 3,
     };
 
     explicit: bool = false,
@@ -84,7 +91,7 @@ pub const SpectralResponse = struct {
     scale: f64 = 1.0,
     phase_deg: f64 = 0.0,
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
-    integration_mode: IntegrationMode = .auto,
+    integration_mode: IntegrationMode = .default_kernel,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
     instrument_line_shape: InstrumentLineShape = .{},

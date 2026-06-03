@@ -1,23 +1,10 @@
 const std = @import("std");
 const jacobian = @import("../../jacobian/root.zig");
-const InstrumentProviders = @import("../../implementations/instrument/implementation.zig");
 
 const Allocator = std.mem.Allocator;
 
 pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
-
-// Bound instrument implementation used by instrument grid evaluation.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: instrument=48 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
-pub const Implementations = struct {
-    instrument: InstrumentProviders.Implementation,
-};
 
 // Measurement-space summary statistics for one spectral sweep.
 // layout(64-bit):

@@ -4,13 +4,6 @@ const SpectroscopyTypes = @import("../../../input/reference/spectroscopy/types.z
 
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: key=8 B, strong_states=16 B, weak_states=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: strong_states, weak_states carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
 const Entry = struct {
     key: u64,
     strong_states: []ReferenceData.StrongLinePreparedState,
@@ -28,11 +21,6 @@ const Entry = struct {
 var mutex = std.Thread.Mutex{};
 var cached_entry: ?Entry = null;
 
-// hot path:
-//   when: spectroscopy profile prepared states can be reused across preparation runs
-//   work: checks cache key and clones prepared weak/strong line states into caller storage
-//   data: line list, temperature/pressure profile arrays, cached prepared states
-//   follow: absorbers.prepareProfileLineStates and profile-state cache key shape
 pub fn load(
     allocator: Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -71,11 +59,6 @@ pub fn load(
     return true;
 }
 
-// hot path:
-//   when: spectroscopy profile prepared states are saved after preparation
-//   work: clones weak/strong prepared line states into the process cache
-//   data: line list, temperature/pressure profile arrays, prepared weak/strong states
-//   follow: future profile_state_cache.load calls and cache key computation
 pub fn store(
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,

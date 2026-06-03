@@ -53,13 +53,13 @@ pub const RadiativeTransferDiagnosticRow = struct {
 // hot path:
 //   when: radiative-transfer diagnostics are requested after a forward run
 //   work: builds atmospheric budget rows and derives per-wavelength transmission/source proxies
-//   data: budget rows, route controls, optional spectrum view, diagnostic rows
+//   Uses budget rows, rtm_config controls, optional spectrum view, and diagnostic rows.
 //   follow: atmospheric_budget.build and fillWavelengthRows
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
-    route: RadiativeTransfer.Route,
+    rtm_config: RadiativeTransfer.SolveConfig,
     wavelengths_nm: []const f64,
     spectrum: ?SpectrumView,
 ) ![]RadiativeTransferDiagnosticRow {
@@ -78,7 +78,7 @@ pub fn build(
         fillWavelengthRows(
             budget[row_index..end_index],
             rows[row_index..end_index],
-            route,
+            rtm_config,
             airmass,
             spectrum,
         );
@@ -91,12 +91,12 @@ pub fn build(
 // hot path:
 //   when: radiative-transfer diagnostics process one wavelength group
 //   work: walks vertical rows, accumulates optical depth, and writes derived proxy fields
-//   data: wavelength budget slice, cumulative optical depth, route controls, output rows
+//   Uses the wavelength budget slice, cumulative optical depth, rtm_config controls, and output rows.
 //   follow: interpolateSpectrum calls for final radiance/reflectance columns
 fn fillWavelengthRows(
     budget: []const atmospheric_budget.AtmosphericBudgetRow,
     rows: []RadiativeTransferDiagnosticRow,
-    route: RadiativeTransfer.Route,
+    rtm_config: RadiativeTransfer.SolveConfig,
     airmass: f64,
     spectrum: ?SpectrumView,
 ) void {
@@ -122,8 +122,8 @@ fn fillWavelengthRows(
             .atmospheric_scattering_source_proxy = source.total_scattering_optical_depth * transmission,
             .absorption_loss_proxy = source.total_absorption_optical_depth * transmission,
             .pseudo_spherical_airmass_factor = airmass,
-            .n_streams = route.rtm_controls.n_streams,
-            .integrate_source_function = if (route.rtm_controls.integrate_source_function) 1 else 0,
+            .n_streams = rtm_config.rtm_controls.n_streams,
+            .integrate_source_function = if (rtm_config.rtm_controls.integrate_source_function) 1 else 0,
             .final_reflectance = interpolateSpectrum(spectrum, .reflectance, source.wavelength_nm),
             .final_radiance = interpolateSpectrum(spectrum, .radiance, source.wavelength_nm),
         };

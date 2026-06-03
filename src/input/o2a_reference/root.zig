@@ -2,7 +2,6 @@ const std = @import("std");
 const AerosolModel = @import("../Aerosol.zig");
 const AtmosphereModel = @import("../Atmosphere.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
-const implementations = @import("../../forward_model/implementations/root.zig");
 const Jacobian = @import("../../forward_model/jacobian/root.zig");
 const metrics = @import("metrics.zig");
 const reference_types = @import("types.zig");
@@ -73,9 +72,7 @@ pub fn defaultInput() O2AInput {
             .description = "DISAMAR O2 A reference case for Python and validation.",
         },
         .plan = .{
-            .model_family = "disamar_standard",
-            .transport_solver = "dispatcher",
-            .execution_derivative_mode = "none",
+            .derivative_mode = .none,
         },
         .inputs = .{
             .atmosphere_profile = asset(
@@ -132,7 +129,6 @@ pub fn defaultInput() O2AInput {
         },
         .observation = .{
             .instrument_name = "disamar-o2a-compare",
-            .regime = .nadir,
             .sampling = .native,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
@@ -255,9 +251,8 @@ pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A) !Output {
     return InstrumentGrid.simulateProduct(
         allocator,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
 }
 
@@ -270,9 +265,8 @@ pub fn runO2AWithSessionStorage(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
     return view.toOwned(allocator);
 }
@@ -287,9 +281,8 @@ pub fn runO2AWithSessionStorageJacobianStates(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
     return view.toOwnedWithJacobianStates(allocator, output_states);
 }
@@ -303,9 +296,8 @@ pub fn warmO2ASessionStorage(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
 }
 

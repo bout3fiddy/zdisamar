@@ -709,18 +709,22 @@ export fn zds_warm_o2a_optimal_estimation(
     requested_state_count: usize,
 ) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
     const loaded_prepared = resolved.prepared orelse {
         resolved.setError("not prepared");
         return @intFromEnum(ZdsStatus.failure);
     };
+
     const state_slice = if (state_ids) |ids| ids[0..requested_state_count] else &.{};
     const selection = jacobianStateSelection(state_slice) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+
     var prepared = loaded_prepared;
-    prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = selection.mask;
+    prepared.rtm_config.derivative_mode = .semi_analytical;
+    prepared.rtm_config.derivative_state_mask = selection.mask;
+
     zdisamar.warmO2ASessionStorage(
         allocator,
         &resolved.o2a_session_storage,
@@ -1358,22 +1362,27 @@ fn runSpectrumJacobianForStateIds(
 ) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     const output = out orelse return @intFromEnum(ZdsStatus.failure);
+
     if (resolved.prepared == null) {
         resolved.setError("not prepared");
         return @intFromEnum(ZdsStatus.failure);
     }
+
     const state_slice = if (state_ids) |ids| ids[0..requested_state_count] else &.{};
     const selection = jacobianStateSelection(state_slice) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+
     var prepared = resolved.prepared.?;
-    prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = selection.mask;
+    prepared.rtm_config.derivative_mode = .semi_analytical;
+    prepared.rtm_config.derivative_state_mask = selection.mask;
+
     const result = allocator.create(zdisamar.Output) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+
     result.* = (if (selection.count == 0)
         zdisamar.runO2AWithSessionStorage(allocator, &resolved.o2a_session_storage, &prepared)
     else
@@ -1387,16 +1396,19 @@ fn runSpectrumJacobianForStateIds(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+
     resolved.results.append(allocator, result) catch |err| {
         result.deinit(allocator);
         allocator.destroy(result);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+
     const output_state_count = if (selection.count == 0)
         zdisamar.RadiativeTransferJacobian.state_count
     else
         selection.count;
+
     output.* = .{
         .len = result.wavelengths.len,
         .wavelength_nm = result.wavelengths.ptr,
@@ -1407,6 +1419,7 @@ fn runSpectrumJacobianForStateIds(
         .jacobian_state_count = output_state_count,
         .result_handle = @ptrCast(result),
     };
+
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
@@ -1640,7 +1653,7 @@ export fn zds_radiative_transfer_diagnostics(
         allocator,
         &request.prepared.scene,
         &request.prepared.prepared,
-        request.prepared.route,
+        request.prepared.rtm_config,
         request.wavelengths,
         spectrum_view,
     ) catch |err| {

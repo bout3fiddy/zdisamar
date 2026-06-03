@@ -41,41 +41,54 @@ pub fn applyLutWorkflows(
     var xsec_applied = false;
 
     if (assets.sceneRequestsSpectroscopyMode(source_scene, .o2, .line_by_line)) {
+        const primary_support = source_scene.observation_model.primaryOperationalBandSupport();
+
         switch (xsec_controls.mode) {
             .direct => {
-                if (source_scene.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled()) {
+                if (primary_support.o2_operational_lut.enabled()) {
                     try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:consume");
                 } else {
                     try appendExecutionLabel(allocator, execution_entries, "o2:xsec:direct");
                 }
+
                 xsec_applied = true;
             },
             .consume => {
-                if (!source_scene.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled()) {
+                if (!primary_support.o2_operational_lut.enabled()) {
                     return error.InvalidRequest;
                 }
+
                 try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:consume");
                 xsec_applied = true;
             },
             .generate => {
                 const o2_lines = line_list orelse return error.InvalidRequest;
+
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
                 defer allocator.free(wavelengths_nm);
+
                 const o2_absorber = try findUniqueAbsorberBySpeciesAndMode(
                     source_scene.absorbers.items,
                     .o2,
                     .line_by_line,
                 ) orelse return error.InvalidRequest;
-                const o2_hitran_index = (AbsorberModel.resolvedAbsorberSpecies(o2_absorber) orelse return error.InvalidRequest).hitranIndex() orelse return error.InvalidRequest;
+
+                const o2_species = AbsorberModel.resolvedAbsorberSpecies(
+                    o2_absorber,
+                ) orelse return error.InvalidRequest;
+                const o2_hitran_index = o2_species.hitranIndex() orelse return error.InvalidRequest;
+
                 var controlled_o2_lines = try o2_lines.clone(allocator);
                 defer controlled_o2_lines.deinit(allocator);
+
+                const active_line_controls = o2_absorber.spectroscopy.line_gas_controls.active();
                 try controlled_o2_lines.applyRuntimeControls(
                     allocator,
                     o2_hitran_index,
-                    o2_absorber.spectroscopy.line_gas_controls.activeIsotopes(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeThresholdLine(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeCutoffCm1(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeLineMixingFactor(),
+                    active_line_controls.isotopes,
+                    active_line_controls.threshold_line,
+                    active_line_controls.cutoff_cm1,
+                    active_line_controls.line_mixing_factor,
                 );
 
                 generated_o2_lut.* = try OperationalCrossSectionLut.buildFromSource(

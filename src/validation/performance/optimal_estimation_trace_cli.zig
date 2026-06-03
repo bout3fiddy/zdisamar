@@ -427,9 +427,9 @@ fn mainInner() !void {
     var product_storage: InstrumentGrid.ProductStorage = .{};
     defer product_storage.deinit(allocator);
 
-    var warm_route = prepared_case.route;
-    warm_route.derivative_mode = .semi_analytical;
-    warm_route.derivative_state_mask = derivativeStateMask(&state_specs);
+    var warm_config = prepared_case.rtm_config;
+    warm_config.derivative_mode = .semi_analytical;
+    warm_config.derivative_state_mask = derivativeStateMask(&state_specs);
     // instrumentation: OE allocation trace
     // captures: session workspace warmup
     // why: measure reusable setup before retrieval iterations.
@@ -439,9 +439,8 @@ fn mainInner() !void {
         allocator,
         &product_storage,
         &prepared_case.scene,
-        warm_route,
+        warm_config,
         &prepared_case.prepared,
-        internal.forward_model.implementations.exact(),
     );
     const session_warm_ns = warm_timer.read();
     const session_warm_allocations = counting_allocator.delta(warm_alloc_start);

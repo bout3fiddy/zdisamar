@@ -406,7 +406,7 @@ inline fn squareAttenuation(n: usize, E: *basis.Vec) void {
 
 inline fn squareAttenuation12(E: *basis.Vec) void {
     // squareAttenuation12 ------------------------------------------------------------------------------------|
-    // Fixed 12-direction attenuation square for the LABOS O2 A route.                                         |
+    // Fixed 12-direction attenuation square for the LABOS O2 A rtm_config.                                    |
     // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..basis.max_nmutot) |imu| {
@@ -495,7 +495,7 @@ fn doDouble(
         // layer. Building Q costs matrix products and a q-series solve. If trace(R)^2 is tiny, this branch    |
         // reuses T as D and drops that small feedback term for this step.                                     |
         //                                                                                                     |
-        // threshold_mul = 1.0e-12 by generic default and 1.0e-8 in the O2 A route. Lower values keep more     |
+        // threshold_mul = 1.0e-12 by generic default and 1.0e-8 in the O2 A rtm_config. Lower values keep more|
         // Q work; higher values skip more. Research note 10 measured this early check moving forward time     |
         // from 2.224609 s to 2.136820 s by avoiding q-series work before the expensive solve.                 |
 
@@ -806,14 +806,14 @@ fn doDouble12x10(
     phase_max_index: usize,
 ) void {
     // doDouble12x10 ------------------------------------------------------------------------------------------|
-    // Fixed 12x10 layer doubling for the O2 A LABOS route. Steps:                                             |
+    // Fixed 12x10 layer doubling for the O2 A LABOS rtm_config. Steps:                                        |
     //                                                                                                         |
     //   1. run one fixed-shape doubling step                                                                  |
     //   2. swap current and next R/T scratch matrices                                                         |
     //   3. square E for the next doubling step                                                                |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : selected layer-doubling steps in the fixed O2 A route                                      |
+    //   repeated : selected layer-doubling steps in the fixed O2 A rtm_config                                 |
     //   costly   : q-series products and fixed-shape matrix kernels                                           |
     //   memory   : two scratch matrices reused by pointer swapping                                            |
     //                                                                                                         |
@@ -917,8 +917,9 @@ inline fn doDouble12x10Step(
     // Skipping Q avoids the q-series solve and later products for this hot O2 A shape. The cost is the same:  |
     // a very small repeated-reflection feedback term is left out for this doubling step.                      |
     //                                                                                                         |
-    // threshold_mul = 1.0e-12 by generic default and 1.0e-8 in the O2 A route. Research note 10 measured the  |
-    // same early q-series check moving forward time from 2.224609 s to 2.136820 s.                            |
+    // threshold_mul is 1.0e-12 by generic default and 1.0e-8 in the O2 A rtm_config.                          |
+    // Research note 10 measured the same early q-series check moving forward time from                        |
+    // 2.224609 s to 2.136820 s.                                                                               |
 
     // instrumentation: telemetry and perturbation: fixed q-series skip ---------------------------------------|
     // captures: fixed-size q-series skip decision                                                             |
@@ -1448,7 +1449,7 @@ pub fn calcRTlayersIntoWithBasis(
         // ----------------------------------------------------------------------------------------------------|
         // max_phase_index comes from the prepared phase support. Phase coefficients and Rayleigh/aerosol      |
         // weights at or below 1.0e-12 are treated as absent there, so higher Fourier orders can be skipped    |
-        // here without building Zplus/Zmin or RT_fc. Prepared HG rows use the route truncation threshold      |
+        // here without building Zplus/Zmin or RT_fc. Prepared HG rows use the rtm_config truncation threshold |
         // 1.0e-8 in O2 A. The cost is that coefficients below the support floor do not contribute here.       |
         if (i_fourier > max_phase_index) {
 
@@ -1596,7 +1597,7 @@ pub fn calcRTlayersIntoWithBasis(
         // ----------------------------------------------------------------------------------------------------|
         // ----------------------------------------------------------------------------------------------------|
         // tradeoff: optional phase renormalization                                                            |
-        // Run the zero-Fourier phase normalization pass only when the route asks for it.                      |
+        // Run the zero-Fourier phase normalization pass only when the rtm_config asks for it.                 |
         // ----------------------------------------------------------------------------------------------------|
         // controls.renorm_phase_function defaults to true. This correction improves parity with the           |
         // reference zero-Fourier phase kernels. It costs an extra pass over Zplus/Zmin. If the control is     |

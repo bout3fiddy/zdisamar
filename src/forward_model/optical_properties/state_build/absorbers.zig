@@ -644,19 +644,25 @@ fn applyRuntimeControls(
     line_absorber: State.ActiveLineAbsorber,
     use_operational_o2_lut: bool,
 ) !void {
+    const active_line_controls = line_absorber.controls.active();
+
+    var hitran_index: ?u16 = null;
+    if (line_absorber.species.hitranIndex()) |index| {
+        hitran_index = @as(u16, index);
+    }
+
+    var line_mixing_factor: f64 = 0.0;
+    if (line_absorber.species == .o2) {
+        line_mixing_factor = active_line_controls.line_mixing_factor;
+    }
+
     try line_list.applyRuntimeControls(
         allocator,
-        if (line_absorber.species.hitranIndex()) |hitran_index|
-            @as(u16, hitran_index)
-        else
-            null,
-        line_absorber.controls.activeIsotopes(),
-        line_absorber.controls.activeThresholdLine(),
-        line_absorber.controls.activeCutoffCm1(),
-        if (line_absorber.species == .o2)
-            line_absorber.controls.activeLineMixingFactor()
-        else
-            0.0,
+        hitran_index,
+        active_line_controls.isotopes,
+        active_line_controls.threshold_line,
+        active_line_controls.cutoff_cm1,
+        line_mixing_factor,
     );
     if (use_operational_o2_lut) {
         return;

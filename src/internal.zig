@@ -140,11 +140,9 @@ pub const forward_model = struct {
 
         pub const reflectance_export_name = root.reflectance_export_name;
         pub const fitted_reflectance_export_name = root.fitted_reflectance_export_name;
-        pub const Implementations = root.Implementations;
         pub const InstrumentGridSummary = root.InstrumentGridSummary;
         pub const InstrumentGridProduct = root.InstrumentGridProduct;
         pub const InstrumentGridProductView = root.InstrumentGridProductView;
-        pub const SummaryStorage = root.SummaryStorage;
         pub const ProductStorage = root.ProductStorage;
         pub const Error = root.Error;
         pub const simulateSummary = root.simulateSummary;
@@ -176,12 +174,8 @@ pub const forward_model = struct {
         pub const ScatteringMode = root.ScatteringMode;
         pub const RadiativeTransferPerformanceThresholds = root.RadiativeTransferPerformanceThresholds;
         pub const RadiativeTransferControls = root.RadiativeTransferControls;
-        pub const TransportFamily = root.TransportFamily;
-        pub const Regime = root.Regime;
-        pub const ExecutionMode = root.ExecutionMode;
         pub const DerivativeMode = root.DerivativeMode;
-        pub const DispatchRequest = root.DispatchRequest;
-        pub const Route = root.Route;
+        pub const SolveConfig = root.SolveConfig;
         pub const LayerPhase = root.LayerPhase;
         pub const LayerInput = root.LayerInput;
         pub const SourceInterfaceInput = root.SourceInterfaceInput;
@@ -195,7 +189,7 @@ pub const forward_model = struct {
         pub const PrepareError = root.PrepareError;
         pub const ExecuteError = root.ExecuteError;
         pub const Error = root.Error;
-        pub const prepareRoute = root.prepareRoute;
+        pub const prepareSolveConfig = root.prepareSolveConfig;
         pub const execute = root.execute;
         pub const executePrepared = root.executePrepared;
         pub const executePreparedWithLabosWorkspace = root.executePreparedWithLabosWorkspace;
@@ -208,22 +202,11 @@ pub const forward_model = struct {
         pub const labos_layers = @import("forward_model/radiative_transfer/labos/layers.zig");
     };
 
-    // layout(64-bit):
-    //   size: 0 B, align: 1 B
-    //   field storage: 0 B; padding: 0 B (0 bits)
-    //   footprint: no runtime field storage; namespace/type declarations only
-    pub const implementations = struct {
-        const root = @import("forward_model/implementations/root.zig");
-
-        pub const Bindings = root.Bindings;
-        pub const instrument_implementation = @import("forward_model/implementations/instrument/implementation.zig");
-        pub const instrument_types = @import("forward_model/implementations/instrument/types.zig");
-        pub const instrument_integration = @import("forward_model/implementations/instrument/integration.zig");
-
-        pub fn exact() Bindings {
-            return root.exact();
-        }
-    };
+    pub const instrument_calibration =
+        @import("forward_model/implementations/instrument/calibration.zig");
+    pub const instrument_integration =
+        @import("forward_model/implementations/instrument/integration.zig");
+    pub const instrument_types = @import("forward_model/implementations/instrument/types.zig");
 };
 
 // layout(64-bit):

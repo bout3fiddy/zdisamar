@@ -13,48 +13,42 @@ pub const simulate = @import("grid_calculation/simulate.zig");
 
 pub const reflectance_export_name = types.reflectance_export_name;
 pub const fitted_reflectance_export_name = types.fitted_reflectance_export_name;
-pub const Implementations = types.Implementations;
 pub const InstrumentGridSummary = types.InstrumentGridSummary;
 pub const InstrumentGridProduct = types.InstrumentGridProduct;
 pub const InstrumentGridProductView = types.InstrumentGridProductView;
-pub const SummaryStorage = storage.SummaryStorage;
 pub const ProductStorage = storage.ProductStorage;
 pub const Error = storage.Error;
 
 pub fn simulateSummary(
     allocator: @import("std").mem.Allocator,
     scene: *const @import("../../input/Scene.zig").Scene,
-    route: @import("../radiative_transfer/root.zig").Route,
+    rtm_config: @import("../radiative_transfer/root.zig").SolveConfig,
     prepared: *const @import("../optical_properties/root.zig").PreparedOpticalState,
-    implementations: Implementations,
 ) !InstrumentGridSummary {
-    return simulate.simulateSummary(allocator, scene, route, prepared, implementations);
+    return simulate.simulateSummary(allocator, scene, rtm_config, prepared);
 }
 
 pub fn simulateSummaryWithWorkspace(
     allocator: @import("std").mem.Allocator,
-    summary_workspace: *SummaryStorage,
+    product_workspace: *ProductStorage,
     scene: *const @import("../../input/Scene.zig").Scene,
-    route: @import("../radiative_transfer/root.zig").Route,
+    rtm_config: @import("../radiative_transfer/root.zig").SolveConfig,
     prepared: *const @import("../optical_properties/root.zig").PreparedOpticalState,
-    implementations: Implementations,
 ) !InstrumentGridSummary {
     return simulate.simulateSummaryWithWorkspace(
         allocator,
-        summary_workspace,
+        product_workspace,
         scene,
-        route,
+        rtm_config,
         prepared,
-        implementations,
     );
 }
 
 pub fn simulateProduct(
     allocator: std.mem.Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Implementations,
 ) !InstrumentGridProduct {
     var product_workspace: ProductStorage = .{};
     defer product_workspace.deinit(allocator);
@@ -62,9 +56,8 @@ pub fn simulateProduct(
         allocator,
         &product_workspace,
         scene,
-        route,
+        rtm_config,
         prepared,
-        implementations,
     );
     return view.toOwned(allocator);
 }
@@ -73,17 +66,15 @@ pub fn simulateProductWithWorkspace(
     allocator: std.mem.Allocator,
     product_workspace: *ProductStorage,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Implementations,
 ) !InstrumentGridProductView {
-    const buffers = try product_workspace.buffers(allocator, scene, route);
+    const buffers = try product_workspace.buffers(allocator, scene, rtm_config);
     const summary = try simulate_core.simulateInternal(
         allocator,
         scene,
-        route,
+        rtm_config,
         prepared,
-        implementations,
         buffers,
         try product_workspace.spectralCache(allocator),
         product_workspace,
@@ -113,16 +104,14 @@ pub fn warmProductWorkspace(
     allocator: std.mem.Allocator,
     product_workspace: *ProductStorage,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Implementations,
 ) !void {
-    _ = try product_workspace.buffers(allocator, scene, route);
+    _ = try product_workspace.buffers(allocator, scene, rtm_config);
     return simulate_core.warmWavelengthPlan(
         allocator,
         product_workspace,
         scene,
         prepared,
-        implementations,
     );
 }
