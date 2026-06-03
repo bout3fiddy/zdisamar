@@ -9,8 +9,8 @@ const Plan = @import("wavelength_plan.zig");
 const Storage = @import("storage.zig");
 const IntegrationKernel = @import("../../implementations/instrument/types.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
 // instrumentation: wavelength sampling

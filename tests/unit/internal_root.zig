@@ -21,7 +21,7 @@ test {
     _ = @import("forward_model/instrument_grid/spectral_math/calibration_test.zig");
     _ = @import("forward_model/instrument_grid/spectral_math/convolution_test.zig");
     _ = @import("forward_model/instrument_grid/spectral_math/grid_test.zig");
-    _ = @import("forward_model/calculation_telemetry_test.zig");
+    _ = @import("forward_model/instrumentation/telemetry_test.zig");
     _ = @import("forward_model/work_partition_test.zig");
     _ = @import("forward_model/optical_properties/shared/phase_functions_test.zig");
     _ = @import("forward_model/optical_properties/shared/band_means_test.zig");

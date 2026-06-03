@@ -7,9 +7,9 @@ const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Perturbation = @import("../../perturbation_sensitivity.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Perturbation = @import("../../instrumentation/sensitivity.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 
 // execute.zig ------------------------------------------------------------------------------------------------|
 // LABOS solve coordinator. Prepared input -> attenuation -> RT layers -> scattering orders.                   |

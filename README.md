@@ -144,11 +144,11 @@ doubling steps                8,389,666
 ```
 
 The low-overhead evidence is
-[`research/performance/tracing/output/lauka-forward/forward-run/summary.json`](./research/performance/tracing/output/lauka-forward/forward-run/summary.json).
+[`scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.json`](./scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.json).
 The timeline trace summary is
-[`research/performance/tracing/output/labos-bottleneck/summary.json`](./research/performance/tracing/output/labos-bottleneck/summary.json).
+[`scaffolding/instrumentation/trace/evidence/labos-bottleneck/summary.json`](./scaffolding/instrumentation/trace/evidence/labos-bottleneck/summary.json).
 The detailed performance notes live in
-[`research/performance/o2a-forward/`](./research/performance/o2a-forward/).
+[`scaffolding/reports/performance/forward/`](./scaffolding/reports/performance/forward/).
 
 ### Retrieval
 
@@ -196,7 +196,7 @@ include session/cache creation, native case load and preparation, native OE work
 and the sparse full-physics correction; they do not include scene construction,
 simulated measurement construction, CSV writing, or plot rendering.
 The technical note is
-[`research/performance/o2a-retrieval/fastmode-final-correction.md`](./research/performance/o2a-retrieval/fastmode-final-correction.md).
+[`scaffolding/reports/performance/retrieval/fastmode-final-correction.md`](./scaffolding/reports/performance/retrieval/fastmode-final-correction.md).
 
 The retained local benchmark was refreshed on 2026-05-27 with
 [`uv run benchmark/run_benchmark.py`](./benchmark/run_benchmark.py). It uses the
@@ -222,14 +222,14 @@ The wrapper-overhead probe used the 10-worker baseline case directly. Under that
 boundary, the current one-shot fastmode public call is `0.230 s` median, and a
 repeated-start loop with a caller-owned session cache is `0.179 s` median after
 the first sparse-case load. That focused evidence is tracked in
-[`research/performance/o2a-retrieval/fastmode-session-overhead.md`](./research/performance/o2a-retrieval/fastmode-session-overhead.md).
+[`scaffolding/reports/performance/retrieval/fastmode-session-overhead.md`](./scaffolding/reports/performance/retrieval/fastmode-session-overhead.md).
 
 The tracked paired DISAMAR/zdisamar summary is
 [`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
 The tracked fastmode summary is
 [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](./validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json).
 The retrieval notes live in
-[`research/performance/o2a-retrieval/`](./research/performance/o2a-retrieval/).
+[`scaffolding/reports/performance/retrieval/`](./scaffolding/reports/performance/retrieval/).
 
 ## Bottlenecks
 
@@ -251,7 +251,7 @@ The main remaining costs are the repeated LABOS radiative-transfer calculations:
 Fourier transport, RT-layer construction, layer doubling, scattering-order
 accumulation, and phase-matrix construction. The detailed timing and operation
 counts are in
-[`research/performance/o2a-forward/remaining-bottlenecks.md`](./research/performance/o2a-forward/remaining-bottlenecks.md).
+[`scaffolding/reports/performance/forward/remaining-bottlenecks.md`](./scaffolding/reports/performance/forward/remaining-bottlenecks.md).
 
 ## Python Package
 

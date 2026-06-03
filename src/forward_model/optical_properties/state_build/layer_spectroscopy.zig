@@ -4,7 +4,7 @@ const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
-const Trace = @import("../../performance_trace.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 const spline = @import("../../../common/math/interpolation/spline.zig");
 

@@ -18,16 +18,14 @@ __pycache__/
 python/zdisamar/bindings/libzdisamar_c.*
 python/zdisamar/reference_data/assets/
 
-# Regenerable primitive-codegen disassembly blobs
-research/performance/where-is-the-bottleneck/primitive-codegen/outputs/*.asm
-research/performance/tracing/output/captures/*.tracy
-research/performance/tracing/output/lauka-forward/*
-!research/performance/tracing/output/lauka-forward/pmu-summary.json
-!research/performance/tracing/output/lauka-forward/forward-run/
-research/performance/tracing/output/lauka-forward/forward-run/*
-!research/performance/tracing/output/lauka-forward/forward-run/summary.json
-research/data-pipeline/data/
-research/data-pipeline/reports/
+# Regenerable scaffolding output
+scaffolding/experiments/primitive-codegen/outputs/*.asm
+scaffolding/instrumentation/trace/evidence/captures/*.tracy
+scaffolding/instrumentation/trace/evidence/lauka-forward/*
+!scaffolding/instrumentation/trace/evidence/lauka-forward/pmu-summary.json
+!scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/
+scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/*
+!scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.json
 
 # Local DISAMAR reference clone and generated vendor outputs
 vendor

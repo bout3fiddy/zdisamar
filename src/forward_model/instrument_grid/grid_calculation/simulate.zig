@@ -15,8 +15,8 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Plan = @import("wavelength_plan.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;

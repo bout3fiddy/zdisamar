@@ -6,8 +6,8 @@ const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
 const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
-const Telemetry = @import("../forward_model/calculation_telemetry.zig");
-const Trace = @import("../forward_model/performance_trace.zig");
+const Telemetry = @import("../forward_model/instrumentation/telemetry.zig");
+const Trace = @import("../forward_model/instrumentation/trace.zig");
 const work_partition = @import("../forward_model/work_partition.zig");
 const algebra = @import("algebra.zig");
 

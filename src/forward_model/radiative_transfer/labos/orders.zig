@@ -3,9 +3,9 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Perturbation = @import("../../perturbation_sensitivity.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Perturbation = @import("../../instrumentation/sensitivity.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 
 // orders.zig -------------------------------------------------------------------------------------------------|
 // LABOS scattering-order transport. RT_fc plus attenuation becomes U/D fields for reflectance.                |

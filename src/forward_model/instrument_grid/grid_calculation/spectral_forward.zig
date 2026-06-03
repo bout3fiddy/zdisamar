@@ -6,14 +6,14 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
 const labos = common.labos;
-const Trace = @import("../../performance_trace.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 const work_partition = @import("../../work_partition.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;

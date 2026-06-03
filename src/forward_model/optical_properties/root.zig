@@ -4,7 +4,7 @@ const Accumulation = @import("state_build/accumulation.zig");
 const Absorbers = @import("state_build/absorbers.zig");
 const Context = @import("state_build/context.zig");
 const Finalize = @import("state_build/finalize.zig");
-const Trace = @import("../performance_trace.zig");
+const Trace = @import("../instrumentation/trace.zig");
 
 pub const state = @import("state_build/state.zig");
 pub const spectroscopy = @import("state_build/spectroscopy.zig");
