@@ -53,6 +53,19 @@ test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical der
     }));
 }
 
+test "execute prepared route uses LABOS for the O2A scalar forward mode" {
+    const route = try prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    try std.testing.expectEqual(common.TransportFamily.labos, route.family);
+
+    const result = try common.executePrepared(std.testing.allocator, route, .{});
+    try std.testing.expectEqual(common.TransportFamily.labos, result.family);
+    try std.testing.expect(result.jacobian == null);
+}
+
 test "source interface builder preserves the top boundary weight and halves the bottom boundary weight" {
     const layer0_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 });
     const layer1_phase = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 });

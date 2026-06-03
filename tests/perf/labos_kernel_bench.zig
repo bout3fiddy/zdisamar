@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const labos = internal.forward_model.radiative_transfer.labos.internal.basis;
+const labos = internal.forward_model.radiative_transfer.labos_basis;
 
 const n = 12;
 const n_gauss = 10;

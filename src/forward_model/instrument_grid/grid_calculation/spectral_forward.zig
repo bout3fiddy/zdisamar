@@ -4,9 +4,8 @@ const OpticsPreparation = @import("../../optical_properties/root.zig");
 const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
 const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const common = @import("../../radiative_transfer/root.zig");
-const dispatcher = @import("../../radiative_transfer/dispatcher.zig");
 const jacobian = @import("../../jacobian/root.zig");
-const labos = @import("../../radiative_transfer/labos/root.zig");
+const labos = common.labos;
 const Trace = @import("../../performance_trace.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
@@ -250,7 +249,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
         // why: keep the radiative-transfer solve separate from surrounding input and scaling work.
         const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
         defer zone.end();
-        break :forward try dispatcher.executePreparedWithLabosWorkspace(allocator, effective_route, input, labos_workspace);
+        break :forward try common.executePreparedWithLabosWorkspace(allocator, effective_route, input, labos_workspace);
     };
     return integratedSampleFromForward(scene, route, wavelength_nm, forward);
 }

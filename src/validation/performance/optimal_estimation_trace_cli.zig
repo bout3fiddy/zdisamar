@@ -435,7 +435,7 @@ fn mainInner() !void {
     // why: measure reusable setup before retrieval iterations.
     var warm_timer = try std.time.Timer.start();
     const warm_alloc_start = counting_allocator.resetPhasePeak();
-    try InstrumentGrid.product.warmProductWorkspace(
+    try InstrumentGrid.warmProductWorkspace(
         allocator,
         &product_storage,
         &prepared_case.scene,

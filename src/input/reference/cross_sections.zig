@@ -61,10 +61,6 @@ pub const CrossSectionTable = struct {
         return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
     }
 
-    pub fn sigmaAtHighResolution(self: CrossSectionTable, wavelength_nm: f64) f64 {
-        return self.interpolateSigma(wavelength_nm);
-    }
-
     // layout(64-bit):
     //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
     //   footprint: per present payload = 16 B (0.016 KiB)

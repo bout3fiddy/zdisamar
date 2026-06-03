@@ -2,28 +2,28 @@
 // physics.
 
 const std = @import("std");
-const Physics = @import("physics.zig");
+const PhysicsCore = @import("physics_core.zig");
 const Types = @import("types.zig");
 
 pub fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.center_wavenumber_cm1))
         line.center_wavenumber_cm1
     else
-        Physics.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+        PhysicsCore.wavelengthToWavenumberCm1(line.center_wavelength_nm);
 }
 
 pub fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.air_half_width_cm1))
         line.air_half_width_cm1
     else
-        Physics.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+        PhysicsCore.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
 }
 
 pub fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.pressure_shift_cm1))
         line.pressure_shift_cm1
     else
-        -Physics.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
+        -PhysicsCore.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
 }
 
 pub fn lineIndexIsStrongAnchor(anchor_indices: []const Types.StrongLineAnchorIndex, line_index: usize) bool {

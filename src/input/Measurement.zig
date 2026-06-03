@@ -98,11 +98,6 @@ pub const Measurement = struct {
         try self.error_model.validate();
     }
 
-    pub fn resolvedProductName(self: Measurement) []const u8 {
-        if (self.product_name.len != 0) return self.product_name;
-        return self.observable.label();
-    }
-
     pub fn includesWavelength(self: Measurement, wavelength_nm: f64) bool {
         _ = self.mask.band;
         for (self.mask.exclude) |window| {

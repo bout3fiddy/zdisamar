@@ -7,16 +7,20 @@ const o2_o2_cia = @import("output/o2_o2_cia.zig");
 const o2_line_contributions = @import("output/o2_line_contributions.zig");
 const radiative_transfer_diagnostics = @import("output/radiative_transfer_diagnostics.zig");
 const report_json = @import("output/json.zig");
-const spectrum = @import("forward_model/run_spectrum.zig");
+const radiative_transfer = @import("forward_model/radiative_transfer/root.zig");
+const measurement = @import("forward_model/instrument_grid/root.zig");
+const implementations = @import("forward_model/implementations/root.zig");
 pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
 pub const Input = @import("input/Scene.zig").Scene;
 pub const O2AInput = o2a_reference.O2AInput;
 pub const ReferenceData = bundled_data.Data;
 pub const OpticalProperties = @import("forward_model/optical_properties/root.zig").PreparedOpticalState;
-pub const Method = @import("forward_model/method.zig").Method;
-pub const CalculationStorage = @import("forward_model/instrument_grid/grid_calculation/storage.zig").SummaryStorage;
-pub const Output = spectrum.Result;
+pub const Method = enum {
+    exact,
+};
+pub const CalculationStorage = measurement.SummaryStorage;
+pub const Output = measurement.InstrumentGridProduct;
 pub const PreparedO2A = o2a_reference.PreparedO2A;
 pub const O2ASessionStorage = o2a_reference.SessionStorage;
 pub const DiagnosticReport = report_json.SummaryReport;
@@ -27,9 +31,9 @@ pub const O2LineContributionTable = o2_line_contributions.O2LineContributionTabl
 pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
 pub const RadiativeTransferDiagnosticRow = radiative_transfer_diagnostics.RadiativeTransferDiagnosticRow;
 pub const RadiativeTransferSpectrumView = radiative_transfer_diagnostics.SpectrumView;
-pub const RadiativeTransferPerformanceThresholds = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferPerformanceThresholds;
-pub const RadiativeTransferControls = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
-pub const RadiativeTransferJacobian = @import("forward_model/radiative_transfer/root.zig").Jacobian;
+pub const RadiativeTransferPerformanceThresholds = radiative_transfer.RadiativeTransferPerformanceThresholds;
+pub const RadiativeTransferControls = radiative_transfer.RadiativeTransferControls;
+pub const RadiativeTransferJacobian = radiative_transfer.Jacobian;
 // layout(64-bit):
 //   size: 7392 B, align: 8 B
 //   field storage: input=2680 B, reference_data=3040 B, optical_properties=1056 B, storage=616 B; padding: 0 B (0 bits)
@@ -83,14 +87,26 @@ pub fn run(
     method: Method,
     rtm_controls: RadiativeTransferControls,
 ) !Output {
-    return spectrum.run(
+    switch (method) {
+        .exact => {},
+    }
+
+    const route = try radiative_transfer.prepareRoute(.{
+        .regime = prepared.input.observation_model.regime,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = rtm_controls,
+    });
+
+    const view = try measurement.simulateProductWithWorkspace(
         allocator,
-        &prepared.input,
-        &prepared.optical_properties,
         &prepared.storage,
-        method,
-        rtm_controls,
+        &prepared.input,
+        route,
+        &prepared.optical_properties,
+        implementations.exact(),
     );
+    return view.toOwned(allocator);
 }
 
 pub fn defaultO2AInput() O2AInput {
@@ -179,7 +195,7 @@ pub fn buildRadiativeTransferDiagnostics(
     allocator: std.mem.Allocator,
     input: *const Input,
     optical_properties: *const OpticalProperties,
-    route: @import("forward_model/radiative_transfer/root.zig").Route,
+    route: radiative_transfer.Route,
     wavelengths_nm: []const f64,
     spectrum_view: ?RadiativeTransferSpectrumView,
 ) ![]RadiativeTransferDiagnosticRow {

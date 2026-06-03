@@ -1,10 +1,10 @@
 const OperationalO2 = @import("operational_o2.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
-const LineListEval = @import("../../../input/reference/spectroscopy/line_list_eval.zig");
+const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const PreparedState = @import("prepared_state.zig");
 const Scalar = @import("state_scalar.zig");
-const Types = @import("state_types.zig");
+const Types = @import("state.zig");
 
 const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
@@ -54,7 +54,7 @@ pub const ProfileNodeSpectroscopyCache = struct {
             .total_values = undefined,
             .total_second = undefined,
         };
-        var wavelength_anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
+        var wavelength_anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex = undefined;
         const wavelength_window = if (prepared_states != null)
             LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm, &wavelength_anchor_storage)
         else

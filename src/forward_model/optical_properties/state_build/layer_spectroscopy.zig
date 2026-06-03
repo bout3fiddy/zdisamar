@@ -1,5 +1,5 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
-const LineListEval = @import("../../../input/reference/spectroscopy/line_list_eval.zig");
+const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
@@ -93,7 +93,7 @@ pub const ProfileSpectroscopyCache = struct {
             .total_second = undefined,
         };
         var wavelength_window_storage: LineListEval.StrongLineWavelengthWindow = undefined;
-        var wavelength_anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
+        var wavelength_anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex = undefined;
         const wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow = if (prepared_states != null) blk: {
             wavelength_window_storage = LineListEval.prepareStrongLineWavelengthWindow(
                 line_list,

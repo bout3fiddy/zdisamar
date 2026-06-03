@@ -1,5 +1,5 @@
 const std = @import("std");
-const calibration = @import("calibration.zig");
+const calibration = @import("../../instrument_grid/spectral_math/calibration.zig");
 const integration = @import("integration.zig");
 const types = @import("types.zig");
 const PreparedOpticalState = @import("../../optical_properties/root.zig").PreparedOpticalState;
@@ -31,9 +31,20 @@ pub fn resolve(provider_id: []const u8) ?Implementation {
 fn genericProvider(provider_id: []const u8) Implementation {
     return .{
         .id = provider_id,
-        .calibrationForScene = calibration.calibrationForScene,
+        .calibrationForScene = calibrationForScene,
         .usesIntegratedSampling = integration.usesIntegratedInstrumentSampling,
         .integrationForWavelength = integration.integrationForWavelength,
         .slitKernelForScene = integration.slitKernelForScene,
+    };
+}
+
+fn calibrationForScene(scene: *const Scene, channel: SpectralChannel) calibration.Calibration {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
+    // math: channel correction uses lambda' = lambda + wavelength_shift, y' = gain*(y + stray_light*(mean(y)-y)) + offset.
+    return .{
+        .gain = controls.multiplicative_offset,
+        .offset = controls.additive_offset,
+        .wavelength_shift_nm = controls.wavelength_shift_nm,
+        .stray_light = controls.stray_light,
     };
 }

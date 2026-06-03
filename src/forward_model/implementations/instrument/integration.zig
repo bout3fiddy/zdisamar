@@ -1,5 +1,4 @@
 const std = @import("std");
-const adaptive_cache = @import("adaptive_cache.zig");
 const adaptive_plan = @import("adaptive_plan.zig");
 const response_support = @import("response.zig");
 const types = @import("types.zig");
@@ -11,9 +10,20 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 pub const IntegrationKernel = types.IntegrationKernel;
 pub const default_integration_sample_count = types.default_integration_sample_count;
 pub const max_integration_sample_count = types.max_integration_sample_count;
-pub const AdaptiveKernelCache = adaptive_cache.AdaptiveKernelCache;
 pub const Error = error{
     DisamarKernelRealizationFailed,
+};
+
+// layout(64-bit):
+//   size: 20512 B, align: 8 B
+//   field storage: plan=20504 B, ready=1 B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 321 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 20512 B (20.0 KiB); total = per instance * live instance count
+pub const AdaptiveKernelCache = struct {
+    ready: bool = false,
+    plan: adaptive_plan.AdaptiveIntervalPlan = .{},
 };
 
 pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralChannel) bool {
@@ -141,7 +151,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     if (response.integration_mode == .disamar_hr_grid) {
         if (prepared) |prepared_state| {
             if (cached_adaptive_kernel) |cache| {
-                if (adaptive_cache.buildAdaptiveIntegrationKernelFromCache(
+                if (buildAdaptiveIntegrationKernelFromCache(
                     response,
                     nominal_wavelength_nm,
                     cache,
@@ -214,7 +224,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
 
     if (prepared) |prepared_state| {
         if (cached_adaptive_kernel) |cache| {
-            if (adaptive_cache.buildAdaptiveIntegrationKernelFromCache(
+            if (buildAdaptiveIntegrationKernelFromCache(
                 response,
                 nominal_wavelength_nm,
                 cache,
@@ -271,7 +281,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
 //   when: wavelength sampling can reuse adaptive instrument grids across nominal wavelengths
 //   work: prepares strong-line-aware support data for adaptive kernel construction
 //   data: scene response controls, prepared spectroscopy state, adaptive cache storage
-//   follow: adaptive_cache.prepareAdaptiveKernelCache and adaptive_plan interval construction
+//   follow: adaptive_plan interval construction
 pub fn prepareAdaptiveKernelCache(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -279,7 +289,43 @@ pub fn prepareAdaptiveKernelCache(
     cache: *AdaptiveKernelCache,
 ) bool {
     const response = scene.observation_model.resolvedChannelControls(channel).response;
-    return adaptive_cache.prepareAdaptiveKernelCache(scene, prepared, response, cache);
+    cache.* = .{};
+    if (!adaptive_plan.buildAdaptiveIntervalPlan(scene, prepared, response, &cache.plan)) {
+        return false;
+    }
+    cache.ready = true;
+    return true;
+}
+
+fn buildAdaptiveIntegrationKernelFromCache(
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    cache: *const AdaptiveKernelCache,
+    apply_disamar_midpoint_bias: bool,
+    kernel: *types.IntegrationKernel,
+) bool {
+    if (!cache.ready) return false;
+
+    var sample_count: usize = 0;
+    // math: cached plan reuses interval boundaries; nominal lambda only shifts response weights and final offsets.
+    if (!adaptive_plan.appendAdaptiveSamplesFromPlan(
+        &cache.plan,
+        response,
+        nominal_wavelength_nm,
+        cache.plan.global_start_nm,
+        cache.plan.global_end_nm,
+        apply_disamar_midpoint_bias,
+        &kernel.offsets_nm,
+        &kernel.weights,
+        &sample_count,
+    )) return false;
+
+    return adaptive_plan.finalizeAdaptiveKernel(
+        kernel,
+        nominal_wavelength_nm,
+        kernel.offsets_nm[0..sample_count],
+        kernel.weights[0..sample_count],
+    );
 }
 
 pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 {

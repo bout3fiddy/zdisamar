@@ -1,6 +1,6 @@
 const std = @import("std");
 const jacobian = @import("../../jacobian/root.zig");
-const InstrumentProviders = @import("../../implementations/instrument.zig");
+const InstrumentProviders = @import("../../implementations/instrument/implementation.zig");
 
 const Allocator = std.mem.Allocator;
 

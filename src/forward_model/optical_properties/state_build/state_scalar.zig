@@ -3,7 +3,7 @@ const AbsorberModel = @import("../../../input/Absorber.zig");
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PreparedState = @import("prepared_state.zig");
-const Types = @import("state_types.zig");
+const Types = @import("state.zig");
 
 const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;

@@ -15,15 +15,16 @@ const SpectroscopyLineList = ReferenceData.SpectroscopyLineList;
 const SpectroscopyStrongLine = ReferenceData.SpectroscopyStrongLine;
 const SpectroscopyStrongLineSet = ReferenceData.SpectroscopyStrongLineSet;
 const RelaxationMatrix = ReferenceData.RelaxationMatrix;
+const SpectroscopyStrongLines = internal.reference.spectroscopy_strong_lines;
 
 test "spectroscopy constants preserve vendor weak and strong temperature scaling" {
     try std.testing.expectEqual(
         @as(f64, 1.4387770),
-        ReferenceData.spectroscopy.Types.hitran_hc_over_kb_cm_k,
+        ReferenceData.hitran_hc_over_kb_cm_k,
     );
     try std.testing.expectEqual(
         @as(f64, 1.43877696),
-        ReferenceData.spectroscopy.Types.hitran_o2_line_mixing_hc_over_kb_cm_k,
+        ReferenceData.hitran_o2_line_mixing_hc_over_kb_cm_k,
     );
 }
 
@@ -915,7 +916,7 @@ test "strong-line convtp state applies detailed-balance and pressure-scaled line
 
     try std.testing.expect(low_pressure.population_t[0] > 0.0);
     var low_relaxation_weights: [4]f64 = undefined;
-    const low_convtp = ReferenceData.spectroscopy.physics.prepareStrongLineConvTPStateWithScratch(
+    const low_convtp = SpectroscopyStrongLines.prepareStrongLineConvTPStateWithScratch(
         line_list.strong_lines.?,
         line_list.relaxation_matrix.?,
         255.0,

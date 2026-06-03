@@ -2,6 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 const labos = internal.forward_model.radiative_transfer.labos;
+const labos_layers = internal.forward_model.radiative_transfer.labos_layers;
 const common = internal.forward_model.radiative_transfer;
 const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
 
@@ -42,7 +43,7 @@ test "workspace layer effective scattering suffix uses active phase stride" {
     };
     const max_indices = [_]usize{ 3, 1 };
 
-    labos.internal.layers.fillLayerEffectiveScatteringSuffixes(
+    labos_layers.fillLayerEffectiveScatteringSuffixes(
         suffixes,
         &layers,
         &max_indices,
@@ -59,7 +60,7 @@ test "workspace layer effective scattering suffix uses active phase stride" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), suffixes[7], 1.0e-12);
 
     const capped_suffixes = try workspace.layerEffectiveScatteringSuffix(2, 2);
-    labos.internal.layers.fillLayerEffectiveScatteringSuffixes(
+    labos_layers.fillLayerEffectiveScatteringSuffixes(
         capped_suffixes,
         &layers,
         &max_indices,
@@ -100,7 +101,7 @@ test "layer doubling classification matches strict halving search" {
             case.coefficient,
             effective_scattering_depth,
         );
-        const actual = labos.internal.layers.classifyLayerDoubling(
+        const actual = labos_layers.classifyLayerDoubling(
             case.scattering,
             case.threshold,
             case.optical_depth,
@@ -119,7 +120,7 @@ fn referenceLayerDoublingDecision(
     optical_depth: f64,
     effective_scattering_coefficient: f64,
     effective_scattering_depth: f64,
-) labos.internal.layers.LayerDoublingDecision {
+) labos_layers.LayerDoublingDecision {
     if (scattering != .multiple or !(effective_scattering_depth > threshold_doubl)) {
         return .{
             .start_optical_depth = optical_depth,

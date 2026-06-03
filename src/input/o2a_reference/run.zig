@@ -247,13 +247,6 @@ pub fn loadResolvedVendorO2AInputs(
     };
 }
 
-pub fn loadResolvedVendorO2AAtmosphereProfile(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-) !ReferenceDataModel.ClimatologyProfile {
-    return loadFixedClimatologyProfile(allocator, resolved.inputs.atmosphere_profile);
-}
-
 fn loadFixedClimatologyProfile(
     allocator: Allocator,
     asset: ExternalAsset,

@@ -7,7 +7,7 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
-const Types = @import("state_types.zig");
+const Types = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -190,7 +190,7 @@ pub const PreparedOpticalState = struct {
     ) !void {
         if (self.shared_rtm_geometry.isValidFor(self.transportLayerCount())) return;
         self.shared_rtm_geometry.deinit(allocator);
-        self.shared_rtm_geometry = try @import("transport.zig").buildSharedRtmGeometry(allocator, self);
+        self.shared_rtm_geometry = try @import("shared_geometry.zig").buildSharedRtmGeometry(allocator, self);
     }
 
     // layout(64-bit):
@@ -223,17 +223,9 @@ pub const PreparedOpticalState = struct {
         return @import("state_spectroscopy.zig").collisionInducedSigmaAtWavelength(self, wavelength_nm);
     }
 
-    pub fn collisionInducedOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
-        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).cia_optical_depth;
-    }
-
     pub fn gasOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
         const optical_depths = self.opticalDepthBreakdownAtWavelength(wavelength_nm);
         return optical_depths.gas_absorption_optical_depth + optical_depths.gas_scattering_optical_depth;
-    }
-
-    pub fn aerosolOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
-        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).aerosol_optical_depth;
     }
 
     pub fn totalOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {

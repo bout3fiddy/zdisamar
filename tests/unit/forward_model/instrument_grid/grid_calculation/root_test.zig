@@ -8,6 +8,8 @@ test {
     _ = measurement.cache;
     _ = measurement.forward_input;
     _ = measurement.spectral_eval;
-    _ = measurement.product;
     _ = measurement.simulate;
+    _ = measurement.simulateProduct;
+    _ = measurement.simulateProductWithWorkspace;
+    _ = measurement.warmProductWorkspace;
 }

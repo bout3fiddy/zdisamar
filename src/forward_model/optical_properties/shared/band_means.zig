@@ -1,7 +1,7 @@
 const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const ReferenceData = @import("../../../input/ReferenceData.zig");
-const LineListEval = @import("../../../input/reference/spectroscopy/line_list_eval.zig");
+const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
 const OperationalReferenceGrid = @import("../../../input/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
@@ -53,7 +53,7 @@ pub fn computeBandLineMeans(
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
         const evaluation = if (prepared_state) |*state| blk: {
-            var anchor_storage: [ReferenceData.spectroscopy.Types.max_strong_line_sidecars]ReferenceData.spectroscopy.Types.StrongLineAnchorIndex = undefined;
+            var anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex = undefined;
             const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm, &anchor_storage);
             break :blk LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                 line_list.*,

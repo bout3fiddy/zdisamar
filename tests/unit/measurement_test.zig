@@ -43,7 +43,7 @@ test "adaptive integration cache matches uncached strong-line kernel" {
         },
     };
 
-    var baseline: implementations.Instrument.IntegrationKernel = undefined;
+    var baseline: implementations.instrument_types.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &baseline);
 
     var cache: instrument_integration.AdaptiveKernelCache = .{};
@@ -56,7 +56,7 @@ test "adaptive integration cache matches uncached strong-line kernel" {
         ),
     );
 
-    var cached: implementations.Instrument.IntegrationKernel = undefined;
+    var cached: implementations.instrument_types.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelengthWithAdaptiveCache(
         &scene,
         &prepared,
@@ -111,7 +111,7 @@ test "legacy adaptive grid prefers adaptive realization over explicit HR lattice
         },
     };
 
-    var kernel: implementations.Instrument.IntegrationKernel = undefined;
+    var kernel: implementations.instrument_types.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
 
     try std.testing.expect(kernel.enabled);

@@ -16,10 +16,10 @@ const Trace = @import("../../performance_trace.zig");
 // Then reflectance and optional Jacobian output are packed into the public result.                            |
 //                                                                                                             |
 // called by                                                                                                   |
-//   radiative_transfer/dispatcher.zig after route preparation                                                 |
+//   radiative_transfer/root.zig after route preparation                                                       |
 //                                                                                                             |
 // exported by                                                                                                 |
-//   labos/root.zig as execute and executeWithWorkspace                                                        |
+//   radiative_transfer/root.zig under the labos namespace                                                     |
 //                                                                                                             |
 // reference order                                                                                             |
 //   zdisamar mirrors LabosModule.f90 layerBasedOrdersScattering: attenuation, PLM basis, RT_fc, surface,      |

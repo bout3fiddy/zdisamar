@@ -20,13 +20,13 @@ pub const reference = struct {
     pub const climatology = @import("input/reference/climatology.zig");
     pub const cross_sections = @import("input/reference/cross_sections.zig");
     pub const rayleigh = @import("input/reference/rayleigh.zig");
+    pub const spectroscopy_strong_lines = @import("input/reference/spectroscopy/strong_lines.zig");
 };
 // layout(64-bit):
 //   size: 0 B, align: 1 B
 //   field storage: 0 B; padding: 0 B (0 bits)
 //   footprint: no runtime field storage; namespace/type declarations only
 pub const input_reference_data = struct {
-    pub const ingest = @import("input/reference_data/ingest/root.zig");
     pub const ingest_reference_assets = @import("input/reference_data/ingest/reference_assets.zig");
     pub const ingest_reference_assets_loaded_asset = @import("input/reference_data/ingest/reference_assets_loaded_asset.zig");
 };
@@ -93,10 +93,8 @@ pub const forward_model = struct {
         const root = @import("forward_model/optical_properties/root.zig");
 
         pub const state = root.state;
-        pub const builder = root.builder;
         pub const spectroscopy = root.spectroscopy;
         pub const evaluation = root.evaluation;
-        pub const transport = root.transport;
         pub const internal = root.internal;
         pub const carrier_eval = root.carrier_eval;
         pub const forward_layers = root.forward_layers;
@@ -133,13 +131,11 @@ pub const forward_model = struct {
     pub const instrument_grid = struct {
         const root = @import("forward_model/instrument_grid/root.zig");
 
-        pub const internal = root.internal;
         pub const types = root.types;
         pub const storage = root.storage;
         pub const cache = root.cache;
         pub const forward_input = root.forward_input;
         pub const spectral_eval = root.spectral_eval;
-        pub const product = root.product;
         pub const simulate = root.simulate;
 
         pub const reflectance_export_name = root.reflectance_export_name;
@@ -155,6 +151,8 @@ pub const forward_model = struct {
         pub const simulateSummaryWithWorkspace = root.simulateSummaryWithWorkspace;
         pub const simulateProduct = root.simulateProduct;
         pub const simulateProductWithWorkspace = root.simulateProductWithWorkspace;
+        pub const warmProductWorkspace = root.warmProductWorkspace;
+        pub const spectral_forward = @import("forward_model/instrument_grid/grid_calculation/spectral_forward.zig");
 
         // layout(64-bit):
         //   size: 0 B, align: 1 B
@@ -164,7 +162,6 @@ pub const forward_model = struct {
             pub const calibration = @import("forward_model/instrument_grid/spectral_math/calibration.zig");
             pub const convolution = @import("forward_model/instrument_grid/spectral_math/convolution.zig");
             pub const grid = @import("forward_model/instrument_grid/spectral_math/grid.zig");
-            pub const sampling = @import("forward_model/instrument_grid/spectral_math/sampling.zig");
         };
     };
 
@@ -199,12 +196,16 @@ pub const forward_model = struct {
         pub const ExecuteError = root.ExecuteError;
         pub const Error = root.Error;
         pub const prepareRoute = root.prepareRoute;
+        pub const execute = root.execute;
+        pub const executePrepared = root.executePrepared;
+        pub const executePreparedWithLabosWorkspace = root.executePreparedWithLabosWorkspace;
         pub const sourceInterfaceFromLayers = root.sourceInterfaceFromLayers;
         pub const fillSourceInterfacesFromLayers = root.fillSourceInterfacesFromLayers;
 
         pub const derivatives = @import("forward_model/radiative_transfer/derivatives.zig");
-        pub const dispatcher = @import("forward_model/radiative_transfer/dispatcher.zig");
-        pub const labos = @import("forward_model/radiative_transfer/labos/root.zig");
+        pub const labos = root.labos;
+        pub const labos_basis = @import("forward_model/radiative_transfer/labos/basis.zig");
+        pub const labos_layers = @import("forward_model/radiative_transfer/labos/layers.zig");
     };
 
     // layout(64-bit):
@@ -215,7 +216,8 @@ pub const forward_model = struct {
         const root = @import("forward_model/implementations/root.zig");
 
         pub const Bindings = root.Bindings;
-        pub const Instrument = @import("forward_model/implementations/instrument.zig");
+        pub const instrument_implementation = @import("forward_model/implementations/instrument/implementation.zig");
+        pub const instrument_types = @import("forward_model/implementations/instrument/types.zig");
         pub const instrument_integration = @import("forward_model/implementations/instrument/integration.zig");
 
         pub fn exact() Bindings {

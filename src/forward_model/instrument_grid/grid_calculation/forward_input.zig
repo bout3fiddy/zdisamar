@@ -44,7 +44,7 @@ pub fn configuredForwardInput(
         // why: measure carrier-backed layer preparation before LABOS transport.
         const zone = Trace.deepStaticZone(@src(), "forward_input.layers");
         defer zone.end();
-        break :optical_depths OpticsPreparation.transport.fillForwardLayersAtWavelengthWithCarrierCache(
+        break :optical_depths OpticsPreparation.forward_layers.fillForwardLayersAtWavelengthWithCarrierCache(
             prepared,
             scene,
             wavelength_nm,
@@ -53,7 +53,7 @@ pub fn configuredForwardInput(
             compute_jacobian,
         );
     };
-    var input = OpticsPreparation.transport.forwardInputFromOpticalDepths(
+    var input = OpticsPreparation.forward_layers.forwardInputFromOpticalDepths(
         prepared,
         scene,
         wavelength_nm,
@@ -71,7 +71,7 @@ pub fn configuredForwardInput(
             // why: isolate explicit quadrature setup from coarse source-interface fallback.
             const zone = Trace.deepStaticZone(@src(), "forward_input.rtm_quadrature");
             defer zone.end();
-            has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
+            has_rtm_quadrature = OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
                 prepared,
                 wavelength_nm,
                 input.layers,
@@ -101,7 +101,7 @@ pub fn configuredForwardInput(
             // why: quantify the fallback source-function boundary when RTM quadrature is unavailable.
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");
             defer zone.end();
-            OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
+            OpticsPreparation.source_interfaces.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
                 prepared,
                 wavelength_nm,
                 input.layers,
@@ -123,7 +123,7 @@ pub fn configuredForwardInput(
             // why: keep geometric-correction setup visible in forward-sample traces.
             const zone = Trace.deepStaticZone(@src(), "forward_input.pseudo_spherical");
             defer zone.end();
-            break :has_grid OpticsPreparation.transport.fillPseudoSphericalGridAtWavelengthWithCarrierCache(
+            break :has_grid OpticsPreparation.pseudo_spherical.fillPseudoSphericalGridAtWavelengthWithCarrierCache(
                 prepared,
                 scene,
                 wavelength_nm,

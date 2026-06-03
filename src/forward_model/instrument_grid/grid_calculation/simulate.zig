@@ -7,7 +7,6 @@ const convolution = @import("../spectral_math/convolution.zig");
 const grid = @import("../spectral_math/grid.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
-const Postprocess = @import("postprocess.zig");
 const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
@@ -698,8 +697,9 @@ fn fillRadianceSamples(
         // why: keep calibration/postprocess cost visible after convolution.
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
-        try Postprocess.applyChannelCorrections(
+        try calibration.applySignal(
             setup.radiance_calibration,
+            buffers.radiance,
             buffers.radiance,
         );
     }
@@ -754,8 +754,9 @@ fn fillIrradianceSamples(
         // why: keep solar calibration cost visible before reflectance assembly.
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
-        try Postprocess.applyChannelCorrections(
+        try calibration.applySignal(
             setup.irradiance_calibration,
+            buffers.irradiance,
             buffers.irradiance,
         );
     }
@@ -827,7 +828,7 @@ fn assembleReflectance(
 //   when: once per simulation when a Jacobian buffer is requested
 //   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
 //   data: derivative state mask, state-major active-column buffer, wavelength array
-//   follow: jacobianColumn and Postprocess.applyChannelJacobianCorrections
+//   follow: jacobianColumn and calibration.applySignalDerivative
 fn processJacobianSamples(
     derivative_state_mask: jacobian.StateMask,
     setup: SimulationSetup,
@@ -856,8 +857,9 @@ fn processJacobianSamples(
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
                 if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
-                try Postprocess.applyChannelJacobianCorrections(
+                try calibration.applySignalDerivative(
                     setup.radiance_calibration,
+                    column,
                     column,
                 );
             }

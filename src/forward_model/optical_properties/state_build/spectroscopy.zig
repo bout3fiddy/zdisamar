@@ -145,21 +145,7 @@ pub fn speciesMixingRatioAtPressure(
     if (profile_ppmv.len != 0) {
         return interpolateMixingRatioProfileFraction(profile_ppmv, pressure_hpa);
     }
-    return default_fraction orelse defaultVolumeMixingRatioForScene(scene, species);
-}
-
-pub fn defaultVolumeMixingRatio(species: AbsorberModel.AbsorberSpecies) ?f64 {
-    return switch (species) {
-        else => null,
-    };
-}
-
-fn defaultVolumeMixingRatioForScene(
-    scene: *const Scene,
-    species: AbsorberModel.AbsorberSpecies,
-) ?f64 {
-    _ = scene;
-    return defaultVolumeMixingRatio(species);
+    return default_fraction;
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) !?AbsorberModel.AbsorberSpecies {

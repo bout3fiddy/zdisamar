@@ -13,7 +13,6 @@ const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpect
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 const Allocator = std.mem.Allocator;
-const legacy_support = @import("observation_legacy_support.zig");
 
 pub const ObservationRegime = enum {
     nadir,
@@ -187,26 +186,26 @@ pub const ObservationModel = struct {
     }
 
     pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
-        return legacy_support.resolvedChannelControls(self, channel);
+        return legacyChannelControls(self, channel);
     }
 
     pub fn operationalBandCount(self: *const ObservationModel) usize {
-        return legacy_support.operationalBandCount(self);
+        return operationalBandCountFromLegacy(self);
     }
 
     pub fn primaryOperationalBandSupport(self: *const ObservationModel) OperationalBandSupport {
-        return legacy_support.primaryOperationalBandSupport(self);
+        return primaryOperationalBandSupportFromLegacy(self);
     }
 
     pub fn lutSamplingHalfSpanNm(self: *const ObservationModel) f64 {
-        return legacy_support.lutSamplingHalfSpanNm(self.primaryOperationalBandSupport());
+        return lutSamplingHalfSpanForSupport(self.primaryOperationalBandSupport());
     }
 
     pub fn resolvedOperationalBandSupport(
         self: *const ObservationModel,
         band_index: usize,
     ) ?OperationalBandSupport {
-        return legacy_support.resolvedOperationalBandSupport(self, band_index);
+        return resolvedOperationalBandSupportFromLegacy(self, band_index);
     }
 
     pub fn operationalReplacementLabelsOwned(
@@ -281,3 +280,145 @@ pub const ObservationModel = struct {
         self.owns_measured_wavelengths = false;
     }
 };
+
+fn operationalBandCountFromLegacy(model: *const ObservationModel) usize {
+    if (model.operational_band_support.len != 0) return model.operational_band_support.len;
+    return if (legacyOperationalBandSupport(model).enabled()) 1 else 0;
+}
+
+fn primaryOperationalBandSupportFromLegacy(model: *const ObservationModel) OperationalBandSupport {
+    return resolvedOperationalBandSupportFromLegacy(model, 0) orelse .{};
+}
+
+fn resolvedOperationalBandSupportFromLegacy(
+    model: *const ObservationModel,
+    band_index: usize,
+) ?OperationalBandSupport {
+    if (band_index < model.operational_band_support.len) {
+        return mergedOperationalBandSupport(
+            model.operational_band_support[band_index],
+            legacyOperationalBandSupport(model),
+        );
+    }
+    if (band_index == 0) {
+        const legacy = legacyOperationalBandSupport(model);
+        if (legacy.enabled()) return legacy;
+    }
+    return null;
+}
+
+fn lutSamplingHalfSpanForSupport(support: OperationalBandSupport) f64 {
+    if (support.high_resolution_step_nm <= 0.0) return 0.0;
+
+    var half_span_nm = support.high_resolution_half_span_nm;
+    if (support.instrument_line_shape.sample_count > 0) {
+        for (support.instrument_line_shape.offsets_nm[0..support.instrument_line_shape.sample_count]) |offset_nm| {
+            half_span_nm = @max(half_span_nm, @abs(offset_nm));
+        }
+    }
+    if (support.instrument_line_shape_table.sample_count > 0) {
+        for (support.instrument_line_shape_table.offsets_nm[0..support.instrument_line_shape_table.sample_count]) |offset_nm| {
+            half_span_nm = @max(half_span_nm, @abs(offset_nm));
+        }
+    }
+    return half_span_nm;
+}
+
+fn legacyChannelControls(model: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+    var controls: Instrument.SpectralChannelControls = .{
+        .response = legacySpectralResponse(model),
+        .wavelength_shift_nm = model.wavelength_shift_nm,
+    };
+    if (channel == .radiance) {
+        controls.multiplicative_offset = model.multiplicative_offset;
+        controls.stray_light = model.stray_light;
+    }
+    return controls;
+}
+
+fn legacySpectralResponse(model: *const ObservationModel) Instrument.SpectralResponse {
+    const support = primaryOperationalBandSupportFromLegacy(model);
+    const resolved_high_resolution_step_nm = if (support.high_resolution_step_nm > 0.0)
+        support.high_resolution_step_nm
+    else
+        model.high_resolution_step_nm;
+    const resolved_high_resolution_half_span_nm = if (support.high_resolution_half_span_nm > 0.0)
+        support.high_resolution_half_span_nm
+    else
+        model.high_resolution_half_span_nm;
+    return .{
+        .slit_index = switch (model.builtin_line_shape) {
+            .gaussian => if (support.instrument_line_shape_table.nominal_count > 0 or model.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
+            .flat_top_n4 => .flat_top_n4,
+            .triple_flat_top_n4 => .triple_flat_top_n4,
+        },
+        .fwhm_nm = model.instrument_line_fwhm_nm,
+        .builtin_line_shape = model.builtin_line_shape,
+        .integration_mode = if (model.integration_mode != .auto)
+            model.integration_mode
+        else if (model.adaptive_reference_grid.enabled())
+            .adaptive
+        else if (resolved_high_resolution_step_nm > 0.0 and resolved_high_resolution_half_span_nm > 0.0)
+            .explicit_hr_grid
+        else
+            .auto,
+        .high_resolution_step_nm = resolved_high_resolution_step_nm,
+        .high_resolution_half_span_nm = resolved_high_resolution_half_span_nm,
+        .instrument_line_shape = if (support.instrument_line_shape.sample_count > 0)
+            borrowedLineShape(support.instrument_line_shape)
+        else
+            borrowedLineShape(model.instrument_line_shape),
+        .instrument_line_shape_table = if (support.instrument_line_shape_table.nominal_count > 0)
+            borrowedLineShapeTable(support.instrument_line_shape_table)
+        else
+            borrowedLineShapeTable(model.instrument_line_shape_table),
+    };
+}
+
+fn legacyOperationalBandSupport(model: *const ObservationModel) OperationalBandSupport {
+    return .{
+        .id = if (model.instrument != .unset) "primary" else "",
+        .high_resolution_step_nm = model.high_resolution_step_nm,
+        .high_resolution_half_span_nm = model.high_resolution_half_span_nm,
+        .instrument_line_shape = borrowedLineShape(model.instrument_line_shape),
+        .instrument_line_shape_table = borrowedLineShapeTable(model.instrument_line_shape_table),
+        .operational_refspec_grid = model.operational_refspec_grid,
+        .operational_solar_spectrum = model.operational_solar_spectrum,
+        .o2_operational_lut = model.o2_operational_lut,
+        .o2o2_operational_lut = model.o2o2_operational_lut,
+    };
+}
+
+fn mergedOperationalBandSupport(
+    explicit: OperationalBandSupport,
+    legacy: OperationalBandSupport,
+) OperationalBandSupport {
+    var merged = legacy;
+    if (explicit.id.len != 0) {
+        merged.id = explicit.id;
+        merged.owns_id = explicit.owns_id;
+    }
+    if (explicit.high_resolution_step_nm > 0.0) {
+        merged.high_resolution_step_nm = explicit.high_resolution_step_nm;
+        merged.high_resolution_half_span_nm = explicit.high_resolution_half_span_nm;
+    }
+    if (explicit.instrument_line_shape.sample_count > 0) merged.instrument_line_shape = explicit.instrument_line_shape;
+    if (explicit.instrument_line_shape_table.nominal_count > 0) merged.instrument_line_shape_table = explicit.instrument_line_shape_table;
+    if (explicit.operational_refspec_grid.enabled()) merged.operational_refspec_grid = explicit.operational_refspec_grid;
+    if (explicit.operational_solar_spectrum.enabled()) merged.operational_solar_spectrum = explicit.operational_solar_spectrum;
+    if (explicit.o2_operational_lut.enabled()) merged.o2_operational_lut = explicit.o2_operational_lut;
+    if (explicit.o2o2_operational_lut.enabled()) merged.o2o2_operational_lut = explicit.o2o2_operational_lut;
+    return merged;
+}
+
+fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
+    var borrowed = line_shape;
+    borrowed.owns_memory = false;
+    return borrowed;
+}
+
+fn borrowedLineShapeTable(line_shape_table: InstrumentLineShapeTable) InstrumentLineShapeTable {
+    var borrowed = line_shape_table;
+    borrowed.owns_memory = false;
+    return borrowed;
+}

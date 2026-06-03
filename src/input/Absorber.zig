@@ -4,8 +4,43 @@ const errors = @import("../common/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
-const species_helpers = @import("absorber/species.zig");
-pub const AbsorberSpecies = @import("atmospheric_types.zig").AbsorberSpecies;
+
+pub const AbsorberSpecies = enum {
+    o2_o2,
+    o2,
+
+    pub fn isLineAbsorbing(self: AbsorberSpecies) bool {
+        return switch (self) {
+            .o2 => true,
+            else => false,
+        };
+    }
+
+    pub fn isCrossSection(self: AbsorberSpecies) bool {
+        return switch (self) {
+            .o2_o2 => true,
+            else => false,
+        };
+    }
+
+    pub fn hitranIndex(self: AbsorberSpecies) ?u8 {
+        return switch (self) {
+            .o2 => 7,
+            else => null,
+        };
+    }
+
+    pub fn fromVendorName(name: []const u8) ?AbsorberSpecies {
+        const map = .{
+            .{ "O2-O2", .o2_o2 },
+            .{ "O2", .o2 },
+        };
+        inline for (map) |entry| {
+            if (std.mem.eql(u8, name, entry[0])) return entry[1];
+        }
+        return null;
+    }
+};
 
 pub const SpectroscopyMode = enum {
     none,
@@ -27,9 +62,18 @@ pub const AbsorptionRepresentation = union(enum) {
     xsec_lut: *const OperationalCrossSectionLut,
 };
 
-pub const resolveAbsorberSpeciesName = species_helpers.resolveAbsorberSpeciesName;
+pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
+    if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2_o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2-o2")) return .o2_o2;
+    return null;
+}
 
-pub const resolvedAbsorberSpecies = species_helpers.resolvedAbsorberSpecies;
+pub fn resolvedAbsorberSpecies(absorber: anytype) ?AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    return resolveAbsorberSpeciesName(absorber.species);
+}
 
 // layout(64-bit):
 //   size: 136 B, align: 8 B

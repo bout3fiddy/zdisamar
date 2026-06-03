@@ -5,7 +5,7 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const PreparedState = @import("prepared_state.zig");
 const Scalar = @import("state_scalar.zig");
 const Spectroscopy = @import("state_spectroscopy.zig");
-const Types = @import("state_types.zig");
+const Types = @import("state.zig");
 
 const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
