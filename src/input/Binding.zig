@@ -38,7 +38,8 @@ pub const NamedRef = struct {
 //   size: 48 B, align: 8 B
 //   field storage: full_name=16 B, ingest_name=16 B, output_name=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in size
+// out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in
+// size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const IngestRef = struct {
@@ -48,10 +49,18 @@ pub const IngestRef = struct {
 
     pub fn fromFullName(full_name: []const u8) IngestRef {
         const dot_index = std.mem.indexOfScalar(u8, full_name, '.');
+        if (dot_index) |index| {
+            return .{
+                .full_name = full_name,
+                .ingest_name = full_name[0..index],
+                .output_name = full_name[index + 1 ..],
+            };
+        }
+
         return .{
             .full_name = full_name,
-            .ingest_name = if (dot_index) |index| full_name[0..index] else "",
-            .output_name = if (dot_index) |index| full_name[index + 1 ..] else "",
+            .ingest_name = "",
+            .output_name = "",
         };
     }
 

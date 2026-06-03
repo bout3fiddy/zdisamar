@@ -5,11 +5,6 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Trace = @import("../../performance_trace.zig");
 const common = @import("../../radiative_transfer/root.zig");
 
-// hot path:
-//   when: once per high-resolution wavelength before LABOS transport
-//   work: fills optical depth layers, source interfaces, RTM quadrature, and pseudo-spherical samples
-//   data: wavelength carrier cache, layer input arrays, quadrature/source-interface buffers
-//   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
 pub fn configuredForwardInput(
     scene: *const Scene,
     rtm_config: common.SolveConfig,
@@ -24,6 +19,13 @@ pub fn configuredForwardInput(
     support_carrier_cache: *CarrierEval.SupportRowScalarCache,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
+
+    // hot path:
+    //   when: once per high-resolution wavelength before LABOS transport
+    //   work: fills optical depth layers, source interfaces, RTM quadrature, and pseudo-spherical samples
+    //   reads: wavelength carrier cache, layer input arrays, quadrature/source-interface buffers
+    //   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
+
     const compute_jacobian = rtm_config.derivative_mode != .none;
 
     var local_profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache = undefined;
@@ -79,7 +81,9 @@ pub fn configuredForwardInput(
             // why: isolate explicit quadrature setup from coarse source-interface fallback.
             const zone = Trace.deepStaticZone(@src(), "forward_input.rtm_quadrature");
             defer zone.end();
-            has_rtm_quadrature = OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
+            const fill_rtm_quadrature =
+                OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache;
+            has_rtm_quadrature = fill_rtm_quadrature(
                 prepared,
                 wavelength_nm,
                 input.layers,

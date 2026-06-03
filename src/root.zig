@@ -30,6 +30,7 @@ pub const RadiativeTransferSpectrumView = radiative_transfer_diagnostics.Spectru
 pub const RadiativeTransferPerformanceThresholds = radiative_transfer.RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = radiative_transfer.RadiativeTransferControls;
 pub const RadiativeTransferJacobian = radiative_transfer.Jacobian;
+
 // layout(64-bit):
 //   size: 7392 B, align: 8 B
 //   field storage: input=2680 B, reference_data=3040 B, optical_properties=1056 B, storage=616 B; padding: 0 B (0 bits)

@@ -71,18 +71,21 @@ fn mainInner() !void {
     input.spectral_grid.start_nm = config.start_nm;
     input.spectral_grid.end_nm = config.end_nm;
     input.spectral_grid.sample_count = config.sample_count;
+
     input.observation.high_resolution_step_nm = config.high_resolution_step_nm;
     var interval_storage: [16]@TypeOf(input.intervals[0]) = undefined;
     if (input.intervals.len > interval_storage.len) return error.InvalidIntervalCount;
     @memcpy(interval_storage[0..input.intervals.len], input.intervals);
     input.intervals = interval_storage[0..input.intervals.len];
     if (config.surface_pressure_hpa) |value| input.surface_pressure_hpa = value;
+
     if (config.surface_albedo) |value| input.surface_albedo = value;
     if (config.aerosol_optical_depth) |value| input.aerosol.optical_depth = value;
     if (config.aerosol_single_scatter_albedo) |value| input.aerosol.single_scatter_albedo = value;
     if (config.aerosol_asymmetry_factor) |value| input.aerosol.asymmetry_factor = value;
     if (config.aerosol_layer_top_pressure_hpa) |value| input.aerosol.placement.top_pressure_hpa = value;
     if (config.aerosol_layer_bottom_pressure_hpa) |value| input.aerosol.placement.bottom_pressure_hpa = value;
+
     if (config.surface_pressure_hpa != null or
         config.aerosol_layer_top_pressure_hpa != null or
         config.aerosol_layer_bottom_pressure_hpa != null)
@@ -90,6 +93,7 @@ fn mainInner() !void {
         updateFitIntervals(&input, interval_storage[0..input.intervals.len]);
     }
     if (config.solar_zenith_deg) |value| input.geometry.solar_zenith_deg = value;
+
     if (config.viewing_zenith_deg) |value| input.geometry.viewing_zenith_deg = value;
     if (config.relative_azimuth_deg) |value| input.geometry.relative_azimuth_deg = value;
     if (!config.multiple_scattering) input.rtm_controls.scattering = .single;
@@ -97,6 +101,7 @@ fn mainInner() !void {
         allocator,
         &input,
     );
+
     const prepare_ns = prepare_timer.read();
     defer prepared_case.deinit(allocator);
 
@@ -158,12 +163,14 @@ fn parseArgs(args: []const []const u8) !Config {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
+
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
             config.output_dir_set = true;
         } else if (std.mem.eql(u8, arg, "--scene-id")) {
             index += 1;
             if (index >= args.len) return error.MissingSceneId;
+
             config.scene_id = args[index];
         } else if (std.mem.eql(u8, arg, "--jacobian")) {
             config.jacobian = true;
@@ -171,58 +178,72 @@ fn parseArgs(args: []const []const u8) !Config {
             config.multiple_scattering = true;
         } else if (std.mem.eql(u8, arg, "--sample-count")) {
             index += 1;
+
             if (index >= args.len) return error.MissingSampleCount;
             config.sample_count = try std.fmt.parseInt(u32, args[index], 10);
         } else if (std.mem.eql(u8, arg, "--start-nm")) {
             index += 1;
+
             if (index >= args.len) return error.MissingStartNm;
             config.start_nm = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--end-nm")) {
             index += 1;
+
             if (index >= args.len) return error.MissingEndNm;
             config.end_nm = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--high-resolution-step-nm")) {
             index += 1;
+
             if (index >= args.len) return error.MissingHighResolutionStep;
             config.high_resolution_step_nm = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--surface-pressure-hpa")) {
             index += 1;
+
             if (index >= args.len) return error.MissingSurfacePressure;
             config.surface_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--surface-albedo")) {
             index += 1;
+
             if (index >= args.len) return error.MissingSurfaceAlbedo;
             config.surface_albedo = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--aerosol-optical-depth")) {
             index += 1;
+
             if (index >= args.len) return error.MissingAerosolOpticalDepth;
             config.aerosol_optical_depth = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--aerosol-single-scatter-albedo")) {
             index += 1;
+
             if (index >= args.len) return error.MissingAerosolSingleScatterAlbedo;
             config.aerosol_single_scatter_albedo = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--aerosol-asymmetry-factor")) {
             index += 1;
+
             if (index >= args.len) return error.MissingAerosolAsymmetryFactor;
             config.aerosol_asymmetry_factor = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--aerosol-layer-top-pressure-hpa")) {
             index += 1;
+
             if (index >= args.len) return error.MissingAerosolLayerTopPressure;
             config.aerosol_layer_top_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--aerosol-layer-bottom-pressure-hpa")) {
             index += 1;
+
             if (index >= args.len) return error.MissingAerosolLayerBottomPressure;
             config.aerosol_layer_bottom_pressure_hpa = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--solar-zenith-deg")) {
             index += 1;
+
             if (index >= args.len) return error.MissingSolarZenith;
             config.solar_zenith_deg = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--viewing-zenith-deg")) {
             index += 1;
+
             if (index >= args.len) return error.MissingViewingZenith;
             config.viewing_zenith_deg = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--relative-azimuth-deg")) {
             index += 1;
+
             if (index >= args.len) return error.MissingRelativeAzimuth;
             config.relative_azimuth_deg = try std.fmt.parseFloat(f64, args[index]);
         } else {
@@ -243,6 +264,7 @@ fn updateFitIntervals(input: anytype, intervals: anytype) void {
             interval.bottom_pressure_hpa = top_pressure;
         } else if (interval_index == fit_index) {
             interval.top_pressure_hpa = top_pressure;
+
             interval.bottom_pressure_hpa = bottom_pressure;
         } else if (interval_index == fit_index + 1) {
             interval.top_pressure_hpa = bottom_pressure;
@@ -303,6 +325,7 @@ fn writeSummary(
         \\
     ,
         .{
+
             // instrumentation: calculation telemetry metadata
             // captures: compile-time request/enabled flags in the run summary
             // why: make disabled or miswired telemetry captures obvious in generated JSON.

@@ -49,6 +49,7 @@ test "measurement storage transport hint follows explicit interval totals" {
     };
 
     try std.testing.expectEqual(@as(usize, 6), transportLayerCountHint(&scene, rtm_config));
+
     // REBASELINE: original literal was 12; current formula is layer_count * (sublayer_divisions + 2) = 6 * 4 = 24.
     try std.testing.expectEqual(@as(usize, 24), pseudoSphericalSampleCountHint(&scene, rtm_config));
 }

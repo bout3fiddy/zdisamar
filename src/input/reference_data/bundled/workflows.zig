@@ -141,6 +141,7 @@ pub fn applyLutWorkflows(
                 try appendExecutionLabel(allocator, execution_entries, "o2o2:xsec_lut:consume");
                 xsec_applied = true;
             },
+
             .generate => {
                 const o2o2_table = cia_table orelse return error.InvalidRequest;
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
@@ -183,6 +184,7 @@ pub fn applyLutWorkflows(
         if (absorber.spectroscopy.mode != .cross_sections) continue;
         if (AbsorberModel.resolvedAbsorberSpecies(absorber) == null) {
             if (xsec_controls.mode != .direct) return error.InvalidRequest;
+
             continue;
         }
         switch (xsec_controls.mode) {
@@ -190,6 +192,7 @@ pub fn applyLutWorkflows(
                 if (absorber.spectroscopy.resolved_cross_section_lut != null) {
                     try appendExecutionLabelOwned(
                         allocator,
+
                         execution_entries,
                         "{s}:xsec_lut:consume",
                         .{absorber.id},
@@ -198,10 +201,12 @@ pub fn applyLutWorkflows(
                     try appendExecutionLabelOwned(
                         allocator,
                         execution_entries,
+
                         "{s}:xsec:direct",
                         .{absorber.id},
                     );
                 }
+
                 xsec_applied = true;
             },
             .consume => {
@@ -211,6 +216,7 @@ pub fn applyLutWorkflows(
                 try appendExecutionLabelOwned(
                     allocator,
                     execution_entries,
+
                     "{s}:xsec_lut:consume",
                     .{absorber.id},
                 );
@@ -219,10 +225,15 @@ pub fn applyLutWorkflows(
             .generate => {
                 const table = absorber.spectroscopy.resolved_cross_section_table orelse return error.InvalidRequest;
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
+
                 defer allocator.free(wavelengths_nm);
 
                 const owned = try ensureOwnedAbsorbers(allocator, source_scene, working_scene, owned_absorbers);
-                const target_absorber = @constCast(&owned.items[findAbsorberIndexById(owned.items, absorber.id) orelse return error.InvalidRequest]);
+                const target_index = findAbsorberIndexById(
+                    owned.items,
+                    absorber.id,
+                ) orelse return error.InvalidRequest;
+                const target_absorber = @constCast(&owned.items[target_index]);
                 target_absorber.spectroscopy.cross_section_table.deinitOwned(allocator);
                 if (target_absorber.spectroscopy.resolved_cross_section_table) |*owned_table| {
                     var cleanup = owned_table.*;
@@ -233,12 +244,13 @@ pub fn applyLutWorkflows(
                 target_absorber.spectroscopy.operational_lut = .{
                     .asset = .{ .name = try allocator.dupe(u8, "generated.xsec_lut") },
                 };
-                target_absorber.spectroscopy.resolved_cross_section_lut = try OperationalCrossSectionLut.buildFromSource(
+                const resolved_cross_section_lut = try OperationalCrossSectionLut.buildFromSource(
                     allocator,
                     wavelengths_nm,
                     .{ .cross_section_table = &table },
                     xsec_controls,
                 );
+                target_absorber.spectroscopy.resolved_cross_section_lut = resolved_cross_section_lut;
                 try appendExecutionLabelOwned(
                     allocator,
                     execution_entries,
@@ -418,10 +430,12 @@ fn findUniqueAbsorberBySpeciesAndMode(
     var matched: ?AbsorberModel.Absorber = null;
     for (items) |absorber| {
         if (absorber.spectroscopy.mode != mode) continue;
+
         if ((AbsorberModel.resolvedAbsorberSpecies(absorber) orelse continue) != species) continue;
         if (matched != null) return error.InvalidRequest;
         matched = absorber;
     }
+
     return matched;
 }
 

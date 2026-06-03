@@ -84,7 +84,8 @@ pub fn resolvedAbsorberSpecies(absorber: anytype) ?AbsorberSpecies {
 
 // layout(64-bit):
 //   size: 136 B, align: 8 B
-//   field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7 B (56 bits)
+// field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7
+// B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: isotopes_sim, isotopes_retr carry references/descriptors; referenced storage is not included in size
 //   cache span: 3 cache line(s) at 64 B per line
@@ -105,6 +106,7 @@ pub const LineGasControls = struct {
         if (self.factor_lm_sim) |value| {
             if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
         }
+
         if (self.factor_lm_retr) |value| {
             if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
         }
@@ -114,6 +116,7 @@ pub const LineGasControls = struct {
         if (self.threshold_line_retr) |value| {
             if (!std.math.isFinite(value) or value < 0.0) return errors.Error.InvalidRequest;
         }
+
         if (self.cutoff_sim_cm1) |value| {
             if (!std.math.isFinite(value) or value <= 0.0) return errors.Error.InvalidRequest;
         }
@@ -328,12 +331,14 @@ pub const Spectroscopy = struct {
             owned.deinit(allocator);
         };
 
-        const resolved_cross_section_table = if (self.resolved_cross_section_table) |cross_section_table_data|
-            ReferenceData.CrossSectionTable{
-                .points = try allocator.dupe(ReferenceData.CrossSectionPoint, cross_section_table_data.points),
-            }
-        else
-            null;
+        const resolved_cross_section_table = choose_resolved_cross_section_table: {
+            break :choose_resolved_cross_section_table if (self.resolved_cross_section_table) |cross_section_table_data|
+                ReferenceData.CrossSectionTable{
+                    .points = try allocator.dupe(ReferenceData.CrossSectionPoint, cross_section_table_data.points),
+                }
+            else
+                null;
+        };
         errdefer if (resolved_cross_section_table) |*cross_section_table_data| {
             var owned = cross_section_table_data.*;
             owned.deinit(allocator);
@@ -401,15 +406,18 @@ pub const Spectroscopy = struct {
 
 // layout(64-bit):
 //   size: 960 B, align: 8 B
-//   field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48 bits)
+// field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48
+// bits)
 //   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not included in size
+// out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not
+// included in size
 //   cache span: 15 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 960 B (0.938 KiB); total also includes referenced storage above
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
+
     // Typed species identity resolved from the string `species` field.
     // Null when the species string has not been resolved against the
     // vendor species catalogue.
@@ -429,15 +437,17 @@ pub const Absorber = struct {
     }
 
     pub fn clone(self: Absorber, allocator: Allocator) !Absorber {
+        const volume_mixing_ratio_profile_ppmv = if (self.volume_mixing_ratio_profile_ppmv.len != 0)
+            try allocator.dupe([2]f64, self.volume_mixing_ratio_profile_ppmv)
+        else
+            &.{};
+
         return .{
             .id = try allocator.dupe(u8, self.id),
             .species = try allocator.dupe(u8, self.species),
             .resolved_species = self.resolved_species,
             .profile_source = try self.profile_source.clone(allocator),
-            .volume_mixing_ratio_profile_ppmv = if (self.volume_mixing_ratio_profile_ppmv.len != 0)
-                try allocator.dupe([2]f64, self.volume_mixing_ratio_profile_ppmv)
-            else
-                &.{},
+            .volume_mixing_ratio_profile_ppmv = volume_mixing_ratio_profile_ppmv,
             .spectroscopy = try self.spectroscopy.clone(allocator),
         };
     }
@@ -513,8 +523,10 @@ pub fn validateVolumeMixingRatioProfile(profile_ppmv: []const [2]f64) errors.Err
         if (entry[0] <= 0.0 or entry[1] < 0.0) {
             return errors.Error.InvalidRequest;
         }
+
         if (previous_pressure_hpa) |previous| {
             if (entry[0] == previous) return errors.Error.InvalidRequest;
+
             const entry_descending = entry[0] < previous;
             if (descending) |expected_descending| {
                 if (entry_descending != expected_descending) return errors.Error.InvalidRequest;

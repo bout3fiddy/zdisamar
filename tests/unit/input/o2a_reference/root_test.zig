@@ -36,7 +36,10 @@ test "default O2A input renders and parses as strict JSON" {
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
         parsed.value.inputs.raw_solar_reference.path,
     );
-    try std.testing.expectEqual(@as(?u16, null), parsed.value.rtm_controls.performance_thresholds.aerosol_tangent_order_cap);
+    try std.testing.expectEqual(
+        @as(?u16, null),
+        parsed.value.rtm_controls.performance_thresholds.aerosol_tangent_order_cap,
+    );
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_rd_product_suppression);
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_tu_product_suppression);
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_td_product_suppression);

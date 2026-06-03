@@ -100,12 +100,14 @@ const AllocationSiteReport = struct {
             insert_index += 1;
         }
         if (insert_index >= max_reported_allocation_sites) return;
+
         const last = @min(self.count, max_reported_allocation_sites - 1);
         var move_index = last;
         while (move_index > insert_index) : (move_index -= 1) {
             self.sites[move_index] = self.sites[move_index - 1];
         }
         self.sites[insert_index] = site;
+
         if (self.count < max_reported_allocation_sites) self.count += 1;
     }
 };
@@ -132,7 +134,8 @@ const WavelengthPlanStats = struct {
 // build graph wires this file only into the explicit optimal-estimation trace executable.
 // layout(64-bit):
 //   size: 20592 B, align: 8 B
-//   field storage: child=16 B, eight atomic counters=64 B, site mutex=4 B, allocation_sites=20480 B, site counters=24 B; padding: 4 B
+// field storage: child=16 B, eight atomic counters=64 B, site mutex=4 B, allocation_sites=20480 B, site counters=24 B;
+// padding: 4 B
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   out-of-line: child allocator owns the actual memory; site buckets are fixed inline trace storage
 //   cache span: 322 cache line(s) at 64 B per line
@@ -340,11 +343,13 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+
     // instrumentation: OE trace frame
     // captures: retrieval run boundary, zones, and allocation deltas
     // why: split setup, warmup, and iteration costs.
     const main_zone = Trace.staticZone(@src(), "oe_trace.main");
     defer main_zone.end();
+
     // instrumentation: trace frame markers
     // captures: start/end messages and frame boundaries
     // why: make the retrieval run easy to find in Tracy captures.
@@ -430,6 +435,7 @@ fn mainInner() !void {
     var warm_config = prepared_case.rtm_config;
     warm_config.derivative_mode = .semi_analytical;
     warm_config.derivative_state_mask = derivativeStateMask(&state_specs);
+
     // instrumentation: OE allocation trace
     // captures: session workspace warmup
     // why: measure reusable setup before retrieval iterations.
@@ -513,10 +519,12 @@ fn parseArgs(args: []const []const u8) !Config {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
+
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
         } else if (std.mem.eql(u8, arg, "--max-iterations")) {
             index += 1;
+
             if (index >= args.len) return error.MissingMaxIterations;
             config.max_iterations = try std.fmt.parseInt(usize, args[index], 10);
         } else {
@@ -626,7 +634,12 @@ fn writeSummary(
     try writer.interface.flush();
 }
 
-fn writeAllocationDelta(writer: *std.Io.Writer, name: []const u8, delta_value: AllocationDelta, needs_comma: bool) !void {
+fn writeAllocationDelta(
+    writer: *std.Io.Writer,
+    name: []const u8,
+    delta_value: AllocationDelta,
+    needs_comma: bool,
+) !void {
     try writer.print(
         \\    "{s}": {{
         \\      "alloc_count": {},
@@ -676,7 +689,9 @@ fn writeAllocationSiteReport(
     for (report.sites[0..report.count], 0..) |site, index| {
         const unslid_return_address = site.return_address -| vmaddr_slide;
         try writer.print(
-            \\        {{"return_address": "0x{x}", "unslid_return_address": "0x{x}", "alloc_count": {}, "resize_growth_count": {}, "remap_growth_count": {}, "allocated_bytes": {}}}{s}
+            \\        {{"return_address": "0x{x}", "unslid_return_address": "0x{x}",
+            \\          "alloc_count": {}, "resize_growth_count": {},
+            \\          "remap_growth_count": {}, "allocated_bytes": {}}}{s}
             \\
         ,
             .{

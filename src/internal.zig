@@ -10,6 +10,7 @@ pub const measurement = @import("input/Measurement.zig");
 pub const surface = @import("input/Surface.zig");
 pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
 pub const reference_data = @import("input/ReferenceData.zig");
+
 // layout(64-bit):
 //   size: 0 B, align: 1 B
 //   field storage: 0 B; padding: 0 B (0 bits)
@@ -22,13 +23,15 @@ pub const reference = struct {
     pub const rayleigh = @import("input/reference/rayleigh.zig");
     pub const spectroscopy_strong_lines = @import("input/reference/spectroscopy/strong_lines.zig");
 };
+
 // layout(64-bit):
 //   size: 0 B, align: 1 B
 //   field storage: 0 B; padding: 0 B (0 bits)
 //   footprint: no runtime field storage; namespace/type declarations only
 pub const input_reference_data = struct {
     pub const ingest_reference_assets = @import("input/reference_data/ingest/reference_assets.zig");
-    pub const ingest_reference_assets_loaded_asset = @import("input/reference_data/ingest/reference_assets_loaded_asset.zig");
+    pub const ingest_reference_assets_loaded_asset =
+        @import("input/reference_data/ingest/reference_assets_loaded_asset.zig");
 };
 
 pub const o2a_reference = @import("input/o2a_reference/root.zig");
@@ -42,11 +45,13 @@ pub const common = struct {
     pub const errors = @import("common/errors.zig");
     pub const units = @import("common/units.zig");
     pub const lut_controls = @import("common/lut_controls.zig");
+
     // layout(64-bit):
     //   size: 0 B, align: 1 B
     //   field storage: 0 B; padding: 0 B (0 bits)
     //   footprint: no runtime field storage; namespace/type declarations only
     pub const math = struct {
+
         // layout(64-bit):
         //   size: 0 B, align: 1 B
         //   field storage: 0 B; padding: 0 B (0 bits)
@@ -54,6 +59,7 @@ pub const common = struct {
         pub const quadrature = struct {
             pub const gauss_legendre = @import("common/math/quadrature/gauss_legendre.zig");
         };
+
         // layout(64-bit):
         //   size: 0 B, align: 1 B
         //   field storage: 0 B; padding: 0 B (0 bits)
@@ -62,6 +68,7 @@ pub const common = struct {
             pub const cholesky = @import("common/math/linalg/cholesky.zig");
             pub const small_dense = @import("common/math/linalg/small_dense.zig");
         };
+
         // layout(64-bit):
         //   size: 0 B, align: 1 B
         //   field storage: 0 B; padding: 0 B (0 bits)
@@ -77,6 +84,7 @@ pub const common = struct {
 //   field storage: 0 B; padding: 0 B (0 bits)
 //   footprint: no runtime field storage; namespace/type declarations only
 pub const forward_model = struct {
+
     // instrumentation: internal test exports
     // captures: calculation telemetry, perturbation sensitivity, and trace facades
     // why: validation CLIs and unit tests need access without exposing instrumentation in the public API.

@@ -61,7 +61,8 @@ pub const OutputRequest = struct {
 
 // layout(64-bit):
 //   size: 3 B, align: 1 B
-//   field storage: strict_unknown_fields=1 B, require_resolved_assets=1 B, require_resolved_stage_references=1 B; padding: 0 B (0 bits)
+// field storage: strict_unknown_fields=1 B, require_resolved_assets=1 B, require_resolved_stage_references=1 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 21 bool-storage slack = 21 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 3 B (0.003 KiB); total = per instance * live instance count
@@ -104,7 +105,8 @@ pub const Metadata = struct {
 
 // layout(64-bit):
 //   size: 32 B, align: 8 B
-//   field storage: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B, model=1 B; padding: 7 B (56 bits)
+// field storage: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B, model=1 B; padding: 7 B (56
+// bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
@@ -117,7 +119,8 @@ pub const GeometrySpec = struct {
 
 // layout(64-bit):
 //   size: 80 B, align: 8 B
-//   field storage: 80 B across 6 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
+// field storage: 80 B across 6 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding:
+// 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -134,9 +137,11 @@ pub const AerosolSpec = struct {
 
 // layout(64-bit):
 //   size: 88 B, align: 8 B
-//   field storage: 81 B across 10 fields; largest: instrument_name=16 B, measured_wavelengths_nm=16 B; padding: 7 B (56 bits)
+// field storage: 81 B across 10 fields; largest: instrument_name=16 B, measured_wavelengths_nm=16 B; padding: 7 B (56
+// bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: instrument_name, solar_reference_asset_id, measured_wavelengths_nm carry references/descriptors; referenced storage is not included in size
+// out-of-line: instrument_name, solar_reference_asset_id, measured_wavelengths_nm carry references/descriptors;
+// referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 88 B (0.086 KiB); total also includes referenced storage above
@@ -155,7 +160,8 @@ pub const ObservationSpec = struct {
 
 // layout(64-bit):
 //   size: 208 B, align: 8 B
-//   field storage: 208 B across 7 fields; largest: line_list_asset=48 B, line_mixing_asset=48 B, strong_lines_asset=48 B; padding: 0 B (0 bits)
+// field storage: 208 B across 7 fields; largest: line_list_asset=48 B, line_mixing_asset=48 B, strong_lines_asset=48 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: isotopes_sim carry references/descriptors; referenced storage is not included in size
 //   cache span: 4 cache line(s) at 64 B per line
@@ -185,7 +191,8 @@ pub const CiaSpec = struct {
 
 // layout(64-bit):
 //   size: 192 B, align: 8 B
-//   field storage: atmosphere_profile=48 B, vendor_reference_csv=48 B, raw_solar_reference=48 B, airmass_factor_lut=48 B; padding: 0 B (0 bits)
+// field storage: atmosphere_profile=48 B, vendor_reference_csv=48 B, raw_solar_reference=48 B, airmass_factor_lut=48 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances

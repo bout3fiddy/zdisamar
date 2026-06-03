@@ -24,7 +24,8 @@ pub const RangeExtremum = struct {
 
 // layout(64-bit):
 //   size: 120 B, align: 8 B
-//   field storage: 113 B across 15 fields; largest: sample_count=8 B, nonzero_sample_count=8 B, mean_signed_difference=8 B; padding: 7 B (56 bits)
+// field storage: 113 B across 15 fields; largest: sample_count=8 B, nonzero_sample_count=8 B, mean_signed_difference=8
+// B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -49,7 +50,8 @@ pub const ComparisonMetrics = struct {
 
 // layout(64-bit):
 //   size: 80 B, align: 8 B
-//   field storage: 80 B across 10 fields; largest: mean_abs_difference_abs=8 B, root_mean_square_difference_abs=8 B, max_abs_difference_abs=8 B; padding: 0 B (0 bits)
+// field storage: 80 B across 10 fields; largest: mean_abs_difference_abs=8 B, root_mean_square_difference_abs=8 B,
+// max_abs_difference_abs=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -82,7 +84,8 @@ pub const AssessmentVerdict = enum {
 
 // layout(64-bit):
 //   size: 10 B, align: 1 B
-//   field storage: 10 B across 10 fields; largest: mean_abs_difference=1 B, root_mean_square_difference=1 B, max_abs_difference=1 B; padding: 0 B (0 bits)
+// field storage: 10 B across 10 fields; largest: mean_abs_difference=1 B, root_mean_square_difference=1 B,
+// max_abs_difference=1 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 10 B (0.010 KiB); total = per instance * live instance count
@@ -217,6 +220,7 @@ pub fn meanVectorInRange(
     end_nm: f64,
 ) f64 {
     var sum: f64 = 0.0;
+
     var count: usize = 0;
     for (wavelengths_nm, values) |wavelength_nm, value| {
         if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
@@ -251,6 +255,7 @@ pub fn maxVectorInRange(
     end_nm: f64,
 ) f64 {
     var best = -std.math.inf(f64);
+
     for (wavelengths_nm, values) |wavelength_nm, value| {
         if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
         if (value > best) best = value;
@@ -264,6 +269,7 @@ pub fn meanReferenceInRange(
     end_nm: f64,
 ) f64 {
     var sum: f64 = 0.0;
+
     var count: usize = 0;
     for (reference) |sample| {
         if (sample.wavelength_nm < start_nm or sample.wavelength_nm > end_nm) continue;
@@ -296,6 +302,7 @@ pub fn maxReferenceInRange(
     end_nm: f64,
 ) f64 {
     var best = -std.math.inf(f64);
+
     for (reference) |sample| {
         if (sample.wavelength_nm < start_nm or sample.wavelength_nm > end_nm) continue;
         if (sample.reflectance > best) best = sample.reflectance;
@@ -313,7 +320,9 @@ pub fn interpolateVector(
     if (target_wavelength_nm >= wavelengths_nm[wavelengths_nm.len - 1]) return values[values.len - 1];
 
     var lower_index: usize = 0;
-    while (lower_index + 1 < wavelengths_nm.len and wavelengths_nm[lower_index + 1] < target_wavelength_nm) : (lower_index += 1) {}
+    while (lower_index + 1 < wavelengths_nm.len and
+        wavelengths_nm[lower_index + 1] < target_wavelength_nm) : (lower_index += 1)
+    {}
 
     const upper_index = lower_index + 1;
     const lower_wavelength = wavelengths_nm[lower_index];
@@ -400,20 +409,52 @@ pub fn assessAgainstBaseline(
         ),
     };
 
+    const blue_wing_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.blue_wing_mean_difference),
+            tolerances.blue_wing_mean_difference_abs,
+        ) == .regressed;
+    const trough_wavelength_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.trough_wavelength_difference_nm),
+            tolerances.trough_wavelength_difference_nm_abs,
+        ) == .regressed;
+    const trough_value_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.trough_value_difference),
+            tolerances.trough_value_difference_abs,
+        ) == .regressed;
+    const rebound_peak_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.rebound_peak_difference),
+            tolerances.rebound_peak_difference_abs,
+        ) == .regressed;
+    const mid_band_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.mid_band_mean_difference),
+            tolerances.mid_band_mean_difference_abs,
+        ) == .regressed;
+    const red_wing_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.red_wing_mean_difference),
+            tolerances.red_wing_mean_difference_abs,
+        ) == .regressed;
     const morphology_ceiling_regressed =
-        compareAbsoluteCeiling(@abs(current.blue_wing_mean_difference), tolerances.blue_wing_mean_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.trough_wavelength_difference_nm), tolerances.trough_wavelength_difference_nm_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.trough_value_difference), tolerances.trough_value_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.rebound_peak_difference), tolerances.rebound_peak_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.mid_band_mean_difference), tolerances.mid_band_mean_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.red_wing_mean_difference), tolerances.red_wing_mean_difference_abs) == .regressed;
+        blue_wing_regressed or
+        trough_wavelength_regressed or
+        trough_value_regressed or
+        rebound_peak_regressed or
+        mid_band_regressed or
+        red_wing_regressed;
 
     if (current.exact_match_within_zero_tolerance) {
         return .{ .verdict = .exact_zero_pass, .trend = trend };
     }
+
     if (!allowed_to_fail) {
         return .{ .verdict = .nonzero_fail, .trend = trend };
     }
+
     if (trend.mean_abs_difference == .regressed or
         trend.root_mean_square_difference == .regressed or
         trend.max_abs_difference == .regressed or
@@ -422,6 +463,7 @@ pub fn assessAgainstBaseline(
     {
         return .{ .verdict = .regression_fail, .trend = trend };
     }
+
     return .{ .verdict = .baseline_pass, .trend = trend };
 }
 
@@ -483,18 +525,26 @@ pub fn computeComparisonMetrics(
         reference_variance += std.math.pow(f64, sample.reflectance - reference_mean, 2.0);
     }
 
-    const correlation = if (generated_variance == 0.0 or reference_variance == 0.0)
-        0.0
-    else
-        covariance / @sqrt(generated_variance * reference_variance);
+    const correlation = choose_correlation: {
+        if (generated_variance == 0.0 or reference_variance == 0.0) break :choose_correlation 0.0;
+        break :choose_correlation covariance / @sqrt(generated_variance * reference_variance);
+    };
+    var mean_signed_difference: f64 = 0.0;
+    var mean_abs_difference: f64 = 0.0;
+    var root_mean_square_difference: f64 = 0.0;
+    if (reference.len != 0) {
+        mean_signed_difference = sum_signed / sample_count;
+        mean_abs_difference = sum_abs / sample_count;
+        root_mean_square_difference = @sqrt(sum_sq / sample_count);
+    }
 
     return .{
         .sample_count = reference.len,
         .nonzero_sample_count = nonzero_sample_count,
         .exact_match_within_zero_tolerance = nonzero_sample_count == 0,
-        .mean_signed_difference = if (reference.len == 0) 0.0 else sum_signed / sample_count,
-        .mean_abs_difference = if (reference.len == 0) 0.0 else sum_abs / sample_count,
-        .root_mean_square_difference = if (reference.len == 0) 0.0 else @sqrt(sum_sq / sample_count),
+        .mean_signed_difference = mean_signed_difference,
+        .mean_abs_difference = mean_abs_difference,
+        .root_mean_square_difference = root_mean_square_difference,
         .max_abs_difference = max_abs_difference,
         .max_abs_difference_wavelength_nm = max_abs_difference_wavelength_nm,
         .correlation = correlation,

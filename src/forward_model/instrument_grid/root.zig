@@ -79,13 +79,15 @@ pub fn simulateProductWithWorkspace(
         try product_workspace.spectralCache(allocator),
         product_workspace,
     );
+    const jacobian_values = if (buffers.jacobian) |values| values else null;
+
     return .{
         .summary = summary,
         .wavelengths = buffers.wavelengths,
         .radiance = buffers.radiance,
         .irradiance = buffers.irradiance,
         .reflectance = buffers.reflectance,
-        .jacobian = if (buffers.jacobian) |values| values else null,
+        .jacobian = jacobian_values,
         .jacobian_state_mask = buffers.jacobian_state_mask,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
         .effective_single_scatter_albedo = prepared.effective_single_scatter_albedo,

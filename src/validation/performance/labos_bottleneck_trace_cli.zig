@@ -68,11 +68,13 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+
     // instrumentation: trace frame
     // captures: one harness run boundary
     // why: align timeline messages with summary timing.
     const main_zone = Trace.staticZone(@src(), "trace_cli.main");
     defer main_zone.end();
+
     // instrumentation: trace frame markers
     // captures: start/end messages and frame boundaries
     // why: make the CLI run easy to find in Tracy captures.
@@ -96,6 +98,7 @@ fn mainInner() !void {
     var prepare_timer = try std.time.Timer.start();
     const input = o2a_reference.defaultInput();
     var prepared_case = prepared_case: {
+
         // instrumentation: trace zone
         // captures: O2 A input preparation
         // why: separate setup cost from RTM execution.
@@ -123,6 +126,7 @@ fn runSingleTrace(
     prepare_ns: u64,
     prepared_case: anytype,
 ) !void {
+
     // instrumentation: trace zone
     // captures: single forward product run
     // why: measure the retained LABOS bottleneck boundary.
@@ -134,6 +138,7 @@ fn runSingleTrace(
 
     var forward_timer = try std.time.Timer.start();
     const product = product: {
+
         // instrumentation: trace zone
         // captures: instrument-grid product simulation
         // why: isolate forward RTM work inside the harness.
@@ -166,6 +171,7 @@ fn runDerivativeSweep(
     prepare_ns: u64,
     prepared_case: anytype,
 ) !void {
+
     // instrumentation: trace sweep
     // captures: forward and Jacobian rtm_config variants
     // why: compare derivative-state cost at the same scene boundary.
@@ -256,6 +262,7 @@ fn parseArgs(args: []const []const u8) !Config {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
+
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
             config.output_dir_set = true;
@@ -265,6 +272,7 @@ fn parseArgs(args: []const []const u8) !Config {
             return error.UnsupportedArgument;
         }
     }
+
     return config;
 }
 

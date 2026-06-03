@@ -191,10 +191,11 @@ pub const ProductStorage = struct {
         allocator: Allocator,
         capacity: usize,
     ) Error![]Types.ForwardIntegratedSample {
+
         // hot path:
         //   when: OE iterations reuse the same high-resolution miss plan
         //   work: retains the dense prefetch result staging array between batches
-        //   data: one ForwardIntegratedSample per unique forward-cache miss
+        //   reads: one ForwardIntegratedSample per unique forward-cache miss
         //   follow: spectral_eval.prefetchForwardSamples cache insertion
         try ensureForwardResultCapacity(allocator, &self.forward_results, capacity);
         return self.forward_results[0..capacity];
@@ -232,6 +233,7 @@ pub const ProductStorage = struct {
         try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
+
         try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
         if (needs_source_interfaces) {
             try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
@@ -246,11 +248,16 @@ pub const ProductStorage = struct {
             self.rtm_quadrature_levels = &.{};
         }
         if (needs_pseudo_spherical_grid) {
-            try ensurePseudoSphericalSampleBufferCapacity(allocator, &self.pseudo_spherical_samples, pseudo_spherical_sample_count);
+            try ensurePseudoSphericalSampleBufferCapacity(
+                allocator,
+                &self.pseudo_spherical_samples,
+                pseudo_spherical_sample_count,
+            );
             try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
             try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
         } else {
             freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
+
             freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
             freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
             self.pseudo_spherical_samples = &.{};
@@ -409,7 +416,11 @@ pub fn validateBuffers(
 
     if (buffers.jacobian) |values| {
         const active_jacobian_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
-        if (active_jacobian_count == 0 or values.len != sample_count * active_jacobian_count) return error.ShapeMismatch;
+        if (active_jacobian_count == 0 or
+            values.len != sample_count * active_jacobian_count)
+        {
+            return error.ShapeMismatch;
+        }
     } else if (buffers.jacobian_state_mask != 0) {
         return error.ShapeMismatch;
     }

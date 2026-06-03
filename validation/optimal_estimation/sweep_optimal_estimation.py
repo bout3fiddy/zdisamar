@@ -8,6 +8,7 @@
 
 import csv
 import math
+import os
 import statistics
 import sys
 import time
@@ -42,28 +43,35 @@ from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E
 from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
 RUN_COUNT = oe_cases.run_count()
+NATIVE_WORKER_LIMIT_ENV = "ZDISAMAR_WORKER_LIMIT"
 
 
 def retrieve_scene(
     case: o2a.O2ACase,
     truth: dict[str, float],
     initial: dict[str, float],
-):
+) -> tuple[Any, float, float]:
 
+    measurement_start = time.perf_counter()
     measurement = measurement_from_o2a_baseline_noise(case)
+    measurement_s = time.perf_counter() - measurement_start
     state_vector = oe_setup.aerosol_two_state_vector(
         initial=initial,
         surface_pressure_hpa=truth["surface_pressure_hpa"],
     )
 
     with rtm.SessionCache(case) as cache:
-        return o2a_oe.retrieve(
+        retrieval_start = time.perf_counter()
+        result = o2a_oe.retrieve(
             case=case,
             measurement=measurement,
             state_vector=state_vector,
             controls=oe_setup.retrieval_controls(),
             cache=cache,
         )
+        retrieval_s = time.perf_counter() - retrieval_start
+
+    return result, measurement_s, retrieval_s
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -100,14 +108,16 @@ def run_sweep() -> dict[str, Any]:
         run_start = time.perf_counter()
 
         try:
-            result = retrieve_scene(case, truth, initial)
-            retrieval_s = time.perf_counter() - run_start
+            result, measurement_s, retrieval_s = retrieve_scene(case, truth, initial)
+            case_wall_s = time.perf_counter() - run_start
             retrieved_aod = result.value("aerosol_optical_depth")
             retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
             status = "ok"
             error = ""
         except Exception as exc:  # noqa: BLE001 - recorded as validation evidence.
-            retrieval_s = time.perf_counter() - run_start
+            case_wall_s = time.perf_counter() - run_start
+            measurement_s = math.nan
+            retrieval_s = math.nan
             result = None
             retrieved_aod = math.nan
             retrieved_mid_pressure = math.nan
@@ -129,7 +139,9 @@ def run_sweep() -> dict[str, Any]:
             ),
             "converged": bool(result.converged) if result is not None else False,
             "iterations": int(result.iterations) if result is not None else 0,
+            "measurement_s": measurement_s,
             "retrieval_s": retrieval_s,
+            "case_wall_s": case_wall_s,
             "final_state_vector_convergence": (
                 result.history[-1].state_vector_convergence
                 if result is not None and result.history
@@ -140,7 +152,9 @@ def run_sweep() -> dict[str, Any]:
         print(
             f"{index:03d}/{RUN_COUNT} {status} "
             f"conv={row['converged']} it={row['iterations']} "
-            f"dt={retrieval_s:.3f}s "
+            f"measurement={measurement_s:.3f}s "
+            f"retrieval={retrieval_s:.3f}s "
+            f"total={case_wall_s:.3f}s "
             f"aod_err={row['aerosol_optical_depth_abs_error']:.3g} "
             f"midp_err={row['aerosol_mid_pressure_abs_error_hpa']:.3g}",
             flush=True,
@@ -171,12 +185,19 @@ def run_sweep() -> dict[str, Any]:
         "converged_count": len(converged_rows),
         "converged_fraction": len(converged_rows) / len(rows),
         "total_wall_s": time.perf_counter() - start,
+        "run_controls": {
+            "native_worker_limit_env": NATIVE_WORKER_LIMIT_ENV,
+            "native_worker_limit": os.environ.get(NATIVE_WORKER_LIMIT_ENV),
+            "host_cpu_count": os.cpu_count(),
+        },
         "outputs": {
             "runs_csv": stable_repo_path(CSV_PATH),
             "summary_json": stable_repo_path(SUMMARY_PATH),
         },
         "stats": {
+            "measurement_s": stats([float(row["measurement_s"]) for row in ok_rows]),
             "retrieval_s": stats([float(row["retrieval_s"]) for row in ok_rows]),
+            "case_wall_s": stats([float(row["case_wall_s"]) for row in ok_rows]),
             "iterations": stats([float(row["iterations"]) for row in ok_rows]),
             "aerosol_optical_depth_abs_error": stats(
                 [float(row["aerosol_optical_depth_abs_error"]) for row in ok_rows]
@@ -240,7 +261,9 @@ def main() -> int:
     print(f"  ok: {summary['ok_count']}")
     print(f"  converged: {summary['converged_count']} ({summary['converged_fraction']:.1%})")
     print(f"  total wall: {summary['total_wall_s']:.3f}s")
+    print(f"  measurement_s stats: {summary['stats']['measurement_s']}")
     print(f"  retrieval_s stats: {summary['stats']['retrieval_s']}")
+    print(f"  case_wall_s stats: {summary['stats']['case_wall_s']}")
     print(f"  AOD abs error stats: {summary['stats']['aerosol_optical_depth_abs_error']}")
     print(
         f"  mid-pressure abs error stats: {summary['stats']['aerosol_mid_pressure_abs_error_hpa']}"

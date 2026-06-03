@@ -24,6 +24,7 @@ const Config = struct {
 
 const ExperimentSpec = struct {
     name: []const u8,
+
     // instrumentation: perturbation channel
     // captures: model expression family targeted by an experiment
     // why: keep perturbation knobs tied to compile-time channel enums instead of strings.
@@ -191,6 +192,7 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
+
     // instrumentation: perturbation harness gate
     // captures: compile-time enablement of perturbation channels
     // why: fail loudly when this validation CLI is built against the product no-op facade.
@@ -423,9 +425,6 @@ fn runRetrieval(
     };
 }
 
-// instrumentation: perturbation summary
-// captures: aggregate spectral deltas
-// why: discard full spectra after computing final-observable movement.
 fn compareSpectra(
     wavelengths: []const f64,
     baseline_reflectance: []const f64,
@@ -433,6 +432,11 @@ fn compareSpectra(
     perturbed_reflectance: []const f64,
     perturbed_radiance: []const f64,
 ) SpectrumDelta {
+
+    // instrumentation: perturbation summary
+    // captures: aggregate spectral deltas
+    // why: discard full spectra after computing final-observable movement.
+
     var delta: SpectrumDelta = .{};
     var sum_abs_reflectance: f64 = 0.0;
     var sum_sq_reflectance: f64 = 0.0;
@@ -622,6 +626,7 @@ fn writeExperiment(
 }
 
 fn channelName(channel: Perturbation.Channel) []const u8 {
+
     // instrumentation: perturbation output label
     // captures: stable channel names for report rows
     // why: keep CSV summaries readable without leaking strings into model code.
@@ -656,22 +661,27 @@ fn parseArgs(args: []const []const u8) !Config {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
+
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
         } else if (std.mem.eql(u8, arg, "--start-nm")) {
             index += 1;
+
             if (index >= args.len) return error.MissingStartNm;
             config.start_nm = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--end-nm")) {
             index += 1;
+
             if (index >= args.len) return error.MissingEndNm;
             config.end_nm = try std.fmt.parseFloat(f64, args[index]);
         } else if (std.mem.eql(u8, arg, "--sample-count")) {
             index += 1;
+
             if (index >= args.len) return error.MissingSampleCount;
             config.sample_count = try std.fmt.parseInt(u32, args[index], 10);
         } else if (std.mem.eql(u8, arg, "--max-iterations")) {
             index += 1;
+
             if (index >= args.len) return error.MissingMaxIterations;
             config.max_iterations = try std.fmt.parseInt(usize, args[index], 10);
         } else {

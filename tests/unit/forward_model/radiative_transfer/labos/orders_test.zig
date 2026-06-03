@@ -308,12 +308,16 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
     const eps = 1.0e-5;
     var plus_layer = layer;
     plus_layer.optical_depth += eps * jacobian.get(layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    plus_layer.scattering_optical_depth += eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    plus_layer.single_scatter_albedo += eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
+    plus_layer.scattering_optical_depth +=
+        eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
+    plus_layer.single_scatter_albedo +=
+        eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
     var minus_layer = layer;
     minus_layer.optical_depth -= eps * jacobian.get(layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    minus_layer.scattering_optical_depth -= eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    minus_layer.single_scatter_albedo -= eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
+    minus_layer.scattering_optical_depth -=
+        eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
+    minus_layer.single_scatter_albedo -=
+        eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
 
     const plus_layers = [_]common.LayerInput{plus_layer};
     const minus_layers = [_]common.LayerInput{minus_layer};

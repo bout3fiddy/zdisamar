@@ -11,7 +11,8 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 //   size: 48 B, align: 8 B
 //   field storage: wavelength_nm=16 B, reflectance=16 B, radiance=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength_nm, reflectance, radiance carry references/descriptors; referenced storage is not included in size
+// out-of-line: wavelength_nm, reflectance, radiance carry references/descriptors; referenced storage is not included in
+// size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const SpectrumView = struct {
@@ -22,7 +23,8 @@ pub const SpectrumView = struct {
 
 // layout(64-bit):
 //   size: 136 B, align: 8 B
-//   field storage: 133 B across 20 fields; largest: wavelength_nm=8 B, altitude_km=8 B, total_optical_depth=8 B; padding: 3 B (24 bits)
+// field storage: 133 B across 20 fields; largest: wavelength_nm=8 B, altitude_km=8 B, total_optical_depth=8 B; padding:
+// 3 B (24 bits)
 //   unused bits: 24 padding + 0 bool-storage slack = 24 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -50,11 +52,6 @@ pub const RadiativeTransferDiagnosticRow = struct {
     final_radiance: f64,
 };
 
-// hot path:
-//   when: radiative-transfer diagnostics are requested after a forward run
-//   work: builds atmospheric budget rows and derives per-wavelength transmission/source proxies
-//   Uses budget rows, rtm_config controls, optional spectrum view, and diagnostic rows.
-//   follow: atmospheric_budget.build and fillWavelengthRows
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
@@ -63,6 +60,13 @@ pub fn build(
     wavelengths_nm: []const f64,
     spectrum: ?SpectrumView,
 ) ![]RadiativeTransferDiagnosticRow {
+
+    // hot path:
+    //   when: radiative-transfer diagnostics are requested after a forward run
+    //   work: builds atmospheric budget rows and derives per-wavelength transmission/source proxies
+    //   Uses budget rows, rtm_config controls, optional spectrum view, and diagnostic rows.
+    //   follow: atmospheric_budget.build and fillWavelengthRows
+
     const budget = try atmospheric_budget.build(allocator, scene, prepared, wavelengths_nm);
     defer allocator.free(budget);
 
@@ -88,11 +92,6 @@ pub fn build(
     return rows;
 }
 
-// hot path:
-//   when: radiative-transfer diagnostics process one wavelength group
-//   work: walks vertical rows, accumulates optical depth, and writes derived proxy fields
-//   Uses the wavelength budget slice, cumulative optical depth, rtm_config controls, and output rows.
-//   follow: interpolateSpectrum calls for final radiance/reflectance columns
 fn fillWavelengthRows(
     budget: []const atmospheric_budget.AtmosphericBudgetRow,
     rows: []RadiativeTransferDiagnosticRow,
@@ -100,6 +99,13 @@ fn fillWavelengthRows(
     airmass: f64,
     spectrum: ?SpectrumView,
 ) void {
+
+    // hot path:
+    //   when: radiative-transfer diagnostics process one wavelength group
+    //   work: walks vertical rows, accumulates optical depth, and writes derived proxy fields
+    //   Uses the wavelength budget slice, cumulative optical depth, rtm_config controls, and output rows.
+    //   follow: interpolateSpectrum calls for final radiance/reflectance columns
+
     var cumulative: f64 = 0.0;
     for (budget, rows) |source, *target| {
         const optical_depth = @max(source.total_optical_depth, 0.0);
@@ -142,13 +148,16 @@ fn interpolateSpectrum(spectrum: ?SpectrumView, column: SpectrumColumn, waveleng
         .reflectance => resolved.reflectance,
         .radiance => resolved.radiance,
     };
+
     if (resolved.wavelength_nm.len == 0 or values.len == 0) return std.math.nan(f64);
     if (wavelength_nm <= resolved.wavelength_nm[0]) return values[0];
     const last_index = @min(resolved.wavelength_nm.len, values.len) - 1;
     if (wavelength_nm >= resolved.wavelength_nm[last_index]) return values[last_index];
 
     var lower_index: usize = 0;
-    while (lower_index + 1 < resolved.wavelength_nm.len and resolved.wavelength_nm[lower_index + 1] < wavelength_nm) : (lower_index += 1) {}
+    while (lower_index + 1 < resolved.wavelength_nm.len and
+        resolved.wavelength_nm[lower_index + 1] < wavelength_nm) : (lower_index += 1)
+    {}
     const upper_index = lower_index + 1;
     const lower_wavelength = resolved.wavelength_nm[lower_index];
     const upper_wavelength = resolved.wavelength_nm[upper_index];

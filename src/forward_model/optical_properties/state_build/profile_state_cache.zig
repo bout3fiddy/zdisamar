@@ -36,7 +36,12 @@ pub fn load(
     defer mutex.unlock();
 
     const entry = cached_entry orelse return false;
-    if (entry.key != key or entry.weak_states.len != weak_out.len or entry.strong_states.len != strong_out.len) return false;
+    if (entry.key != key or
+        entry.weak_states.len != weak_out.len or
+        entry.strong_states.len != strong_out.len)
+    {
+        return false;
+    }
 
     var weak_count: usize = 0;
     errdefer {

@@ -9,7 +9,8 @@ pub const fitted_reflectance_export_name = "fitted_reflectance";
 // Measurement-space summary statistics for one spectral sweep.
 // layout(64-bit):
 //   size: 88 B, align: 8 B
-//   field storage: 84 B across 8 fields; largest: mean_jacobian=32 B, wavelength_start_nm=8 B, wavelength_end_nm=8 B; padding: 4 B (32 bits)
+// field storage: 84 B across 8 fields; largest: mean_jacobian=32 B, wavelength_start_nm=8 B, wavelength_end_nm=8 B;
+// padding: 4 B (32 bits)
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -40,9 +41,10 @@ pub const ForwardIntegratedSample = struct {
 // Measurement-space product arrays and associated bulk optical properties.
 // layout(64-bit):
 //   size: 272 B, align: 8 B
-//   field storage: 272 B across 18 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
+// field storage: 272 B across 18 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced storage is not included in size
+// out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced
+// storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
@@ -77,9 +79,10 @@ pub const InstrumentGridProduct = struct {
 // Borrowed instrument grid outputs backed by a reusable product storage.
 // layout(64-bit):
 //   size: 280 B, align: 8 B
-//   field storage: 273 B across 19 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
+// field storage: 273 B across 19 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced storage is not included in size
+// out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced
+// storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
@@ -89,6 +92,7 @@ pub const InstrumentGridProductView = struct {
     radiance: []const f64,
     irradiance: []const f64,
     reflectance: []const f64,
+
     // Borrowed workspace Jacobians are state-major and contain only the active
     // derivative states. The default owned product keeps the public full-state
     // row-major shape; requested-state API paths clone compact row-major output
@@ -116,25 +120,35 @@ pub const InstrumentGridProductView = struct {
         output_states: []const jacobian.State,
     ) !InstrumentGridProduct {
         const wavelengths = try cloneF64Slice(allocator, self.wavelengths);
+
         errdefer allocator.free(wavelengths);
         const radiance = try cloneF64Slice(allocator, self.radiance);
         errdefer allocator.free(radiance);
         const irradiance = try cloneF64Slice(allocator, self.irradiance);
         errdefer allocator.free(irradiance);
         const reflectance = try cloneF64Slice(allocator, self.reflectance);
+
         errdefer allocator.free(reflectance);
-        const jacobian_values = if (self.jacobian) |values| blk: {
+        const jacobian_values = choose_jacobian_values: {
+            const values = self.jacobian orelse break :choose_jacobian_values null;
+
             if (output_states.len == 0) {
-                break :blk try cloneExpandedJacobian(allocator, values, self.jacobian_state_mask, self.wavelengths.len);
+                break :choose_jacobian_values try cloneExpandedJacobian(
+                    allocator,
+                    values,
+                    self.jacobian_state_mask,
+                    self.wavelengths.len,
+                );
             }
-            break :blk try cloneSelectedRowMajorJacobian(
+
+            break :choose_jacobian_values try cloneSelectedRowMajorJacobian(
                 allocator,
                 values,
                 self.jacobian_state_mask,
                 self.wavelengths.len,
                 output_states,
             );
-        } else null;
+        };
         errdefer if (jacobian_values) |values| allocator.free(values);
 
         return .{

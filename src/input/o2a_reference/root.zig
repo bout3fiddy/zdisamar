@@ -304,13 +304,16 @@ pub fn warmO2ASessionStorage(
 pub fn validateInput(input: *const O2AInput) !void {
     if (input.spectral_grid.sample_count < 2) return error.InvalidSpectralGrid;
     if (!(input.spectral_grid.end_nm > input.spectral_grid.start_nm)) return error.InvalidSpectralGrid;
+
     if (input.observation.measured_wavelengths_nm.len != 0) {
         if (input.observation.measured_wavelengths_nm.len != input.spectral_grid.sample_count) {
             return error.InvalidSpectralGrid;
         }
+
         var previous: ?f64 = null;
         for (input.observation.measured_wavelengths_nm) |wavelength_nm| {
             if (!std.math.isFinite(wavelength_nm)) return error.InvalidSpectralGrid;
+
             if (previous) |earlier| {
                 if (wavelength_nm <= earlier) return error.InvalidSpectralGrid;
             }
@@ -319,14 +322,17 @@ pub fn validateInput(input: *const O2AInput) !void {
     }
     if (input.layer_count == 0 or input.sublayer_divisions == 0) return error.InvalidAtmosphere;
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
+
     for (input.intervals) |interval| try interval.validate();
     try validateAerosol(input);
     try input.plan.validate();
     try input.rtm_controls.validate();
+
     try requireAsset(input.inputs.atmosphere_profile);
     try requireAsset(input.inputs.vendor_reference_csv);
     try requireAsset(input.inputs.raw_solar_reference);
     try requireAsset(input.inputs.airmass_factor_lut);
+
     try requireAsset(input.o2.line_list_asset);
     try requireAsset(input.o2.line_mixing_asset);
     try requireAsset(input.o2.strong_lines_asset);

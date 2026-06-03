@@ -83,7 +83,8 @@ pub const ScatteringMode = enum(u2) {
 
 // layout(64-bit):
 //   size: 64 B, align: 8 B
-//   field storage: 63 B across 13 fields; largest: fourier_tail_reflectance_epsilon=8 B, threshold_conv_first=8 B, threshold_conv_mult=8 B; padding: 1 B (8 bits)
+// field storage: 63 B across 13 fields; largest: fourier_tail_reflectance_epsilon=8 B, threshold_conv_first=8 B,
+// threshold_conv_mult=8 B; padding: 1 B (8 bits)
 //   unused bits: 8 padding + 0 bool-storage slack = 8 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
@@ -125,6 +126,7 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         scattering_optical_depth: f64,
     ) u16 {
         if (self.num_orders_max != 0) return self.num_orders_max;
+
         // math: default multiple-scattering order cap = clamp(max(tau_sca, 0) + 15, 1, max_u16).
         const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
         return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
@@ -164,7 +166,8 @@ pub const RadiativeTransferPerformanceThresholds = struct {
 // Resolved radiative transfer controls compiled from canonical configuration.
 // layout(64-bit):
 //   size: 72 B, align: 8 B
-//   field storage: 70 B across 6 fields; largest: performance_thresholds=64 B, n_streams=2 B, scattering=1 B; padding: 2 B (16 bits)
+// field storage: 70 B across 6 fields; largest: performance_thresholds=64 B, n_streams=2 B, scattering=1 B; padding: 2
+// B (16 bits)
 //   unused bits: 16 padding + 27 enum/bool-storage slack = 43 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -229,10 +232,12 @@ pub const SolveConfig = struct {
 
 // layout(64-bit):
 //   size: 208 B, align: 8 B
-//   field storage: 208 B across 16 fields; largest: phase=40 B, optical_depth_jacobian=24 B, scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
+// field storage: 208 B across 16 fields; largest: phase=40 B, optical_depth_jacobian=24 B,
+// scattering_optical_depth_jacobian=24 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   inline arrays: 3 Jacobian vectors reserve 72 B inside each instance
-//   encoded fields: phase stores gas/aerosol phase weights plus shared phase-row references instead of a full 1208 B coefficient row
+// encoded fields: phase stores gas/aerosol phase weights plus shared phase-row references instead of a full 1208 B
+// coefficient row
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 208 B (0.203 KiB); total also includes referenced phase storage above
@@ -255,9 +260,11 @@ pub const LayerInput = struct {
 
 // layout(64-bit):
 //   size: 80 B, align: 8 B
-//   field storage: 80 B across 6 fields; largest: phase_above=40 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0 bits)
+// field storage: 80 B across 6 fields; largest: phase_above=40 B, source_weight=8 B, rtm_weight=8 B; padding: 0 B (0
+// bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase_above stores gas/aerosol phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
+// encoded fields: phase_above stores gas/aerosol phase weights plus shared phase-row references; phase_max_index_above
+// and phase_max_index_below store Fourier bounds
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 80 B (0.078 KiB); total also includes referenced phase storage above
@@ -271,6 +278,7 @@ pub const SourceInterfaceInput = struct {
 
     pub fn effectiveWeight(self: SourceInterfaceInput) f64 {
         if (self.rtm_weight > 0.0 and self.ksca_above > 0.0) {
+
             // math: RTM quadrature source weight = quadrature_weight * scattering_coefficient_above.
             return self.rtm_weight * self.ksca_above;
         }
@@ -297,6 +305,7 @@ pub const RtmQuadratureLevel = struct {
     phase_rayleigh2_weight: f64 = 0.0,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
+
         // math: weighted scattering source = quadrature_weight * k_sca.
         return self.weight * self.ksca;
     }
@@ -314,6 +323,7 @@ pub const RtmQuadratureLevel = struct {
             return;
         }
         const inv_total = 1.0 / total;
+
         // math: phase mixture = (aerosol_ksca / total_ksca) * aerosol_phase + (gas_ksca / total_ksca) * Rayleigh2.
         self.phase_aerosol_weight = aerosol_ksca * inv_total;
         self.phase_rayleigh2_weight = gas_ksca * inv_total * rayleigh_phase_coefficient2;
@@ -326,7 +336,8 @@ const default_aerosol_phase_coefficients = phase_functions.zeroPhaseCoefficients
 //   size: 24 B, align: 8 B
 //   field storage: levels=16 B, aerosol_phase_coefficients=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients points at prepared phase storage; referenced storage is not included in size
+// out-of-line: levels carries a slice descriptor, aerosol_phase_coefficients points at prepared phase storage;
+// referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
 pub const RtmQuadratureGrid = struct {
@@ -354,7 +365,8 @@ pub const PseudoSphericalSample = struct {
 //   size: 48 B, align: 8 B
 //   field storage: samples=16 B, level_sample_starts=16 B, level_altitudes_km=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: samples, level_sample_starts, level_altitudes_km carry references/descriptors; referenced storage is not included in size
+// out-of-line: samples, level_sample_starts, level_altitudes_km carry references/descriptors; referenced storage is not
+// included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const PseudoSphericalGrid = struct {
@@ -368,6 +380,7 @@ pub const PseudoSphericalGrid = struct {
         if (self.level_altitudes_km.len != 0 and self.level_altitudes_km.len != layer_count + 1) return false;
         if (self.level_sample_starts[0] != 0) return false;
         if (self.level_sample_starts[self.level_sample_starts.len - 1] != self.samples.len) return false;
+
         for (1..self.level_sample_starts.len) |index| {
             if (self.level_sample_starts[index] < self.level_sample_starts[index - 1] or
                 self.level_sample_starts[index] > self.samples.len)
@@ -381,7 +394,8 @@ pub const PseudoSphericalGrid = struct {
 
 // layout(64-bit):
 //   size: 304 B, align: 8 B
-//   field storage: 304 B across 21 fields; largest: rtm_controls=64 B, pseudo_spherical_grid=48 B, rtm_quadrature=32 B; padding: 0 B (0 bits)
+// field storage: 304 B across 21 fields; largest: rtm_controls=64 B, pseudo_spherical_grid=48 B, rtm_quadrature=32 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: layers, source_interfaces carry references/descriptors; referenced storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
@@ -466,22 +480,22 @@ pub fn sourceInterfaceFromLayers(
 ) SourceInterfaceInput {
     if (layers.len == 0) return .{};
     const above_index = @min(ilevel, layers.len - 1);
-    const below_index = if (ilevel > 0) ilevel - 1 else above_index;
+    var phase_max_index_below: usize = 0;
+    if (ilevel > 0) {
+        phase_max_index_below = layers[ilevel - 1].phase.maxIndex();
+    }
+
     // math: fallback source weight uses layer scattering optical depth, with half weight at the top boundary.
     const source_weight = if (ilevel < layers.len)
         @max(layers[ilevel].scattering_optical_depth, 0.0)
     else
         0.5 * @max(layers[above_index].scattering_optical_depth, 0.0);
-
     return .{
         .source_weight = source_weight,
         .ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
         .phase_above = layers[above_index].phase,
         .phase_max_index_above = layers[above_index].phase.maxIndex(),
-        .phase_max_index_below = if (ilevel > 0)
-            layers[below_index].phase.maxIndex()
-        else
-            0,
+        .phase_max_index_below = phase_max_index_below,
     };
 }
 

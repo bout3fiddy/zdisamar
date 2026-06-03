@@ -28,6 +28,7 @@ pub const AdaptiveKernelCache = struct {
 
 pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralChannel) bool {
     const response = scene.observation_model.resolvedChannelControls(channel).response;
+
     // DECISION:
     //   Integrated sampling is driven by the observation model first; explicit
     //   line-shape metadata also forces integration so the legacy convolution
@@ -59,12 +60,6 @@ pub fn integrationForWavelengthChecked(
     );
 }
 
-// hot path:
-//   when: wavelength sampling builds radiance/irradiance integration kernels per nominal wavelength
-//   work: chooses table, fixed line-shape, adaptive, or default integration samples
-//   data: channel response controls, adaptive cache, offsets/weights kernel storage
-//   follow: adaptive_plan builders and response_support.spectralResponseWeight
-//   math: kernel approximates integral y(lambda_i) = sum_j w_ij y(lambda_i + delta_ij), with sum_j w_ij = 1
 pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     scene: *const Scene,
     prepared: ?*const PreparedOpticalState,
@@ -73,6 +68,14 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     cached_adaptive_kernel: ?*const AdaptiveKernelCache,
     kernel: *IntegrationKernel,
 ) Error!void {
+
+    // hot path:
+    //   when: wavelength sampling builds radiance/irradiance integration kernels per nominal wavelength
+    //   work: chooses table, fixed line-shape, adaptive, or default integration samples
+    //   reads: channel response controls, adaptive cache, offsets/weights kernel storage
+    //   follow: adaptive_plan builders and response_support.spectralResponseWeight
+    //   math: kernel approximates integral y(lambda_i) = sum_j w_ij y(lambda_i + delta_ij), with sum_j w_ij = 1
+
     response_support.resetKernel(kernel);
     const response = scene.observation_model.resolvedChannelControls(channel).response;
     if (!usesIntegratedInstrumentSampling(scene, channel)) {
@@ -90,6 +93,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             response_support.writeIdentityKernel(kernel, true);
             return;
         }
+
         // PARITY:
         //   Strong-line table routines bypass the legacy slit convolution when
         //   the table can provide a normalized routine directly.
@@ -280,17 +284,19 @@ fn adaptiveIntegrationFromPrepared(
     );
 }
 
-// hot path:
-//   when: wavelength sampling can reuse adaptive instrument grids across nominal wavelengths
-//   work: prepares strong-line-aware support data for adaptive kernel construction
-//   data: scene response controls, prepared spectroscopy state, adaptive cache storage
-//   follow: adaptive_plan interval construction
 pub fn prepareAdaptiveKernelCache(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
     channel: SpectralChannel,
     cache: *AdaptiveKernelCache,
 ) bool {
+
+    // hot path:
+    //   when: wavelength sampling can reuse adaptive instrument grids across nominal wavelengths
+    //   work: prepares strong-line-aware support data for adaptive kernel construction
+    //   reads: scene response controls, prepared spectroscopy state, adaptive cache storage
+    //   follow: adaptive_plan interval construction
+
     const response = scene.observation_model.resolvedChannelControls(channel).response;
     cache.* = .{};
     if (!adaptive_plan.buildAdaptiveIntervalPlan(scene, prepared, response, &cache.plan)) {
@@ -310,6 +316,7 @@ fn buildAdaptiveIntegrationKernelFromCache(
     if (!cache.ready) return false;
 
     var sample_count: usize = 0;
+
     // math: cached plan reuses interval boundaries; nominal lambda only shifts response weights and final offsets.
     if (!adaptive_plan.appendAdaptiveSamplesFromPlan(
         &cache.plan,
@@ -333,24 +340,28 @@ fn buildAdaptiveIntegrationKernelFromCache(
 
 pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 {
     const response = scene.observation_model.resolvedChannelControls(channel).response;
+
     // PARITY:
     //   The default slit routine remains a five-point symmetric routine so the
     //   legacy convolution shape stays recognizable when explicit line-shape
     //   metadata is absent.
     if (response.fwhm_nm <= 0.0) {
+
         // math: default convolution kernel is [1,4,6,4,1] before convolution.apply normalizes by its sum.
         return .{ 1.0, 4.0, 6.0, 4.0, 1.0 };
     }
 
+    const sample_span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const sample_spacing_nm = if (scene.spectral_grid.sample_count <= 1)
         1.0
     else
-        (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
+        sample_span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
     var kernel: [5]f64 = undefined;
     var sum: f64 = 0.0;
     for (0..kernel.len) |index| {
         const offset_samples = @as(f64, @floatFromInt(@as(i32, @intCast(index)) - 2));
         const offset_nm = offset_samples * sample_spacing_nm;
+
         // math: raw slit weight k_j = response((j - 2) * sample_spacing_nm), then k_j /= sum(k).
         const value = response_support.spectralResponseWeight(response, offset_nm);
         kernel[index] = value;
