@@ -21,11 +21,11 @@ grouping the data first. Only do that when the grouping cost is worth it.
 
   ```zig
   for (rows) |row| {
-      if (row.needs_scattering) try solveScattering(row);
+      if (row.needs_review) try reviewRow(row);
   }
   ```
 
-  Notice that every row checks `row.needs_scattering`. If that value
+  Notice that every row checks `row.needs_review`. If that value
   changes unpredictably, the CPU may guess wrong often.
 
 
@@ -35,12 +35,12 @@ grouping the data first. Only do that when the grouping cost is worth it.
 
   ```zig
   const split = partitionRows(rows, scratch);
-  try solveAbsorptionRows(split.absorption);
-  try solveScatteringRows(split.scattering);
+  try processNormalRows(split.normal);
+  try processReviewRows(split.review);
   ```
 
   Notice that each function receives rows that need the same path. The
-  scattering decision is made before the repeated solve loop.
+  review decision is made before the repeated loop.
 
 
 - Sorting or grouping has its own cost.
@@ -54,12 +54,12 @@ Here is a pattern that branches on each row in the repeated loop.
 
 ```zig
 for (rows) |row| {
-    if (row.needs_scattering) try solveScattering(row);
+    if (row.needs_review) sum += row.value;
 }
 ```
 
 The compiler output below is generated machine code. It makes the per-row
-`needs_scattering` flag load and branch from the code above visible.
+`needs_review` flag load and branch from the code above visible.
 
 ```asm
 ldrb    w10, [x8], #1  ; load one runtime flag
@@ -69,18 +69,17 @@ add     w0, w10, w0    ; add selected value
 ```
 
 The loop contains a branch whose direction depends on the runtime values of
-`row.needs_scattering`.
+`row.needs_review`.
 
-A better approach groups rows first, then runs each group.
+A better approach groups rows first, then sums the selected values.
 
 ```zig
-const split = partitionRows(rows, scratch);
-try solveAbsorptionRows(split.absorption);
-try solveScatteringRows(split.scattering);
+const review_values = collectReviewValues(rows, scratch);
+sum += sumValues(review_values);
 ```
 
 The first version branches inside the repeated loop. The better version moves
-the decision into a grouping step, then each solve loop walks one kind of row.
+the decision into a grouping step, then the sum loop walks only selected values.
 
 The generated output for the better approach is easier to read.
 
@@ -91,7 +90,7 @@ add.4s  v0, v4, v0          ; add four i32 lanes
 add.4s  v1, v5, v1          ; add four more i32 lanes
 ```
 
-After grouping, the repeated sum loop no longer checks `row.needs_scattering`
+After grouping, the repeated sum loop no longer checks `row.needs_review`
 for every row.
 
 A related flag-selection output shows the branch directly.
@@ -102,7 +101,7 @@ br i1 %.not, label %Block2, label %Then1
 ```
 
 The branch remains in the repeated loop. The compiler can unroll, but it cannot
-know the future `row.needs_scattering` values.
+know the future `row.needs_review` values.
 
 A benchmark for pre-grouped values showed summing them was `33.56x` faster
 than branching on every flag, with the same checksum. Grouping setup was

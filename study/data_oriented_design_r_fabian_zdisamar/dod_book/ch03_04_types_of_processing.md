@@ -19,49 +19,49 @@ the storage.
 
 - A transform is just a step that changes data.
   The simplest case is one input row producing one output row. In plain terms:
-  every layer becomes one prepared layer.
+  every raw item becomes one prepared item.
 
   ```zig
-  for (layers, out_layers) |layer, *out| out.* = prepareLayer(layer);
+  for (items, out_items) |item, *out| out.* = prepareItem(item);
   ```
 
-  Notice that the loop walks two lists together. Each input layer writes
-  exactly one output layer.
+  Notice that the loop walks two lists together. Each input item writes exactly
+  one output item.
 
 
 - Some steps keep only the rows that pass a test.
-  The output can be smaller than the input because some samples are skipped.
+  The output can be smaller than the input because some rows are skipped.
 
   ```zig
-  for (samples) |sample| {
-      if (sample.in_band) try kept.append(sample);
+  for (rows) |row| {
+      if (row.keep) try kept.append(row);
   }
   ```
 
-  Notice that `kept` can end up shorter than `samples` because only
-  in-band samples are appended.
+  Notice that `kept` can end up shorter than `rows` because only selected rows
+  are appended.
 
 
 - Some steps expand one row into many rows.
-  One instrument kernel can produce several high-resolution samples, so the
-  output can be larger than the input.
+  One order can produce several line items, so the output can be larger than
+  the input.
 
   ```zig
-  for (kernels) |kernel| {
-      try appendKernelSamples(kernel, &samples);
+  for (orders) |order| {
+      try appendLineItems(order, &line_items);
   }
   ```
 
-  Notice that one `kernel` can append several items to `samples`, so the
+  Notice that one `order` can append several items to `line_items`, so the
   output list can grow faster than the input list.
 
 ## Practical Example
 
-Here is a pattern that filters samples and sums them in the same loop.
+Here is a pattern that filters rows and sums them in the same loop.
 
 ```zig
-for (samples) |sample| {
-    if (sample.in_band) sum += sample.value;
+for (rows) |row| {
+    if (row.keep) sum += row.value;
 }
 ```
 
@@ -81,8 +81,8 @@ branch for every row.
 A better approach separates selection from summing.
 
 ```zig
-const in_band_values = collectInBandValues(samples, scratch);
-for (in_band_values) |value| {
+const kept_values = collectKeptValues(rows, scratch);
+for (kept_values) |value| {
     sum += value;
 }
 ```

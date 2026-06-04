@@ -19,11 +19,9 @@ computations that will use it.
 
 ## Main Lessons
 
-- The input file is allowed to be messy. The solver data should not be.
+- The input file is allowed to be messy. The repeated-run data should not be.
   A file can contain names, paths, comments, defaults, and many choices. The
-  solver should receive clean arrays and small structs.
-  In `zdisamar`, that usually means file/control input is turned into prepared
-  optical data before the solver sees it.
+  repeated calculation should receive clean arrays and small structs.
 
 - Do parsing and setup before the repeated run.
   If the same prepared input is used many times, the repeated part should not
@@ -31,49 +29,62 @@ computations that will use it.
   prepared input and reusable storage, not raw files.
 
 - Make the runtime struct match the loop that reads it.
-  If the loop reads optical depth, single-scatter albedo, and a phase index,
-  those should be easy to read together.
+  If the loop reads an amount, a rate, and a group index, those should be easy
+  to read together.
 
   ```zig
-  const PreparedLayer = struct {
-      optical_depth: f64,
-      single_scatter_albedo: f64,
-      phase_index: usize,
+  const PreparedItem = struct {
+      amount: f64,
+      rate: f64,
+      group_index: usize,
   };
 
-  fn prepareLayer(input: SceneLayer, phase_index: usize) PreparedLayer {
-      // Copy only the values the layer solve will read.
-      return .{
-          .optical_depth = input.optical_depth,
-          .single_scatter_albedo = input.single_scatter_albedo,
-          .phase_index = phase_index,
-      };
+  fn prepareItems(
+      inputs: []const RawItem,
+      group_indices: []const usize,
+      out: []PreparedItem,
+  ) void {
+      for (inputs, group_indices, out) |input, group_index, *dst| {
+          // Copy only the values the repeated calculation will read.
+          dst.* = .{
+              .amount = input.amount,
+              .rate = input.rate,
+              .group_index = group_index,
+          };
+      }
   }
 
-  fn layerContribution(layer: PreparedLayer, phase_weight: []const f64) f64 {
-      // The later solve reads the prepared row directly.
-      return layer.optical_depth *
-          layer.single_scatter_albedo *
-          phase_weight[layer.phase_index];
+  fn totalContribution(
+      items: []const PreparedItem,
+      group_weight: []const f64,
+  ) f64 {
+      var total: f64 = 0;
+      for (items) |item| {
+          total += item.amount * item.rate * group_weight[item.group_index];
+      }
+      return total;
   }
+
+  prepareItems(raw_items, group_indices, prepared_items);
+  const total = totalContribution(prepared_items, group_weight);
   ```
 
-  Notice that `prepareLayer` is where the larger scene layer is turned into the
-  smaller row. `layerContribution` then reads that row without carrying file
-  names or setup-only data.
+  Notice that `prepareItems` is where the larger input rows become smaller
+  runtime rows. `totalContribution` then loops over those rows without carrying
+  file names or setup-only data.
 
-  Without `PreparedLayer`, the solve would receive raw scene fields plus a
-  separate phase index, or it would recompute that index inside the repeated
-  path. Preparation chooses the index once and stores it beside the optical
-  values that use it.
+  Without `PreparedItem`, the run would receive raw input fields plus a
+  separate group index, or it would recompute that index inside the repeated
+  path. Preparation chooses the index once and stores it beside the values that
+  use it.
 
 ## Practical Example
 
-Here is a pattern that rebuilds prepared input for every product.
+Here is a pattern that rebuilds prepared input for every report.
 
 ```zig
-for (products) |_| {
-    const prepared = try prepareInput(scene, assets);
+for (reports) |_| {
+    const prepared = try prepareInput(request, lookups);
     try runPrepared(prepared, storage);
 }
 ```
@@ -82,36 +93,36 @@ The compiler output below is generated machine code. It makes the repeated calls
 from the code above visible.
 
 ```asm
-bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside the product loop
-bl      _dod_codegen_examples.runPreparedForCodegen   ; run after rebuilding prepared data
-subs    x19, x19, #1                                  ; count down remaining products
-b.ne    LBB2_2                                        ; repeat both calls
+bl      _prepareInputForCodegen  ; prepare inside the report loop
+bl      _runPreparedForCodegen   ; run after rebuilding prepared data
+subs    x19, x19, #1             ; count down remaining reports
+b.ne    LBB2_2                   ; repeat both calls
 ```
 
-This shows that preparation stays inside the repeated product loop. The
+This shows that preparation stays inside the repeated report loop. The
 compiler output shows both the prepare call and the run call on the repeated
 path.
 
-A better approach is to prepare once, then run each product from that prepared
+A better approach is to prepare once, then run each report from that prepared
 data.
 
 ```zig
-const prepared = try prepareInput(scene, assets);
-for (products) |_| {
+const prepared = try prepareInput(request, lookups);
+for (reports) |_| {
     try runPrepared(prepared, storage);
 }
 ```
 
-The first loop repeats setup for every product. The better loop forms the data
-once, then keeps each repeated run focused on model work.
+The first loop repeats setup for every report. The better loop forms the data
+once, then keeps each repeated run focused on calculation work.
 
 The generated output for the better approach is easier to read.
 
 ```asm
-ldp     d0, d1, [x0]                                  ; load prepared values once
-bl      _dod_codegen_examples.runPreparedForCodegen   ; compute from prepared data
-fadd    d1, d0, d1                                    ; repeated loop only accumulates result
-b.ne    LBB5_5                                        ; repeat the cheap loop body
+ldp     d0, d1, [x0]             ; load prepared values once
+bl      _runPreparedForCodegen   ; compute from prepared data
+fadd    d1, d0, d1               ; repeated loop only accumulates result
+b.ne    LBB5_5                   ; repeat the cheap loop body
 ```
 
 Once the input is already prepared, the repeated loop no longer includes the
@@ -121,7 +132,7 @@ A related compiler output from a repeated transform shows the same split between
 preparation and the loop.
 
 ```llvm
-define dso_local void @fillLayerSource(
+define dso_local void @fillScores(
   ptr nocapture nonnull readonly align 8 %0,
   ptr nocapture nonnull writeonly align 8 %1,
   ...

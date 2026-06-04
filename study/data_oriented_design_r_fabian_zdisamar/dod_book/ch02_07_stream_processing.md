@@ -24,12 +24,12 @@ again.
   then moves to the next row.
 
   ```zig
-  for (misses, results) |miss, *result| {
-      result.* = solveMiss(miss, constants);
+  for (jobs, results) |job, *result| {
+      result.* = runJob(job, constants);
   }
   ```
 
-  Notice that one `miss` produces one `result`. The loop does not depend on
+  Notice that one `job` produces one `result`. The loop does not depend on
   hidden state from another row.
 
 
@@ -37,8 +37,8 @@ again.
   This makes it clear which memory the function is allowed to use.
 
   ```zig
-  fn fillRadiance(misses: []const Miss, scratch: *Scratch, out: []f64) !void {
-      for (misses, out) |miss, *dst| dst.* = try radianceAt(miss, scratch);
+  fn fillScores(jobs: []const Job, scratch: *Scratch, out: []f64) !void {
+      for (jobs, out) |job, *dst| dst.* = try scoreJob(job, scratch);
   }
   ```
 
@@ -50,21 +50,21 @@ again.
   That makes it easier to test the stage, time it, and replace it later.
 
   ```zig
-  const plan = try buildPlan(wavelengths, storage.plan);
-  try fillRadiance(plan, storage.radiance);
-  try assembleReflectance(storage.radiance, storage.reflectance);
+  const plan = try buildPlan(items, storage.plan);
+  try fillScores(plan, storage.scores);
+  try assembleReport(storage.scores, storage.report);
   ```
 
-  Notice that `fillRadiance` writes `radiance`, then `assembleReflectance`
-  reads `radiance` and writes `reflectance`. The handoff is explicit.
+  Notice that `fillScores` writes `scores`, then `assembleReport` reads
+  `scores` and writes `report`. The handoff is explicit.
 
 ## Practical Example
 
 Here is a pattern that appends results while the stream is running.
 
 ```zig
-for (misses) |miss| {
-    try results.append(solveMiss(miss, constants));
+for (jobs) |job| {
+    try results.append(runJob(job, constants));
 }
 ```
 
@@ -72,11 +72,14 @@ The compiler output below is generated machine code. It makes the capacity
 check, length update, and store from the code above visible.
 
 ```asm
-ldr     x9, [x1, #16]          ; load output capacity
-cmp     x0, x9                 ; compare current length with capacity
-b.hs    LBB7_4                 ; branch out if the list is full
-str     d1, [x9, x0, lsl #3]   ; store at items[len]
-str     x0, [x1, #8]           ; write the updated length
+ldr     x10, [x1, #8]           ; load current output length
+ldr     x11, [x1, #16]          ; load output capacity
+cmp     x10, x11                ; compare current length with capacity
+b.hs    LBB7_4                  ; branch out if the list is full
+ldr     x9, [x1]                ; load output items pointer
+str     d1, [x9, x10, lsl #3]   ; store at items[len]
+add     x10, x10, #1            ; advance the output length
+str     x10, [x1, #8]           ; write the updated length
 ```
 
 This shows that append-style output keeps capacity checks and length updates in
@@ -86,8 +89,8 @@ A better approach sizes the output ahead of time and writes each result into
 its slot.
 
 ```zig
-for (misses, results) |miss, *result| {
-    result.* = solveMiss(miss, constants);
+for (jobs, results) |job, *result| {
+    result.* = runJob(job, constants);
 }
 ```
 

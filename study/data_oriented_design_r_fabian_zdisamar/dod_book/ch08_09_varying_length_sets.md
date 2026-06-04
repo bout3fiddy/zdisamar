@@ -18,40 +18,39 @@ item.
 ## Main Lessons
 
 - One input row may create zero, one, or many output rows.
-  One instrument kernel can add several samples, while another kernel may add
-  only one.
+  One order can add several line items, while another order may add only one.
 
   ```zig
-  for (kernels) |kernel| {
-      try appendSamplesForKernel(kernel, &samples);
+  for (orders) |order| {
+      try appendLineItems(order, &line_items);
   }
   ```
 
-  Notice that `samples` is appended to inside the loop. Each kernel can add
-  a different number of samples.
+  Notice that `line_items` is appended to inside the loop. Each order can add a
+  different number of line items.
 
 - Store variable-size groups in one big list.
   Each row stores where its group starts and how many items belong to it.
 
   ```zig
-  const KernelRef = struct {
-      sample_start: u32,
-      sample_count: u16,
+  const GroupRef = struct {
+      item_start: u32,
+      item_count: u16,
   };
 
-  fn kernelSamples(ref: KernelRef, samples: []const Sample) []const Sample {
-      // Turn the saved start/count into the samples for this kernel.
-      return samples[ref.sample_start .. ref.sample_start + ref.sample_count];
+  fn groupItems(ref: GroupRef, items: []const LineItem) []const LineItem {
+      // Turn the saved start/count into the line items for this group.
+      return items[ref.item_start .. ref.item_start + ref.item_count];
   }
   ```
 
-  Notice that `kernelSamples` is how the row is used. `KernelRef` stores where
-  the samples start and how many to read from the packed sample list.
+  Notice that `groupItems` is how the row is used. `GroupRef` stores where the
+  line items start and how many to read from the packed item list.
 
-  Passing `sample_start` and `sample_count` separately is not wrong by itself.
+  Passing `item_start` and `item_count` separately is not wrong by itself.
   The problem is that the two values must always change together. If one is
-  copied without the other, the range can point at the wrong `samples`.
-  `KernelRef` keeps the range with the kernel that uses it.
+  copied without the other, the range can point at the wrong `items`.
+  `GroupRef` keeps the range with the row that uses it.
 
 - A prefix sum turns counts into starting positions.
   If worker 0 wrote 3 items and worker 1 wrote 5 items, worker 1 starts at 3.
@@ -76,7 +75,7 @@ var start: u32 = 0;
 for (counts[0..i]) |count| {
     start += count;
 }
-return samples[start..][0..counts[i]];
+return line_items[start..][0..counts[i]];
 ```
 
 The compiler output below is generated machine code. It makes the repeated
@@ -96,7 +95,7 @@ A better approach builds start positions once and reuses them.
 
 ```zig
 const start = starts[i];
-return samples[start..][0..counts[i]];
+return line_items[start..][0..counts[i]];
 ```
 
 The first version re-adds counts for every query. The better version builds

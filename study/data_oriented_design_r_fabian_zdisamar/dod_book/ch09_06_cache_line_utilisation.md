@@ -24,68 +24,68 @@ row.
   This keeps useful data close without making every row too large.
 
   ```zig
-  const KernelRef = struct {
+  const GroupRef = struct {
       start: u32,
       count: u16,
   };
 
-  fn sideSamples(ref: KernelRef, samples: []const SampleRef) []const SampleRef {
-      // Turn the saved range into the sample references for this kernel.
-      return samples[ref.start .. ref.start + ref.count];
+  fn sideItems(ref: GroupRef, items: []const ItemRef) []const ItemRef {
+      // Turn the saved range into the side items for this group.
+      return items[ref.start .. ref.start + ref.count];
   }
   ```
 
-  Notice that `sideSamples` reads `start` and `count` together to answer the
-  same question: where are this kernel's samples? Keeping those fields together
+  Notice that `sideItems` reads `start` and `count` together to answer the
+  same question: where are this group's side items? Keeping those fields together
   helps the loop that repeatedly asks that question.
 
-  Passing `start` without `count` is not enough to read a sample range. Passing
-  both separately is possible, but then a caller can mix `start` from one kernel
-  with `count` from another. `KernelRef` gives the loop the complete range
+  Passing `start` without `count` is not enough to read an item range. Passing
+  both separately is possible, but then a caller can mix `start` from one group
+  with `count` from another. `GroupRef` gives the loop the complete range
   descriptor.
 
 - Do not fill the nearby bytes with unrelated data.
   Cache-line space is useful only when the hot path reads the nearby value.
-  Debug text belongs somewhere else if the sample loop never asks for it.
+  Debug text belongs somewhere else if the repeated loop never asks for it.
 
   ```zig
-  fn describeKernel(
-      kernel_index: usize,
-      kernel_source_names: []const []const u8,
+  fn describeGroup(
+      group_index: usize,
+      group_source_names: []const []const u8,
   ) []const u8 {
-      // Debug text is read away from the repeated sample loop.
-      return kernel_source_names[kernel_index];
+      // Debug text is read away from the repeated item loop.
+      return group_source_names[group_index];
   }
   ```
 
-  Notice that `describeKernel` reads the source-name table outside the repeated
-  sample loop. The repeated sample loop can use `KernelRef` without carrying
+  Notice that `describeGroup` reads the source-name table outside the repeated
+  item loop. The repeated item loop can use `GroupRef` without carrying
   `source_name`.
 
-  Keeping debug text in `KernelRef` would make the hot lookup row carry data it
-  does not read. A separate `kernel_source_names` table keeps reporting data
-  available without putting it in the repeated sample path.
+  Keeping debug text in `GroupRef` would make the hot lookup row carry data it
+  does not read. A separate `group_source_names` table keeps reporting data
+  available without putting it in the repeated item path.
 
 ## Practical Example
 
-Here is a pattern that loads a side table just to answer whether a kernel has
-sample work.
+Here is a pattern that loads a side table just to answer whether a group has
+side items.
 
 ```zig
-if (sideSampleCount(sample_counts, kernel.id) != 0) {
-    try appendSideSamples(kernel, side_samples, out);
+if (sideItemCount(item_counts, group.id) != 0) {
+    try appendSideItems(group, side_items, out);
 }
 ```
 
 That shape can be reasonable if the question is rare. It is wasteful if the hot
-loop asks it for every kernel, because the code loads another structure before
-it knows whether sample work exists.
+loop asks it for every group, because the code loads another structure before
+it knows whether side items exist.
 
 A better approach keeps the common answer in the row the loop already loaded.
 
 ```zig
-if (kernel.side_count != 0) {
-    try appendSideSamples(kernel, side_samples, out);
+if (group.side_count != 0) {
+    try appendSideItems(group, side_items, out);
 }
 ```
 

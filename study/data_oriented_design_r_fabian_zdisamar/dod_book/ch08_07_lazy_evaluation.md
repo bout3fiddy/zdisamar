@@ -20,8 +20,8 @@ expensive work, keep a clear list of the items that really need updating.
   checking a flag for every row.
 
   ```zig
-  for (layers, out) |layer, *dst| {
-      dst.* = cheapUpdate(layer);
+  for (items, out) |item, *dst| {
+      dst.* = cheapUpdate(item);
   }
   ```
 
@@ -33,12 +33,12 @@ expensive work, keep a clear list of the items that really need updating.
   else without checking every row.
 
   ```zig
-  for (dirty_wavelengths) |wavelength_nm| {
-      try refreshSpectralCache(cache, wavelength_nm);
+  for (dirty_items) |item_id| {
+      try refreshCache(cache, item_id);
   }
   ```
 
-  Notice that the loop visits `dirty_wavelengths`, not every wavelength.
+  Notice that the loop visits `dirty_items`, not every item.
   The list itself says what needs refresh.
 
 - Cached data is valid only for the input it was built from.
@@ -55,12 +55,12 @@ expensive work, keep a clear list of the items that really need updating.
 
 ## Practical Example
 
-Here is a pattern that scans every wavelength to check whether its cached value
+Here is a pattern that scans every item to check whether its cached value
 needs refresh.
 
 ```zig
-for (all_wavelengths) |wavelength_nm| {
-    if (cache.isDirty(wavelength_nm)) try refreshSpectralCache(cache, wavelength_nm);
+for (all_items) |item_id| {
+    if (cache.isDirty(item_id)) try refreshCache(cache, item_id);
 }
 ```
 
@@ -70,22 +70,22 @@ load and branch from the code above visible.
 ```asm
 ldrb    w12, [x9], #1  ; load one dirty flag
 cbz     w12, LBB16_5   ; branch around refresh work when flag is zero
-ldr     d1, [x10]      ; load wavelength only when dirty
-str     d1, [x11]      ; store refreshed output
+ldr     d1, [x10]      ; load input value only when dirty
+str     d1, [x11]      ; store refreshed output value
 ```
 
 This shows that the scan-all version keeps a flag load and branch in the loop
 for every possible row.
 
-A better approach stores the wavelengths that need refresh as a list.
+A better approach stores the items that need refresh as a list.
 
 ```zig
-for (dirty_wavelengths) |wavelength_nm| {
-    try refreshSpectralCache(cache, wavelength_nm);
+for (dirty_items) |item_id| {
+    try refreshCache(cache, item_id);
 }
 ```
 
-The first loop scans every possible wavelength to find the few cache entries
+The first loop scans every possible item to find the few cache entries
 needing refresh. The better loop stores that refresh list directly.
 
 The generated output for the better approach is easier to read.

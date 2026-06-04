@@ -26,21 +26,20 @@ one project.
   If a function sums numbers, collect the numbers first instead of passing a
   large object.
   For example, a sum function should receive numbers. It should not need the
-  whole scene or a layer object if it only adds one field.
+  whole request or a full row object if it only adds one field.
 
 - A reusable function should ask for only what it needs.
   This makes it easier to call from another place without building extra data.
-  A good reusable forward-model function should ask for prepared input and
-  reusable storage. It should not ask for files, parser state, or Python wrapper
-  state.
+  A good reusable function should ask for prepared input and reusable storage.
+  It should not ask for files, parser state, or wrapper state.
 
 ## Practical Example
 
 Here is a pattern that ties reusable work to setup and allocation.
 
 ```zig
-pub fn run(scene: SceneInput, allocator: Allocator, options: RunOptions) !ProductView {
-    const prepared = try prepare(scene, allocator);
+pub fn run(request: RequestInput, allocator: Allocator, options: RunOptions) !RunView {
+    const prepared = try prepare(request, allocator);
     return runPreparedAllocating(prepared, allocator, options);
 }
 ```
@@ -49,10 +48,10 @@ The compiler output below is generated machine code. It makes the repeated
 prepare call from the code above visible.
 
 ```asm
-bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside repeated use
-bl      _dod_codegen_examples.runPreparedForCodegen   ; run after rebuilding state
-subs    x19, x19, #1                                  ; count down uses
-b.ne    LBB2_2                                        ; repeat prepare and run
+bl      _prepareInputForCodegen  ; prepare inside repeated use
+bl      _runPreparedForCodegen   ; run after rebuilding state
+subs    x19, x19, #1             ; count down uses
+b.ne    LBB2_2                   ; repeat prepare and run
 ```
 
 This shows that a non-reusable function owns preparation, so each repeated use
@@ -63,21 +62,26 @@ A better approach exposes the prepared run as its own function.
 ```zig
 pub fn runPrepared(
     prepared: *const PreparedInput,
-    storage: *ProductStorage,
+    storage: *RunStorage,
     options: RunOptions,
-) !ProductView
+) !RunView {
+    const values = storage.values[0..prepared.items.len];
+    fillOutputValues(prepared.items, options.scale, values);
+    return .{ .values = values };
+}
 ```
 
 The first version owns setup and allocation, so it is hard to reuse the repeated
-run. The better version accepts prepared data and storage from the caller.
+run. The better version accepts prepared data and storage from the caller, then
+writes into the caller-owned `values` slice.
 
 The generated output for the better approach is easier to read.
 
 ```asm
-ldp     d0, d1, [x0]                                  ; load reusable prepared input
-bl      _dod_codegen_examples.runPreparedForCodegen   ; compute from prepared input
-fadd    d1, d0, d1                                    ; repeated loop only accumulates
-b.ne    LBB5_5                                        ; no prepare call in the loop
+ldp     d0, d1, [x0]             ; load reusable prepared input
+bl      _runPreparedForCodegen   ; compute from prepared input
+fadd    d1, d0, d1               ; repeated loop only accumulates
+b.ne    LBB5_5                   ; no prepare call in the loop
 ```
 
 Because the function accepts prepared input, callers can keep setup out of the
@@ -87,7 +91,7 @@ A related output-shape example shows the same split between input data and
 reusable storage.
 
 ```llvm
-define dso_local void @fillReflectance(
+define dso_local void @fillOutputValues(
   ptr nocapture nonnull readonly align 8 %0,
   ptr nocapture nonnull readonly align 8 %1,
   ptr nocapture nonnull writeonly align 8 %2,

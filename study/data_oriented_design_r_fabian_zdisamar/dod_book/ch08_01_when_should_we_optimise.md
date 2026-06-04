@@ -21,11 +21,11 @@ the target, and the new result so you can tell whether the change helped.
 
   ```zig
   const start = timer.read();
-  try simulateProductWithWorkspace(input, storage);
+  try runBatchWithWorkspace(input, storage);
   const elapsed_ns = timer.read() - start;
   ```
 
-  Notice that the code records the time around the actual product run. Now
+  Notice that the code records the time around the actual batch run. Now
   "slow" has a number attached to it.
 
 - Write down the number you need to hit.
@@ -51,17 +51,14 @@ produced the same result, or how large the difference was.
 A better approach writes the benchmark so the comparison can be checked.
 
 ```
-bench fill_reflectance_caller_output items=131072 iterations=300 elapsed_ns=26615500 ns_per_item=0.677 checksum=127247609.700
-bench fill_reflectance_allocate_output items=131072 iterations=300 elapsed_ns=39982000 ns_per_item=1.017 checksum=127247609.700
+bench fill_scores_caller_output items=131072 iterations=300 elapsed_ns=26615500 ns_per_item=0.677 checksum=127247609.700
+bench fill_scores_allocate_output items=131072 iterations=300 elapsed_ns=39982000 ns_per_item=1.017 checksum=127247609.700
 ratio caller_output_vs_allocate_output 1.50x
 ```
 
 The first line does not say what was timed, how much work ran, or whether the
 output still matched. The better lines say exactly what was timed and show that
 both versions produced the same checksum.
-
-The optimization claim is tied to a timed code region, iteration count, elapsed
-time, and checksum. Without those numbers, "faster" is only a guess.
 
 ## zdisamar Reading Notes
 

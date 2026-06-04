@@ -21,20 +21,13 @@ work. Combine shared results after the worker has finished its local loop.
   their main work.
 
   ```zig
-  fn runWorker(range: Range, output: []Miss) !void {
-      try fillWorkerMisses(range, output);
-  }
-
-  fn workerMisses(range: Range, output: []Miss) ![]const Miss {
-      try runWorker(range, output);
-      return output;
-  }
+  const worker_output = worker_outputs[worker_id];
+  try fillWorkerResults(range, worker_output);
   ```
 
   Notice that the worker receives the output area it is allowed to write. The
-  main work writes there, not into another worker's output. `workerMisses`
-  returns that filled worker slice for the caller to read after `runWorker`
-  finishes.
+  main work writes there, not into another worker's output. Later code can read
+  `worker_output` after this worker has finished filling it.
 
 
 - Add into a local variable first.
@@ -92,7 +85,7 @@ The generated output for the better approach is easier to read.
 ```asm
 ldp     q1, q2, [x10, #-32]  ; load two vector registers of input values
 fadd    d0, d0, d1           ; add one loaded f64 lane into local accumulator d0
-fadd    d0, d0, d3           ; add another loaded f64 lane into local accumulator d0
+fadd    d0, d0, d2           ; add another loaded f64 lane into local accumulator d0
 ```
 
 The repeated loop loads values and accumulates in register `d0`. There is no

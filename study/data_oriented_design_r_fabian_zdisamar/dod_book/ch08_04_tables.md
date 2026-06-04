@@ -19,70 +19,68 @@ common work clearer or faster.
 ## Main Lessons
 
 - A list is often the clearest shape for repeated work.
-  If the code needs to do the same thing for every layer, a layer list is easy
+  If the code needs to do the same thing for every item, an item list is easy
   to read and easy to loop over.
 
   ```zig
-  for (layers) |layer| {
-      total_tau += layer.optical_depth;
+  for (items) |item| {
+      total += item.amount;
   }
   ```
 
-  Notice that the loop reads one layer after another. A plain layer list
+  Notice that the loop reads one item after another. A plain item list
   matches that access pattern.
 
 
 - Split fields only when that helps the loop.
-  If one loop reads only optical depth, keeping optical depths together can help.
-  If the loop always needs the full layer, splitting may not help.
+  If one loop reads only `amount`, keeping amounts together can help. If the
+  loop always needs the full item, splitting may not help.
 
   ```zig
-  const LayerTables = struct {
-      optical_depth: []const f64,
-      source: []const f64,
+  const ItemTables = struct {
+      amount: []const f64,
+      weight: []const f64,
   };
 
-  fn buildLayerTables(layers: []const Layer, table: LayerTables) void {
-      for (layers, table.optical_depth, table.source) |layer, *tau, *src| {
-          // Split the larger layer row into the columns later loops read.
-          tau.* = layer.optical_depth;
-          src.* = layer.source;
+  fn buildItemTables(items: []const Item, table: ItemTables) void {
+      for (items, table.amount, table.weight) |item, *amount, *weight| {
+          // Split the larger item row into the columns later loops read.
+          amount.* = item.amount;
+          weight.* = item.weight;
       }
   }
 
-  fn sumOpticalDepth(table: LayerTables) f64 {
+  fn sumAmounts(table: ItemTables) f64 {
       var total: f64 = 0;
-      for (table.optical_depth) |tau| {
-          // This loop reads optical depth and does not touch source.
-          total += tau;
+      for (table.amount) |amount| {
+          // This loop reads amount and does not touch weight.
+          total += amount;
       }
       return total;
   }
 
-  fn sumSourceContribution(table: LayerTables) f64 {
+  fn sumWeightedAmounts(table: ItemTables) f64 {
       var total: f64 = 0;
-      for (table.optical_depth, table.source) |tau, src| {
+      for (table.amount, table.weight) |amount, weight| {
           // This loop reads aligned columns from the same prepared table.
-          total += tau * src;
+          total += amount * weight;
       }
       return total;
   }
 
-  fn sumPreparedOpticalDepth(layers: []const Layer, table: LayerTables) f64 {
-      buildLayerTables(layers, table);
-      return sumOpticalDepth(table);
-  }
+  buildItemTables(items, table);
+  const total_amount = sumAmounts(table);
+  const weighted_total = sumWeightedAmounts(table);
   ```
 
-  Notice that `buildLayerTables` splits larger layer rows into columns.
-  `sumPreparedOpticalDepth` then passes the filled table to
-  `sumOpticalDepth`, which reads only `table.optical_depth`.
-  `sumSourceContribution` shows the other case: a loop can read two aligned
-  columns from the same table when it needs both values.
+  Notice that `buildItemTables` splits larger item rows into columns.
+  The next two calls show why the table exists: one loop reads only
+  `table.amount`, while another loop reads `table.amount` and `table.weight`
+  together.
 
   The columns could be passed as separate slices, but their lengths and order
-  still have to match. If one column is filtered or reordered alone, optical
-  depth for one layer can line up with source data from another. `LayerTables`
+  still have to match. If one column is filtered or reordered alone, amount
+  data for one item can line up with weight data from another. `ItemTables`
   keeps the columns together while still allowing loops to read only one column.
 
 - Avoid "loop over everything inside another loop" for large data.
@@ -104,8 +102,8 @@ common work clearer or faster.
 Here is a pattern that stores rows but reads only one field from each row.
 
 ```zig
-for (layers) |layer| {
-    total_tau += layer.optical_depth;
+for (items) |item| {
+    total += item.amount;
 }
 ```
 
@@ -124,8 +122,8 @@ steps through full 24-byte rows to read one field.
 A better approach stores the field the loop reads repeatedly in its own list.
 
 ```zig
-for (optical_depths) |tau| {
-    total_tau += tau;
+for (amounts) |amount| {
+    total += amount;
 }
 ```
 
@@ -138,13 +136,13 @@ The generated output for the better approach is easier to read.
 ldp     q1, q2, [x9, #-32]  ; load four adjacent f64 values
 ldp     q5, q6, [x9], #64   ; load four more and advance by 64 bytes
 fadd    d0, d0, d1          ; add one loaded lane into the running total
-fadd    d0, d0, d3          ; add another loaded lane into the running total
+fadd    d0, d0, d2          ; add another loaded lane into the running total
 ```
 
 A column loop walks contiguous numeric values instead of striding through larger
 rows.
 
-A benchmark for a separate `[]f64` optical-depth column showed it was `1.49x`
+A benchmark for a separate `[]f64` amount column showed it was `1.49x`
 faster than reading the field out of full rows, with the same checksum. That is
 why the table layout choice can matter.
 

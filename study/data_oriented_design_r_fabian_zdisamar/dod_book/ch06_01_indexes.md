@@ -23,62 +23,61 @@ the original data.
   then reuse those positions in the repeated loop.
 
 - The index should point to the real data, not replace it.
-  If the index stores positions, the wavelength values still live in the
-  wavelength array.
+  If the index stores positions, the values still live in the values array.
 
   ```zig
-  const wavelength = high_res_wavelengths[sample_index.items[i]];
+  const value = values[index.items[i]];
   ```
 
-  Notice that `sample_index.items[i]` is only a position. The wavelength
-  value still comes from `high_res_wavelengths`.
+  Notice that `index.items[i]` is only a position. The value still comes from
+  `values`.
 
 - In the loop that runs many times, use the saved positions directly.
-  The loop should not rediscover which result belongs to which sample.
+  The loop should not rediscover which result belongs to which input row.
 
   ```zig
-  for (row.sample_indices) |result_index| {
-      sum += forward_results[result_index].radiance;
+  for (row.result_indices) |result_index| {
+      sum += results[result_index].score;
   }
   ```
 
   Notice that the loop does not search for the result. It uses the saved
-  `result_index` and reads the radiance directly.
+  `result_index` and reads the score directly.
 
 ## Practical Example
 
-Here is a pattern that searches for a result during every integration row.
+Here is a pattern that searches for a result during every repeated row.
 
 ```zig
-for (row.sample_wavelengths) |wavelength_nm| {
-    const result_index = findResultIndex(forward_results, wavelength_nm);
-    sum += forward_results[result_index].radiance;
+for (row.result_keys) |result_key| {
+    const result_index = findResultIndex(results, result_key);
+    sum += results[result_index].score;
 }
 ```
 
 The compiler output below is generated machine code. It makes the repeated
-wavelength search from the code above visible.
+result-key search from the code above visible.
 
 ```asm
-ldr     d1, [x1, x9, lsl #3]   ; load requested wavelength
-ldr     d2, [x2, x11, lsl #3]  ; load candidate result wavelength
+ldr     d1, [x1, x9, lsl #3]   ; load requested key
+ldr     d2, [x2, x11, lsl #3]  ; load candidate result key
 fcmp    d2, d1                 ; compare candidate with requested value
 b.eq    LBB11_7                ; branch when the search finds a match
 ```
 
-This shows that the integration loop contains a second loop that searches
-wavelengths before it can read radiance.
+This shows that the repeated loop contains a second loop that searches keys
+before it can read the score.
 
 A better approach stores the result positions during preparation, then reuses
 them in the repeated loop.
 
 ```zig
-for (row.sample_indices) |result_index| {
-    sum += forward_results[result_index].radiance;
+for (row.result_indices) |result_index| {
+    sum += results[result_index].score;
 }
 ```
 
-The first loop searches during every integration row. The better loop pays that
+The first loop searches during every repeated row. The better loop pays that
 lookup earlier and stores the result index.
 
 The generated output for the better approach is easier to read.
@@ -93,12 +92,12 @@ The matching machine code shows the saved-index load.
 
 ```asm
 ldr     w11, [x1, x9, lsl #2]  ; load a saved u32 result index
-ldr     d1, [x2, x11]          ; load the radiance f64 at that computed result address
-fadd    d0, d0, d1             ; add the radiance into the integration total
+ldr     d1, [x2, w11, uxtw #3] ; load the f64 score at results[result_index]
+fadd    d0, d0, d1             ; add the score into the total
 ```
 
 The loop uses a saved position, then reads the result. It does not search for
-the result inside the repeated integration loop.
+the result inside the repeated loop.
 
 A benchmark for prepared indexes showed they were `803.65x` faster than
 linear search, with the same checksum.

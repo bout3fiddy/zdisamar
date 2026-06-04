@@ -17,77 +17,104 @@ less a function knows about the larger program, the easier it is to reuse.
 ## Main Lessons
 
 - Small functions are easier to reuse when the input is simple.
-  A function that sums a slice can be used anywhere you have a slice of numbers.
+  A range counter can be used by validation, reporting, or alert code because
+  it only asks for the values and the range.
 
   ```zig
-  fn sum(values: []const f64) f64 {
-      var total: f64 = 0;
-      for (values) |value| total += value;
-      return total;
+  fn countInsideRange(values: []const f64, low: f64, high: f64) usize {
+      var count: usize = 0;
+      for (values) |value| {
+          if (value >= low and value <= high) count += 1;
+      }
+      return count;
   }
   ```
 
-  Notice that `sum` only needs a read-only slice of numbers. That makes it
-  easy to reuse.
+  Notice that `countInsideRange` owns a small rule: count values inside this
+  range. Any caller that can provide a numeric slice can use that rule.
 
-- Do not pass a large object when the function only needs one array.
-  Passing the slice makes the dependency obvious.
+- Do not pass a large object when the function only needs a few arrays.
+  Passing the slices makes the dependency obvious.
 
   ```zig
-  fn maxValue(values: []const f64) f64 {
-      return std.mem.max(f64, values);
+  fn writeDeltas(previous: []const f64, current: []const f64, out: []f64) void {
+      for (previous, current, out) |before, now, *dst| {
+          dst.* = now - before;
+      }
   }
   ```
 
-  Notice that `maxValue` does not need to know whether the numbers came
-  from layers, wavelengths, or residuals. It only needs the slice.
+  Notice that `writeDeltas` does not need a report object, a catalog object, or
+  labels for the values. It needs two aligned input slices and one output slice.
 
 - Put inputs and outputs in the function signature.
-  The caller can see that `input` is read and `output` is written.
+  The caller can see which values are read, which settings are copied, and
+  which output buffer is written.
 
   ```zig
-  fn fillOutput(input: []const f64, output: []f64) void {
-      for (input, output) |value, *dst| dst.* = value;
+  fn writeNormalizedScores(
+      scores: []const f64,
+      mean: f64,
+      inv_stddev: f64,
+      out: []f64,
+  ) void {
+      for (scores, out) |score, *dst| {
+          dst.* = (score - mean) * inv_stddev;
+      }
   }
 
-  fn copiedValues(input: []const f64, output: []f64) []const f64 {
-      fillOutput(input, output);
-      return output;
-  }
+  const normalized = scratch.normalized[0..scores.len];
+  writeNormalizedScores(scores, mean, inv_stddev, normalized);
   ```
 
-  Notice that `input` is read-only and `output` is writable. The signature
-  explains the direction of data movement. `copiedValues` shows the filled
-  caller-owned `output` slice being returned as a read-only view.
+  Notice that `scores` is read-only and `out` is writable. The call site shows
+  where the output memory comes from, so the function does not allocate or hide
+  the result.
 
 ## Practical Example
 
-Here is a pattern that ties a small search helper to a large model object.
+Here is a pattern that ties a small search helper to a large catalog object.
 
 ```zig
-fn lowerBoundInModel(model: *const FullModel, needle: f64) usize
+fn lowerBoundInCatalog(catalog: *const ValueCatalog, needle: f64) usize {
+    var low: usize = 0;
+    var high: usize = catalog.len;
+    while (low < high) {
+        const mid = low + (high - low) / 2;
+        if (catalog.values[mid] < needle) low = mid + 1 else high = mid;
+    }
+    return low;
+}
 ```
 
-The compiler output below is generated machine code. It makes the model-object
+The compiler output below is generated machine code. It makes the catalog-object
 loads from the code above visible.
 
 ```asm
-ldr     x9, [x0, #8]          ; load model.len from the model object
-ldr     x8, [x8]              ; load model.values from the model object
+ldr     x9, [x0, #8]          ; load catalog.len from the catalog object
+ldr     x8, [x0]              ; load catalog.values from the catalog object
 ldr     d1, [x8, x10, lsl #3] ; load values[mid]
 fcmp    d1, d0                ; compare values[mid] with the needle
 ```
 
-This shows that the helper is tied to the larger model shape before it can do
+This shows that the helper is tied to the larger catalog shape before it can do
 the slice search.
 
 A better approach accepts only the sorted values it needs.
 
 ```zig
-fn lowerBound(values: []const f64, needle: f64) usize
+fn lowerBound(values: []const f64, needle: f64) usize {
+    var low: usize = 0;
+    var high: usize = values.len;
+    while (low < high) {
+        const mid = low + (high - low) / 2;
+        if (values[mid] < needle) low = mid + 1 else high = mid;
+    }
+    return low;
+}
 ```
 
-The first helper can only be used by callers that have a `FullModel`. The
+The first helper can only be used by callers that have a `ValueCatalog`. The
 better helper works for any caller that can provide a sorted slice of numbers.
 
 The generated output for the better approach is easier to read.
@@ -98,7 +125,7 @@ The generated output for the better approach is easier to read.
 %.17 = select i1 %8, i64 %9, i64 %.068
 ```
 
-The helper works on the slice it was given. It does not need a large model
+The helper works on the slice it was given. It does not need a large catalog
 object.
 
 ## zdisamar Reading Notes

@@ -19,27 +19,27 @@ data it needs, and make it clear what shape comes out.
 
 - Keep loading separate from data-changing work.
   Loading reads files or reference tables. The next step should receive normal
-  typed data and change it into the shape the model needs.
-  The solver should not load files as part of its repeated math loop.
+  typed data and change it into the shape the next step needs. A repeated loop
+  should not load files as part of its work.
 
 - Give the next step only the data it will read.
   This keeps the function small and makes the cost easier to see.
 
   ```zig
-  const ctx = ForwardContext{
-      .layers = prepared.layers,
-      .carriers = cache.rows,
-      .wavelength_nm = wavelength_nm,
+  const ctx = RunContext{
+      .items = prepared.items,
+      .rates = cache.rates,
+      .batch_id = batch_id,
   };
   ```
 
-  Notice that `ForwardContext` lists the data the next step needs: `layers`,
-  `carriers`, and `wavelength_nm`.
+  Notice that `RunContext` lists the data the next step needs: `items`,
+  `rates`, and `batch_id`.
 
   The next step could take each value separately, but those values were prepared
-  as one set. If they travel separately, a later call can mix `layers` from one
-  prepared scene with `carriers` from another. `ForwardContext` passes the
-  prepared read set without also passing the full scene or reference assets.
+  as one set. If they travel separately, a later call can mix `items` from one
+  prepared request with `rates` from another. `RunContext` passes the prepared
+  read set without also passing the full request or lookup tables.
 
 
 - Some totals can be built from smaller totals.
@@ -47,8 +47,8 @@ data it needs, and make it clear what shape comes out.
   and combined later.
 
   ```zig
-  const left = sumRadiance(samples[0..mid]);
-  const right = sumRadiance(samples[mid..]);
+  const left = sumValues(values[0..mid]);
+  const right = sumValues(values[mid..]);
   const total = left + right;
   ```
 
@@ -60,15 +60,15 @@ data it needs, and make it clear what shape comes out.
 Here is a pattern that hides preparation inside a transform.
 
 ```zig
-fn fillForwardInput(
-    scene: SceneInput,
-    assets: ReferenceAssets,
-    wavelength_nm: f64,
-    out: *ForwardInput,
+fn fillRunInput(
+    request: RequestInput,
+    lookups: LookupTables,
+    batch_id: u32,
+    out: *RunInput,
 ) !void {
-    const ctx = try prepareContext(scene, assets);
-    for (ctx.layers, out.layers) |layer, *dst| {
-        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
+    const ctx = try prepareContext(request, lookups);
+    for (ctx.items, out.items) |item, *dst| {
+        dst.* = makeRunItem(item, ctx.rates, batch_id);
     }
 }
 ```
@@ -77,10 +77,10 @@ The compiler output below is generated machine code. It makes the prepare call
 inside the repeated transform visible.
 
 ```asm
-bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside the repeated path
-bl      _dod_codegen_examples.runPreparedForCodegen   ; run after rebuilding prepared data
-subs    x19, x19, #1                                  ; count down repeated runs
-b.ne    LBB2_2                                        ; loop back to prepare again
+bl      _prepareInputForCodegen  ; prepare inside the repeated path
+bl      _runPreparedForCodegen   ; run after rebuilding prepared data
+subs    x19, x19, #1             ; count down repeated runs
+b.ne    LBB2_2                   ; loop back to prepare again
 ```
 
 This shows that setup still runs inside the transform, so the compiler keeps
@@ -89,30 +89,23 @@ the prepare call in the repeated loop.
 A better approach sends prepared context into the transform.
 
 ```zig
-fn fillForwardInput(
+fn fillRunInput(
     ctx: PreparedContext,
-    wavelength_nm: f64,
-    out: *ForwardInput,
+    batch_id: u32,
+    out: *RunInput,
 ) void {
-    for (ctx.layers, out.layers) |layer, *dst| {
-        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
+    for (ctx.items, out.items) |item, *dst| {
+        dst.* = makeRunItem(item, ctx.rates, batch_id);
     }
 }
 
-fn solvePreparedWavelength(
-    ctx: PreparedContext,
-    wavelength_nm: f64,
-    out: *ForwardInput,
-    workspace: *Workspace,
-) ForwardResult {
-    fillForwardInput(ctx, wavelength_nm, out);
-    return solveForward(out, workspace);
-}
+fillRunInput(ctx, batch_id, out);
+const result = runBatch(out, scratch);
 ```
 
 The first version hides preparation inside the transform. The better version
 gives the repeated transform prepared input and a place to write.
-`solvePreparedWavelength` then passes the filled `out` value to the solver.
+The next line then passes the filled `out` value to the batch run.
 
 The generated output for the better approach is easier to read.
 

@@ -22,12 +22,12 @@ people and the compiler to follow.
   This is easier for the CPU than writing to many unrelated places.
 
   ```zig
-  for (radiance, reflectance) |value, *dst| {
+  for (input_values, output_values) |value, *dst| {
       dst.* = value * scale;
   }
   ```
 
-  Notice that `reflectance` is written from left to right. The loop does
+  Notice that `output_values` is written from left to right. The loop does
   not jump around to write each result.
 
 
@@ -35,40 +35,38 @@ people and the compiler to follow.
   This makes it clearer which arrays are inputs and which arrays are outputs.
 
   ```zig
-  const ProductBuffers = struct {
-      wavelengths: []const f64,
-      radiance: []f64,
+  const RunBuffers = struct {
+      input_values: []const f64,
+      output_values: []f64,
   };
 
-  fn fillRadiance(buffers: ProductBuffers) void {
-      for (buffers.wavelengths, buffers.radiance) |wavelength_nm, *dst| {
-          // Read one wavelength and write the matching radiance slot.
-          dst.* = solveRadianceAt(wavelength_nm);
+  fn fillOutputs(buffers: RunBuffers) void {
+      for (buffers.input_values, buffers.output_values) |value, *dst| {
+          // Read one input value and write the matching output slot.
+          dst.* = computeValue(value);
       }
   }
 
-  fn radianceView(buffers: ProductBuffers) []const f64 {
-      fillRadiance(buffers);
-      return buffers.radiance;
-  }
+  fillOutputs(buffers);
+  try writeOutputs(buffers.output_values);
   ```
 
-  Notice that `fillRadiance` reads `wavelengths` and writes `radiance`. Passing
-  those slices separately is possible, but the two lengths must match and slot
-  `i` in `radiance` must be the output for slot `i` in `wavelengths`.
-  `ProductBuffers` keeps that pairing visible while still separating read-only
-  input from writable output.
+  Notice that `fillOutputs` reads `input_values` and writes `output_values`.
+  The next step reads the filled output slice. Passing those slices separately
+  is possible, but the two lengths must match and slot `i` in `output_values`
+  must be the output for slot `i` in `input_values`. `RunBuffers` keeps that
+  pairing visible while still separating read-only input from writable output.
 
 
 - Let the caller keep output memory between runs.
-  This avoids allocating new arrays for every product run.
+  This avoids allocating new arrays for every run.
 
   ```zig
-  try storage.reflectance.resize(allocator, wavelength_count);
-  try fillReflectance(storage.radiance.items, storage.reflectance.items);
+  try storage.output_values.resize(allocator, item_count);
+  try fillOutputs(storage.input_values.items, storage.output_values.items);
   ```
 
-  Notice that the storage object keeps the `reflectance` array. The run
+  Notice that the storage object keeps the `output_values` array. The run
   resizes and fills that existing array instead of making a new output array
   from scratch.
 
@@ -77,10 +75,10 @@ people and the compiler to follow.
 Here is a pattern that allocates output as part of the output fill.
 
 ```zig
-const out = try allocator.alloc(f64, radiance.len);
+const out = try allocator.alloc(f64, numerator.len);
 defer allocator.free(out);
-for (radiance, irradiance, out) |l, e, *dst| {
-    dst.* = if (e != 0.0) l / e else 0.0;
+for (numerator, denominator, out) |top, bottom, *dst| {
+    dst.* = if (bottom != 0.0) top / bottom else 0.0;
 }
 ```
 
@@ -101,8 +99,8 @@ call `free` afterward.
 A better approach receives output storage from the caller.
 
 ```zig
-for (radiance, irradiance, out) |l, e, *dst| {
-    dst.* = if (e != 0.0) l / e else 0.0;
+for (numerator, denominator, out) |top, bottom, *dst| {
+    dst.* = if (bottom != 0.0) top / bottom else 0.0;
 }
 ```
 

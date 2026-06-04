@@ -27,15 +27,14 @@ Avoid letting input and output secretly refer to the same storage.
       for (input, output) |value, *dst| dst.* = value * factor;
   }
 
-  fn scaledValues(input: []const f64, factor: f64, output: []f64) []const f64 {
-      scale(input, factor, output);
-      return output;
-  }
+  const scaled = scratch.scaled[0..input.len];
+  scale(input, factor, scaled);
   ```
 
   Notice that `input` is `[]const f64`, so this function promises not to write
   through that slice. The separate `output` argument is the writable result, and
-  the caller is responsible for keeping it separate from `input`.
+  the caller is responsible for keeping it separate from `input`. The call site
+  makes that rule visible by taking output space from `scratch.scaled`.
 
 - Do not let input and output secretly point to the same memory.
   If they overlap, a write to the output can change a value the function has not
@@ -54,9 +53,9 @@ Avoid letting input and output secretly refer to the same storage.
 Here is a pattern whose signature leaves input/output ownership unclear.
 
 ```zig
-fn fillOutput(input: []f64, output: []f64) void {
-    for (input, output) |value, *dst| {
-        dst.* = value * 2.0;
+fn fillRatio(numerator: []f64, denominator: []f64, output: []f64) void {
+    for (numerator, denominator, output) |top, bottom, *dst| {
+        dst.* = if (bottom != 0.0) top / bottom else 0.0;
     }
 }
 ```
@@ -69,38 +68,45 @@ sub     x9, x2, x0  ; compute distance between output and first input
 cmp     x9, #64     ; check whether the slices might overlap
 b.lo    LBB8_3      ; use scalar fallback if overlap is too close
 sub     x9, x2, x1  ; repeat the overlap check for the second input
+cmp     x9, #64     ; check whether output is too close to that input
+b.lo    LBB8_3      ; use scalar fallback if this pair might overlap
 ```
 
 When aliasing is possible, the compiler adds runtime overlap checks before it
 can use the fast vector loop.
 
-A better approach marks input read-only and states the separate-output rule.
+A better approach marks inputs read-only and states the separate-output rule.
 
 ```zig
-fn fillOutput(input: []const f64, output: []f64) void {
-    // The caller passes a separate output slice.
-    for (input, output) |value, *dst| {
-        dst.* = value * 2.0;
+fn fillRatio(
+    numerator: []const f64,
+    denominator: []const f64,
+    output: []f64,
+) void {
+    // The caller passes an output slice that does not overlap either input.
+    for (numerator, denominator, output) |top, bottom, *dst| {
+        dst.* = if (bottom != 0.0) top / bottom else 0.0;
     }
 }
 
-fn doubledValues(input: []const f64, output: []f64) []const f64 {
-    fillOutput(input, output);
-    return output;
-}
+const ratios = output[0..numerator.len];
+fillRatio(numerator, denominator, ratios);
+writeRatioReport(ratios);
 ```
 
 The first signature does not tell the reader which slice is input and which
-slice is output. The better signature marks the input read-only, and the comment
-states the rule Fabian's aliasing section cares about: the output slice is
-separate. `doubledValues` then hands the filled output slice to the caller.
+slice is output. The better signature marks the inputs read-only, and the
+comment states the rule Fabian's aliasing section cares about: the output slice
+is separate. The call site then passes the filled `ratios` slice to the next
+step.
 
 The generated output for the better approach is easier to read.
 
 ```asm
-ldp     q0, q1, [x10, #-32]  ; load radiance vectors directly
-ldp     q4, q5, [x11, #-32]  ; load irradiance vectors directly
+ldp     q0, q1, [x10, #-32]  ; load numerator vectors directly
+ldp     q4, q5, [x11, #-32]  ; load denominator vectors directly
 fdiv.2d v0, v0, v4           ; divide vector lanes
+fdiv.2d v1, v1, v5           ; divide the next vector lanes
 stp     q0, q1, [x9, #-32]   ; store output vectors
 ```
 

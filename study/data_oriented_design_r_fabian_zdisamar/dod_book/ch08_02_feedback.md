@@ -19,36 +19,36 @@ tells only half the story.
 ## Main Lessons
 
 - Time the part you are trying to improve.
-  If radiance filling is the concern, put the timing around radiance filling,
-  not around the whole program.
+  If score filling is the concern, put the timing around score filling, not
+  around the whole program.
 
   ```zig
-  const zone = trace.begin(.fill_radiance);
+  const zone = trace.begin(.fill_scores);
   defer zone.end();
-  try fillRadiance(plan, storage);
+  try fillScores(plan, storage);
   ```
 
-  Notice that the trace starts before `fillRadiance` and ends when the
-  function returns. The measured phase is exactly the radiance-fill phase.
+  Notice that the trace starts before `fillScores` and ends when the function
+  returns. The measured phase is exactly the score-fill phase.
 
 
 - Record counts that help explain the timing.
-  A run with more forward misses should usually cost more, so record that count.
+  A run with more cache misses should usually cost more, so record that count.
 
   ```zig
-  telemetry.count(.forward_misses, plan.miss_count);
-  telemetry.count(.nominal_wavelengths, plan.rows.len);
+  telemetry.count(.cache_misses, plan.miss_count);
+  telemetry.count(.input_rows, plan.rows.len);
   ```
 
   Notice that the timing can now be read together with the amount of work:
-  number of misses and number of nominal wavelengths.
+  number of misses and number of input rows.
 
 - Make slow runs easy to notice.
   If a phase goes over budget, record that as its own event.
 
   ```zig
   if (elapsed_ns > budget_ns) {
-      telemetry.count(.product_budget_miss, 1);
+      telemetry.count(.batch_budget_miss, 1);
   }
   ```
 

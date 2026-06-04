@@ -23,22 +23,22 @@ and saved positions when the program needs to visit many related values.
   address of the next load.
 
   ```zig
-  const value = rows[index].optical_depth;
+  const value = rows[index].score;
   ```
 
   Notice that the code uses one array and one index. It does not follow a
-  pointer to another object before finding `optical_depth`.
+  pointer to another object before finding `score`.
 
 - Save positions into arrays when you can.
   Then the repeated loop can jump straight to the result it needs.
 
   ```zig
-  const result_index = plan.sample_indices[i];
-  sum += results[result_index].radiance;
+  const result_index = plan.result_indices[i];
+  sum += results[result_index].score;
   ```
 
-  Notice that `sample_indices` stores the result position. The next line
-  uses that position to read `results` directly.
+  Notice that `result_indices` stores the result position. The next line uses
+  that position to read `results` directly.
 
 
 - If a loop reads the same field from many rows, consider storing that field
@@ -46,39 +46,35 @@ and saved positions when the program needs to visit many related values.
   This can be easier for the CPU than reading full rows with many unused fields.
 
   ```zig
-  fn sumOpticalDepths(optical_depths: []const f64) f64 {
-      var total: f64 = 0;
-      for (optical_depths) |tau| {
-          // The loop walks one plain optical-depth list.
-          total += tau;
-      }
-      return total;
+  var total: f64 = 0;
+  for (scores) |score| {
+      // The loop walks one plain score list.
+      total += score;
   }
   ```
 
-  Notice that `sumOpticalDepths` receives the optical-depth list directly. A
-  struct with only `values: []const f64` would add a name, but it would not keep
-  any related fields together. Use a wrapper only when there is more context
-  that must travel with the values, such as layer indexes or wavelength metadata.
+  Notice that the loop reads the score list directly. A struct with only
+  `values: []const f64` would add a name, but it would not keep any related
+  fields together. Use a wrapper only when there is more context that must
+  travel with the values, such as indexes or matching keys.
 
 ## Practical Example
 
-Here is a pattern where a wavelength search must finish before radiance can be
-read.
+Here is a pattern where a key search must finish before a score can be read.
 
 ```zig
-const wavelength_nm = plan.sample_wavelengths[i];
-const result_index = findResultIndex(results, wavelength_nm);
-sum += results[result_index].radiance;
+const result_key = plan.result_keys[i];
+const result_index = findResultIndex(results, result_key);
+sum += results[result_index].score;
 ```
 
 The compiler output below is generated machine code. It makes the repeated
 search and comparison from the code above visible.
 
 ```asm
-ldr     d1, [x1, x9, lsl #3]   ; load requested wavelength
-ldr     d2, [x2, x11, lsl #3]  ; load candidate result wavelength
-fcmp    d2, d1                 ; compare before radiance can be read
+ldr     d1, [x1, x9, lsl #3]   ; load requested key
+ldr     d2, [x2, x11, lsl #3]  ; load candidate result key
+fcmp    d2, d1                 ; compare before the score can be read
 b.eq    LBB11_7                ; branch when the search finds a match
 ```
 
@@ -88,11 +84,11 @@ saved index.
 A better approach stores the result index before the repeated read.
 
 ```zig
-const result_index = plan.sample_indices[i];
-sum += results[result_index].radiance;
+const result_index = plan.result_indices[i];
+sum += results[result_index].score;
 ```
 
-The first version depends on a search before it can read radiance. The better
+The first version depends on a search before it can read a score. The better
 version keeps one dependent load, but removes the search chain from the repeated
 loop.
 
