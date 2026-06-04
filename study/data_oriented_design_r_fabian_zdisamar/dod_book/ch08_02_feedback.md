@@ -28,11 +28,9 @@ tells only half the story.
   try fillRadiance(plan, storage);
   ```
 
-  What to notice: the trace starts before `fillRadiance` and ends when the
+  Notice that the trace starts before `fillRadiance` and ends when the
   function returns. The measured phase is exactly the radiance-fill phase.
 
-  Zig syntax note: `defer zone.end();` means "run `zone.end()` when this scope
-  exits," even if the function returns early with an error.
 
 - Record counts that help explain the timing.
   A run with more forward misses should usually cost more, so record that count.
@@ -42,7 +40,7 @@ tells only half the story.
   telemetry.count(.nominal_wavelengths, plan.rows.len);
   ```
 
-  What to notice: the timing can now be read together with the amount of work:
+  Notice that the timing can now be read together with the amount of work:
   number of misses and number of nominal wavelengths.
 
 - Make slow runs easy to notice.
@@ -54,7 +52,7 @@ tells only half the story.
   }
   ```
 
-  What to notice: the run records a separate event only when it misses the
+  Notice that the run records a separate event only when it misses the
   budget. Slow cases are easier to find later.
 
 ## Code Material
@@ -64,13 +62,15 @@ instrumentation:
 
 ```zig
 const zone = trace.begin(.fill_radiance);
+// The timing region ends when this scope exits.
 defer zone.end();
 
 try fillRadiance(product, plan, storage);
+// The count gives the timing a workload size.
 telemetry.count(.forward_misses, plan.miss_count);
 ```
 
-What to notice: the timer covers one named phase, and the count records how much
+Notice that the timer covers one named phase, and the count records how much
 work that phase did.
 
 ## Practical Example

@@ -33,11 +33,9 @@ data it needs, and make it clear what shape comes out.
   };
   ```
 
-  What to notice: `ForwardContext` lists the data the next step needs: layers,
+  Notice that `ForwardContext` lists the data the next step needs: layers,
   carrier rows, and one wavelength.
 
-  Zig syntax note: `const ctx = ForwardContext{ .layers = ..., ... };` creates
-  a `ForwardContext` value and fills fields by name.
 
 - Some totals can be built from smaller totals.
   If the math allows `left + right`, different chunks can be computed separately
@@ -49,11 +47,9 @@ data it needs, and make it clear what shape comes out.
   const total = left + right;
   ```
 
-  What to notice: the final answer is made from two partial answers. That means
+  Notice that the final answer is made from two partial answers. That means
   the two halves can be computed separately if needed.
 
-  Zig syntax note: `samples[0..mid]` is the first part of the slice.
-  `samples[mid..]` is the rest of the slice starting at `mid`.
 
 ## Code Material
 
@@ -61,18 +57,20 @@ Fabian's section is prose with examples of data-changing steps. Adapted:
 
 ```zig
 const PreparedContext = struct {
+    // Prepared inputs are the only data this transform needs to read.
     layers: []const PreparedLayer,
     carriers: []const CarrierRow,
 };
 
 fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
     for (ctx.layers, out.layers) |layer, *dst| {
+        // One prepared layer becomes one RTM layer input.
         dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
     }
 }
 ```
 
-What to notice: the function receives prepared layers and carrier rows, then
+Notice that the function receives prepared layers and carrier rows, then
 writes RTM layer input. It does not load reference files or parse scene data.
 
 ## Practical Example

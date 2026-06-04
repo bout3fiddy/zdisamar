@@ -27,7 +27,7 @@ less a function knows about the larger program, the easier it is to reuse.
   }
   ```
 
-  What to notice: `sum` only needs a read-only slice of numbers. That makes it
+  Notice that `sum` only needs a read-only slice of numbers. That makes it
   easy to reuse.
 
 - Do not pass a large object when the function only needs one array.
@@ -39,7 +39,7 @@ less a function knows about the larger program, the easier it is to reuse.
   }
   ```
 
-  What to notice: `maxValue` does not need to know whether the numbers came
+  Notice that `maxValue` does not need to know whether the numbers came
   from layers, wavelengths, or residuals. It only needs the slice.
 
 - Put inputs and outputs in the function signature.
@@ -51,11 +51,9 @@ less a function knows about the larger program, the easier it is to reuse.
   }
   ```
 
-  What to notice: `input` is read-only and `output` is writable. The signature
+  Notice that `input` is read-only and `output` is writable. The signature
   explains the direction of data movement.
 
-  Zig syntax note: `*dst` captures a pointer to each output slot. `dst.* = value`
-  writes the input value into that output slot.
 
 ## Code Material
 
@@ -66,6 +64,7 @@ fn lowerBound(values: []const f64, needle: f64) usize {
     var low: usize = 0;
     var high: usize = values.len;
     while (low < high) {
+        // The search needs only the sorted values slice.
         const mid = low + (high - low) / 2;
         if (values[mid] < needle) low = mid + 1 else high = mid;
     }
@@ -74,12 +73,13 @@ fn lowerBound(values: []const f64, needle: f64) usize {
 
 fn integrateWeighted(values: []const f64, weights: []const f64) f64 {
     var sum: f64 = 0;
+    // Matching slices keep the loop independent of caller-specific types.
     for (values, weights) |value, weight| sum += value * weight;
     return sum;
 }
 ```
 
-What to notice: both functions work on slices, not on a large model object.
+Notice that both functions work on slices, not on a large model object.
 That is why they can be reused wherever the data can be presented as slices.
 
 ## Practical Example

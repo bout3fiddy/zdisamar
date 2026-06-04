@@ -44,17 +44,17 @@ pub fn runPrepared(
     storage: *ProductStorage,
     options: RunOptions,
 ) !ProductView {
+    // Match storage to the prepared input before running.
     try storage.ensureShape(prepared.shape(), options);
+    // The run step receives explicit storage instead of allocating inside.
     return simulateProductWithWorkspace(prepared, storage, options);
 }
 ```
 
-What to notice: the reusable call takes prepared data and reusable storage. It
+Notice that the reusable call takes prepared data and reusable storage. It
 does not own every setup path; callers adapt their data into `PreparedInput`
 first.
 
-Zig syntax note: `options: RunOptions` is passed by value. `!ProductView` means
-the function may return an error instead of a `ProductView`.
 
 ## Practical Example
 

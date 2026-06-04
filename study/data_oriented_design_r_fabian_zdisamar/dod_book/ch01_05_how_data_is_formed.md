@@ -42,7 +42,7 @@ reinterpreting them.
   };
   ```
 
-  What to notice: this row contains the values a layer calculation needs close
+  Notice that this row contains the values a layer calculation needs close
   together. It leaves out file names and setup-only data.
 
 ## Code Material
@@ -52,6 +52,7 @@ this section. The applicable code shape is:
 
 ```zig
 pub fn loadReferenceData(allocator: Allocator) !ReferenceAssets {
+    // File-backed assets become reusable tables before the model runs.
     return .{
         .absorption_tables = try loadTables(allocator),
         .solar_spectrum = try loadSolar(allocator),
@@ -59,6 +60,7 @@ pub fn loadReferenceData(allocator: Allocator) !ReferenceAssets {
 }
 
 pub fn prepareInput(scene: SceneInput, assets: ReferenceAssets) !PreparedInput {
+    // Scene input and reference assets become RTM-ready data.
     return .{
         .optical = try buildOpticalState(scene, assets),
         .rtm_config = scene.rtm_config,
@@ -66,12 +68,10 @@ pub fn prepareInput(scene: SceneInput, assets: ReferenceAssets) !PreparedInput {
 }
 ```
 
-What to notice: loading creates `ReferenceAssets`, then `prepareInput` creates
+Notice that loading creates `ReferenceAssets`, then `prepareInput` creates
 `PreparedInput`. The later model run should use `PreparedInput` so it does not
 repeat file-loading or asset-shaping work.
 
-Zig syntax note: `return .{ ... };` builds the return struct without repeating
-the struct type name. The `.optical = ...` lines set fields by name.
 
 ## Practical Example
 

@@ -27,7 +27,7 @@ item.
   }
   ```
 
-  What to notice: `samples` is appended to inside the loop. Each kernel can add
+  Notice that `samples` is appended to inside the loop. Each kernel can add
   a different number of samples.
 
 - Store variable-size groups in one big list.
@@ -40,7 +40,7 @@ item.
   };
   ```
 
-  What to notice: the row does not store the samples themselves. It stores where
+  Notice that the row does not store the samples themselves. It stores where
   its samples start and how many to read.
 
 - A prefix sum turns counts into starting positions.
@@ -53,12 +53,9 @@ item.
   }
   ```
 
-  What to notice: each start is the previous start plus the previous count.
+  Notice that each start is the previous start plus the previous count.
   Counts become positions.
 
-  Zig syntax note: `counts[0 .. counts.len - 1]` skips the last count.
-  `1..` produces indexes starting at 1. The loop reads a count and its matching
-  output index together.
 
 ## Code Material
 
@@ -67,34 +64,37 @@ sums, worker-local output, and pooling. Adapted:
 
 ```zig
 const KernelRef = struct {
+    // Small kernels stay inside the row.
     inline_count: u8,
     inline_samples: [4]Sample,
+    // Larger kernels use a range in side storage.
     side_start: u32,
     side_count: u32,
 };
 
 fn samples(ref: KernelRef, side: []const Sample) []const Sample {
     if (ref.inline_count > 0) {
+        // Small kernels do not need a side-storage lookup.
         return ref.inline_samples[0..ref.inline_count];
     }
+    // Larger kernels use one saved range into side storage.
     return side[ref.side_start .. ref.side_start + ref.side_count];
 }
 
 fn prefixStarts(counts: []const usize, starts: []usize) void {
     var total: usize = 0;
     for (counts, starts) |count, *start| {
+        // Save where this group begins before adding its length.
         start.* = total;
         total += count;
     }
 }
 ```
 
-What to notice: `KernelRef` stores either inline samples or a side-list range.
+Notice that `KernelRef` stores either inline samples or a side-list range.
 `prefixStarts` turns per-group counts into start positions for a packed output
 list.
 
-Zig syntax note: `ref.inline_samples[0..ref.inline_count]` returns only the
-filled part of the fixed-size inline array.
 
 ## Practical Example
 

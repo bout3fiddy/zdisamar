@@ -25,7 +25,7 @@ expensive work, keep a clear list of the items that really need updating.
   }
   ```
 
-  What to notice: there is no dirty check here. The example is for cheap work
+  Notice that there is no dirty check here. The example is for cheap work
   where simply doing the work may be clearer and faster.
 
 - If the work is expensive, keep a list of only the rows that need it.
@@ -38,7 +38,7 @@ expensive work, keep a clear list of the items that really need updating.
   }
   ```
 
-  What to notice: the loop visits `dirty_wavelengths`, not every wavelength.
+  Notice that the loop visits `dirty_wavelengths`, not every wavelength.
   The list itself says what needs refresh.
 
 - Cached data is valid only for the input it was built from.
@@ -50,11 +50,9 @@ expensive work, keep a clear list of the items that really need updating.
   }
   ```
 
-  What to notice: the key is checked before reuse. A different key forces a
+  Notice that the key is checked before reuse. A different key forces a
   rebuild.
 
-  Zig syntax note: `!cache.key.eql(new_key)` uses `!` as boolean "not." This is
-  different from `!T` in a return type, where `!` means "may return an error."
 
 ## Code Material
 
@@ -62,17 +60,19 @@ Fabian's section is prose. Adapted:
 
 ```zig
 const DirtyPlan = struct {
+    // This is already the refresh list, not every possible wavelength.
     wavelengths: []const f64,
 };
 
 fn refreshOnlyDirty(plan: DirtyPlan, cache: *SpectralCache) !void {
     for (plan.wavelengths) |wavelength_nm| {
+        // Refresh only the entries listed in the plan.
         try cache.refresh(wavelength_nm);
     }
 }
 ```
 
-What to notice: `plan.wavelengths` is the list of work to refresh. The function
+Notice that `plan.wavelengths` is the list of work to refresh. The function
 does not scan every possible wavelength looking for dirty flags.
 
 ## Practical Example

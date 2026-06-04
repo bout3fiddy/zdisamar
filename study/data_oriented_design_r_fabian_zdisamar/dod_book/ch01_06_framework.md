@@ -36,17 +36,16 @@ Fabian's section is prose. The study code shape is:
 
 ```zig
 pub fn simulate(input: Input, storage: *ProductStorage) !Output {
+    // Prepare first, then run, then finish the product.
     const prepared = try prepare(input, storage.prepare_scratch);
     const product = try runPrepared(prepared, storage.product_workspace);
     return finish(product, storage.output_scratch);
 }
 ```
 
-What to notice: this function is a readable chain. It prepares data, runs the
+Notice that this function is a readable chain. It prepares data, runs the
 prepared data, then turns the product into output.
 
-Zig syntax note: `!Output` means the function can return either an `Output` or
-an error.
 
 ## Practical Example
 

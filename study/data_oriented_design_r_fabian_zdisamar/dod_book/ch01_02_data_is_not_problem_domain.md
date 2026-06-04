@@ -32,12 +32,10 @@ let repeated work run on simple, direct values.
   };
   ```
 
-  What to notice: this struct names the values the solver reads. It does not
+  Notice that this struct names the values the solver reads. It does not
   include the whole O2 A case, the input file, or a DISAMAR-style control
   object.
 
-  Zig syntax note: `const RtmInput = struct { ... };` defines a new struct type.
-  `[]const LayerInput` means a read-only slice of `LayerInput` rows.
 
 - The solver should not need to know where the numbers came from.
   The wavelength may have come from an O2 A setup file, a test, or a Python API
@@ -50,11 +48,9 @@ let repeated work run on simple, direct values.
   }
   ```
 
-  What to notice: `solve` reads already prepared layer data. The code that
+  Notice that `solve` reads already prepared layer data. The code that
   loads or interprets O2 A input has already run before this function is called.
 
-  Zig syntax note: `*Workspace` means "pointer to a `Workspace`." Passing a
-  pointer lets the function reuse or change workspace memory.
 
 - If the code loops over layers, store the layers as a list.
   A list makes the work visible: for each layer, read the values needed by the
@@ -66,7 +62,7 @@ let repeated work run on simple, direct values.
   }
   ```
 
-  What to notice: the loop says the real work directly: visit each layer and
+  Notice that the loop says the real work directly: visit each layer and
   read its optical depth.
 
 ## Code Material
@@ -76,6 +72,7 @@ shape:
 
 ```zig
 const RuntimeInput = struct {
+    // Runtime data is already shaped for the RTM loop.
     layers: []const LayerInput,
     wavelength_nm: f64,
     config: SolveConfig,
@@ -87,7 +84,7 @@ pub fn solve(input: RuntimeInput, workspace: *Workspace) ForwardResult {
 }
 ```
 
-What to notice: the code that calls `radiativeTransfer` passes `layers`,
+Notice that the code that calls `radiativeTransfer` passes `layers`,
 `config`, and workspace memory. It does not pass a parser result or a full
 science case object into the RTM math.
 

@@ -25,11 +25,9 @@ the storage.
   for (layers, out_layers) |layer, *out| out.* = prepareLayer(layer);
   ```
 
-  What to notice: the loop walks two lists together. Each input layer writes
+  Notice that the loop walks two lists together. Each input layer writes
   exactly one output layer.
 
-  Zig syntax note: `*out` means the loop gives you a pointer to the output slot.
-  `out.* = ...` stores a value into that slot.
 
 - Some steps keep only the rows that pass a test.
   The output can be smaller than the input because some samples are skipped.
@@ -40,11 +38,9 @@ the storage.
   }
   ```
 
-  What to notice: `kept` can end up shorter than `samples` because only
+  Notice that `kept` can end up shorter than `samples` because only
   in-band samples are appended.
 
-  Zig syntax note: `try kept.append(sample)` calls `append`, and if append fails
-  with an allocation error, the current function returns that error.
 
 - Some steps expand one row into many rows.
   One instrument kernel can produce several high-resolution samples, so the
@@ -56,7 +52,7 @@ the storage.
   }
   ```
 
-  What to notice: one `kernel` can append several items to `samples`, so the
+  Notice that one `kernel` can append several items to `samples`, so the
   output list can grow faster than the input list.
 
 ## Code Material
@@ -65,28 +61,30 @@ Adapted data-changing step shapes:
 
 ```zig
 fn writeOneOutputPerInput(in_rows: []const LayerInput, out_rows: []LayerOutput) void {
+    // Every input row has a matching output row.
     for (in_rows, out_rows) |input, *output| output.* = solveLayer(input);
 }
 
 fn keepOnlyEnabledRows(rows: []const Candidate, kept: *ArrayList(Candidate)) !void {
+    // Only enabled rows are appended to the output list.
     for (rows) |row| if (row.enabled) try kept.append(row);
 }
 
 fn appendManySamplesPerKernel(rows: []const KernelRef, samples: *ArrayList(Sample)) !void {
+    // One kernel can append several samples.
     for (rows) |row| try appendKernelSamples(row, samples);
 }
 
 fn fillOutputWithoutInputRows(out: []f64, value: f64) void {
+    // Output is produced without reading an input row list.
     @memset(out, value);
 }
 ```
 
-What to notice: each function name says the input/output shape. One writes one
+Notice that each function name says the input/output shape. One writes one
 output per input, one may write fewer rows, one may write more rows, and one
 writes output without reading input rows.
 
-Zig syntax note: `*ArrayList(T)` means the function receives a pointer to a
-growable list, so appending inside the function changes the caller's list.
 
 ## Practical Example
 

@@ -27,11 +27,9 @@ people and the compiler to follow.
   }
   ```
 
-  What to notice: `reflectance` is written from left to right. The loop does
+  Notice that `reflectance` is written from left to right. The loop does
   not jump around to write each result.
 
-  Zig syntax note: in `|value, *dst|`, `value` is copied from the input slice,
-  while `*dst` is a pointer to the output slot. `dst.*` writes to that slot.
 
 - Keep data you only read separate from data you change.
   This makes it clearer which arrays are inputs and which arrays are outputs.
@@ -43,12 +41,10 @@ people and the compiler to follow.
   };
   ```
 
-  What to notice: `wavelengths` is `[]const`, so code using this struct can
+  Notice that `wavelengths` is `[]const`, so code using this struct can
   read wavelength values but should not change them. `radiance` is `[]f64`, so
   it is a buffer the run is allowed to write.
 
-  Zig syntax note: `[]const f64` is a read-only slice of `f64`. `[]f64` is a
-  writable slice of `f64`.
 
 - Let the caller keep output memory between runs.
   This avoids allocating new arrays for every product run.
@@ -58,12 +54,10 @@ people and the compiler to follow.
   try fillReflectance(storage.radiance.items, storage.reflectance.items);
   ```
 
-  What to notice: the storage object keeps the `reflectance` array. The run
+  Notice that the storage object keeps the `reflectance` array. The run
   resizes and fills that existing array instead of making a new output array
   from scratch.
 
-  Zig syntax note: `.items` is the slice inside an `ArrayList`. Passing
-  `storage.radiance.items` passes the current array contents to the function.
 
 ## Code Material
 
@@ -72,12 +66,13 @@ Fabian's section is prose. Adapted:
 ```zig
 fn fillReflectance(radiance: []const f64, irradiance: []const f64, out: []f64) void {
     for (radiance, irradiance, out) |l, e, *dst| {
+        // Caller-owned output keeps allocation outside this loop.
         dst.* = if (e != 0.0) l / e else 0.0;
     }
 }
 ```
 
-What to notice: `radiance` and `irradiance` are read-only inputs. `out` is the
+Notice that `radiance` and `irradiance` are read-only inputs. `out` is the
 writable output slice, and the loop writes it from left to right.
 
 ## Practical Example

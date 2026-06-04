@@ -25,7 +25,7 @@ the target, and the new result so you can tell whether the change helped.
   const elapsed_ns = timer.read() - start;
   ```
 
-  What to notice: the code records the time around the actual product run. Now
+  Notice that the code records the time around the actual product run. Now
   "slow" has a number attached to it.
 
 - Write down the number you need to hit.
@@ -45,14 +45,16 @@ surface:
 const budget_ns = 2_000_000;
 
 const start = timer.read();
+// Time the product run boundary, not unrelated setup or reporting.
 try simulateProductWithWorkspace(input, storage);
 const elapsed = timer.read() - start;
 
+// Record the measured cost and the budget miss separately.
 try telemetry.record(.product_run_ns, elapsed);
 if (elapsed > budget_ns) try telemetry.record(.product_budget_miss, elapsed);
 ```
 
-What to notice: the code records both the actual time and the budget miss. That
+Notice that the code records both the actual time and the budget miss. That
 makes the optimization question measurable.
 
 ## Practical Example

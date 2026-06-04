@@ -25,12 +25,9 @@ grouping the data first. Only do that when the grouping cost is worth it.
   }
   ```
 
-  What to notice: every row checks `row.needs_scattering`. If that value
+  Notice that every row checks `row.needs_scattering`. If that value
   changes unpredictably, the CPU may guess wrong often.
 
-  Zig syntax note: `if (row.needs_scattering) try solveScattering(row);` is a
-  one-line `if`. The `try` still means an error from `solveScattering` returns
-  from the current function.
 
 - When possible, run one group for one case and another group for the other
   case.
@@ -42,11 +39,9 @@ grouping the data first. Only do that when the grouping cost is worth it.
   try solveScatteringRows(split.scattering);
   ```
 
-  What to notice: each function receives rows that need the same path. The
+  Notice that each function receives rows that need the same path. The
   scattering decision is made before the repeated solve loop.
 
-  Zig syntax note: `split.absorption` reads the `absorption` field from
-  `split`.
 
 - Sorting or grouping has its own cost.
   Only do it when the measured run shows that the grouping pays for itself.
@@ -62,19 +57,21 @@ branch behavior. Adapted:
 fn sumSelected(flags: []const bool, values: []const i32) i32 {
     var sum: i32 = 0;
     for (flags, values) |flag, value| {
+        // This branch depends on the current flag.
         if (flag) sum += value;
     }
     return sum;
 }
 
 fn processByScatteringNeed(rows: []const Row) void {
+    // Group first so each solve loop sees one kind of row.
     const split = partitionByScatteringNeed(rows);
     solveAbsorptionRows(split.absorption);
     solveScatteringRows(split.scattering);
 }
 ```
 
-What to notice: `partitionByScatteringNeed` moves the decision before the
+Notice that `partitionByScatteringNeed` moves the decision before the
 repeated solve work. Each solver receives rows for one branch of the physics.
 
 ## Practical Example

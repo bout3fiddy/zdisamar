@@ -29,12 +29,9 @@ again.
   }
   ```
 
-  What to notice: one `miss` produces one `result`. The loop does not depend on
+  Notice that one `miss` produces one `result`. The loop does not depend on
   hidden state from another row.
 
-  Zig syntax note: `for (misses, results)` loops over two slices together.
-  `miss` is the current input row. `*result` captures a pointer to the current
-  output slot, and `result.* = ...` writes through that pointer.
 
 - Give temporary memory to the function instead of hiding it somewhere else.
   This makes it clear which memory the function is allowed to use.
@@ -45,13 +42,9 @@ again.
   }
   ```
 
-  What to notice: the function signature shows all three important memory
+  Notice that the function signature shows all three important memory
   areas: input rows, scratch memory, and output rows.
 
-  Zig syntax note: `[]const Miss` is a read-only slice. `*Scratch` is a pointer.
-  `out: []f64` is a writable slice. `!void` means the function returns no value
-  on success, but may return an error. `try radianceAt(miss, scratch)` returns
-  early if `radianceAt` fails.
 
 - Each stage should say what it reads and what it writes.
   That makes it easier to test the stage, time it, and replace it later.
@@ -62,7 +55,7 @@ again.
   try assembleReflectance(storage.radiance, storage.reflectance);
   ```
 
-  What to notice: `fillRadiance` writes radiance, then `assembleReflectance`
+  Notice that `fillRadiance` writes radiance, then `assembleReflectance`
   reads radiance and writes reflectance. The handoff is explicit.
 
 ## Code Material
@@ -73,12 +66,13 @@ to structure stages like kernels:
 ```zig
 fn fillRadiance(rows: []const MissRow, constants: Constants, out: []f64) void {
     for (rows, out) |row, *dst| {
+        // One input row writes one matching output slot.
         dst.* = solveOne(row, constants);
     }
 }
 ```
 
-What to notice: every row uses the same constants and writes one output slot.
+Notice that every row uses the same constants and writes one output slot.
 There is no hidden global accumulator inside the loop.
 
 ## Practical Example

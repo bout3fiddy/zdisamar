@@ -21,15 +21,14 @@ work. Combine shared results after the worker has finished its local loop.
   their main work.
 
   ```zig
-  const slice = worker_scratch[worker_id];
-  try fillWorkerMisses(range, slice);
+  fn runWorker(range: Range, output: []Miss) !void {
+      try fillWorkerMisses(range, output);
+  }
   ```
 
-  What to notice: each worker chooses its own scratch slice with `worker_id`.
-  The main work writes into that worker's slice.
+  Notice that the worker receives the output area it is allowed to write. The
+  main work writes there, not into another worker's output.
 
-  Zig syntax note: `worker_scratch[worker_id]` indexes the scratch storage for
-  the current worker.
 
 - Add into a local variable first.
   Write the worker's final answer once, after the loop is done.
@@ -40,7 +39,7 @@ work. Combine shared results after the worker has finished its local loop.
   partial_sums[worker_id] = local_sum;
   ```
 
-  What to notice: the loop updates `local_sum`, which belongs to one worker.
+  Notice that the loop updates `local_sum`, which belongs to one worker.
   Shared memory is written once at the end.
 
 - Do not guess that false sharing is the problem.
@@ -55,6 +54,7 @@ accumulator. Adapted:
 fn workerSum(range: Range, values: []const f64) f64 {
     var local: f64 = 0;
     for (range.start..range.end) |i| {
+        // Keep the running sum in local until the loop is done.
         local += values[i];
     }
     return local;
@@ -62,12 +62,13 @@ fn workerSum(range: Range, values: []const f64) f64 {
 
 fn reduceWorkerSums(partials: []const f64) f64 {
     var total: f64 = 0;
+    // Combine the returned worker sums after workerSum has finished.
     for (partials) |value| total += value;
     return total;
 }
 ```
 
-What to notice: each worker returns one local sum. The shared combine step
+Notice that each worker returns one local sum. The shared combine step
 happens after the worker loop, not on every item.
 
 ## Practical Example

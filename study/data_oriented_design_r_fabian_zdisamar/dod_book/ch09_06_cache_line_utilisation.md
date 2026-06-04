@@ -30,7 +30,7 @@ question needs them, and move rarely used details away from hot repeated rows.
   };
   ```
 
-  What to notice: `start`, `count`, and `inline_count` describe how to read the
+  Notice that `start`, `count`, and `inline_count` describe how to read the
   kernel samples. Keeping them together helps the sample-reading loop.
 
 - Move debug names and rarely used data away from the row used by the loop that
@@ -45,12 +45,10 @@ question needs them, and move rarely used details away from hot repeated rows.
   };
   ```
 
-  What to notice: `source_name` and `build_note` are useful for debugging, but
+  Notice that `source_name` and `build_note` are useful for debugging, but
   not for the repeated sample loop. Keeping them elsewhere avoids loading them
   by accident.
 
-  Zig syntax note: `[]const u8` is the common Zig type for read-only bytes, often
-  used for string-like data.
 
 ## Code Material
 
@@ -59,6 +57,7 @@ reasoning. Adapted:
 
 ```zig
 const KernelRef = extern struct {
+    // Fields read together by the sample loop stay in this row.
     nominal_index: u32,
     side_start: u32,
     side_count: u16,
@@ -68,17 +67,15 @@ const KernelRef = extern struct {
 };
 
 comptime {
+    // Keep the row within the intended compact size.
     assert(@sizeOf(KernelRef) <= 64);
 }
 ```
 
-What to notice: the fields in `KernelRef` are the fields the sample-reading
+Notice that the fields in `KernelRef` are the fields the sample-reading
 loop needs together. The point is not "make every struct 64 bytes"; it is to
 keep related repeated-read fields together.
 
-Zig syntax note: `extern struct` asks Zig to use a C-like field layout.
-`comptime { ... }` runs at compile time. `@sizeOf(KernelRef)` asks the compiler
-for the size of the type.
 
 ## Practical Example
 

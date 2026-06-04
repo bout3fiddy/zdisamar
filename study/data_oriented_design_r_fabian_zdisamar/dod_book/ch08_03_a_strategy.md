@@ -15,60 +15,47 @@ repeatable, change one thing, and write down what happened.
 
 ## Main Lessons
 
-- State the problem before naming the fix.
-  This prevents the study from starting with a guess.
+Start by naming the problem in observable terms. If the branch-heavy loop is
+suspect, the problem is not "we should group the data." The problem is that a
+measured loop is spending time on branch-heavy work, and the current cost is
+known.
 
-- Check that the baseline is repeatable.
-  If two unchanged runs give very different numbers, the measurement is not
-  stable enough to judge a code change.
+Make the baseline repeatable before changing code. If two unchanged runs give
+very different numbers, the measurement is not stable enough to judge a change.
 
-- Write down the change and the result.
-  This keeps the lesson useful after the details leave your head.
+Change one thing, then write down what happened. The note should let a later
+reader see the starting point, the change, the result, and whether the output
+still matched.
 
 ## Code Material
 
-Fabian's section is procedural rather than code-heavy. No Zig example is needed
-for the main idea. The useful artifact is a short note or benchmark report with:
-
-- the problem stated without a guessed fix;
-- the baseline measurement;
-- the predicted result;
-- the implemented change;
-- the confirmed result.
+Fabian's section is procedural rather than code-heavy. The useful material is
+not a Zig snippet; it is the record left behind after an optimization attempt.
+That record should say what was slow, how the original version behaved, what
+change was tried, how the changed version behaved, and whether both versions
+still produced the same result.
 
 ## Practical Example
 
-This section uses benchmark notes instead of Zig code because the chapter
-lesson is about process evidence.
+This chapter does not need a code block for the practical example. The useful
+material is the difference between a vague optimization note and a note that
+can be checked later.
 
-Here is a pattern that records an optimization story without enough evidence.
+An under-specified note might say that the branch code was slow, the data was
+grouped, and the result was faster. That records an opinion after the fact, but
+it leaves out the starting measurement, the amount of work, the exact changed
+version, and the correctness check. A reader cannot repeat it or falsify it.
 
-```text
-Problem: make the branch code faster
-Fix: group the data
-Result: faster
-```
+The stronger record keeps the comparison together. The baseline was
+`sum_selected_branchy`, with `262144` items, `1000` iterations, `146827667`
+elapsed nanoseconds, `0.560` nanoseconds per item, and checksum `8387918000`.
+The changed version was `sum_grouped_values`, with `131072` items, `1000`
+iterations, `4374958` elapsed nanoseconds, `0.033` nanoseconds per item, and
+the same checksum. The measured ratio was `33.56x`.
 
-This shows that the note records an outcome, but not the starting point, the
-workload, the measured result, or the correctness check. It is hard to repeat
-or falsify.
-
-A better approach keeps the baseline implementation, changed implementation,
-result, ratio, and checksum together.
-
-```text
-bench sum_selected_branchy items=262144 iterations=1000 elapsed_ns=146827667 ns_per_item=0.560 checksum=8387918000
-bench sum_grouped_values items=131072 iterations=1000 elapsed_ns=4374958 ns_per_item=0.033 checksum=8387918000
-ratio grouped_values_vs_branchy 33.56x
-```
-
-The first note records an opinion after the fact. The better note records the
-baseline implementation, the changed implementation, workload, elapsed time,
-ratio, and checksum.
-
-The result is tied to a problem, baseline implementation, changed
-implementation, and matching checksum. That is the chapter lesson. Compiler
-output becomes useful after the measured problem is known.
+Now the result is tied to a problem, a baseline implementation, a changed
+implementation, a measured workload, and matching output. That is the chapter
+lesson. Compiler output becomes useful after the measured problem is known.
 
 ## zdisamar Reading Notes
 

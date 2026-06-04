@@ -27,7 +27,7 @@ needs. Find the position first, then fetch the larger data once.
   };
   ```
 
-  What to notice: `times` is separate from `payloads`. Searching by time reads
+  Notice that `times` is separate from `payloads`. Searching by time reads
   only the small time values.
 
 - Find the position first, then read the larger data once.
@@ -39,7 +39,7 @@ needs. Find the position first, then fetch the larger data once.
   return table.payloads[index];
   ```
 
-  What to notice: the payload is read after the index is known. The search does
+  Notice that the payload is read after the index is known. The search does
   not repeatedly load full payload rows.
 
 - If the same search is still too slow, add one more helper table.
@@ -50,11 +50,9 @@ needs. Find the position first, then fetch the larger data once.
   const index = linearSearch(table.times[block.start..block.end], t);
   ```
 
-  What to notice: `first_stage` chooses a smaller range. The final search only
+  Notice that `first_stage` chooses a smaller range. The final search only
   scans that range.
 
-  Zig syntax note: `table.times[block.start..block.end]` passes only part of the
-  `times` slice into `linearSearch`.
 
 ## Code Material
 
@@ -64,17 +62,20 @@ using otherwise spare cache-line space. Adapted:
 
 ```zig
 const KeyPayload = struct {
+    // Larger data returned after a time key has found one row.
     translation: Vec3,
     scale: Vec3,
     rotation: Quat,
 };
 
 const KeyTable = struct {
+    // Search the compact time column first.
     times: []const f32,
     payloads: []const KeyPayload,
 
     fn find(self: KeyTable, t: f32) KeyPayload {
         const index = lowerBound(self.times, t);
+        // Read the payload only after the lookup chooses an index.
         return self.payloads[index];
     }
 };
@@ -82,6 +83,7 @@ const KeyTable = struct {
 const IndexedKeyTable = struct {
     times: []const f32,
     payloads: []const KeyPayload,
+    // Coarse time index used to narrow the final search.
     first_stage: [11]f32,
 
     fn find(self: IndexedKeyTable, t: f32) KeyPayload {
@@ -92,7 +94,7 @@ const IndexedKeyTable = struct {
 };
 ```
 
-What to notice: `times` is searched first because it is the small lookup data.
+Notice that `times` is searched first because it is the small lookup data.
 `payloads` is read only after the index is found. `first_stage` is an extra
 helper that narrows the search range.
 

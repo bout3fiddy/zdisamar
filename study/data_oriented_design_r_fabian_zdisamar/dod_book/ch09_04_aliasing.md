@@ -25,7 +25,7 @@ Avoid letting input and output secretly refer to the same storage.
   }
   ```
 
-  What to notice: `input` is `[]const f64`, so this function promises not to
+  Notice that `input` is `[]const f64`, so this function promises not to
   write through that slice. `output` is writable.
 
 - Do not let input and output secretly point to the same memory.
@@ -47,22 +47,22 @@ the compiler to be conservative. Adapted:
 
 ```zig
 fn fillOutput(input: []const f64, scale: f64, output: []f64) void {
-    // Contract: output does not overlap input.
+    // Callers keep output separate from input.
     for (input, output) |value, *dst| {
+        // Read input and write the separate output slot.
         dst.* = value * scale;
     }
 }
 
 fn run(prepared: *const PreparedInput, workspace: *Workspace) !void {
+    // Prepared data is read; temporary output lives in workspace.
     try fillOutput(prepared.optical_depths, prepared.scale, workspace.tmp);
 }
 ```
 
-What to notice: prepared data is read through `*const PreparedInput`, and output
+Notice that prepared data is read through `*const PreparedInput`, and output
 goes into `workspace.tmp`. The read side and write side are separate.
 
-Zig syntax note: `*const PreparedInput` means a pointer to prepared input that
-this function should not modify through that pointer.
 
 ## Practical Example
 

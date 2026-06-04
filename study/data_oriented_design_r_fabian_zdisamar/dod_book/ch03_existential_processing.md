@@ -26,7 +26,7 @@ nothing to do; a non-empty list tells the program exactly what to process.
   }
   ```
 
-  What to notice: there is no `if (state.enabled)` inside the loop. Being in
+  Notice that there is no `if (state.enabled)` inside the loop. Being in
   `active_jacobians` already means the work is enabled.
 
 - Do not make every layer carry data for rare work.
@@ -38,7 +38,7 @@ nothing to do; a non-empty list tells the program exactly what to process.
   }
   ```
 
-  What to notice: the row is added only when Jacobians are requested. Normal
+  Notice that the row is added only when Jacobians are requested. Normal
   runs do not carry that extra work list.
 
 - Be strict about what an empty list means.
@@ -50,7 +50,7 @@ nothing to do; a non-empty list tells the program exactly what to process.
   }
   ```
 
-  What to notice: the code treats "no rows" as "no Jacobian buffers." That keeps
+  Notice that the code treats "no rows" as "no Jacobian buffers." That keeps
   the meaning of the list clear.
 
 ## Code Material
@@ -59,18 +59,20 @@ Fabian's chapter uses health/regeneration examples. Adapted to Zig:
 
 ```zig
 const ActiveDerivative = struct {
+    // Being present in this list means the derivative must be computed.
     layer_index: usize,
     state: JacobianState,
 };
 
 fn fillJacobians(active: []const ActiveDerivative, out: []JacobianRow) void {
     for (active, out) |derivative, *row| {
+        // No enabled flag is needed here; the list already selected the work.
         row.* = computeDerivative(derivative.layer_index, derivative.state);
     }
 }
 ```
 
-What to notice: the row existing in `active` means "this derivative must be
+Notice that the row existing in `active` means "this derivative must be
 computed". The loop does not need another enabled flag.
 
 ## Practical Example

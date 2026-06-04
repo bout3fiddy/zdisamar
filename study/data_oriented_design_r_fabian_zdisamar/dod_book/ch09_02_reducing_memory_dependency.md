@@ -25,7 +25,7 @@ and saved positions when the program needs to visit many related values.
   const value = rows[index].optical_depth;
   ```
 
-  What to notice: the code uses one array and one index. It does not follow a
+  Notice that the code uses one array and one index. It does not follow a
   pointer to another object before finding `optical_depth`.
 
 - Save positions into arrays when you can.
@@ -36,11 +36,9 @@ and saved positions when the program needs to visit many related values.
   sum += results[result_index].radiance;
   ```
 
-  What to notice: `sample_indices` stores the result position. The next line
+  Notice that `sample_indices` stores the result position. The next line
   uses that position to read `results` directly.
 
-  Zig syntax note: `plan.sample_indices[i]` indexes one item from the slice.
-  `results[result_index]` then indexes another slice using that saved position.
 
 - If a loop reads the same field from many rows, consider storing that field
   together.
@@ -52,7 +50,7 @@ and saved positions when the program needs to visit many related values.
   };
   ```
 
-  What to notice: this stores optical depths as one plain list. A loop that only
+  Notice that this stores optical depths as one plain list. A loop that only
   needs optical depths can read this list without loading full layer rows.
 
 ## Code Material
@@ -63,8 +61,10 @@ Fabian's section is prose. Adapted:
 fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) void {
     for (plan.rows, out) |row, *dst| {
         var sum: f64 = 0;
+        // The row points at prepared result indexes.
         const indexes = plan.sample_indices[row.start .. row.start + row.count];
         for (indexes) |sample_index| {
+            // Read the index first, then read radiance from results.
             sum += results[sample_index].radiance;
         }
         dst.* = sum;
@@ -72,7 +72,7 @@ fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) 
 }
 ```
 
-What to notice: the inner loop follows saved indexes into one result array. It
+Notice that the inner loop follows saved indexes into one result array. It
 does not walk a chain of objects or maps to find each radiance value.
 
 ## Practical Example

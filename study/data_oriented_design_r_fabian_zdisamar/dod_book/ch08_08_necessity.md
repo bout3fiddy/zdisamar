@@ -25,7 +25,7 @@ should exist only when a later step will actually read it.
   };
   ```
 
-  What to notice: this row has only the two fields the example loop needs. It
+  Notice that this row has only the two fields the example loop needs. It
   does not carry unrelated layer data.
 
 - Only allocate optional data when a later step will read it.
@@ -37,7 +37,7 @@ should exist only when a later step will actually read it.
   }
   ```
 
-  What to notice: the Jacobian buffers are created inside the `need_jacobians`
+  Notice that the Jacobian buffers are created inside the `need_jacobians`
   branch. Runs without Jacobians skip them.
 
 - If a feature is disabled, skip the data for that feature.
@@ -49,11 +49,9 @@ should exist only when a later step will actually read it.
   }
   ```
 
-  What to notice: the absorption-only path returns early. It does not build the
+  Notice that the absorption-only path returns early. It does not build the
   data needed only by scattering.
 
-  Zig syntax note: `!config.has_scattering` means "not scattering." The `!` is
-  boolean negation here, not an error-return marker.
 
 ## Code Material
 
@@ -62,15 +60,17 @@ Fabian's section is prose. Adapted:
 ```zig
 fn ensureJacobianStorage(storage: *ProductStorage, states: JacobianMask) !void {
     if (states.isEmpty()) {
+        // No requested states means no Jacobian buffer is needed.
         storage.releaseJacobians();
         return;
     }
 
+    // Allocate only enough storage for the requested states.
     try storage.ensureJacobians(states.count());
 }
 ```
 
-What to notice: the function releases Jacobian storage when no states are
+Notice that the function releases Jacobian storage when no states are
 active, and only allocates it when the state mask says it will be used.
 
 ## Practical Example

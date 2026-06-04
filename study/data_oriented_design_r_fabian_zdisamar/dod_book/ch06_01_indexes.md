@@ -30,7 +30,7 @@ the original data.
   const wavelength = high_res_wavelengths[sample_index.items[i]];
   ```
 
-  What to notice: `sample_index.items[i]` is only a position. The wavelength
+  Notice that `sample_index.items[i]` is only a position. The wavelength
   value still comes from `high_res_wavelengths`.
 
 - In the loop that runs many times, use the saved positions directly.
@@ -42,7 +42,7 @@ the original data.
   }
   ```
 
-  What to notice: the loop does not search for the result. It uses the saved
+  Notice that the loop does not search for the result. It uses the saved
   `result_index` and reads the radiance directly.
 
 ## Code Material
@@ -52,20 +52,20 @@ Fabian's section is conceptual. A direct `zdisamar`-shaped sketch:
 ```zig
 const ForwardMissPlan = struct {
     rows: []const MissRow,
+    // Packed result indexes for all rows.
     sample_indices: []const usize,
 };
 
 fn samplesFor(plan: ForwardMissPlan, row_index: usize) []const usize {
     const row = plan.rows[row_index];
+    // The saved start/count chooses this row's indexes.
     return plan.sample_indices[row.start .. row.start + row.count];
 }
 ```
 
-What to notice: `MissRow` stores `start` and `count`. That lets the function
+Notice that `MissRow` stores `start` and `count`. That lets the function
 return the saved sample indexes for one nominal wavelength without searching.
 
-Zig syntax note: `a[b .. c]` makes a slice from index `b` up to, but not
-including, index `c`.
 
 ## Practical Example
 

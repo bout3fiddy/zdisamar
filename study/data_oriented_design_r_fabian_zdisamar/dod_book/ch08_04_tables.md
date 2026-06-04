@@ -28,11 +28,9 @@ common work clearer or faster.
   }
   ```
 
-  What to notice: the loop reads one layer after another. A plain layer list
+  Notice that the loop reads one layer after another. A plain layer list
   matches that access pattern.
 
-  Zig syntax note: `|layer|` names the current item in the loop. Each pass
-  through the loop gets the next item from `layers`.
 
 - Split fields only when that helps the loop.
   If one loop reads only optical depth, keeping optical depths together can help.
@@ -45,7 +43,7 @@ common work clearer or faster.
   };
   ```
 
-  What to notice: `optical_depth` and `source` are separate arrays. This only
+  Notice that `optical_depth` and `source` are separate arrays. This only
   helps if some loops read one without the other.
 
 - Avoid "loop over everything inside another loop" for large data.
@@ -59,7 +57,7 @@ common work clearer or faster.
   }
   ```
 
-  What to notice: the code advances through both lists once. It does not scan
+  Notice that the code advances through both lists once. It does not scan
   all of `b` for every item in `a`.
 
 ## Code Material
@@ -70,11 +68,13 @@ Adapted:
 
 ```zig
 const MotionTable = struct {
+    // Position is written in place; velocity is read-only input.
     positions: []Vec3,
     velocities: []const Vec3,
 
     fn step(self: MotionTable, dt: f32) void {
         for (self.positions, self.velocities) |*pos, vel| {
+            // Both lists advance together.
             pos.* = pos.* + vel.scale(dt);
         }
     }
@@ -83,6 +83,7 @@ const MotionTable = struct {
 fn mergeJoin(a: []const RowA, b: []const RowB, out: *ArrayList(Joined)) !void {
     var ia: usize = 0;
     var ib: usize = 0;
+    // The inputs are sorted by id, so one pass can join matching rows.
     while (ia < a.len and ib < b.len) {
         if (a[ia].id == b[ib].id) {
             try out.append(.{ .a = a[ia], .b = b[ib] });
@@ -97,12 +98,10 @@ fn mergeJoin(a: []const RowA, b: []const RowB, out: *ArrayList(Joined)) !void {
 }
 ```
 
-What to notice: `MotionTable.step` writes positions in order while reading
+Notice that `MotionTable.step` writes positions in order while reading
 velocities in order. `mergeJoin` walks two sorted lists once instead of nesting
 one full scan inside another.
 
-Zig syntax note: `*pos` in the loop captures a pointer to the current position,
-so `pos.* = ...` updates the position stored in the array.
 
 ## Practical Example
 
