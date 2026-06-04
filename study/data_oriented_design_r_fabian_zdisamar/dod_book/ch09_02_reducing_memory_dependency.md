@@ -2,14 +2,15 @@
 
 Source: [Data-Oriented Design online book, "Reducing memory dependency"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001020000000000000000) (printed-book p164).
 
-Summary: Fabian's memory-dependency lesson is that a program can stall when
-each memory read tells it where the next read is. The CPU cannot fetch the next
-address early if it does not know it yet.
+Summary: Fabian's memory-dependency lesson is that repeated work can stall when
+each memory read must finish before the program knows the next address to read.
+The bad case is not "the compiler knows where the next read is". The bad case is
+"the next address is stored inside the object we are still waiting to load".
 
 The concrete cases are linked lists, tree-shaped maps or sets, and systems that
 connect objects through many pointers. The lesson is not that every lookup is
-bad; it is that a long chain of "read this to find the next thing" gives the
-machine little room to get ahead.
+bad; it is that a long chain of "load this object before you can find the next
+object" gives the machine little room to get ahead.
 
 Take home: Avoid long chains of pointers in repeated work. Prefer simple lists
 and saved positions when the program needs to visit many related values.
