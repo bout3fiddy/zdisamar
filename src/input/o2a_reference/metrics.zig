@@ -1,22 +1,190 @@
 const std = @import("std");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
+const OpticsPrepare = @import("../../forward_model/optical_properties/root.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
+const Scene = @import("../../input/Scene.zig").Scene;
 const runtime = @import("run.zig");
-const support_types = @import("support_types.zig");
+const SolveConfig = @import("../../forward_model/radiative_transfer/root.zig").SolveConfig;
 
-pub const ReferenceData = support_types.ReferenceData;
-pub const ReferenceSample = support_types.ReferenceSample;
-pub const ResolvedVendorO2ACase = support_types.ResolvedVendorO2ACase;
-pub const LineGasSpec = support_types.LineGasSpec;
-pub const RangeExtremum = support_types.RangeExtremum;
-pub const ComparisonMetrics = support_types.ComparisonMetrics;
-pub const TrendTolerances = support_types.TrendTolerances;
-pub const TrendState = support_types.TrendState;
-pub const AssessmentVerdict = support_types.AssessmentVerdict;
-pub const AssessmentTrend = support_types.AssessmentTrend;
-pub const AssessmentOutcome = support_types.AssessmentOutcome;
-pub const VendorO2AReflectanceCase = support_types.VendorO2AReflectanceCase;
-pub const VendorO2APreparedCase = support_types.VendorO2APreparedCase;
+pub const ReferenceData = ReferenceDataModel;
+pub const ReferenceSample = runtime.ReferenceSample;
+pub const ResolvedVendorO2ACase = runtime.ResolvedVendorO2ACase;
+pub const LineGasSpec = runtime.LineGasSpec;
+
+// layout(64-bit):
+//   size: 16 B, align: 8 B
+//   field storage: wavelength_nm=8 B, value=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+pub const RangeExtremum = struct {
+    wavelength_nm: f64,
+    value: f64,
+};
+
+// layout(64-bit):
+//   size: 120 B, align: 8 B
+// field storage: 113 B across 15 fields; largest: sample_count=8 B, nonzero_sample_count=8 B, mean_signed_difference=8
+// B; padding: 7 B (56 bits)
+//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 120 B (0.117 KiB); total = per instance * live instance count
+pub const ComparisonMetrics = struct {
+    sample_count: usize,
+    nonzero_sample_count: usize,
+    exact_match_within_zero_tolerance: bool,
+    mean_signed_difference: f64,
+    mean_abs_difference: f64,
+    root_mean_square_difference: f64,
+    max_abs_difference: f64,
+    max_abs_difference_wavelength_nm: f64,
+    correlation: f64,
+    blue_wing_mean_difference: f64,
+    trough_wavelength_difference_nm: f64,
+    trough_value_difference: f64,
+    rebound_peak_difference: f64,
+    mid_band_mean_difference: f64,
+    red_wing_mean_difference: f64,
+};
+
+// layout(64-bit):
+//   size: 80 B, align: 8 B
+// field storage: 80 B across 10 fields; largest: mean_abs_difference_abs=8 B, root_mean_square_difference_abs=8 B,
+// max_abs_difference_abs=8 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   cache span: 2 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
+pub const TrendTolerances = struct {
+    mean_abs_difference_abs: f64,
+    root_mean_square_difference_abs: f64,
+    max_abs_difference_abs: f64,
+    correlation_abs: f64,
+    blue_wing_mean_difference_abs: f64 = 1.0e-6,
+    trough_wavelength_difference_nm_abs: f64 = 1.0e-6,
+    trough_value_difference_abs: f64 = 1.0e-6,
+    rebound_peak_difference_abs: f64 = 1.0e-6,
+    mid_band_mean_difference_abs: f64 = 1.0e-6,
+    red_wing_mean_difference_abs: f64 = 1.0e-6,
+};
+
+pub const TrendState = enum {
+    improved,
+    flat,
+    regressed,
+};
+
+pub const AssessmentVerdict = enum {
+    exact_zero_pass,
+    baseline_pass,
+    regression_fail,
+    nonzero_fail,
+};
+
+// layout(64-bit):
+//   size: 10 B, align: 1 B
+// field storage: 10 B across 10 fields; largest: mean_abs_difference=1 B, root_mean_square_difference=1 B,
+// max_abs_difference=1 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 10 B (0.010 KiB); total = per instance * live instance count
+pub const AssessmentTrend = struct {
+    mean_abs_difference: TrendState,
+    root_mean_square_difference: TrendState,
+    max_abs_difference: TrendState,
+    correlation: TrendState,
+    blue_wing_mean_difference: TrendState,
+    trough_wavelength_difference_nm: TrendState,
+    trough_value_difference: TrendState,
+    rebound_peak_difference: TrendState,
+    mid_band_mean_difference: TrendState,
+    red_wing_mean_difference: TrendState,
+};
+
+// layout(64-bit):
+//   size: 11 B, align: 1 B
+//   field storage: verdict=1 B, trend=10 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 11 B (0.011 KiB); total = per instance * live instance count
+pub const AssessmentOutcome = struct {
+    verdict: AssessmentVerdict,
+    trend: AssessmentTrend,
+};
+
+// layout(64-bit):
+//   size: 4144 B, align: 8 B
+//   field storage: 4144 B across 5 fields; largest: scene=2680 B, prepared=1056 B, product=320 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
+//   cache span: 65 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 4144 B (4.047 KiB); total also includes referenced storage above
+pub const VendorO2AReflectanceCase = struct {
+    reference: []ReferenceSample,
+    scene: Scene,
+    rtm_config: SolveConfig,
+    prepared: OpticsPrepare.PreparedOpticalState,
+    product: InstrumentGrid.InstrumentGridProduct,
+
+    pub fn deinit(self: *VendorO2AReflectanceCase, allocator: std.mem.Allocator) void {
+        self.product.deinit(allocator);
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        allocator.free(self.reference);
+        self.* = undefined;
+    }
+};
+
+// layout(64-bit):
+//   size: 3824 B, align: 8 B
+//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
+//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
+//   cache span: 60 cache line(s) at 64 B per line
+//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
+//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
+pub const VendorO2APreparedCase = struct {
+    reference: []ReferenceSample,
+    scene: Scene,
+    rtm_config: SolveConfig,
+    prepared: OpticsPrepare.PreparedOpticalState,
+
+    pub fn deinit(self: *VendorO2APreparedCase, allocator: std.mem.Allocator) void {
+        self.prepared.deinit(allocator);
+        self.scene.deinitOwned(allocator);
+        allocator.free(self.reference);
+        self.* = undefined;
+    }
+
+    pub fn intoReflectanceCase(
+        self: *VendorO2APreparedCase,
+        allocator: std.mem.Allocator,
+    ) !VendorO2AReflectanceCase {
+        var product = try InstrumentGrid.simulateProduct(
+            allocator,
+            &self.scene,
+            self.rtm_config,
+            &self.prepared,
+        );
+        errdefer product.deinit(allocator);
+
+        const prepared = self.prepared;
+        const rtm_config = self.rtm_config;
+        const scene = self.scene;
+        const reference = self.reference;
+        self.* = undefined;
+
+        return .{
+            .reference = reference,
+            .scene = scene,
+            .rtm_config = rtm_config,
+            .prepared = prepared,
+            .product = product,
+        };
+    }
+};
 
 pub fn runResolvedVendorO2AReflectanceCase(
     allocator: std.mem.Allocator,
@@ -26,7 +194,7 @@ pub fn runResolvedVendorO2AReflectanceCase(
     return .{
         .reference = runtime_case.reference,
         .scene = runtime_case.scene,
-        .route = runtime_case.route,
+        .rtm_config = runtime_case.rtm_config,
         .prepared = runtime_case.prepared,
         .product = runtime_case.product,
     };
@@ -40,7 +208,7 @@ pub fn prepareResolvedVendorO2ACase(
     return .{
         .reference = runtime_case.reference,
         .scene = runtime_case.scene,
-        .route = runtime_case.route,
+        .rtm_config = runtime_case.rtm_config,
         .prepared = runtime_case.prepared,
     };
 }
@@ -52,6 +220,7 @@ pub fn meanVectorInRange(
     end_nm: f64,
 ) f64 {
     var sum: f64 = 0.0;
+
     var count: usize = 0;
     for (wavelengths_nm, values) |wavelength_nm, value| {
         if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
@@ -86,6 +255,7 @@ pub fn maxVectorInRange(
     end_nm: f64,
 ) f64 {
     var best = -std.math.inf(f64);
+
     for (wavelengths_nm, values) |wavelength_nm, value| {
         if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
         if (value > best) best = value;
@@ -99,6 +269,7 @@ pub fn meanReferenceInRange(
     end_nm: f64,
 ) f64 {
     var sum: f64 = 0.0;
+
     var count: usize = 0;
     for (reference) |sample| {
         if (sample.wavelength_nm < start_nm or sample.wavelength_nm > end_nm) continue;
@@ -131,6 +302,7 @@ pub fn maxReferenceInRange(
     end_nm: f64,
 ) f64 {
     var best = -std.math.inf(f64);
+
     for (reference) |sample| {
         if (sample.wavelength_nm < start_nm or sample.wavelength_nm > end_nm) continue;
         if (sample.reflectance > best) best = sample.reflectance;
@@ -148,7 +320,9 @@ pub fn interpolateVector(
     if (target_wavelength_nm >= wavelengths_nm[wavelengths_nm.len - 1]) return values[values.len - 1];
 
     var lower_index: usize = 0;
-    while (lower_index + 1 < wavelengths_nm.len and wavelengths_nm[lower_index + 1] < target_wavelength_nm) : (lower_index += 1) {}
+    while (lower_index + 1 < wavelengths_nm.len and
+        wavelengths_nm[lower_index + 1] < target_wavelength_nm) : (lower_index += 1)
+    {}
 
     const upper_index = lower_index + 1;
     const lower_wavelength = wavelengths_nm[lower_index];
@@ -235,20 +409,52 @@ pub fn assessAgainstBaseline(
         ),
     };
 
+    const blue_wing_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.blue_wing_mean_difference),
+            tolerances.blue_wing_mean_difference_abs,
+        ) == .regressed;
+    const trough_wavelength_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.trough_wavelength_difference_nm),
+            tolerances.trough_wavelength_difference_nm_abs,
+        ) == .regressed;
+    const trough_value_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.trough_value_difference),
+            tolerances.trough_value_difference_abs,
+        ) == .regressed;
+    const rebound_peak_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.rebound_peak_difference),
+            tolerances.rebound_peak_difference_abs,
+        ) == .regressed;
+    const mid_band_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.mid_band_mean_difference),
+            tolerances.mid_band_mean_difference_abs,
+        ) == .regressed;
+    const red_wing_regressed =
+        compareAbsoluteCeiling(
+            @abs(current.red_wing_mean_difference),
+            tolerances.red_wing_mean_difference_abs,
+        ) == .regressed;
     const morphology_ceiling_regressed =
-        compareAbsoluteCeiling(@abs(current.blue_wing_mean_difference), tolerances.blue_wing_mean_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.trough_wavelength_difference_nm), tolerances.trough_wavelength_difference_nm_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.trough_value_difference), tolerances.trough_value_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.rebound_peak_difference), tolerances.rebound_peak_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.mid_band_mean_difference), tolerances.mid_band_mean_difference_abs) == .regressed or
-        compareAbsoluteCeiling(@abs(current.red_wing_mean_difference), tolerances.red_wing_mean_difference_abs) == .regressed;
+        blue_wing_regressed or
+        trough_wavelength_regressed or
+        trough_value_regressed or
+        rebound_peak_regressed or
+        mid_band_regressed or
+        red_wing_regressed;
 
     if (current.exact_match_within_zero_tolerance) {
         return .{ .verdict = .exact_zero_pass, .trend = trend };
     }
+
     if (!allowed_to_fail) {
         return .{ .verdict = .nonzero_fail, .trend = trend };
     }
+
     if (trend.mean_abs_difference == .regressed or
         trend.root_mean_square_difference == .regressed or
         trend.max_abs_difference == .regressed or
@@ -257,6 +463,7 @@ pub fn assessAgainstBaseline(
     {
         return .{ .verdict = .regression_fail, .trend = trend };
     }
+
     return .{ .verdict = .baseline_pass, .trend = trend };
 }
 
@@ -318,18 +525,26 @@ pub fn computeComparisonMetrics(
         reference_variance += std.math.pow(f64, sample.reflectance - reference_mean, 2.0);
     }
 
-    const correlation = if (generated_variance == 0.0 or reference_variance == 0.0)
-        0.0
-    else
-        covariance / @sqrt(generated_variance * reference_variance);
+    const correlation = choose_correlation: {
+        if (generated_variance == 0.0 or reference_variance == 0.0) break :choose_correlation 0.0;
+        break :choose_correlation covariance / @sqrt(generated_variance * reference_variance);
+    };
+    var mean_signed_difference: f64 = 0.0;
+    var mean_abs_difference: f64 = 0.0;
+    var root_mean_square_difference: f64 = 0.0;
+    if (reference.len != 0) {
+        mean_signed_difference = sum_signed / sample_count;
+        mean_abs_difference = sum_abs / sample_count;
+        root_mean_square_difference = @sqrt(sum_sq / sample_count);
+    }
 
     return .{
         .sample_count = reference.len,
         .nonzero_sample_count = nonzero_sample_count,
         .exact_match_within_zero_tolerance = nonzero_sample_count == 0,
-        .mean_signed_difference = if (reference.len == 0) 0.0 else sum_signed / sample_count,
-        .mean_abs_difference = if (reference.len == 0) 0.0 else sum_abs / sample_count,
-        .root_mean_square_difference = if (reference.len == 0) 0.0 else @sqrt(sum_sq / sample_count),
+        .mean_signed_difference = mean_signed_difference,
+        .mean_abs_difference = mean_abs_difference,
+        .root_mean_square_difference = root_mean_square_difference,
         .max_abs_difference = max_abs_difference,
         .max_abs_difference_wavelength_nm = max_abs_difference_wavelength_nm,
         .correlation = correlation,

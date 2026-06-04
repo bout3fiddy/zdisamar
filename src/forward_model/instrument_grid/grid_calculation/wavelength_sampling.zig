@@ -7,10 +7,10 @@ const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
 const Plan = @import("wavelength_plan.zig");
 const Storage = @import("storage.zig");
-const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
+const IntegrationKernel = @import("../../implementations/instrument/types.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
 // instrumentation: wavelength sampling
@@ -47,9 +47,11 @@ const WavelengthSamplingErrorState = struct {
 
 // layout(64-bit):
 //   size: 176 B, align: 8 B
-//   field storage: 169 B across 14 fields; largest: radiance_calibration=32 B, irradiance_calibration=32 B, allocator=16 B; padding: 7 B (56 bits)
+// field storage: 169 B across 14 fields; largest: radiance_calibration=32 B, irradiance_calibration=32 B, allocator=16
+// B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   out-of-line: scene, prepared, resolved_axis, radiance_adaptive_cache, irradiance_adaptive_cache, +5 more carry references/descriptors; referenced storage is not included in size
+// out-of-line: scene, prepared, resolved_axis, radiance_adaptive_cache, irradiance_adaptive_cache, +5 more carry
+// references/descriptors; referenced storage is not included in size
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 176 B (0.172 KiB); total also includes referenced storage above
@@ -72,7 +74,8 @@ const WavelengthSamplingWorker = struct {
 
 // layout(64-bit):
 //   size: 64 B, align: 8 B
-//   field storage: mutex=4 B, offsets_nm=16 B, weights=16 B, expected_kernel_ref_count=8 B, reserved_from_first_side_kernel=1 B; padding: 19 B
+// field storage: mutex=4 B, offsets_nm=16 B, weights=16 B, expected_kernel_ref_count=8 B,
+// reserved_from_first_side_kernel=1 B; padding: 19 B
 //   unused bits: 152 padding + 7 bool-storage slack = 159 bits
 //   out-of-line: offsets_nm, weights carry ArrayList backing storage; referenced storage is not included in size
 //   cache span: 1 cache line(s) at 64 B per line
@@ -133,12 +136,6 @@ const KernelStorageBuilder = struct {
     }
 };
 
-// hot path:
-//   when: once per simulation plan, often reused across OE iterations
-//   work: expands output wavelengths into radiance and irradiance integration plans
-//   data: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
-//   follow: fillWavelengthSamplingPlans and buildForwardMissPlan
-//   math: each output lambda_i maps to per-channel sample sets {lambda_i + delta_ij, w_ij}
 pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
@@ -146,19 +143,26 @@ pub fn buildWavelengthSampling(
     resolved_axis: *const grid.ResolvedAxis,
     radiance_calibration: calibration.Calibration,
     irradiance_calibration: calibration.Calibration,
-    implementations: Types.Implementations,
 ) Error!OwnedWavelengthSampling {
+
+    // hot path:
+    //   when: once per simulation plan, often reused across OE iterations
+    //   work: expands output wavelengths into radiance and irradiance integration plans
+    //   reads: resolved spectral axis, channel calibrations, adaptive kernel caches, sampling rows
+    //   follow: fillWavelengthSamplingPlans and buildForwardMissPlan
+    //   math: each output lambda_i maps to per-channel sample sets {lambda_i + delta_ij, w_ij}
+
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try resolved_axis.validate();
     const plans = try allocator.alloc(WavelengthSampling, sample_count);
     errdefer allocator.free(plans);
     var kernel_storage_builder = KernelStorageBuilder.init(sample_count * 2);
     defer kernel_storage_builder.deinit(allocator);
-    const can_cache_adaptive_plan = prepared.spectroscopy_lines != null and
-        std.mem.eql(u8, implementations.instrument.id, "builtin.generic_response");
+    const can_cache_adaptive_plan = prepared.spectroscopy_lines != null;
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     if (can_cache_adaptive_plan) {
+
         // instrumentation: trace zone
         // captures: adaptive kernel cache preparation
         // why: measure reusable instrument-response setup.
@@ -179,6 +183,7 @@ pub fn buildWavelengthSampling(
     }
 
     {
+
         // instrumentation: trace zone
         // captures: wavelength sampling plan fill
         // why: measure output-grid expansion into integration samples.
@@ -209,11 +214,6 @@ pub fn buildWavelengthSampling(
     };
 }
 
-// hot path:
-//   when: wavelength sampling expands all output grid points into integration plans
-//   work: chooses single-thread or chunked worker execution for plan rows
-//   data: output plan array, resolved axis, channel calibrations, adaptive caches
-//   follow: wavelengthSamplingWorkerMain and fillWavelengthSamplingPlanRange
 fn fillWavelengthSamplingPlans(
     allocator: Allocator,
     scene: *const Scene,
@@ -227,6 +227,13 @@ fn fillWavelengthSamplingPlans(
     kernel_storage_builder: *KernelStorageBuilder,
     plans: []WavelengthSampling,
 ) Error!void {
+
+    // hot path:
+    //   when: wavelength sampling expands all output grid points into integration plans
+    //   work: chooses single-thread or chunked worker execution for plan rows
+    //   reads: output plan array, resolved axis, channel calibrations, adaptive caches
+    //   follow: wavelengthSamplingWorkerMain and fillWavelengthSamplingPlanRange
+
     const worker_count = preferredWavelengthSamplingWorkerCount(plans.len);
     if (worker_count == 1) {
         return fillWavelengthSamplingPlanRange(
@@ -271,6 +278,7 @@ fn fillWavelengthSamplingPlans(
             .error_state = &error_state,
             .worker_index = worker_index,
         };
+
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
                 .{},
@@ -278,6 +286,7 @@ fn fillWavelengthSamplingPlans(
                 .{&workers[worker_index]},
             ) catch {
                 wavelengthSamplingWorkerMain(&workers[worker_index]);
+
                 continue;
             };
             started_thread_count += 1;
@@ -286,21 +295,25 @@ fn fillWavelengthSamplingPlans(
         }
     }
     for (threads[0..started_thread_count]) |thread| thread.join();
+
     if (error_state.err) |err| return err;
 }
 
-// hot path:
-//   when: wavelength sampling runs in parallel over output-grid chunks
-//   work: pulls chunks and fills integration-plan rows for each assigned output wavelength
-//   data: chunk queue, plan array, adaptive caches, worker error state
-//   follow: fillWavelengthSamplingPlanRange and work_partition.ChunkQueue
 fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
+
+    // hot path:
+    //   when: wavelength sampling runs in parallel over output-grid chunks
+    //   work: pulls chunks and fills integration-plan rows for each assigned output wavelength
+    //   reads: chunk queue, plan array, adaptive caches, worker error state
+    //   follow: fillWavelengthSamplingPlanRange and work_partition.ChunkQueue
+
     var thread_name_buffer: [64]u8 = undefined;
     const thread_name = std.fmt.bufPrintZ(
         &thread_name_buffer,
         "zdisamar-sampling-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-sampling-worker";
+
     // instrumentation: trace thread label
     // captures: wavelength-sampling worker identity
     // why: make parallel plan-fill lanes separable in timeline traces.
@@ -315,6 +328,7 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
 
     while (worker.queue.next()) |chunk| {
         {
+
             // instrumentation: trace zone
             // captures: wavelength-sampling chunk wall time and row count
             // why: reveal chunk imbalance while filling integration plans.
@@ -344,11 +358,6 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
     }
 }
 
-// hot path:
-//   when: a sampling worker fills a contiguous range of output wavelengths
-//   work: writes one WavelengthSampling row per output index
-//   data: plan array slice, resolved spectral axis, channel integration caches
-//   follow: buildWavelengthSamplingPlan and instrument integration kernel construction
 fn fillWavelengthSamplingPlanRange(
     allocator: Allocator,
     scene: *const Scene,
@@ -364,6 +373,13 @@ fn fillWavelengthSamplingPlanRange(
     start: usize,
     end: usize,
 ) Error!void {
+
+    // hot path:
+    //   when: a sampling worker fills a contiguous range of output wavelengths
+    //   work: writes one WavelengthSampling row per output index
+    //   reads: plan array slice, resolved spectral axis, channel integration caches
+    //   follow: buildWavelengthSamplingPlan and instrument integration kernel construction
+
     var integration_scratch: IntegrationKernel = undefined;
     for (start..end) |index| {
         plans[index] = try buildWavelengthSamplingPlan(
@@ -383,12 +399,6 @@ fn fillWavelengthSamplingPlanRange(
     }
 }
 
-// hot path:
-//   when: each output wavelength is converted into radiance and irradiance sampling plans
-//   work: resolves nominal wavelength, builds channel integration kernels, and applies calibration shifts
-//   data: resolved axis, radiance/irradiance adaptive caches, integration kernel outputs
-//   follow: integrationForWavelengthWithAdaptiveCacheChecked and calibration.shiftedWavelength
-//   math: lambda_radiance = lambda_i + shift_L(lambda_i); lambda_irradiance = lambda_i + shift_E0(lambda_i)
 fn buildWavelengthSamplingPlan(
     allocator: Allocator,
     scene: *const Scene,
@@ -403,6 +413,14 @@ fn buildWavelengthSamplingPlan(
     integration_scratch: *IntegrationKernel,
     index: usize,
 ) Error!WavelengthSampling {
+
+    // hot path:
+    //   when: each output wavelength is converted into radiance and irradiance sampling plans
+    //   work: resolves nominal wavelength, builds channel integration kernels, and applies calibration shifts
+    //   reads: resolved axis, radiance/irradiance adaptive caches, integration kernel outputs
+    //   follow: integrationForWavelengthWithAdaptiveCacheChecked and calibration.shiftedWavelength
+    //   math: lambda_radiance = lambda_i + shift_L(lambda_i); lambda_irradiance = lambda_i + shift_E0(lambda_i)
+
     const nominal_wavelength_nm = resolvedSampleAtAssumeValid(resolved_axis, index);
     if (can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
@@ -463,12 +481,14 @@ fn compactIntegrationKernel(
     kernel: *const IntegrationKernel,
 ) Error!Plan.IntegrationKernelRef {
     var compact: Plan.IntegrationKernelRef = .{};
+
     if (!kernel.enabled) {
         compact.sample_count = 1;
         return compact;
     }
     if (kernel.sample_count > std.math.maxInt(u16)) return error.OutOfMemory;
     compact.sample_count = @intCast(kernel.sample_count);
+
     if (kernel.sample_count <= Plan.inline_integration_sample_count) {
         compact.encoding = .inline_samples;
         @memcpy(compact.inline_offsets_nm[0..kernel.sample_count], kernel.offsets_nm[0..kernel.sample_count]);
@@ -476,11 +496,13 @@ fn compactIntegrationKernel(
         return compact;
     }
     compact.encoding = .side_samples;
+
     compact.side_start = try kernel_storage_builder.append(allocator, kernel);
     return compact;
 }
 
 fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_count: usize) void {
+
     // instrumentation: calculation telemetry
     // captures: integrated rows and side samples
     // why: quantify spectral sampling work before forward misses.
@@ -490,16 +512,19 @@ fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_c
     var radiance_sample_count: usize = 0;
     var irradiance_sample_count: usize = 0;
     var max_kernel_sample_count: usize = 0;
+
     for (plans) |plan| {
         const radiance_count = plan.radiance_integration.activeSampleCount();
         const irradiance_count = plan.irradiance_integration.activeSampleCount();
         if (plan.radiance_integration.enabled()) radiance_integrated_rows += 1;
         if (plan.irradiance_integration.enabled()) irradiance_integrated_rows += 1;
         radiance_sample_count += radiance_count;
+
         irradiance_sample_count += irradiance_count;
         max_kernel_sample_count = @max(max_kernel_sample_count, radiance_count);
         max_kernel_sample_count = @max(max_kernel_sample_count, irradiance_count);
     }
+
     // instrumentation: calculation telemetry
     // captures: compact wavelength sampling plan summary
     // why: store the sampling workload without per-output-row data volume.
@@ -517,6 +542,7 @@ fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_c
 fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: usize) f64 {
     if (resolved_axis.explicit_wavelengths_nm.len != 0) return resolved_axis.explicit_wavelengths_nm[index];
     const sample_count = resolved_axis.base.sample_count;
+
     // math: lambda_i = lambda_start + i * (lambda_end - lambda_start) / (N - 1).
     const step = (resolved_axis.base.end_nm - resolved_axis.base.start_nm) /
         @as(f64, @floatFromInt(sample_count - 1));
@@ -527,16 +553,18 @@ fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
     return work_partition.preferredWorkerCount(sample_count, min_parallel_wavelength_sample_count);
 }
 
-// hot path:
-//   when: once per wavelength plan before forward prefetch
-//   work: deduplicates radiance integration wavelengths and records dense miss indexes per nominal row
-//   data: radiance integration offsets, quantized cache keys, forward miss array, per-sample result indexes
-//   follow: SpectralEval.prefetchForwardSamples and direct radiance integration
-//   math: unique misses are lambda_m = lambda_radiance_i + delta_ij, with rows storing indexes into F(lambda_m)
 pub fn buildForwardMissPlan(
     allocator: Allocator,
     table: WavelengthSamplingTable,
 ) !Plan.OwnedForwardMissPlan {
+
+    // hot path:
+    //   when: once per wavelength plan before forward prefetch
+    //   work: deduplicates radiance integration wavelengths and records dense miss indexes per nominal row
+    //   reads: radiance integration offsets, quantized cache keys, forward miss array, per-sample result indexes
+    //   follow: SpectralEval.prefetchForwardSamples and direct radiance integration
+    //   math: unique misses are lambda_m = lambda_radiance_i + delta_ij, with rows storing indexes into F(lambda_m)
+
     var miss_indices = std.AutoHashMap(u64, u32).init(allocator);
     defer miss_indices.deinit();
     var misses = std.ArrayList(Plan.ForwardCacheMiss).empty;
@@ -604,12 +632,14 @@ fn appendForwardMissIndex(
     wavelength_nm: f64,
 ) !void {
     const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
+
     if (miss_indices.get(key)) |miss_index| {
         sample_indices.appendAssumeCapacity(miss_index);
         return;
     }
     if (misses.items.len > std.math.maxInt(u32)) return error.OutOfMemory;
     const miss_index: u32 = @intCast(misses.items.len);
+
     const entry = try miss_indices.getOrPut(key);
     if (entry.found_existing) {
         sample_indices.appendAssumeCapacity(entry.value_ptr.*);
@@ -620,6 +650,7 @@ fn appendForwardMissIndex(
         .wavelength_nm = wavelength_nm,
     }) catch |err| {
         _ = miss_indices.remove(key);
+
         return err;
     };
     entry.value_ptr.* = miss_index;

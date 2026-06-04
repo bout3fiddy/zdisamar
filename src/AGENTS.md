@@ -5,6 +5,7 @@
 - `src/output/` owns diagnostic reports and spectrum serialization.
 - `src/common/` is shared support code only.
 - `src/validation/` owns validation-only CLIs that consume the typed O2 A baseline.
+- `src/forward_model/instrumentation/` owns narrow no-op-by-default facades for trace, telemetry, and sensitivity hooks. Retained sinks, capture scripts, and reports live under `scaffolding/`.
 
 ## Rules
 
@@ -12,5 +13,5 @@
 - Tests that need non-public symbols should use `src/internal.zig`; keep that access surface named after the current tree.
 - Prefer the public flow input -> RTM -> output. Do not move product wiring into `src/common/`.
 - Comments explain why, not what. Keep comments near non-obvious DISAMAR semantics, unit conversions, sign conventions, ordering, and intentional divergences.
-- File I/O and text parsing belong in input, output, validation, CLI, or scripts, not in RTM routines.
+- File I/O and text parsing belong in input, output, validation, scaffolding, CLI, or scripts, not in RTM routines.
 - Every new input/config field must be consumed, rejected with a typed error, or explicitly documented as inert with focused test coverage.

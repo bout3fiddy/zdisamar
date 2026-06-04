@@ -38,18 +38,31 @@ pub const SlitIndex = enum(u8) {
     table = 5,
 
     pub fn parse(value: []const u8) errors.Error!SlitIndex {
-        if (std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "gaussian") or std.mem.eql(u8, value, "gaussian_modulated")) {
+        if (std.mem.eql(u8, value, "0") or
+            std.mem.eql(u8, value, "gaussian") or
+            std.mem.eql(u8, value, "gaussian_modulated"))
+        {
             return .gaussian_modulated;
         }
-        if (std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "flat_top") or std.mem.eql(u8, value, "flat_top_n4")) {
+
+        if (std.mem.eql(u8, value, "1") or
+            std.mem.eql(u8, value, "flat_top") or
+            std.mem.eql(u8, value, "flat_top_n4"))
+        {
             return .flat_top_n4;
         }
-        if (std.mem.eql(u8, value, "2") or std.mem.eql(u8, value, "triple_flat_top") or std.mem.eql(u8, value, "triple_flat_top_n4")) {
+
+        if (std.mem.eql(u8, value, "2") or
+            std.mem.eql(u8, value, "triple_flat_top") or
+            std.mem.eql(u8, value, "triple_flat_top_n4"))
+        {
             return .triple_flat_top_n4;
         }
+
         if (std.mem.eql(u8, value, "5") or std.mem.eql(u8, value, "table")) {
             return .table;
         }
+
         return errors.Error.InvalidRequest;
     }
 
@@ -64,17 +77,25 @@ pub const SlitIndex = enum(u8) {
 
 // layout(64-bit):
 //   size: 152 B, align: 8 B
-//   field storage: 148 B across 12 fields; largest: instrument_line_shape_table=56 B, instrument_line_shape=40 B, fwhm_nm=8 B; padding: 4 B (32 bits)
+// field storage: 148 B across 12 fields; largest: instrument_line_shape_table=56 B, instrument_line_shape=40 B,
+// fwhm_nm=8 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 7 bool-storage slack = 39 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
 pub const SpectralResponse = struct {
-    pub const IntegrationMode = enum {
+    pub const RequestedIntegrationMode = enum {
         auto,
+        default_kernel,
         explicit_hr_grid,
         disamar_hr_grid,
         adaptive,
+    };
+    pub const IntegrationMode = enum(u8) {
+        default_kernel = 0,
+        explicit_hr_grid = 1,
+        disamar_hr_grid = 2,
+        adaptive = 3,
     };
 
     explicit: bool = false,
@@ -84,7 +105,7 @@ pub const SpectralResponse = struct {
     scale: f64 = 1.0,
     phase_deg: f64 = 0.0,
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
-    integration_mode: IntegrationMode = .auto,
+    integration_mode: IntegrationMode = .default_kernel,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
     instrument_line_shape: InstrumentLineShape = .{},
@@ -92,17 +113,26 @@ pub const SpectralResponse = struct {
 
     pub fn validate(self: *const SpectralResponse) errors.Error!void {
         if (self.fwhm_nm < 0.0 or !std.math.isFinite(self.fwhm_nm)) return errors.Error.InvalidRequest;
-        if (!std.math.isFinite(self.amplitude) or !std.math.isFinite(self.scale) or self.scale <= 0.0 or !std.math.isFinite(self.phase_deg)) {
+
+        if (!std.math.isFinite(self.amplitude) or
+            !std.math.isFinite(self.scale) or
+            self.scale <= 0.0 or
+            !std.math.isFinite(self.phase_deg))
+        {
             return errors.Error.InvalidRequest;
         }
+
         if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
+
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
         try self.instrument_line_shape.validate();
+
         try self.instrument_line_shape_table.validate();
+
         if (self.slit_index == .table and
             self.instrument_line_shape_table.nominal_count == 0 and
             self.instrument_line_shape.sample_count == 0)
@@ -120,7 +150,8 @@ pub const SpectralResponse = struct {
 
 // layout(64-bit):
 //   size: 192 B, align: 8 B
-//   field storage: 185 B across 6 fields; largest: response=152 B, wavelength_shift_nm=8 B, multiplicative_offset=8 B; padding: 7 B (56 bits)
+// field storage: 185 B across 6 fields; largest: response=152 B, wavelength_shift_nm=8 B, multiplicative_offset=8 B;
+// padding: 7 B (56 bits)
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances

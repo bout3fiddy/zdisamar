@@ -149,48 +149,14 @@ test "generated O2A LUTs live only in operational band support" {
     var prepared = try zdisamar.prepare(std.testing.allocator, &input);
     defer prepared.deinit(std.testing.allocator);
 
-    try std.testing.expect(!prepared.input.observation_model.o2_operational_lut.enabled());
-    try std.testing.expect(prepared.input.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled());
-}
-
-test "observation model resolves legacy operational support through the public methods" {
-    const support = [_]OperationalBandSupport{.{
-        .id = "band-0",
-        .instrument_line_shape = .{
-            .sample_count = 3,
-            .offsets_nm = &.{ -0.1, 0.0, 0.1 },
-            .weights = &.{ 0.25, 0.5, 0.25 },
-        },
-    }};
-    var model: ObservationModel = .{
-        .instrument = .tropomi,
-        .high_resolution_step_nm = 0.08,
-        .high_resolution_half_span_nm = 0.32,
-        .operational_solar_spectrum = .{
-            .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
-            .irradiance = &.{ 2.7e14, 2.8e14, 2.75e14 },
-        },
-        .operational_band_support = &support,
-    };
-
-    const resolved = model.primaryOperationalBandSupport();
-    try std.testing.expectEqualStrings("band-0", resolved.id);
-    try std.testing.expectEqual(@as(f64, 0.08), resolved.high_resolution_step_nm);
-    try std.testing.expectEqual(@as(f64, 0.32), resolved.high_resolution_half_span_nm);
-    try std.testing.expectEqual(@as(u8, 3), resolved.instrument_line_shape.sample_count);
-    try std.testing.expect(resolved.operational_solar_spectrum.enabled());
-    try std.testing.expectApproxEqAbs(
-        @as(f64, 2.8e14),
-        resolved.operational_solar_spectrum.interpolateIrradiance(761.0),
-        1.0e9,
-    );
+    const prepared_support = prepared.input.observation_model.primaryOperationalBandSupport();
+    try std.testing.expect(prepared_support.o2_operational_lut.enabled());
 }
 
 test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(zdisamar, "Input"));
     try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
     try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
-    try std.testing.expect(@hasDecl(zdisamar, "Method"));
     try std.testing.expect(@hasDecl(zdisamar, "CalculationStorage"));
     try std.testing.expect(@hasDecl(zdisamar, "Output"));
     try std.testing.expect(@hasDecl(zdisamar, "DiagnosticReport"));

@@ -7,8 +7,9 @@ const ObservationModel = @TypeOf(empty_scene.observation_model);
 const empty_model: ObservationModel = .{};
 const CrossSectionFitControls = @TypeOf(empty_model.cross_section_fit);
 const OperationalBandSupport = std.meta.Child(@TypeOf(empty_model.operational_band_support));
-const InstrumentLineShape = @TypeOf(empty_model.instrument_line_shape);
-const InstrumentLineShapeTable = @TypeOf(empty_model.instrument_line_shape_table);
+const empty_support: OperationalBandSupport = .{};
+const InstrumentLineShape = @TypeOf(empty_support.instrument_line_shape);
+const InstrumentLineShapeTable = @TypeOf(empty_support.instrument_line_shape_table);
 
 test "observation model carries calibration and supporting-data bindings" {
     const model: ObservationModel = .{
@@ -49,8 +50,6 @@ test "observation model explicit integration mode overrides adaptive default" {
     const model: ObservationModel = .{
         .instrument = .tropomi,
         .instrument_line_fwhm_nm = 0.38,
-        .high_resolution_step_nm = 0.01,
-        .high_resolution_half_span_nm = 0.40,
         .integration_mode = .disamar_hr_grid,
         .adaptive_reference_grid = .{
             .points_per_fwhm = 5,
@@ -63,7 +62,27 @@ test "observation model explicit integration mode overrides adaptive default" {
     try std.testing.expectEqual(@TypeOf(response.integration_mode).disamar_hr_grid, response.integration_mode);
 }
 
-test "observation model legacy spectral response borrows owned line-shape carriers" {
+test "observation model auto integration resolves to a concrete default kernel" {
+    const model: ObservationModel = .{
+        .instrument = .tropomi,
+        .instrument_line_fwhm_nm = 0.38,
+    };
+
+    const response = model.resolvedChannelControls(.radiance).response;
+    try std.testing.expectEqual(@TypeOf(response.integration_mode).default_kernel, response.integration_mode);
+}
+
+test "observation model explicit HR integration requires grid metadata" {
+    const model: ObservationModel = .{
+        .instrument = .tropomi,
+        .instrument_line_fwhm_nm = 0.38,
+        .integration_mode = .explicit_hr_grid,
+    };
+
+    try std.testing.expectError(error.InvalidRequest, model.validate());
+}
+
+test "observation model spectral response borrows owned support line-shape carriers" {
     var line_shape: InstrumentLineShape = .{
         .sample_count = 2,
         .offsets_nm = try std.testing.allocator.dupe(f64, &.{ -0.1, 0.1 }),
@@ -82,27 +101,33 @@ test "observation model legacy spectral response borrows owned line-shape carrie
     };
     errdefer line_shape_table.deinitOwned(std.testing.allocator);
 
+    const support = [_]OperationalBandSupport{.{
+        .id = "primary",
+        .instrument_line_shape = line_shape,
+        .instrument_line_shape_table = line_shape_table,
+    }};
     var model: ObservationModel = .{
         .instrument = .tropomi,
         .builtin_line_shape = .gaussian,
         .instrument_line_fwhm_nm = 0.38,
-        .instrument_line_shape = line_shape,
-        .instrument_line_shape_table = line_shape_table,
+        .operational_band_support = support[0..],
     };
-    defer model.deinitOwned(std.testing.allocator);
 
     const radiance = model.resolvedChannelControls(.radiance);
 
     try std.testing.expect(!radiance.response.instrument_line_shape.owns_memory);
     try std.testing.expect(!radiance.response.instrument_line_shape_table.owns_memory);
     try std.testing.expectEqual(
-        @intFromPtr(model.instrument_line_shape.offsets_nm.ptr),
+        @intFromPtr(support[0].instrument_line_shape.offsets_nm.ptr),
         @intFromPtr(radiance.response.instrument_line_shape.offsets_nm.ptr),
     );
     try std.testing.expectEqual(
-        @intFromPtr(model.instrument_line_shape_table.weights.ptr),
+        @intFromPtr(support[0].instrument_line_shape_table.weights.ptr),
         @intFromPtr(radiance.response.instrument_line_shape_table.weights.ptr),
     );
+
+    line_shape.deinitOwned(std.testing.allocator);
+    line_shape_table.deinitOwned(std.testing.allocator);
 }
 
 test "cross-section fit controls validate band-scoped settings" {
@@ -163,33 +188,4 @@ test "observation model rejects multi-band operational support until runtime bec
     };
 
     try std.testing.expectError(error.InvalidRequest, model.validate());
-}
-
-test "observation model merges partial explicit operational support with legacy replacements" {
-    const support = [_]OperationalBandSupport{.{
-        .id = "band-0",
-        .instrument_line_shape = .{
-            .sample_count = 3,
-            .offsets_nm = &.{ -0.1, 0.0, 0.1 },
-            .weights = &.{ 0.25, 0.5, 0.25 },
-        },
-    }};
-    var model: ObservationModel = .{
-        .instrument = .tropomi,
-        .high_resolution_step_nm = 0.08,
-        .high_resolution_half_span_nm = 0.32,
-        .operational_solar_spectrum = .{
-            .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
-            .irradiance = &.{ 2.7e14, 2.8e14, 2.75e14 },
-        },
-        .operational_band_support = &support,
-    };
-
-    const resolved = model.primaryOperationalBandSupport();
-    try std.testing.expectEqualStrings("band-0", resolved.id);
-    try std.testing.expectEqual(@as(f64, 0.08), resolved.high_resolution_step_nm);
-    try std.testing.expectEqual(@as(f64, 0.32), resolved.high_resolution_half_span_nm);
-    try std.testing.expectEqual(@as(u8, 3), resolved.instrument_line_shape.sample_count);
-    try std.testing.expect(resolved.operational_solar_spectrum.enabled());
-    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), resolved.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
 }

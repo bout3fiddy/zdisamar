@@ -133,10 +133,6 @@ pub fn maxWeightedPhaseCoefficientIndex(
     return max_index;
 }
 
-pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
-    return gasPhaseCoefficientsAtWavelength(760.0);
-}
-
 pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
     return gasPhaseCoefficientsFromRayleigh2(rayleighPhaseCoefficient2AtWavelength(wavelength_nm));
 }
@@ -242,16 +238,6 @@ pub fn combinePhaseCoefficientsWithRayleigh2(
     combined[0] = 1.0;
     combined[2] += gas_weight * rayleigh_coef2;
     return combined;
-}
-
-pub fn backscatterFraction(phase_coefficients: *const [phase_coefficient_count]f64) f64 {
-    return backscatterFractionFromAsymmetry(phase_coefficients[1]);
-}
-
-pub fn backscatterFractionFromAsymmetry(asymmetry_factor: f64) f64 {
-    const clamped_asymmetry = std.math.clamp(asymmetry_factor, -0.95, 0.95);
-    // math: backscatter fraction = clamp(0.5 * (1 - g), 0.02, 0.95).
-    return std.math.clamp(0.5 * (1.0 - clamped_asymmetry), 0.02, 0.95);
 }
 
 pub fn computeLayerDepolarization(

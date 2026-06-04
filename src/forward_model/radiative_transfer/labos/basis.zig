@@ -2,6 +2,11 @@ const types = @import("types.zig");
 const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");
 
+// basis.zig -------------------------------------------------------------------------------------------------|
+// Private LABOS basis facade. Re-exports fixed-size types, matrix kernels, and Plm/phase helpers used by     |
+// the sibling LABOS implementation files. No runtime work happens in this file.                              |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub const max_gauss = types.max_gauss;
 pub const max_extra = types.max_extra;
 pub const max_nmutot = types.max_nmutot;

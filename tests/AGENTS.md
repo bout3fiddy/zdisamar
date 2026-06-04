@@ -6,7 +6,7 @@
 - Keep fast correctness checks here; longer-running compatibility or benchmark assets belong in `validation/`.
 - Keep the harness layered: `test-fast` owns the fast presubmit unit/integration coverage, while heavier compatibility evidence stays under `validation/`.
 - Allocation-failure and `std.heap.DebugAllocator` coverage belong in the fast suites when they validate lifecycle or cleanup behavior.
-- `tests/perf/` is for bounded smoke coverage and benchmark harness code that feeds `zig build bench`; disposable reports belong under `out/ci/`.
+- Kernel and construction experiments live under `scaffolding/experiments/`; `tests/` contains asserting coverage.
 - `tests/validation/o2a_vendor_reflectance_assessment_test.zig` is an opt-in DISAMAR-reference assessment lane, not a default correctness gate.
 - Run it with `zig build test-validation-o2a-vendor` when you need to compare zdisamar's O2 A forward reflectance against the stored DISAMAR reference for `Config_O2_with_CIA.in`.
 - `tests/validation/o2a_vendor_line_list_smoke_test.zig` is a separate opt-in smoke lane for the DISAMAR O2 A line-list anchor/weak-line helper behavior. Run it with `zig build test-validation-o2a-vendor-line-list` when you need that coverage.

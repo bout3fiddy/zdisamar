@@ -47,55 +47,75 @@ fn addTestStep(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const link_libc_on_linux: ?bool = switch (target.result.os.tag) {
+        .linux => true,
+        else => null,
+    };
     const enable_ztracy = b.option(
         bool,
         "enable-ztracy",
         "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
-    // instrumentation: build gates
-    // captures: opt-in trace/telemetry wiring
-    // why: keep research sinks out of product builds.
+    const forward_instrumentation_root = "src/forward_model/instrumentation";
+    const forward_instrumentation_stub_root = forward_instrumentation_root ++ "/stubs";
+    const scaffolding_instrumentation_root = "scaffolding/instrumentation";
+    const scaffolding_trace_zig_root = scaffolding_instrumentation_root ++ "/trace/zig";
+    const scaffolding_telemetry_zig_root = scaffolding_instrumentation_root ++ "/telemetry/zig";
+    const scaffolding_perturbation_zig_root = scaffolding_instrumentation_root ++ "/perturbation/zig";
+    const scaffolding_experiments_root = "scaffolding/experiments";
+
+    // Default modules keep instrumentation disabled for product and tests.
     const ztracy_stub_module = b.createModule(.{
-        .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
+        .root_source_file = b.path(forward_instrumentation_stub_root ++ "/ztracy.zig"),
         .target = target,
         .optimize = optimize,
     });
+
     const calculation_telemetry_stub_module = b.createModule(.{
-        .root_source_file = b.path("src/forward_model/calculation_telemetry_stub.zig"),
+        .root_source_file = b.path(forward_instrumentation_stub_root ++ "/calculation_telemetry_sink.zig"),
         .target = target,
         .optimize = optimize,
     });
+
     const perturbation_sensitivity_stub_module = b.createModule(.{
-        .root_source_file = b.path("src/forward_model/perturbation_sensitivity_stub.zig"),
+        .root_source_file = b.path(forward_instrumentation_stub_root ++ "/perturbation_sensitivity_sink.zig"),
         .target = target,
         .optimize = optimize,
     });
+
     const calculation_telemetry_sink_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/calculation_telemetry_sink.zig"),
+        .root_source_file = b.path(scaffolding_telemetry_zig_root ++ "/calculation_telemetry_sink.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+
     const perturbation_sensitivity_sink_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/perturbation_sensitivity_sink.zig"),
+        .root_source_file = b.path(scaffolding_perturbation_zig_root ++ "/perturbation_sensitivity_sink.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const trace_ztracy_dependency = if (enable_ztracy)
-        b.dependency("ztracy", .{
+
+    const trace_ztracy_dependency = select_trace_dependency: {
+        if (!enable_ztracy) break :select_trace_dependency null;
+
+        break :select_trace_dependency b.dependency("ztracy", .{
             .target = target,
             .optimize = optimize,
             .enable_ztracy = true,
             .enable_fibers = false,
             .on_demand = false,
             .callstack = 8,
-        })
-    else
-        null;
-    const trace_ztracy_module = if (trace_ztracy_dependency) |dependency|
-        dependency.module("root")
-    else
-        ztracy_stub_module;
+        });
+    };
+
+    const trace_ztracy_module = select_trace_module: {
+        if (trace_ztracy_dependency) |dependency| {
+            break :select_trace_module dependency.module("root");
+        }
+
+        break :select_trace_module ztracy_stub_module;
+    };
 
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
@@ -104,9 +124,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const build_options_module = build_options.createModule();
 
-    // instrumentation: product boundary
-    // captures: disabled facades only
-    // why: compile tracing, telemetry, and perturbation away unless a research target opts in.
+    // Research targets opt into tracing or sink modules with their own build options.
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
@@ -132,7 +150,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = if (target.result.os.tag == .linux) true else null,
+        .link_libc = link_libc_on_linux,
         .imports = &.{
             .{
                 .name = "build_options",
@@ -162,7 +180,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/api/c.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = if (target.result.os.tag == .linux) true else null,
+        .link_libc = link_libc_on_linux,
         .imports = &.{
             .{
                 .name = "zdisamar",
@@ -325,7 +343,7 @@ pub fn build(b: *std.Build) void {
     );
 
     const labos_kernel_bench_module = b.createModule(.{
-        .root_source_file = b.path("tests/perf/labos_kernel_bench.zig"),
+        .root_source_file = b.path(scaffolding_experiments_root ++ "/kernels/labos_kernel_bench.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -388,11 +406,12 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
+
     // instrumentation: ztracy timeline
     // captures: nested forward/OE phase zones
     // why: inspect timing shape without changing normal builds.
     const labos_bottleneck_trace_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/labos_bottleneck_trace_cli.zig"),
+        .root_source_file = b.path(scaffolding_trace_zig_root ++ "/labos_bottleneck_trace_cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -432,7 +451,7 @@ pub fn build(b: *std.Build) void {
     labos_bottleneck_trace_bin_step.dependOn(&labos_bottleneck_trace_install.step);
 
     const optimal_estimation_trace_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/optimal_estimation_trace_cli.zig"),
+        .root_source_file = b.path(scaffolding_trace_zig_root ++ "/optimal_estimation_trace_cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -490,7 +509,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const calculation_telemetry_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/calculation_telemetry_cli.zig"),
+        .root_source_file = b.path(scaffolding_telemetry_zig_root ++ "/calculation_telemetry_cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -518,7 +537,7 @@ pub fn build(b: *std.Build) void {
     calculation_telemetry_step.dependOn(&run_calculation_telemetry.step);
 
     const fastmode_diagnosis_telemetry_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/fastmode_diagnosis_telemetry_cli.zig"),
+        .root_source_file = b.path(scaffolding_telemetry_zig_root ++ "/fastmode_diagnosis_telemetry_cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -572,7 +591,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const perturbation_sensitivity_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/performance/perturbation_sensitivity_cli.zig"),
+        .root_source_file = b.path(scaffolding_perturbation_zig_root ++ "/perturbation_sensitivity_cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -600,7 +619,7 @@ pub fn build(b: *std.Build) void {
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,
-        .paths = &.{ "build.zig", "src", "tests", "scripts" },
+        .paths = &.{ "build.zig", "src", "tests", "scripts", "scaffolding" },
     });
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);

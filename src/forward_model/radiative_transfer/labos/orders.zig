@@ -3,53 +3,127 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Perturbation = @import("../../perturbation_sensitivity.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Perturbation = @import("../../instrumentation/sensitivity.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 
-// instrumentation: LABOS orders
-// captures: scattering-order zones and convergence decisions
-// why: study how early multiple scattering can stop without moving reflectance.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: ud, ud_sum_local carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+// orders.zig -------------------------------------------------------------------------------------------------|
+// LABOS scattering-order transport. RT_fc plus attenuation becomes U/D fields for reflectance.                |
+//                                                                                                             |
+// source                                                                                                      |
+//   zdisamar follows LabosModule.f90 ordersScat and transportToOtherLevels                                    |
+//   successive scattering orders are built locally, transported, accumulated, then tested                     |
+//   orders are between layers, not volume elements; the reflecting surface is handled as a layer              |
+//                                                                                                             |
+// used by                                                                                                     |
+//   execute.zig calls these entry points inside one Fourier term after attenuation and RT_fc are ready        |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   ordersScatInto / ordersScatIntoWithActive                                                                 |
+//     -> ordersScatInternal                                                                                   |
+//     -> initial local source fill                                                                            |
+//     -> transportToOtherLevels                                                                               |
+//     -> repeat local-down/local-up/transport/accumulate until convergence                                    |
+//                                                                                                             |
+//   ordersScatIntoWithLocalSum / ordersScatIntoWithActiveLocalSum                                             |
+//     -> same core path, also fills ud_sum_local for integrated-source Jacobians                              |
+//                                                                                                             |
+//   ordersScatTransportInto                                                                                   |
+//     -> same core path, returns only the transported order field                                             |
+//                                                                                                             |
+//   ordersScatTangent                                                                                         |
+//     -> non-integrated Jacobian path with base and derivative U/D fields                                     |
+//                                                                                                             |
+// reference names                                                                                             |
+//   E              : direct top-to-level attenuation                                                          |
+//   U              : upward diffuse light                                                                     |
+//   D              : downward diffuse light                                                                   |
+//   UDLocal_fc     : current local source before transport                                                    |
+//   UDorde_fc      : current order after transport                                                            |
+//   UD_fc          : summed retained orders                                                                   |
+//   UDsumLocal_fc  : summed local source terms for integrated-source Jacobians                                |
+//                                                                                                             |
+// convergence                                                                                                 |
+//   stop when max_outgoing_upward < threshold_conv                                                            |
+//   the reference notes a geometric-tail approximation for remaining orders at the order cap                  |
+//   telemetry name: orders_convergence                                                                        |
+// ------------------------------------------------------------------------------------------------------------|
+
+// OrdersResult -----------------------------------------------------------------------------------------------|
+// Owning result returned by allocation-based entry points.                                                    |
+// ud is the accumulated transported field. ud_sum_local feeds integrated-source aerosol weighting.            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] allocator    : Allocator                                                                           |
+// [16..31] ud           : []UDField                                                                           |
+// [32..47] ud_sum_local : []UDLocal                                                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// out-of-line: ud and ud_sum_local carry referenced storage                                                   |
+// footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above                    |
 pub const OrdersResult = struct {
     allocator: Allocator,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
 
     pub fn deinit(self: *OrdersResult) void {
+        // OrdersResult.deinit --------------------------------------------------------------------------------|
+        // Free the result arrays owned by ordersScat and ordersScatTangent.                                   |
+        // ----------------------------------------------------------------------------------------------------|
+
         self.allocator.free(self.ud);
         self.allocator.free(self.ud_sum_local);
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: ud, ud_sum_local carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// OrdersResultView -------------------------------------------------------------------------------------------|
+// Borrowed result returned by workspace-backed entry points.                                                  |
+// Caller owns the workspace memory; this view must not outlive that workspace.                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] ud           : []const UDField                                                                     |
+// [16..31] ud_sum_local : []const UDLocal                                                                     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// out-of-line: ud and ud_sum_local carry referenced storage                                                   |
+// footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above                    |
 pub const OrdersResultView = struct {
     ud: []const basis.UDField,
     ud_sum_local: []const basis.UDLocal,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 96 B across 6 fields; largest: allocator=16 B, ud=16 B, ud_sum_local=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: ud, ud_sum_local, ud_orde, ud_local, rt_active carry references/descriptors; referenced storage is not included in size
-//   storage shape: ud carries direct E/U/D fields; ud_orde carries only transported U/D current-order terms; ud_sum_local is allocated only for routes that return local-source sums
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
+// OrdersWorkspace --------------------------------------------------------------------------------------------|
+// Reusable workspace memory for repeated scattering-order solves.                                             |
+// Reuse avoids per-Fourier allocation and keeps the hot loop on matrix/vector work.                           |
+//                                                                                                             |
+// ud and ud_sum_local are returned through OrdersResultView                                                   |
+// ud_orde and ud_local are scratch arrays for the current order                                               |
+// rt_active marks layers whose R/T matrices can affect this Fourier term                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] allocator    : Allocator                                                                           |
+// [16..31] ud           : []UDField                                                                           |
+// [32..47] ud_sum_local : []UDLocal                                                                           |
+// [48..63] ud_orde      : []UDLocal                                                                           |
+// [64..79] ud_local     : []UDLocal                                                                           |
+// [80..95] rt_active    : []bool                                                                              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// out-of-line: all slice fields carry referenced storage                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above                    |
 pub const OrdersWorkspace = struct {
     allocator: Allocator,
     ud: []basis.UDField,
@@ -62,14 +136,24 @@ pub const OrdersWorkspace = struct {
         allocator: Allocator,
         nlevel: usize,
     ) !OrdersWorkspace {
-        return initForRoute(allocator, nlevel, true);
+        // OrdersWorkspace.init -------------------------------------------------------------------------------|
+        // Allocate the full workspace, including local-source sum storage.                                    |
+        // ----------------------------------------------------------------------------------------------------|
+
+        return initWithLocalSumStorage(allocator, nlevel, true);
     }
 
-    pub fn initForRoute(
+    pub fn initWithLocalSumStorage(
         allocator: Allocator,
         nlevel: usize,
         needs_local_sum: bool,
     ) !OrdersWorkspace {
+        // OrdersWorkspace.initWithLocalSumStorage ------------------------------------------------------------|
+        // Allocate only the storage needed by the selected RTM config.                                        |
+        //                                                                                                     |
+        // Configs that never return local-source sums keep ud_sum_local empty.                                |
+        // ----------------------------------------------------------------------------------------------------|
+
         const ud = try allocator.alloc(basis.UDField, nlevel);
         errdefer allocator.free(ud);
         const ud_sum_local = try allocator.alloc(basis.UDLocal, if (needs_local_sum) nlevel else 0);
@@ -90,6 +174,10 @@ pub const OrdersWorkspace = struct {
     }
 
     pub fn ensureLocalSumCapacity(self: *OrdersWorkspace, nlevel: usize) !void {
+        // OrdersWorkspace.ensureLocalSumCapacity -------------------------------------------------------------|
+        // Lazily add local-source sum storage when a later rtm_config needs it.                               |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.ud_sum_local.len >= nlevel) return;
         const ud_sum_local = try self.allocator.alloc(basis.UDLocal, nlevel);
         self.allocator.free(self.ud_sum_local);
@@ -97,6 +185,10 @@ pub const OrdersWorkspace = struct {
     }
 
     pub fn deinit(self: *OrdersWorkspace) void {
+        // OrdersWorkspace.deinit -----------------------------------------------------------------------------|
+        // Free all workspace-owned arrays.                                                                    |
+        // ----------------------------------------------------------------------------------------------------|
+
         self.allocator.free(self.ud);
         self.allocator.free(self.ud_sum_local);
         self.allocator.free(self.ud_orde);
@@ -106,12 +198,6 @@ pub const OrdersWorkspace = struct {
     }
 };
 
-// hot path:
-//   when: inside multiple-scattering order propagation across levels
-//   work: transports up/down source terms between optical levels
-//   data: attenuation cache, level-indexed U/D source arrays, Gauss stream weights
-//   follow: dynamic, runtime12, and fixed12 transport variants selected by route shape
-//   math: U_l = U_local_l + T(l-1->l) U_{l-1}; D_l = D_local_l + T(l+1->l) D_{l+1}.
 fn transportToOtherLevels(
     start_level: usize,
     end_level: usize,
@@ -120,6 +206,26 @@ fn transportToOtherLevels(
     ud_local: []const basis.UDLocal,
     ud_orde: []basis.UDLocal,
 ) void {
+    // transportToOtherLevels ---------------------------------------------------------------------------------|
+    // Move the current local source terms through the level grid.                                             |
+    //                                                                                                         |
+    // Upward:   U_level = U_local_level + atten(mu, level - 1, level) * U_(level - 1)                         |
+    // Downward: D_level = D_local_level + atten(mu, level + 1, level) * D_(level + 1)                         |
+    //                                                                                                         |
+    // Same recurrence as the reference `transportToOtherLevels`.                                              |
+    //                                                                                                         |
+    // Dispatches to fixed 12-stream helpers when the geometry has the common                                  |
+    // max-stream shape.                                                                                       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : inside multiple-scattering order propagation across levels                                 |
+    //   does     : transports up/down source terms between optical levels                                     |
+    //   reads    : attenuation cache, level-indexed U/D source arrays, stream directions                      |
+    //   feeds    : dynamic, runtime12, and fixed12 transport variants selected by rtm_config shape            |
+    // The equations above are split by direction so the transport loop can walk                               |
+    // upward and downward without rebuilding attenuation products.                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (nmutot == basis.max_nmutot) {
         if (comptime isDynamicAttenPointer(@TypeOf(atten))) {
             transportToOtherLevelsDynamic12(start_level, end_level, atten, ud_local, ud_orde);
@@ -137,13 +243,17 @@ fn transportToOtherLevels(
     for (start_level + 1..end_level + 1) |ilevel| {
         const local_u0 = ud_local[ilevel].U.col[0].data;
         const local_u1 = ud_local[ilevel].U.col[1].data;
+
         const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
         const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+
         const out_u0 = &ud_orde[ilevel].U.col[0].data;
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
+
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
-            // math: upward transported current order adds attenuated previous-level upward source.
+
+            // upward transported current order adds attenuated previous-level upward source.
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
             out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
         }
@@ -153,15 +263,20 @@ fn transportToOtherLevels(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
+
         const local_d0 = ud_local[ilevel].D.col[0].data;
         const local_d1 = ud_local[ilevel].D.col[1].data;
+
         const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
         const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+
         const out_d0 = &ud_orde[ilevel].D.col[0].data;
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
+
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
-            // math: downward transported current order adds attenuated next-level downward source.
+
+            // downward transported current order adds attenuated next-level downward source.
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
         }
@@ -169,6 +284,10 @@ fn transportToOtherLevels(
 }
 
 fn isDynamicAttenPointer(comptime T: type) bool {
+    // isDynamicAttenPointer ----------------------------------------------------------------------------------|
+    // Compile-time check for the full attenuation table representation.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     return switch (@typeInfo(T)) {
         .pointer => |ptr| ptr.child == attenuation_mod.DynamicAttenArray,
         else => false,
@@ -176,13 +295,26 @@ fn isDynamicAttenPointer(comptime T: type) bool {
 }
 
 fn isRuntimeAttenPointer(comptime T: type) bool {
+    // isRuntimeAttenPointer ----------------------------------------------------------------------------------|
+    // Compile-time check for the compact runtime attenuation representation.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     return switch (@typeInfo(T)) {
         .pointer => |ptr| ptr.child == attenuation_mod.RuntimeAttenArray,
         else => false,
     };
 }
 
-fn dynamicAttenAt(atten: *const attenuation_mod.DynamicAttenArray, stream_stride: usize, imu: usize, level_offset: usize) f64 {
+fn dynamicAttenAt(
+    atten: *const attenuation_mod.DynamicAttenArray,
+    stream_stride: usize,
+    imu: usize,
+    level_offset: usize,
+) f64 {
+    // dynamicAttenAt -----------------------------------------------------------------------------------------|
+    // Dynamic attenuation is laid out as [direction, from_level, to_level].                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
     return atten.data[imu * stream_stride + level_offset];
 }
 
@@ -193,18 +325,28 @@ fn transportToOtherLevelsDynamic12(
     ud_local: []const basis.UDLocal,
     ud_orde: []basis.UDLocal,
 ) void {
+    // transportToOtherLevelsDynamic12 ------------------------------------------------------------------------|
+    // Fixed 12-direction transport for the full dynamic attenuation table.                                    |
+    //                                                                                                         |
+    // Uses direct table indexing for the common 12-direction dynamic rtm_config.                              |
+    // --------------------------------------------------------------------------------------------------------|
+
     const nlevel = atten.nlevel;
     const stream_stride = nlevel * nlevel;
 
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         const level_offset = (ilevel - 1) * nlevel + ilevel;
+
         const local_u0 = ud_local[ilevel].U.col[0].data;
         const local_u1 = ud_local[ilevel].U.col[1].data;
+
         const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
         const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+
         const out_u0 = &ud_orde[ilevel].U.col[0].data;
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = dynamicAttenAt(atten, stream_stride, imu, level_offset);
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
@@ -216,13 +358,18 @@ fn transportToOtherLevelsDynamic12(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
+
         const level_offset = (ilevel + 1) * nlevel + ilevel;
+
         const local_d0 = ud_local[ilevel].D.col[0].data;
         const local_d1 = ud_local[ilevel].D.col[1].data;
+
         const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
         const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+
         const out_d0 = &ud_orde[ilevel].D.col[0].data;
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = dynamicAttenAt(atten, stream_stride, imu, level_offset);
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
@@ -238,14 +385,23 @@ fn transportToOtherLevelsRuntime12(
     ud_local: []const basis.UDLocal,
     ud_orde: []basis.UDLocal,
 ) void {
+    // transportToOtherLevelsRuntime12 ------------------------------------------------------------------------|
+    // Fixed 12-direction transport for compact runtime attenuation.                                           |
+    //                                                                                                         |
+    // Runtime transport only needs adjacent layer transmittance here.                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         const local_u0 = ud_local[ilevel].U.col[0].data;
         const local_u1 = ud_local[ilevel].U.col[1].data;
+
         const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
         const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+
         const out_u0 = &ud_orde[ilevel].U.col[0].data;
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = atten.adjacent(imu, ilevel - 1);
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
@@ -257,12 +413,16 @@ fn transportToOtherLevelsRuntime12(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
+
         const local_d0 = ud_local[ilevel].D.col[0].data;
         const local_d1 = ud_local[ilevel].D.col[1].data;
+
         const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
         const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+
         const out_d0 = &ud_orde[ilevel].D.col[0].data;
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = atten.adjacent(imu, ilevel);
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
@@ -278,14 +438,21 @@ fn transportToOtherLevels12(
     ud_local: []const basis.UDLocal,
     ud_orde: []basis.UDLocal,
 ) void {
+    // transportToOtherLevels12 -------------------------------------------------------------------------------|
+    // Fixed 12-direction transport for generic attenuation objects.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         const local_u0 = ud_local[ilevel].U.col[0].data;
         const local_u1 = ud_local[ilevel].U.col[1].data;
+
         const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
         const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+
         const out_u0 = &ud_orde[ilevel].U.col[0].data;
         const out_u1 = &ud_orde[ilevel].U.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
             out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
@@ -297,12 +464,16 @@ fn transportToOtherLevels12(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
+
         const local_d0 = ud_local[ilevel].D.col[0].data;
         const local_d1 = ud_local[ilevel].D.col[1].data;
+
         const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
         const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+
         const out_d0 = &ud_orde[ilevel].D.col[0].data;
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
+
         inline for (0..basis.max_nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
@@ -322,20 +493,35 @@ fn transportToOtherLevelsTangent(
     ud_orde: []const basis.UDLocal,
     ud_orde_tangent: []basis.UDLocal,
 ) void {
+    // transportToOtherLevelsTangent --------------------------------------------------------------------------|
+    // Transport derivative U/D fields through the same level grid as the base                                 |
+    // fields.                                                                                                 |
+    //                                                                                                         |
+    // d(T * U) = dT * U + T * dU                                                                              |
+    //                                                                                                         |
+    // ud_orde is the already-transported base current order.                                                  |
+    // ud_orde_tangent receives the transported derivative current order.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
     ud_orde_tangent[start_level].U = ud_local_tangent[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         const local_du0 = ud_local_tangent[ilevel].U.col[0].data;
         const local_du1 = ud_local_tangent[ilevel].U.col[1].data;
+
         const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
         const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+
         const prev_du0 = ud_orde_tangent[ilevel - 1].U.col[0].data;
         const prev_du1 = ud_orde_tangent[ilevel - 1].U.col[1].data;
+
         const out_u0 = &ud_orde_tangent[ilevel].U.col[0].data;
         const out_u1 = &ud_orde_tangent[ilevel].U.col[1].data;
+
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel - 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel - 1, ilevel);
-            // math: dU_l = dU_local_l + dT*U_{l-1} + T*dU_{l-1}.
+
+            // dU_level = dU_local_level + dT * U_(level - 1) + T * dU_(level - 1).
             out_u0[imu] = local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
             out_u1[imu] = local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
         }
@@ -345,18 +531,24 @@ fn transportToOtherLevelsTangent(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
+
         const local_dd0 = ud_local_tangent[ilevel].D.col[0].data;
         const local_dd1 = ud_local_tangent[ilevel].D.col[1].data;
+
         const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
         const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+
         const prev_dd0 = ud_orde_tangent[ilevel + 1].D.col[0].data;
         const prev_dd1 = ud_orde_tangent[ilevel + 1].D.col[1].data;
+
         const out_d0 = &ud_orde_tangent[ilevel].D.col[0].data;
         const out_d1 = &ud_orde_tangent[ilevel].D.col[1].data;
+
         for (0..nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             const datt = atten_tangent.get(imu, ilevel + 1, ilevel);
-            // math: dD_l = dD_local_l + dT*D_{l+1} + T*dD_{l+1}.
+
+            // dD_level = dD_local_level + dT * D_(level + 1) + T * dD_(level + 1).
             out_d0[imu] = local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
             out_d1[imu] = local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
         }
@@ -364,6 +556,13 @@ fn transportToOtherLevelsTangent(
 }
 
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
+    // dotGauss -----------------------------------------------------------------------------------------------|
+    // Dot one RT matrix row with one Gauss-stream vector.                                                     |
+    //                                                                                                         |
+    // The 10-Gauss rtm_config is manually unrolled because this reduction sits inside                         |
+    // the scattering-order inner loop.                                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     const row_offset = row * mat.n;
     if (n_gauss == 10) {
         const data = mat.data[row_offset..];
@@ -382,29 +581,31 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     }
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
-        // math: dotGauss(row,v) = sum_k mat[row,k] * v_k over Gaussian streams.
+
+        // dotGauss(row, v) = sum over k of mat[row, k] * v[k].
         s += mat.data[row_offset + k] * vec_col.data[k];
     }
     return s;
 }
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: col0=8 B, col1=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// DotPair ----------------------------------------------------------------------------------------------------|
+// Two related Gauss dot products returned from one pass over the same row.                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] col0 : f64                                                                                          |
+// [8..15] col1 : f64                                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 const DotPair = struct {
     col0: f64,
     col1: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: inside scattering-order accumulation reductions
-//   work: reduces paired Gauss stream vectors with quadrature weights
-//   data: stream vectors, Gaussian weights, n_gauss loop count
-//   follow: dotGaussPair10 and accumulation callers in ordersScatInternal
-//   math: returns two sums s_c = sum_k mat[row,k] * vec_c[k] for c in {0,1}.
 inline fn dotGaussPair(
     mat: *const basis.Mat,
     row: usize,
@@ -412,6 +613,20 @@ inline fn dotGaussPair(
     vec_col1: *const basis.Vec,
     n_gauss: usize,
 ) DotPair {
+    // dotGaussPair -------------------------------------------------------------------------------------------|
+    // Dot one RT matrix row with both polarization/source columns.                                            |
+    //                                                                                                         |
+    // The two columns use the same matrix row, so pairing them cuts repeated row                              |
+    // reads in the order loop.                                                                                |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : inside scattering-order accumulation reductions                                            |
+    //   does     : reduces two Gauss stream vectors against the same RT matrix row                            |
+    //   reads    : one matrix row, two stream vectors, n_gauss loop count                                     |
+    //   feeds    : dotGaussPair10 and accumulation callers in ordersScatInternal                              |
+    // returns two sums: sum over k of mat[row, k] * vec0[k], and the same for vec1.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     const row_offset = row * mat.n;
     if (n_gauss == 10) {
         const data = mat.data[row_offset..];
@@ -429,16 +644,28 @@ inline fn dotGaussPair(
     return .{ .col0 = s0, .col1 = s1 };
 }
 
-// hot path:
-//   when: fixed 10-stream route evaluates scattering-order reductions
-//   work: reduces paired Gauss stream vectors with unrolled fixed-stream access
-//   data: 10-stream vectors and quadrature weights
-//   follow: fixed-route order accumulation and vector element order
 inline fn dotGaussPair10(
     data: []const f64,
     vec0: *const [basis.max_nmutot]f64,
     vec1: *const [basis.max_nmutot]f64,
 ) DotPair {
+    // dotGaussPair10 -----------------------------------------------------------------------------------------|
+    // Fixed 10-Gauss paired dot product using small vectors.                                                  |
+    //                                                                                                         |
+    // Keeps the common 10-Gauss reduction branchless and short.                                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : fixed 10-stream rtm_config evaluates scattering-order reductions                           |
+    //   does     : reduces paired Gauss stream vectors with unrolled fixed-stream access                      |
+    //   reads    : one 10-value matrix row and two 10-stream vectors                                          |
+    //   feeds    : fixed-rtm_config order accumulation and vector element order                               |
+    //                                                                                                         |
+    // ARM64 SIMD codegen proof                                                                                |
+    //   retained harness codegen_dot_gauss_pair mirrors this 10-Gauss paired reduction                        |
+    //   current ReleaseFast harness: 20 floating-point arithmetic instructions, zero divides, 4.518 ns/call   |
+    //   Vec2 reduces two Gauss directions at a time; @reduce(.Add, ...) returns scalar columns                |
+    // --------------------------------------------------------------------------------------------------------|
+
     const Vec2 = @Vector(2, f64);
     var sum0: Vec2 = @as(Vec2, .{ data[0], data[1] }) * @as(Vec2, .{ vec0[0], vec0[1] });
     var sum1: Vec2 = @as(Vec2, .{ data[0], data[1] }) * @as(Vec2, .{ vec1[0], vec1[1] });
@@ -461,6 +688,10 @@ inline fn dotGaussPair10(
 }
 
 fn rtLayerHasSignal(rt: *const basis.LayerRT, nmutot: usize) bool {
+    // rtLayerHasSignal ---------------------------------------------------------------------------------------|
+    // Check whether a layer RT matrix can contribute to the order update.                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     const count = nmutot * nmutot;
     for (rt.R.data[0..count]) |value| {
         if (value != 0.0) return true;
@@ -472,6 +703,10 @@ fn rtLayerHasSignal(rt: *const basis.LayerRT, nmutot: usize) bool {
 }
 
 fn refreshActiveLayerMask(rt: []const basis.LayerRT, rt_active: []bool, nmutot: usize) void {
+    // refreshActiveLayerMask ---------------------------------------------------------------------------------|
+    // Rebuild the active-layer mask from the layer RT matrices.                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (rt, rt_active) |*layer_rt, *active| {
         active.* = rtLayerHasSignal(layer_rt, nmutot);
     }
@@ -483,6 +718,10 @@ fn copyTransportedOrderIntoOutput(
     start_level: usize,
     end_level: usize,
 ) void {
+    // copyTransportedOrderIntoOutput -------------------------------------------------------------------------|
+    // Copy the transported current order into the accumulated output shape.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (start_level..end_level + 1) |ilevel| {
         ud[ilevel].U = ud_orde[ilevel].U;
         ud[ilevel].D = ud_orde[ilevel].D;
@@ -495,6 +734,12 @@ fn maxOutgoingUpward(
     n_gauss: usize,
     nmutot: usize,
 ) f64 {
+    // maxOutgoingUpward --------------------------------------------------------------------------------------|
+    // Find the largest outgoing upward source at the top boundary.                                            |
+    //                                                                                                         |
+    // This is the convergence signal for stopping the scattering-order loop.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     var max_value: f64 = 0.0;
     for (0..2) |imu0| {
         const end_u = ud_orde[end_level].U.col[imu0].data;
@@ -506,11 +751,6 @@ fn maxOutgoingUpward(
     return max_value;
 }
 
-// hot path:
-//   when: each LABOS scattering-order solve resets per-level order buffers
-//   work: zeroes U/D fields, local sums, current-order fields, and active flags
-//   data: UD field arrays, local sum arrays, active-layer flags, stream count
-//   follow: ordersScatInternal buffer layout and workspace reuse
 fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -519,6 +759,19 @@ fn initializeOrdersBuffers(
     ud_local: []basis.UDLocal,
     nmutot: usize,
 ) void {
+    // initializeOrdersBuffers --------------------------------------------------------------------------------|
+    // Reset all per-level fields before one order solve.                                                      |
+    //                                                                                                         |
+    // ud is left undefined because each rtm_config writes the fields it returns.                              |
+    // ud_local starts as zero because each order builds local source terms into it.                           |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : each LABOS scattering-order solve resets per-level order buffers                           |
+    //   does     : zeroes U/D fields, local sums, current-order fields, and active flags                      |
+    //   reads    : UD field arrays, local sum arrays, active-layer flags, stream count                        |
+    //   feeds    : ordersScatInternal buffer layout and workspace reuse                                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (0..ud.len) |index| {
         const field = &ud[index];
         const orde = &ud_orde[index];
@@ -538,12 +791,6 @@ fn initializeOrdersBuffers(
     }
 }
 
-// hot path:
-//   when: each scattering order contributes local source terms to accumulated order fields
-//   work: adds local U/D fields into per-level sums and current-order buffers
-//   data: ud, ud_sum_local, ud_local arrays, level range, stream count
-//   follow: fixed 12-stream accumulate variant and reflectance integration inputs
-//   math: accumulated field = sum over retained scattering orders; local sum tracks only untransported source terms.
 fn accumulateOrderContribution(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -554,6 +801,21 @@ fn accumulateOrderContribution(
     end_level: usize,
     nmutot: usize,
 ) void {
+    // accumulateOrderContribution ----------------------------------------------------------------------------|
+    // Add the retained current order into the accumulated output.                                             |
+    //                                                                                                         |
+    // ud receives transported U/D.                                                                            |
+    // ud_sum_local receives untransported local U/D only when the caller needs it.                            |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : each scattering order contributes local source terms to accumulated order fields           |
+    //   does     : adds local U/D fields into per-level sums and current-order buffers                        |
+    //   reads    : ud, ud_sum_local, ud_local arrays, level range, stream count                               |
+    //   feeds    : fixed 12-stream accumulate variant and reflectance integration inputs                      |
+    // accumulated field = sum over retained scattering orders.                                                |
+    // local sum tracks only untransported source terms.                                                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (nmutot == basis.max_nmutot) {
         accumulateOrderContribution12(
             track_sum_local,
@@ -603,6 +865,10 @@ fn accumulateOrderContribution12(
     start_level: usize,
     end_level: usize,
 ) void {
+    // accumulateOrderContribution12 --------------------------------------------------------------------------|
+    // Fixed 12-direction version of accumulateOrderContribution.                                              |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
             const orde_u = ud_orde[ilevel].U.col[imu0].data;
@@ -630,12 +896,6 @@ fn accumulateOrderContribution12(
     }
 }
 
-// hot path:
-//   when: for each LABOS Fourier term after RT layers and attenuation are ready
-//   work: initializes sources, propagates scattering orders, transports levels, and accumulates reflectance terms
-//   data: order U/D buffers, RT matrices, attenuation arrays, Gauss weights, contribution arrays
-//   follow: labos.orders trace zones and transportToOtherLevels variants
-//   math: scattering orders iterate local sources from R/T applied to previous transported U/D, then transport and accumulate until convergence.
 fn ordersScatInternal(
     comptime track_sum_local: bool,
     comptime rt_active_ready: bool,
@@ -652,6 +912,50 @@ fn ordersScatInternal(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
+    // ordersScatInternal -------------------------------------------------------------------------------------|
+    // Core scattering-order solver.                                                                           |
+    //                                                                                                         |
+    // zdisamar follows `LabosModule.f90` `ordersScat`:                                                        |
+    // copy attenuation into E, build the first local U/D source, transport it,                                |
+    // then build each later local source from the previous transported order.                                 |
+    //                                                                                                         |
+    // 1. Build direct field E and first local U/D sources.                                                    |
+    // 2. Transport that first order across levels.                                                            |
+    // 3. If multiple scattering is enabled, keep building the next local order                                |
+    //    from the previous transported order.                                                                 |
+    // 4. Stop when the outgoing upward field is below threshold or the order cap                              |
+    //    is hit.                                                                                              |
+    //                                                                                                         |
+    // rt_active can be either built here or supplied by a caller that already                                 |
+    // knows which layer RT matrices are nonzero.                                                              |
+    // track_sum_local controls whether UDsumLocal_fc-style local sources are                                  |
+    // accumulated for integrated-source Jacobian weighting.                                                   |
+    //                                                                                                         |
+    // One later scattering order uses the same local-source/transport split as the reference:                 |
+    //                                                                                                         |
+    //   1. local source at each layer                                                                         |
+    //        D_local = Rst * U_previous + T   * D_previous                                                    |
+    //        U_local = R   * D_previous + Tst * U_previous                                                    |
+    //                                                                                                         |
+    //   2. transport that local source to all levels with attenuation                                         |
+    //        U_level = U_local_level + atten(previous -> level) * U_previous_level                            |
+    //        D_level = D_local_level + atten(next     -> level) * D_next_level                                |
+    //                                                                                                         |
+    //   3. add the transported order into UD_fc and, when requested, add local source into UDsumLocal_fc      |
+    //                                                                                                         |
+    // This function does not allocate. Public wrappers decide whether storage is                              |
+    // workspace-backed or owned by the returned result.                                                       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : for each LABOS Fourier term after RT layers and attenuation are ready                      |
+    //   does     : initializes sources, propagates scattering orders, transports levels,                      |
+    //              and accumulates retained order fields                                                      |
+    //   reads    : order U/D arrays, RT matrices, attenuation arrays, active-layer mask                       |
+    //   feeds    : labos.orders trace zones and transportToOtherLevels variants                               |
+    // scattering orders iterate local sources from R/T applied to previous transported U/D,                   |
+    // then transport and accumulate until convergence.                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
     const nlevel = end_level + 1;
@@ -667,26 +971,31 @@ fn ordersScatInternal(
     const ud_local_view = ud_local[0..nlevel];
     const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
-    // instrumentation: trace counter
-    // captures: LABOS scattering-order solver calls
-    // why: count the transport solves hidden under each Fourier term.
+
+    // instrumentation: trace counter: order solve ------------------------------------------------------------|
+    // captures: LABOS scattering-order solver calls                                                           |
+    // why: count the transport solves hidden under each Fourier term.                                         |
     Trace.plotU("orders_calls", 1);
+    // end instrumentation: trace counter: order solve --------------------------------------------------------|
 
     if (!rt_active_ready) {
         refreshActiveLayerMask(rt[0..nlevel], rt_active_view, nmutot);
     }
 
     {
-        // instrumentation: trace zone
-        // captures: initial local source construction wall time
-        // why: separate first-order source setup from later inter-level transport.
+
+        // instrumentation: trace zone: initial sources -------------------------------------------------------|
+        // captures: initial local source construction wall time                                               |
+        // why: separate first-order source setup from later inter-level transport.                            |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_sources");
         defer zone.end();
         for (start_level..end_level + 1) |ilevel| {
             const e_data = &ud_view[ilevel].E.data;
+
             for (0..nmutot) |imu| {
                 const att = atten.get(imu, end_level, ilevel);
-                // math: E_l(mu) = T_mu(top_level -> l), the direct attenuation to each level.
+
+                // E_level(mu) = T_mu(top_level -> level), the direct attenuation to each level.
                 e_data[imu] = att;
             }
         }
@@ -696,13 +1005,18 @@ fn ordersScatInternal(
                 if (!rt_active_view[ilevel + 1]) {
                     continue;
                 }
+
                 const col_idx = n_gauss + imu0;
                 const att = atten.get(col_idx, end_level, ilevel + 1);
+
                 const local_d = &ud_local_view[ilevel].D.col[imu0].data;
                 const rt_t = &rt[ilevel + 1].T;
                 var rt_idx = col_idx;
+
                 for (0..nmutot) |imu| {
-                    // math: initial local downward source D_l = T_layer(:,sun/view) * attenuation_to_layer.
+
+                    // initial local downward source uses the solar/view column of T_layer
+                    // multiplied by attenuation down to this layer.
                     local_d[imu] = rt_t.data[rt_idx] * att;
                     rt_idx += rt_t.n;
                 }
@@ -714,13 +1028,18 @@ fn ordersScatInternal(
                 if (!rt_active_view[ilevel]) {
                     continue;
                 }
+
                 const col_idx = n_gauss + imu0;
                 const att = atten.get(col_idx, end_level, ilevel);
+
                 const local_u = &ud_local_view[ilevel].U.col[imu0].data;
                 const rt_r = &rt[ilevel].R;
                 var rt_idx = col_idx;
+
                 for (0..nmutot) |imu| {
-                    // math: initial local upward source U_l = R_layer(:,sun/view) * attenuation_to_level.
+
+                    // initial local upward source uses the solar/view column of R_layer
+                    // multiplied by attenuation down to this level.
                     local_u[imu] = rt_r.data[rt_idx] * att;
                     rt_idx += rt_r.n;
                 }
@@ -733,39 +1052,61 @@ fn ordersScatInternal(
                 ud_sum_local_view[ilevel].D = ud_local_view[ilevel].D;
             }
         }
+        // end instrumentation: trace zone: initial sources ---------------------------------------------------|
+
     }
 
     {
-        // instrumentation: trace zone
-        // captures: initial-order transport wall time
-        // why: isolate first scattering transport before convergence tests.
+
+        // instrumentation: trace zone: initial transport -----------------------------------------------------|
+        // captures: initial-order transport wall time                                                         |
+        // why: isolate first scattering transport before convergence tests.                                   |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_transport");
         defer zone.end();
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
+        // end instrumentation: trace zone: initial transport -------------------------------------------------|
+
     }
 
     copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
 
     var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
-    // instrumentation: perturbation
-    // captures: initial-order convergence decision
-    // why: test sensitivity of the single-scattering early return.
-    const initial_stop = if (controls.scattering != .multiple)
-        true
-    else
-        Perturbation.decision(
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: first-order convergence stop                                                                  |
+    // Return after the first transported order when max outgoing upward light is below threshold_conv_first.  |
+    // --------------------------------------------------------------------------------------------------------|
+    // threshold_conv_first = 1.0e-6 by generic default and 1.5e-7 in O2 A. Lower values keep more             |
+    // scattering-order work. Higher values stop earlier and drop more weak multiple-scattering feedback.      |
+    // If scattering is not multiple, the return is requested physics rather than a tolerance shortcut.        |
+
+    // instrumentation: perturbation: initial stop ------------------------------------------------------------|
+    // captures: initial-order convergence decision                                                            |
+    // why: test sensitivity of the single-scattering early return.                                            |
+    var initial_stop = controls.scattering != .multiple;
+    if (!initial_stop) {
+        initial_stop = Perturbation.decision(
             .orders_initial_convergence,
             .{ .order_index = 1 },
             max_value < controls.performance_thresholds.threshold_conv_first,
         );
+    }
+    // end instrumentation: perturbation: initial stop --------------------------------------------------------|
+
+    // end tradeoff: first-order convergence stop -------------------------------------------------------------|
+
     if (initial_stop) {
-        // instrumentation: trace counter
-        // captures: initial-order early returns
-        // why: quantify single-scattering exits from the order loop.
+
+        // instrumentation: trace counter: initial return -----------------------------------------------------|
+        // captures: initial-order early returns                                                               |
+        // why: quantify single-scattering exits from the order loop.                                          |
         Trace.plotU("orders_initial_returns", 1);
-        // instrumentation: calculation telemetry
-        // captures: initial convergence margin
-        // why: study whether single-scattering exits are safely below tolerance.
+        // end instrumentation: trace counter: initial return -------------------------------------------------|
+
+        // instrumentation: calculation telemetry: initial convergence ----------------------------------------|
+        // captures: initial convergence margin                                                                |
+        // why: study whether single-scattering exits are safely below tolerance.                              |
         Telemetry.ordersConvergence(
             1,
             num_orders_max,
@@ -774,6 +1115,8 @@ fn ordersScatInternal(
             true,
             false,
         );
+        // end instrumentation: calculation telemetry: initial convergence ------------------------------------|
+
         return .{
             .ud = ud_view,
             .ud_sum_local = ud_sum_local_view,
@@ -783,71 +1126,92 @@ fn ordersScatInternal(
     var num_orders: usize = 1;
 
     while (true) {
-        // instrumentation: trace zone
-        // captures: one multiple-scattering order iteration wall time
-        // why: compare cost per retained scattering order.
+
+        // instrumentation: trace zone: multiple order --------------------------------------------------------|
+        // captures: one multiple-scattering order iteration wall time                                         |
+        // why: compare cost per retained scattering order.                                                    |
         const multiple_loop_zone = Trace.deepStaticZone(@src(), "labos.orders.multiple_loop");
         num_orders += 1;
-        // instrumentation: trace counter
-        // captures: number of multiple-scattering iterations
-        // why: tie convergence thresholds to actual order count.
+
+        // instrumentation: trace counter: multiple iterations ------------------------------------------------|
+        // captures: number of multiple-scattering iterations                                                  |
+        // why: tie convergence thresholds to actual order count.                                              |
         Trace.plotU("orders_multiple_iterations", 1);
+        // end instrumentation: trace counter: multiple iterations --------------------------------------------|
 
         {
-            // instrumentation: trace zone
-            // captures: local downward source update wall time
-            // why: isolate downward matrix-vector work inside each order.
+
+            // instrumentation: trace zone: local down --------------------------------------------------------|
+            // captures: local downward source update wall time                                                |
+            // why: isolate downward matrix-vector work inside each order.                                     |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_down");
             defer zone.end();
             for (start_level..end_level) |ilevel| {
                 const local_d0 = &ud_local_view[ilevel].D.col[0].data;
                 const local_d1 = &ud_local_view[ilevel].D.col[1].data;
+
                 if (!rt_active_view[ilevel + 1]) {
-                    // instrumentation: trace counter
-                    // captures: inactive layers skipped in downward source update
-                    // why: quantify savings from layer pre-partitioning and active masks.
+
+                    // instrumentation: trace counter: inactive down layer ------------------------------------|
+                    // captures: inactive layers skipped in downward source update                             |
+                    // why: quantify savings from layer pre-partitioning and active masks.                     |
                     Trace.plotU("orders_inactive_down_layers", 1);
+                    // end instrumentation: trace counter: inactive down layer --------------------------------|
+
                     continue;
                 }
+
                 const prev_u0 = &ud_orde_view[ilevel].U.col[0];
                 const prev_u1 = &ud_orde_view[ilevel].U.col[1];
                 const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
                 const prev_d1 = &ud_orde_view[ilevel + 1].D.col[1];
-                // instrumentation: trace counters
-                // captures: Gauss-pair dot-product calls and terms for downward updates
-                // why: connect order timing to inner product arithmetic volume.
+
+                // instrumentation: trace counters: local down dot products -----------------------------------|
+                // captures: Gauss-pair dot-product calls and terms for downward updates                       |
+                // why: connect order timing to inner product arithmetic volume.                               |
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
+                // end instrumentation: trace counters: local down dot products -------------------------------|
+
                 for (0..nmutot) |imu| {
                     const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                     const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
-                    // math: local downward order = R * previous_up + T * previous_down.
+
+                    // local downward order = R * previous_up + T * previous_down.
                     local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
                     local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
                 }
             }
             ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
+            // end instrumentation: trace zone: local down ----------------------------------------------------|
+
         }
 
         {
-            // instrumentation: trace zone
-            // captures: local upward source update wall time
-            // why: isolate upward matrix-vector work inside each order.
+
+            // instrumentation: trace zone: local up ----------------------------------------------------------|
+            // captures: local upward source update wall time                                                  |
+            // why: isolate upward matrix-vector work inside each order.                                       |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_up");
             defer zone.end();
             const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
             const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
             const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
             const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
+
             if (rt_active_view[start_level]) {
-                // instrumentation: trace counters
-                // captures: boundary upward dot-product calls and terms
-                // why: account for the lower-bound source cost separately.
+
+                // instrumentation: trace counters: lower-bound dot products ----------------------------------|
+                // captures: boundary upward dot-product calls and terms                                       |
+                // why: account for the lower-bound source cost separately.                                    |
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * n_gauss));
+                // end instrumentation: trace counters: lower-bound dot products ------------------------------|
+
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
-                    // math: lower-bound local upward source = R * previous_down.
+
+                    // lower-bound local upward source = R * previous_down.
                     local_u_start0[imu] = r_dot_d.col0;
                     local_u_start1[imu] = r_dot_d.col1;
                 }
@@ -856,59 +1220,87 @@ fn ordersScatInternal(
             for (start_level + 1..end_level + 1) |ilevel| {
                 const local_u0 = &ud_local_view[ilevel].U.col[0].data;
                 const local_u1 = &ud_local_view[ilevel].U.col[1].data;
+
                 if (!rt_active_view[ilevel]) {
-                    // instrumentation: trace counter
-                    // captures: inactive layers skipped in upward source update
-                    // why: quantify savings from layer pre-partitioning and active masks.
+
+                    // instrumentation: trace counter: inactive up layer --------------------------------------|
+                    // captures: inactive layers skipped in upward source update                               |
+                    // why: quantify savings from layer pre-partitioning and active masks.                     |
                     Trace.plotU("orders_inactive_up_layers", 1);
+                    // end instrumentation: trace counter: inactive up layer ----------------------------------|
+
                     continue;
                 }
+
                 const prev_d0 = &ud_orde_view[ilevel].D.col[0];
                 const prev_d1 = &ud_orde_view[ilevel].D.col[1];
                 const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
                 const prev_u1 = &ud_orde_view[ilevel - 1].U.col[1];
-                // instrumentation: trace counters
-                // captures: Gauss-pair dot-product calls and terms for upward updates
-                // why: connect order timing to inner product arithmetic volume.
+
+                // instrumentation: trace counters: local up dot products -------------------------------------|
+                // captures: Gauss-pair dot-product calls and terms for upward updates                         |
+                // why: connect order timing to inner product arithmetic volume.                               |
                 Trace.plotU("dot_gauss_pair_calls", @intCast(nmutot * 2));
                 Trace.plotU("dot_gauss_pair_terms", @intCast(nmutot * 2 * n_gauss));
+                // end instrumentation: trace counters: local up dot products ---------------------------------|
+
                 for (0..nmutot) |imu| {
                     const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                     const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
-                    // math: local upward order = R * previous_down + T * previous_up.
+
+                    // local upward order = R * previous_down + T * previous_up.
                     local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
                     local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
                 }
             }
+            // end instrumentation: trace zone: local up ------------------------------------------------------|
+
         }
 
         {
-            // instrumentation: trace zone
-            // captures: inter-level transport wall time for this order
-            // why: separate propagation from local source computation.
+
+            // instrumentation: trace zone: order transport ---------------------------------------------------|
+            // captures: inter-level transport wall time for this order                                        |
+            // why: separate propagation from local source computation.                                        |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.transport");
             defer zone.end();
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
+            // end instrumentation: trace zone: order transport -----------------------------------------------|
+
         }
 
         max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
-        // instrumentation: telemetry and perturbation
-        // captures: multiple-order stop margin and forced stop experiments
-        // why: identify scattering orders that are safe to skip by tolerance.
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: multiple-order convergence stop                                                           |
+        // Stop adding scattering orders when the order field is below threshold_conv_mult or the cap is hit.  |
+        // ----------------------------------------------------------------------------------------------------|
+        // threshold_conv_mult = 1.0e-4 by generic default and 1.5e-9 in O2 A. num_orders_max is the hard cap; |
+        // when it is zero, the resolved cap is roughly max(scattering optical depth, 0) + 15. Lower threshold |
+        // values keep more scattering orders. Higher values stop earlier and drop more weak order feedback.   |
+
+        // instrumentation: perturbation: multiple stop -------------------------------------------------------|
+        // captures: multiple-order stop margin and forced stop experiments                                    |
+        // why: identify scattering orders that are safe to skip by tolerance.                                 |
         const hit_iteration_cap = num_orders >= num_orders_max;
-        const multiple_stop = if (hit_iteration_cap)
-            true
-        else
-            Perturbation.decision(
+        var multiple_stop = hit_iteration_cap;
+        if (!multiple_stop) {
+            multiple_stop = Perturbation.decision(
                 .orders_multiple_convergence,
                 .{ .order_index = @intCast(num_orders) },
                 max_value < controls.performance_thresholds.threshold_conv_mult,
             );
+        }
+        // end instrumentation: perturbation: multiple stop ---------------------------------------------------|
+
+        // end tradeoff: multiple-order convergence stop ------------------------------------------------------|
+
         if (multiple_stop) {
-            // instrumentation: calculation telemetry
-            // captures: multiple-order convergence margin and iteration cap status
-            // why: study whether later scattering orders can be safely pruned.
+
+            // instrumentation: calculation telemetry: multiple convergence -----------------------------------|
+            // captures: multiple-order convergence margin and iteration cap status                            |
+            // why: study whether later scattering orders can be safely pruned.                                |
             Telemetry.ordersConvergence(
                 num_orders,
                 num_orders_max,
@@ -917,18 +1309,22 @@ fn ordersScatInternal(
                 false,
                 hit_iteration_cap,
             );
-            // PARITY:
-            //   `LabosModule::ordersScat` exits the scattering-order loop as
-            //   soon as the current order falls below `thresholdConv_mult`.
-            //   That current below-threshold order is not added to `UD_fc`.
+            // end instrumentation: calculation telemetry: multiple convergence -------------------------------|
+
+            // `LabosModule::ordersScat` exits the scattering-order loop as
+            // soon as the current order falls below `thresholdConv_mult`.
+            // That current below-threshold order is not added to `UD_fc`.
             multiple_loop_zone.end();
+            // end instrumentation: trace zone: multiple order ------------------------------------------------|
+
             break;
         }
 
         {
-            // instrumentation: trace zone
-            // captures: accepted order accumulation wall time
-            // why: separate retained-order summation from convergence testing.
+
+            // instrumentation: trace zone: accepted order accumulation ---------------------------------------|
+            // captures: accepted order accumulation wall time                                                 |
+            // why: separate retained-order summation from convergence testing.                                |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.accumulate");
             defer zone.end();
             accumulateOrderContribution(
@@ -941,8 +1337,12 @@ fn ordersScatInternal(
                 end_level,
                 nmutot,
             );
+            // end instrumentation: trace zone: accepted order accumulation -----------------------------------|
+
         }
         multiple_loop_zone.end();
+        // end instrumentation: trace zone: multiple order ----------------------------------------------------|
+
     }
 
     return .{
@@ -961,6 +1361,14 @@ pub fn ordersScatInto(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
+    // ordersScatInto -----------------------------------------------------------------------------------------|
+    // Workspace-backed orders solve without returning local-source sums.                                      |
+    //                                                                                                         |
+    // used by                                                                                                 |
+    //   Integrated-source forward routes that only need UD_fc-style transported                               |
+    //   order fields.                                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     const result = ordersScatInternal(
         false,
         false,
@@ -993,6 +1401,15 @@ pub fn ordersScatIntoWithLocalSum(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
+    // ordersScatIntoWithLocalSum -----------------------------------------------------------------------------|
+    // Workspace-backed orders solve that also returns accumulated local-source                                |
+    // sums.                                                                                                   |
+    //                                                                                                         |
+    // used by                                                                                                 |
+    //   Integrated-source Jacobian routes. Their aerosol weighting code needs                                 |
+    //   UDsumLocal_fc-style local source sums in addition to UD_fc.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     const result = ordersScatInternal(
         true,
         false,
@@ -1025,10 +1442,17 @@ pub fn ordersScatIntoWithActive(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
-    // INVARIANT:
-    //   `rt_active` is populated by the paired LABOS layer builder for the
-    //   same Fourier order. It may conservatively mark zero matrices active,
-    //   but it must not mark a nonzero layer inactive.
+    // ordersScatIntoWithActive -------------------------------------------------------------------------------|
+    // Workspace-backed orders solve using an active-layer mask prepared by the                                |
+    // caller.                                                                                                 |
+    //                                                                                                         |
+    // Avoids rescanning RT matrices when the paired layer builder already knows                               |
+    // which layers can contribute.                                                                            |
+    // `rt_active` is populated by the paired LABOS layer builder for the same                                 |
+    // Fourier order. It may conservatively mark zero matrices active, but it                                  |
+    // must not mark a nonzero layer inactive.                                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     const result = ordersScatInternal(
         false,
         true,
@@ -1061,10 +1485,16 @@ pub fn ordersScatIntoWithActiveLocalSum(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
-    // INVARIANT:
-    //   `rt_active` is populated by the paired LABOS layer builder for the
-    //   same Fourier order. It may conservatively mark zero matrices active,
-    //   but it must not mark a nonzero layer inactive.
+    // ordersScatIntoWithActiveLocalSum -----------------------------------------------------------------------|
+    // Active-mask rtm_config that also returns accumulated local-source sums.                                 |
+    //                                                                                                         |
+    // used by                                                                                                 |
+    //   Runtime-attenuation integrated-source Jacobian rtm_config in execute.zig.                             |
+    // `rt_active` is populated by the paired LABOS layer builder for the same                                 |
+    // Fourier order. It may conservatively mark zero matrices active, but it                                  |
+    // must not mark a nonzero layer inactive.                                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     const result = ordersScatInternal(
         true,
         true,
@@ -1097,6 +1527,14 @@ pub fn ordersScatTransportInto(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
+    // ordersScatTransportInto --------------------------------------------------------------------------------|
+    // Workspace-backed orders solve for routes that only need the transported                                 |
+    // UD_fc-style field.                                                                                      |
+    //                                                                                                         |
+    // used by                                                                                                 |
+    //   Non-integrated reflectance and the single-layer LABOS rtm_config in execute.zig.                      |
+    // --------------------------------------------------------------------------------------------------------|
+
     const result = ordersScatInternal(
         false,
         false,
@@ -1129,6 +1567,13 @@ pub fn ordersScat(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) !OrdersResult {
+    // ordersScat ---------------------------------------------------------------------------------------------|
+    // Allocation-based orders solve.                                                                          |
+    //                                                                                                         |
+    // Prefer workspace-backed wrappers in repeated runs. This rtm_config owns the                             |
+    // returned arrays and is simpler for one-off callers.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     const nlevel = end_level + 1;
 
     const ud = try allocator.alloc(basis.UDField, nlevel);
@@ -1173,12 +1618,6 @@ pub fn ordersScat(
     return result;
 }
 
-// hot path:
-//   when: derivative routes request tangent scattering-order propagation
-//   work: propagates base and derivative order payloads through the scattering-order loop
-//   data: tangent U/D buffers, base order buffers, derivative RT layers, attenuation tangent arrays
-//   follow: tangent transport helpers and derivative accumulation writes
-//   math: tangent local sources apply product rule, e.g. d(T*att)=dT*att + T*datt and d(R*U)=dR*U + R*dU.
 pub fn ordersScatTangent(
     allocator: Allocator,
     start_level: usize,
@@ -1191,6 +1630,27 @@ pub fn ordersScatTangent(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) !OrdersResult {
+    // ordersScatTangent --------------------------------------------------------------------------------------|
+    // Non-integrated tangent version of the scattering-order solve.                                           |
+    //                                                                                                         |
+    // Build the base order and tangent order side by side, transport both, then                               |
+    // iterate multiple scattering until the base order converges.                                             |
+    //                                                                                                         |
+    // base_* arrays carry the ordinary scattering order.                                                      |
+    // tangent_* arrays carry d(order)/dx for the requested state.                                             |
+    //                                                                                                         |
+    // Convergence is tested on the base order, not on the derivative order.                                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   runs     : derivative routes request tangent scattering-order propagation                             |
+    //   does     : propagates base and derivative order payloads through the scattering-order loop            |
+    //   reads    : tangent U/D buffers, base order buffers, derivative RT layers, attenuation tangent arrays  |
+    //   feeds    : tangent transport helpers and derivative accumulation writes                               |
+    // tangent local sources use the product rule:                                                             |
+    // d(T * attenuation) = dT * attenuation + T * d attenuation                                               |
+    // d(R * U) = dR * U + R * dU                                                                              |
+    // --------------------------------------------------------------------------------------------------------|
+
     const nlevel = end_level + 1;
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
@@ -1234,6 +1694,7 @@ pub fn ordersScatTangent(
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &base_ud[ilevel].E.data;
         const tangent_e_data = &result.ud[ilevel].E.data;
+
         for (0..nmutot) |imu| {
             const att = atten.get(imu, end_level, ilevel);
             e_data[imu] = att;
@@ -1245,6 +1706,7 @@ pub fn ordersScatTangent(
         for (0..2) |imu0| {
             const local_d = &base_local[ilevel].D.col[imu0].data;
             const tangent_d = &tangent_local[ilevel].D.col[imu0].data;
+
             if (!rt_active[ilevel + 1]) {
                 for (0..nmutot) |imu| {
                     local_d[imu] = 0.0;
@@ -1252,15 +1714,19 @@ pub fn ordersScatTangent(
                 }
                 continue;
             }
+
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel + 1);
             const datt = atten_tangent.get(col_idx, end_level, ilevel + 1);
+
             const rt_t = &rt[ilevel + 1].T;
             const drt_t = &rt_tangent[ilevel + 1].T;
             var rt_idx = col_idx;
+
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
-                // math: dD_local = dT_layer * attenuation + T_layer * d attenuation.
+
+                // dD_local = dT_layer * attenuation + T_layer * d attenuation.
                 tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
                 rt_idx += rt_t.n;
             }
@@ -1273,6 +1739,7 @@ pub fn ordersScatTangent(
         for (0..2) |imu0| {
             const local_u = &base_local[ilevel].U.col[imu0].data;
             const tangent_u = &tangent_local[ilevel].U.col[imu0].data;
+
             if (!rt_active[ilevel]) {
                 for (0..nmutot) |imu| {
                     local_u[imu] = 0.0;
@@ -1280,15 +1747,19 @@ pub fn ordersScatTangent(
                 }
                 continue;
             }
+
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel);
             const datt = atten_tangent.get(col_idx, end_level, ilevel);
+
             const rt_r = &rt[ilevel].R;
             const drt_r = &rt_tangent[ilevel].R;
             var rt_idx = col_idx;
+
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
-                // math: dU_local = dR_layer * attenuation + R_layer * d attenuation.
+
+                // dU_local = dR_layer * attenuation + R_layer * d attenuation.
                 tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
                 rt_idx += rt_r.n;
             }
@@ -1296,13 +1767,25 @@ pub fn ordersScatTangent(
     }
 
     transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
-    transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+    transportToOtherLevelsTangent(
+        start_level,
+        end_level,
+        nmutot,
+        atten,
+        atten_tangent,
+        base_local,
+        tangent_local,
+        base_orde,
+        tangent_orde,
+    );
 
     copyTransportedOrderIntoOutput(base_ud, base_orde, start_level, end_level);
     copyTransportedOrderIntoOutput(result.ud, tangent_orde, start_level, end_level);
 
     var max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
-    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) return result;
+    const first_order_converged =
+        max_value < controls.performance_thresholds.threshold_conv_first;
+    if (controls.scattering != .multiple or first_order_converged) return result;
 
     var num_orders: usize = 1;
     while (true) {
@@ -1313,6 +1796,7 @@ pub fn ordersScatTangent(
             const local_d1 = &base_local[ilevel].D.col[1].data;
             const tangent_d0 = &tangent_local[ilevel].D.col[0].data;
             const tangent_d1 = &tangent_local[ilevel].D.col[1].data;
+
             if (!rt_active[ilevel + 1]) {
                 for (0..nmutot) |imu| {
                     local_d0[imu] = 0.0;
@@ -1322,14 +1806,17 @@ pub fn ordersScatTangent(
                 }
                 continue;
             }
+
             const prev_u0 = &base_orde[ilevel].U.col[0];
             const prev_u1 = &base_orde[ilevel].U.col[1];
             const prev_d0 = &base_orde[ilevel + 1].D.col[0];
             const prev_d1 = &base_orde[ilevel + 1].D.col[1];
+
             const tangent_prev_u0 = &tangent_orde[ilevel].U.col[0];
             const tangent_prev_u1 = &tangent_orde[ilevel].U.col[1];
             const tangent_prev_d0 = &tangent_orde[ilevel + 1].D.col[0];
             const tangent_prev_d1 = &tangent_orde[ilevel + 1].D.col[1];
+
             for (0..nmutot) |imu| {
                 const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                 const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
@@ -1340,7 +1827,8 @@ pub fn ordersScatTangent(
                 const rst_dot_du = dotGaussPair(&rt[ilevel + 1].R, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
                 const dt_dot_d = dotGaussPair(&rt_tangent[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
                 const t_dot_dd = dotGaussPair(&rt[ilevel + 1].T, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
-                // math: dD_local = dR*U + R*dU + dT*D + T*dD.
+
+                // dD_local = dR * U + R * dU + dT * D + T * dD.
                 tangent_d0[imu] = drst_dot_u.col0 + rst_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
                 tangent_d1[imu] = drst_dot_u.col1 + rst_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
             }
@@ -1356,14 +1844,23 @@ pub fn ordersScatTangent(
         const prev_d_start1 = &base_orde[start_level].D.col[1];
         const tangent_prev_d_start0 = &tangent_orde[start_level].D.col[0];
         const tangent_prev_d_start1 = &tangent_orde[start_level].D.col[1];
+
         if (rt_active[start_level]) {
             for (0..nmutot) |imu| {
                 const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
                 local_u_start0[imu] = r_dot_d.col0;
                 local_u_start1[imu] = r_dot_d.col1;
+
                 const dr_dot_d = dotGaussPair(&rt_tangent[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
-                const r_dot_dd = dotGaussPair(&rt[start_level].R, imu, tangent_prev_d_start0, tangent_prev_d_start1, n_gauss);
-                // math: lower-bound dU_local = dR*D + R*dD.
+                const r_dot_dd = dotGaussPair(
+                    &rt[start_level].R,
+                    imu,
+                    tangent_prev_d_start0,
+                    tangent_prev_d_start1,
+                    n_gauss,
+                );
+
+                // lower-bound dU_local = dR * D + R * dD.
                 tangent_u_start0[imu] = dr_dot_d.col0 + r_dot_dd.col0;
                 tangent_u_start1[imu] = dr_dot_d.col1 + r_dot_dd.col1;
             }
@@ -1381,6 +1878,7 @@ pub fn ordersScatTangent(
             const local_u1 = &base_local[ilevel].U.col[1].data;
             const tangent_u0 = &tangent_local[ilevel].U.col[0].data;
             const tangent_u1 = &tangent_local[ilevel].U.col[1].data;
+
             if (!rt_active[ilevel]) {
                 for (0..nmutot) |imu| {
                     local_u0[imu] = 0.0;
@@ -1390,14 +1888,17 @@ pub fn ordersScatTangent(
                 }
                 continue;
             }
+
             const prev_d0 = &base_orde[ilevel].D.col[0];
             const prev_d1 = &base_orde[ilevel].D.col[1];
             const prev_u0 = &base_orde[ilevel - 1].U.col[0];
             const prev_u1 = &base_orde[ilevel - 1].U.col[1];
+
             const tangent_prev_d0 = &tangent_orde[ilevel].D.col[0];
             const tangent_prev_d1 = &tangent_orde[ilevel].D.col[1];
             const tangent_prev_u0 = &tangent_orde[ilevel - 1].U.col[0];
             const tangent_prev_u1 = &tangent_orde[ilevel - 1].U.col[1];
+
             for (0..nmutot) |imu| {
                 const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                 const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
@@ -1408,21 +1909,52 @@ pub fn ordersScatTangent(
                 const r_dot_dd = dotGaussPair(&rt[ilevel].R, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
                 const dtst_dot_u = dotGaussPair(&rt_tangent[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
                 const tst_dot_du = dotGaussPair(&rt[ilevel].T, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
-                // math: dU_local = dR*D + R*dD + dT*U + T*dU.
+
+                // dU_local = dR * D + R * dD + dT * U + T * dU.
                 tangent_u0[imu] = dr_dot_d.col0 + r_dot_dd.col0 + dtst_dot_u.col0 + tst_dot_du.col0;
                 tangent_u1[imu] = dr_dot_d.col1 + r_dot_dd.col1 + dtst_dot_u.col1 + tst_dot_du.col1;
             }
         }
 
         transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
-        transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+        transportToOtherLevelsTangent(
+            start_level,
+            end_level,
+            nmutot,
+            atten,
+            atten_tangent,
+            base_local,
+            tangent_local,
+            base_orde,
+            tangent_orde,
+        );
 
         max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
 
-        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) break;
+        const order_converged =
+            max_value < controls.performance_thresholds.threshold_conv_mult;
+        if (order_converged or num_orders >= num_orders_max) break;
 
-        accumulateOrderContribution(false, base_ud, base_ud_sum_local, base_orde, base_local, start_level, end_level, nmutot);
-        accumulateOrderContribution(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, start_level, end_level, nmutot);
+        accumulateOrderContribution(
+            false,
+            base_ud,
+            base_ud_sum_local,
+            base_orde,
+            base_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
+        accumulateOrderContribution(
+            false,
+            result.ud,
+            result.ud_sum_local,
+            tangent_orde,
+            tangent_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
     }
 
     return result;

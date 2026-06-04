@@ -3,7 +3,7 @@ const Scene = @import("../input/Scene.zig").Scene;
 const Optics = @import("../forward_model/optical_properties/root.zig");
 const Rayleigh = @import("../input/reference/rayleigh.zig");
 const Spectroscopy = @import("../forward_model/optical_properties/state_build/state_spectroscopy.zig");
-const StateTypes = @import("../forward_model/optical_properties/state_build/state_types.zig");
+const StateTypes = @import("../forward_model/optical_properties/state_build/state.zig");
 
 const Allocator = std.mem.Allocator;
 const OpticalDepthBreakdown = Optics.OpticalDepthBreakdown;

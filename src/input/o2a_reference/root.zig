@@ -2,7 +2,6 @@ const std = @import("std");
 const AerosolModel = @import("../Aerosol.zig");
 const AtmosphereModel = @import("../Atmosphere.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
-const implementations = @import("../../forward_model/implementations/root.zig");
 const Jacobian = @import("../../forward_model/jacobian/root.zig");
 const metrics = @import("metrics.zig");
 const reference_types = @import("types.zig");
@@ -73,9 +72,7 @@ pub fn defaultInput() O2AInput {
             .description = "DISAMAR O2 A reference case for Python and validation.",
         },
         .plan = .{
-            .model_family = "disamar_standard",
-            .transport_solver = "dispatcher",
-            .execution_derivative_mode = "none",
+            .derivative_mode = .none,
         },
         .inputs = .{
             .atmosphere_profile = asset(
@@ -132,7 +129,6 @@ pub fn defaultInput() O2AInput {
         },
         .observation = .{
             .instrument_name = "disamar-o2a-compare",
-            .regime = .nadir,
             .sampling = .native,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
@@ -255,9 +251,8 @@ pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A) !Output {
     return InstrumentGrid.simulateProduct(
         allocator,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
 }
 
@@ -270,9 +265,8 @@ pub fn runO2AWithSessionStorage(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
     return view.toOwned(allocator);
 }
@@ -287,9 +281,8 @@ pub fn runO2AWithSessionStorageJacobianStates(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
     return view.toOwnedWithJacobianStates(allocator, output_states);
 }
@@ -303,22 +296,24 @@ pub fn warmO2ASessionStorage(
         allocator,
         storage,
         &prepared.scene,
-        prepared.route,
+        prepared.rtm_config,
         &prepared.prepared,
-        implementations.exact(),
     );
 }
 
 pub fn validateInput(input: *const O2AInput) !void {
     if (input.spectral_grid.sample_count < 2) return error.InvalidSpectralGrid;
     if (!(input.spectral_grid.end_nm > input.spectral_grid.start_nm)) return error.InvalidSpectralGrid;
+
     if (input.observation.measured_wavelengths_nm.len != 0) {
         if (input.observation.measured_wavelengths_nm.len != input.spectral_grid.sample_count) {
             return error.InvalidSpectralGrid;
         }
+
         var previous: ?f64 = null;
         for (input.observation.measured_wavelengths_nm) |wavelength_nm| {
             if (!std.math.isFinite(wavelength_nm)) return error.InvalidSpectralGrid;
+
             if (previous) |earlier| {
                 if (wavelength_nm <= earlier) return error.InvalidSpectralGrid;
             }
@@ -327,14 +322,17 @@ pub fn validateInput(input: *const O2AInput) !void {
     }
     if (input.layer_count == 0 or input.sublayer_divisions == 0) return error.InvalidAtmosphere;
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
+
     for (input.intervals) |interval| try interval.validate();
     try validateAerosol(input);
     try input.plan.validate();
     try input.rtm_controls.validate();
+
     try requireAsset(input.inputs.atmosphere_profile);
     try requireAsset(input.inputs.vendor_reference_csv);
     try requireAsset(input.inputs.raw_solar_reference);
     try requireAsset(input.inputs.airmass_factor_lut);
+
     try requireAsset(input.o2.line_list_asset);
     try requireAsset(input.o2.line_mixing_asset);
     try requireAsset(input.o2.strong_lines_asset);

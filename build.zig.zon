@@ -13,6 +13,7 @@
         "build.zig",
         "build.zig.zon",
         "python",
+        "scaffolding",
         "scripts",
         "src",
         "tests",

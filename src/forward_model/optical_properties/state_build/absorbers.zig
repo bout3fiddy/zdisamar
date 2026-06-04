@@ -7,7 +7,7 @@ const Context = @import("context.zig").PreparationContext;
 const ProfileStateCache = @import("profile_state_cache.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
-const Trace = @import("../../performance_trace.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
@@ -17,9 +17,11 @@ const max_profile_spectroscopy_cache_nodes: usize = 64;
 
 // layout(64-bit):
 //   size: 304 B, align: 8 B
-//   field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B (0 bits)
+// field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B
+// (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced storage is not included in size
+// out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced
+// storage is not included in size
 //   cache span: 5 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
@@ -36,9 +38,11 @@ const ProfileLineStateWorker = struct {
 
 // layout(64-bit):
 //   size: 568 B, align: 8 B
-//   field storage: 567 B across 22 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B, active_line_absorbers=16 B; padding: 1 B (8 bits)
+// field storage: 567 B across 22 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B,
+// active_line_absorbers=16 B; padding: 1 B (8 bits)
 //   unused bits: 8 padding + 21 bool-storage slack = 29 bits
-//   out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers, owned_line_absorbers carry references/descriptors; referenced storage is not included in size
+// out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers,
+// owned_line_absorbers carry references/descriptors; referenced storage is not included in size
 //   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
@@ -74,12 +78,14 @@ pub const AbsorberBuildState = struct {
         if (self.profile_strong_line_states) |states| {
             if (self.owns_profile_strong_line_states) {
                 for (states[0..self.profile_strong_line_state_count]) |*state| state.deinit(allocator);
+
                 if (states.len != 0) allocator.free(states);
             }
         }
         if (self.profile_weak_line_states) |states| {
             if (self.owns_profile_weak_line_states) {
                 for (states[0..self.profile_weak_line_state_count]) |*state| state.deinit(allocator);
+
                 if (states.len != 0) allocator.free(states);
             }
         }
@@ -90,30 +96,36 @@ pub const AbsorberBuildState = struct {
             allocator.free(self.owned_line_absorbers);
         }
         if (self.owned_cross_section_absorbers.len != 0) {
-            for (self.owned_cross_section_absorbers[0..self.owned_cross_section_absorber_count]) |*cross_section_absorber| {
+            for (
+                self.owned_cross_section_absorbers[0..self.owned_cross_section_absorber_count],
+            ) |*cross_section_absorber| {
                 cross_section_absorber.deinit(allocator);
             }
             allocator.free(self.owned_cross_section_absorbers);
         }
+
         if (self.owned_lines) |line_list| {
             var owned = line_list;
             owned.deinit(allocator);
         }
+
         if (self.active_line_absorbers.len != 0) allocator.free(self.active_line_absorbers);
         if (self.active_cross_section_absorbers.len != 0) allocator.free(self.active_cross_section_absorbers);
         self.* = undefined;
     }
 };
 
-// hot path:
-//   when: once per optical-state preparation
-//   work: builds active cross-section and line absorbers for repeated wavelength evaluation
-//   data: reference absorber tables, spectroscopy line lists, profile line-state storage
-//   follow: buildCrossSectionAbsorbers, buildLineAbsorbers, and prepareProfileLineStates
 pub fn build(
     allocator: Allocator,
     context: *Context,
 ) !AbsorberBuildState {
+
+    // hot path:
+    //   when: once per optical-state preparation
+    //   work: builds active cross-section and line absorbers for repeated wavelength evaluation
+    //   reads: reference absorber tables, spectroscopy line lists, profile line-state storage
+    //   follow: buildCrossSectionAbsorbers, buildLineAbsorbers, and prepareProfileLineStates
+
     const scene = context.scene;
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = operational_band_support.o2_operational_lut;
@@ -153,22 +165,26 @@ pub fn build(
         return error.InvalidRequest;
     }
 
-    state.strong_line_states = if (state.owned_line_absorbers.len == 0)
-        if (state.owned_lines) |line_list|
-            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len == 0)
-                try allocator.alloc(ReferenceData.StrongLinePreparedState, context.vertical_grid.sublayer_mid_altitudes_km.len)
-            else
-                null
-        else
-            null
-    else
-        null;
+    const can_prepare_single_line_profile =
+        state.owned_line_absorbers.len == 0 and !operational_o2_lut.enabled();
+    if (can_prepare_single_line_profile) {
+        if (state.owned_lines) |line_list| {
+            if (line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len == 0) {
+                state.strong_line_states = try allocator.alloc(
+                    ReferenceData.StrongLinePreparedState,
+                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                );
+            }
+        }
+    }
+
     const should_prepare_profile_line_states = state.owned_line_absorbers.len == 0 and
         state.owned_lines != null and
         !operational_o2_lut.enabled() and
         state.owned_lines.?.hasStrongLineSidecars() and
         context.spectroscopy_profile_temperatures_k.len != 0;
     var loaded_profile_states = false;
+
     if (should_prepare_profile_line_states) {
         if (context.borrowed_profile_strong_line_states) |strong_states| {
             const weak_states = context.borrowed_profile_weak_line_states orelse return error.InvalidRequest;
@@ -182,6 +198,7 @@ pub fn build(
             state.profile_strong_line_state_count = strong_states.len;
             state.profile_weak_line_state_count = weak_states.len;
             state.owns_profile_strong_line_states = false;
+
             state.owns_profile_weak_line_states = false;
             loaded_profile_states = true;
         } else {
@@ -190,6 +207,7 @@ pub fn build(
                 ReferenceData.StrongLinePreparedState,
                 context.spectroscopy_profile_temperatures_k.len,
             );
+
             state.profile_weak_line_states = try allocator.alloc(
                 ReferenceData.WeakLinePreparedState,
                 context.spectroscopy_profile_temperatures_k.len,
@@ -200,6 +218,7 @@ pub fn build(
         if (state.profile_weak_line_states) |weak_states| {
             if (state.profile_strong_line_states) |strong_states| {
                 const line_list = state.owned_lines.?;
+
                 loaded_profile_states = try ProfileStateCache.load(
                     allocator,
                     line_list,
@@ -208,6 +227,7 @@ pub fn build(
                     weak_states,
                     strong_states,
                 );
+
                 if (loaded_profile_states) {
                     state.profile_weak_line_state_count = weak_states.len;
                     state.profile_strong_line_state_count = strong_states.len;
@@ -215,7 +235,10 @@ pub fn build(
             }
         }
     }
-    if (!loaded_profile_states and (state.profile_weak_line_states != null or state.profile_strong_line_states != null)) {
+    if (!loaded_profile_states and
+        (state.profile_weak_line_states != null or state.profile_strong_line_states != null))
+    {
+
         // instrumentation: trace zone
         // captures: profile line-state preparation wall time
         // why: expose expensive spectroscopy state setup not covered by cache hits.
@@ -229,6 +252,7 @@ pub fn build(
             state.profile_weak_line_states,
             state.profile_strong_line_states,
         );
+
         if (state.profile_weak_line_states) |states| state.profile_weak_line_state_count = states.len;
         if (state.profile_strong_line_states) |states| state.profile_strong_line_state_count = states.len;
     }
@@ -255,14 +279,18 @@ pub fn build(
         state.owned_line_absorbers,
         operational_o2_lut,
     );
+
     state.has_line_absorbers = single_active_line_absorber != null or state.owned_line_absorbers.len != 0;
-    state.mean_sigma = if (state.owned_cross_section_absorbers.len == 0)
-        context.cross_sections.meanSigmaInRange(
-            context.scene.spectral_grid.start_nm,
-            context.scene.spectral_grid.end_nm,
-        )
-    else
-        0.0;
+    state.mean_sigma = choose_value: {
+        break :choose_value if (state.owned_cross_section_absorbers.len == 0)
+            context.cross_sections.meanSigmaInRange(
+                context.scene.spectral_grid.start_nm,
+                context.scene.spectral_grid.end_nm,
+            )
+        else
+            0.0;
+    };
+
     state.midpoint_continuum_sigma = if (state.owned_cross_section_absorbers.len == 0)
         context.cross_sections.interpolateSigma(context.midpoint_nm)
     else
@@ -276,11 +304,6 @@ pub fn build(
     return state;
 }
 
-// hot path:
-//   when: during spectroscopy absorber preparation for profile-resolved scenes
-//   work: allocates prepared weak and strong line-state arrays for all profile nodes
-//   data: spectroscopy profile nodes, weak-line state slices, strong-line state slices
-//   follow: fillProfileLineStates and profile-node indexing into prepared state arrays
 fn prepareProfileLineStates(
     allocator: Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -289,6 +312,13 @@ fn prepareProfileLineStates(
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
 ) !void {
+
+    // hot path:
+    //   when: during spectroscopy absorber preparation for profile-resolved scenes
+    //   work: allocates prepared weak and strong line-state arrays for all profile nodes
+    //   reads: spectroscopy profile nodes, weak-line state slices, strong-line state slices
+    //   follow: fillProfileLineStates and profile-node indexing into prepared state arrays
+
     if (temperatures_k.len != pressures_hpa.len) return error.InvalidRequest;
 
     var weak_initialized: usize = 0;
@@ -297,6 +327,7 @@ fn prepareProfileLineStates(
     };
     if (weak_states) |states| {
         if (states.len != temperatures_k.len) return error.InvalidRequest;
+
         // instrumentation: trace zone
         // captures: weak line-state allocation wall time
         // why: distinguish allocation cost from per-profile spectroscopy preparation.
@@ -314,6 +345,7 @@ fn prepareProfileLineStates(
     };
     if (strong_states) |states| {
         if (states.len != temperatures_k.len) return error.InvalidRequest;
+
         // instrumentation: trace zone
         // captures: strong line-state allocation wall time
         // why: distinguish allocation cost from per-profile spectroscopy preparation.
@@ -345,11 +377,6 @@ fn prepareProfileLineStates(
     );
 }
 
-// hot path:
-//   when: during profile spectroscopy preparation, often across worker chunks
-//   work: fills prepared weak and strong line states per thermodynamic profile node
-//   data: profile pressure/temperature arrays, line absorber arrays, prepared state arrays
-//   follow: profileLineStateWorkerMain and fillProfileLineStateRange
 fn fillProfileLineStates(
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
@@ -359,6 +386,13 @@ fn fillProfileLineStates(
     strong_relaxation_weight_scratch: []f64,
     strong_weight_count: usize,
 ) void {
+
+    // hot path:
+    //   when: during profile spectroscopy preparation, often across worker chunks
+    //   work: fills prepared weak and strong line states per thermodynamic profile node
+    //   reads: profile pressure/temperature arrays, line absorber arrays, prepared state arrays
+    //   follow: profileLineStateWorkerMain and fillProfileLineStateRange
+
     const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
     if (worker_count == 1) {
         fillProfileLineStateRange(
@@ -380,30 +414,36 @@ fn fillProfileLineStates(
     const workers = worker_buffer[0..worker_count];
     const threads = thread_buffer[0 .. worker_count - 1];
     var started_thread_count: usize = 0;
+    var empty_strong_relaxation_weights: [0]f64 = .{};
 
     for (0..worker_count) |worker_index| {
+        const strong_relaxation_weights = if (strong_weight_count != 0)
+            strong_relaxation_weight_scratch[worker_index * strong_weight_count ..][0..strong_weight_count]
+        else
+            empty_strong_relaxation_weights[0..];
+
         workers[worker_index] = .{
             .line_list = line_list,
             .temperatures_k = temperatures_k,
             .pressures_hpa = pressures_hpa,
             .weak_states = weak_states,
             .strong_states = strong_states,
-            .strong_relaxation_weights = if (strong_weight_count != 0)
-                strong_relaxation_weight_scratch[worker_index * strong_weight_count ..][0..strong_weight_count]
-            else
-                &.{},
+            .strong_relaxation_weights = strong_relaxation_weights,
+
             .queue = &queue,
             .worker_index = worker_index,
         };
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
                 .{},
+
                 profileLineStateWorkerMain,
                 .{&workers[worker_index]},
             ) catch {
                 profileLineStateWorkerMain(&workers[worker_index]);
                 continue;
             };
+
             started_thread_count += 1;
         } else {
             profileLineStateWorkerMain(&workers[worker_index]);
@@ -419,6 +459,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
         "zdisamar-optics-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-optics-worker";
+
     // instrumentation: trace thread label
     // captures: profile line-state worker identity
     // why: make parallel spectroscopy-preparation lanes separable in timeline traces.
@@ -433,6 +474,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
 
     while (worker.queue.next()) |chunk| {
         {
+
             // instrumentation: trace zone
             // captures: profile line-state chunk wall time and node count
             // why: identify chunking overhead and imbalance in parallel line preparation.
@@ -487,16 +529,18 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
     return work_partition.preferredWorkerCount(profile_count, min_parallel_profile_line_state_count);
 }
 
-// hot path:
-//   when: once while preparing cross-section absorbers
-//   work: collects LUT/table-backed absorbers used by wavelength carrier evaluation
-//   data: absorber configs, cross-section tables, operational LUT handles
-//   follow: carrier_eval cross-section loops that consume the resulting active set
 fn buildCrossSectionAbsorbers(
     allocator: Allocator,
     context: *Context,
     state: *AbsorberBuildState,
 ) !void {
+
+    // hot path:
+    //   when: once while preparing cross-section absorbers
+    //   work: collects LUT/table-backed absorbers used by wavelength carrier evaluation
+    //   reads: absorber configs, cross-section tables, operational LUT handles
+    //   follow: carrier_eval cross-section loops that consume the resulting active set
+
     if (state.active_cross_section_absorbers.len == 0) return;
     state.owned_cross_section_absorbers = try allocator.alloc(
         State.PreparedCrossSectionAbsorber,
@@ -515,12 +559,14 @@ fn buildCrossSectionAbsorbers(
                 State.CrossSectionRepresentationKind.lut,
             .line_abs, .none => unreachable,
         };
+
         const representation = switch (cross_section_absorber.representation) {
             .xsec_table => |table| State.PreparedCrossSectionRepresentation{
                 .table = .{
                     .points = try allocator.dupe(ReferenceData.CrossSectionPoint, table.points),
                 },
             },
+
             .xsec_lut => |cross_section_lut| State.PreparedCrossSectionRepresentation{
                 .lut = try cross_section_lut.clone(allocator),
             },
@@ -529,6 +575,7 @@ fn buildCrossSectionAbsorbers(
         errdefer switch (representation) {
             .table => |table| {
                 var owned = table;
+
                 owned.deinit(allocator);
             },
             .lut => |cross_section_lut| {
@@ -551,11 +598,6 @@ fn buildCrossSectionAbsorbers(
     }
 }
 
-// hot path:
-//   when: once while preparing spectroscopy line absorbers
-//   work: applies line controls, partitions strong/weak lines, and prepares match indexes
-//   data: line lists, strong-line sidecars, runtime controls, prepared line-state slices
-//   follow: layer_spectroscopy and line_list_eval relevant-window loops
 fn buildLineAbsorbers(
     allocator: Allocator,
     context: *Context,
@@ -563,11 +605,20 @@ fn buildLineAbsorbers(
     owned_lines: *?ReferenceData.SpectroscopyLineList,
     operational_o2_lut: OperationalCrossSectionLut,
 ) !void {
+
+    // hot path:
+    //   when: once while preparing spectroscopy line absorbers
+    //   work: applies line controls, partitions strong/weak lines, and prepares match indexes
+    //   reads: line lists, strong-line sidecars, runtime controls, prepared line-state slices
+    //   follow: layer_spectroscopy and line_list_eval relevant-window loops
+
     const line_list = owned_lines.*;
     if (line_list == null) return;
     var line_list_value = line_list.?;
 
-    if (state.active_line_absorbers.len > 1 or (operational_o2_lut.enabled() and state.active_line_absorbers.len != 0)) {
+    if (state.active_line_absorbers.len > 1 or
+        (operational_o2_lut.enabled() and state.active_line_absorbers.len != 0))
+    {
         state.owned_line_absorbers = try allocator.alloc(State.PreparedLineAbsorber, state.active_line_absorbers.len);
 
         for (state.active_line_absorbers, 0..) |line_absorber, index| {
@@ -581,6 +632,7 @@ fn buildLineAbsorbers(
                 line_absorber,
                 use_operational_o2_lut,
             );
+
             if (!use_operational_o2_lut and filtered.lines.len == 0) {
                 return error.InvalidRequest;
             }
@@ -589,26 +641,36 @@ fn buildLineAbsorbers(
                 try filtered.buildStrongLineMatchIndex(allocator);
             }
             const has_strong_line_states = !use_operational_o2_lut and filtered.hasStrongLineSidecars();
-            const strong_line_states = if (has_strong_line_states)
-                try allocator.alloc(ReferenceData.StrongLinePreparedState, context.vertical_grid.sublayer_mid_altitudes_km.len)
-            else
-                null;
-            errdefer if (strong_line_states) |states| allocator.free(states);
-            const strong_line_state_initialized = if (has_strong_line_states)
-                try allocator.alloc(bool, context.vertical_grid.sublayer_mid_altitudes_km.len)
-            else
-                null;
+            var strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null;
+            var strong_line_state_initialized: ?[]bool = null;
+            if (has_strong_line_states) {
+                strong_line_states = try allocator.alloc(
+                    ReferenceData.StrongLinePreparedState,
+                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                );
+                errdefer if (strong_line_states) |states| allocator.free(states);
+                strong_line_state_initialized = try allocator.alloc(
+                    bool,
+                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                );
+            }
+
             errdefer if (strong_line_state_initialized) |initialized| allocator.free(initialized);
 
             state.owned_line_absorbers[index] = .{
                 .species = line_absorber.species,
                 .line_list = filtered,
-                .number_densities_cm3 = try allocator.alloc(f64, context.vertical_grid.sublayer_mid_altitudes_km.len),
+                .number_densities_cm3 = try allocator.alloc(
+                    f64,
+                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                ),
                 .strong_line_states = strong_line_states,
                 .strong_line_state_initialized = strong_line_state_initialized,
             };
             @memset(state.owned_line_absorbers[index].number_densities_cm3, 0.0);
-            if (state.owned_line_absorbers[index].strong_line_state_initialized) |initialized| @memset(initialized, false);
+            if (state.owned_line_absorbers[index].strong_line_state_initialized) |initialized| {
+                @memset(initialized, false);
+            }
             state.owned_line_absorber_count += 1;
         }
 
@@ -644,19 +706,25 @@ fn applyRuntimeControls(
     line_absorber: State.ActiveLineAbsorber,
     use_operational_o2_lut: bool,
 ) !void {
+    const active_line_controls = line_absorber.controls.active();
+
+    var hitran_index: ?u16 = null;
+    if (line_absorber.species.hitranIndex()) |index| {
+        hitran_index = @as(u16, index);
+    }
+
+    var line_mixing_factor: f64 = 0.0;
+    if (line_absorber.species == .o2) {
+        line_mixing_factor = active_line_controls.line_mixing_factor;
+    }
+
     try line_list.applyRuntimeControls(
         allocator,
-        if (line_absorber.species.hitranIndex()) |hitran_index|
-            @as(u16, hitran_index)
-        else
-            null,
-        line_absorber.controls.activeIsotopes(),
-        line_absorber.controls.activeThresholdLine(),
-        line_absorber.controls.activeCutoffCm1(),
-        if (line_absorber.species == .o2)
-            line_absorber.controls.activeLineMixingFactor()
-        else
-            0.0,
+        hitran_index,
+        active_line_controls.isotopes,
+        active_line_controls.threshold_line,
+        active_line_controls.cutoff_cm1,
+        line_mixing_factor,
     );
     if (use_operational_o2_lut) {
         return;
@@ -668,6 +736,7 @@ fn sortLineList(line_list: *ReferenceData.SpectroscopyLineList) void {
         ReferenceData.SpectroscopyLine,
         line_list.lines,
         {},
+
         // layout(64-bit):
         //   anonymous comparator namespace: size 0 B, align 1 B
         //   footprint: no runtime field storage; function declaration only
@@ -688,6 +757,7 @@ fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]Stat
         const species = Spectroscopy.resolvedAbsorberSpecies(absorber) orelse continue;
         if (!species.isLineAbsorbing()) continue;
         if (absorber.spectroscopy.mode != .line_by_line) continue;
+
         try active.append(allocator, .{
             .species = species,
             .controls = absorber.spectroscopy.line_gas_controls,

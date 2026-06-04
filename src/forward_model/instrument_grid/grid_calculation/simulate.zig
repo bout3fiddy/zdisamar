@@ -7,15 +7,16 @@ const convolution = @import("../spectral_math/convolution.zig");
 const grid = @import("../spectral_math/grid.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
-const Postprocess = @import("postprocess.zig");
+const instrument_calibration = @import("../../implementations/instrument/calibration.zig");
+const instrument_integration = @import("../../implementations/instrument/integration.zig");
 const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const Plan = @import("wavelength_plan.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
-const Telemetry = @import("../../calculation_telemetry.zig");
-const Trace = @import("../../performance_trace.zig");
+const Telemetry = @import("../../instrumentation/telemetry.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
@@ -24,7 +25,8 @@ const profile_cache_build_chunk_size: usize = 8;
 
 // layout(64-bit):
 //   size: 216 B, align: 8 B
-//   field storage: 210 B across 10 fields; largest: resolved_axis=40 B, radiance_slit_kernel=40 B, irradiance_slit_kernel=40 B; padding: 6 B (48 bits)
+// field storage: 210 B across 10 fields; largest: resolved_axis=40 B, radiance_slit_kernel=40 B,
+// irradiance_slit_kernel=40 B; padding: 6 B (48 bits)
 //   unused bits: 48 padding + 14 bool-storage slack = 62 bits
 //   inline arrays: radiance_slit_kernel:[5]f64=40 B, irradiance_slit_kernel:[5]f64=40 B
 //   cache span: 4 cache line(s) at 64 B per line
@@ -45,9 +47,11 @@ const SimulationSetup = struct {
 
 // layout(64-bit):
 //   size: 240 B, align: 8 B
-//   field storage: 240 B across 7 fields; largest: forward_miss_plan=48 B, owned_forward_miss_plan=48 B, wavelength_sampling=48 B; padding: 0 B (0 bits)
+// field storage: 240 B across 7 fields; largest: forward_miss_plan=48 B, owned_forward_miss_plan=48 B,
+// wavelength_sampling=48 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength_sampling, forward_miss_plan, forward_results, profile_spectroscopy_caches, and owned fields carry references/descriptors
+// out-of-line: wavelength_sampling, forward_miss_plan, forward_results, profile_spectroscopy_caches, and owned fields
+// carry references/descriptors
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 240 B (0.234 KiB); total also includes referenced storage above
@@ -68,7 +72,7 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
-// Active Jacobian states resolved once per simulation from the route/storage mask.
+// Active Jacobian states resolved once per simulation from the rtm_config/storage mask.
 // layout(64-bit):
 //   size: 16 B, align: 8 B
 //   field storage: count=8 B, states=3 B; padding: 5 B (40 bits)
@@ -100,7 +104,8 @@ const ActiveJacobianStates = struct {
 
 // layout(64-bit):
 //   size: 56 B, align: 8 B
-//   field storage: 56 B across 5 fields; largest: jacobian_sum=24 B, radiance_sum=8 B, irradiance_sum=8 B; padding: 0 B (0 bits)
+// field storage: 56 B across 5 fields; largest: jacobian_sum=24 B, radiance_sum=8 B, irradiance_sum=8 B; padding: 0 B
+// (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   inline arrays: jacobian_sum:[3]f64=24 B
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -121,6 +126,7 @@ const RunningSummary = struct {
     }
 
     fn addReflectanceSample(self: *RunningSummary, radiance: f64, irradiance: f64, reflectance: f64) void {
+
         // math: running sums store sum L_i, sum E0_i, and sum rho_i for later arithmetic means.
         self.radiance_sum += radiance;
         self.irradiance_sum += irradiance;
@@ -138,6 +144,7 @@ const RunningSummary = struct {
             .sample_count = @intCast(sample_count),
             .wavelength_start_nm = wavelengths[0],
             .wavelength_end_nm = wavelengths[sample_count - 1],
+
             // math: mean(y) = (sum_i y_i) / N for radiance, irradiance, reflectance, and any active Jacobian vector.
             .mean_radiance = self.radiance_sum / denominator,
             .mean_irradiance = self.irradiance_sum / denominator,
@@ -151,7 +158,8 @@ const RunningSummary = struct {
 //   size: 64 B, align: 8 B
 //   field storage: 64 B across 6 fields; largest: forward_misses=16 B, caches=16 B, prepared=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: prepared, forward_misses, caches carry references/descriptors; referenced storage is not included in size
+// out-of-line: prepared, forward_misses, caches carry references/descriptors; referenced storage is not included in
+// size
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
@@ -171,6 +179,7 @@ fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
         "zdisamar-profile-cache-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-profile-cache";
+
     // instrumentation: trace thread label
     // captures: profile spectroscopy cache worker identity
     // why: make parallel cache-build lanes separable in timeline traces.
@@ -201,10 +210,9 @@ fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
 
 pub fn warmWavelengthPlan(
     allocator: Allocator,
-    storage: *Storage.SummaryStorage,
+    storage: *Storage.ProductStorage,
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
 ) Storage.Error!void {
     try scene.validate();
     const spectral_grid: grid.SpectralGrid = .{
@@ -218,7 +226,7 @@ pub fn warmWavelengthPlan(
     };
     try resolved_axis.validate();
 
-    const plan_key = wavelengthPlanKey(scene, prepared, implementations);
+    const plan_key = wavelengthPlanKey(scene, prepared);
     if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
         _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_miss_plan.misses);
         return;
@@ -232,9 +240,8 @@ pub fn warmWavelengthPlan(
         scene,
         prepared,
         &resolved_axis,
-        implementations.instrument.calibrationForScene(scene, .radiance),
-        implementations.instrument.calibrationForScene(scene, .irradiance),
-        implementations,
+        instrument_calibration.calibrationForScene(scene, .radiance),
+        instrument_calibration.calibrationForScene(scene, .irradiance),
     );
     storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
         allocator,
@@ -248,7 +255,7 @@ pub fn warmWavelengthPlan(
 
 fn ensureProfileSpectroscopyCaches(
     allocator: Allocator,
-    storage: *Storage.SummaryStorage,
+    storage: *Storage.ProductStorage,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
 ) ![]const SpectroscopyState.ProfileNodeSpectroscopyCache {
@@ -284,6 +291,7 @@ fn buildProfileSpectroscopyCaches(
     forward_misses: []const SpectralEval.ForwardCacheMiss,
     thread_pool: ?*std.Thread.Pool,
 ) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
+
     // instrumentation: trace zone
     // captures: profile spectroscopy cache build wall time and miss count
     // why: show when cache construction, rather than LABOS transport, dominates prefetch setup.
@@ -345,33 +353,33 @@ fn buildProfileSpectroscopyCaches(
     return caches;
 }
 
-// hot path:
-//   when: once per product simulation in forward and retrieval runs
-//   work: sequences wavelength planning, forward-cache fill, convolution, noise, and Jacobian processing
-//   data: instrument buffers, spectral evaluation cache, wavelength plan storage, active derivative mask
-//   follow: downstream calls into fillRadianceSamples, fillIrradianceSamples, and processJacobianSamples
 pub fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
-    wavelength_plan_storage: ?*Storage.SummaryStorage,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
 ) Storage.Error!Types.InstrumentGridSummary {
+
+    // hot path:
+    //   when: once per product simulation in forward and retrieval runs
+    //   work: sequences wavelength planning, forward-cache fill, convolution, noise, and Jacobian processing
+    //   reads: instrument buffers, spectral evaluation cache, wavelength plan storage, active derivative mask
+    //   follow: downstream calls into fillRadianceSamples, fillIrradianceSamples, and processJacobianSamples
+
     // instrumentation: trace zone
     // captures: whole instrument-grid product simulation wall time
     // why: anchor nested sampling, prefetch, convolution, and assembly phases to one forward solve.
     const simulate_zone = Trace.staticZone(@src(), "simulate.product");
     defer simulate_zone.end();
 
-    const setup = try buildSimulationSetup(scene, route, prepared, implementations, buffers);
+    const setup = try buildSimulationSetup(scene, rtm_config, prepared, buffers);
     var simulation_plan = try resolveSimulationPlan(
         allocator,
         scene,
         prepared,
-        implementations,
         setup,
         wavelength_plan_storage,
     );
@@ -379,16 +387,16 @@ pub fn simulateInternal(
     try prefetchSimulationPlan(
         allocator,
         scene,
-        route,
+        rtm_config,
         prepared,
         &simulation_plan,
         wavelength_plan_storage,
     );
 
     var summary = RunningSummary.init();
-    _ = try validateTransportBuffers(scene, route, prepared, buffers);
+    _ = try validateTransportBuffers(scene, rtm_config, prepared, buffers);
     try fillRadianceSamples(
-        route,
+        rtm_config,
         setup,
         simulation_plan.wavelength_sampling,
         simulation_plan.forward_miss_plan,
@@ -405,7 +413,7 @@ pub fn simulateInternal(
     );
     assembleReflectance(scene, setup.sample_count, buffers, &summary);
     const mean_jacobian = try processJacobianSamples(
-        route.derivative_state_mask,
+        rtm_config.derivative_state_mask,
         setup,
         buffers,
         &summary,
@@ -419,14 +427,13 @@ pub fn simulateInternal(
 
 fn buildSimulationSetup(
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     buffers: Storage.Buffers,
 ) Storage.Error!SimulationSetup {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    try Storage.validateBuffers(scene, route, sample_count, buffers);
+    try Storage.validateBuffers(scene, rtm_config, sample_count, buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -439,20 +446,24 @@ fn buildSimulationSetup(
     };
     try resolved_axis.validate();
 
-    const radiance_calibration = implementations.instrument.calibrationForScene(scene, .radiance);
-    const irradiance_calibration = implementations.instrument.calibrationForScene(scene, .irradiance);
-    const radiance_slit_kernel = implementations.instrument.slitKernelForScene(scene, .radiance);
-    const irradiance_slit_kernel = implementations.instrument.slitKernelForScene(scene, .irradiance);
-    const uses_integrated_radiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .radiance);
-    const uses_integrated_irradiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .irradiance);
+    const radiance_calibration = instrument_calibration.calibrationForScene(scene, .radiance);
+    const irradiance_calibration = instrument_calibration.calibrationForScene(scene, .irradiance);
+    const radiance_slit_kernel = instrument_integration.slitKernelForScene(scene, .radiance);
+    const irradiance_slit_kernel = instrument_integration.slitKernelForScene(scene, .irradiance);
+    const uses_integrated_radiance_sampling =
+        instrument_integration.usesIntegratedInstrumentSampling(scene, .radiance);
+    const uses_integrated_irradiance_sampling =
+        instrument_integration.usesIntegratedInstrumentSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
+
     // math: safe_span = max(lambda_end - lambda_start, 1 nm) for normalized carrier and support interpolation.
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
+
     // instrumentation: trace counter
     // captures: number of output wavelength samples
     // why: normalize product-level timeline cost by the emitted spectrum size.
     Trace.plotU("output_wavelengths", @intCast(sample_count));
-    const plan_key = wavelengthPlanKey(scene, prepared, implementations);
+    const plan_key = wavelengthPlanKey(scene, prepared);
 
     return .{
         .sample_count = sample_count,
@@ -468,23 +479,25 @@ fn buildSimulationSetup(
     };
 }
 
-// hot path:
-//   when: once per simulation, with cached storage reused across OE iterations
-//   work: resolves wavelength sampling, unique forward misses, and profile spectroscopy caches
-//   data: wavelength sampling rows, forward miss keys, profile-node spectroscopy cache array
-//   follow: plan storage reuse and cache invalidation before prefetchSimulationPlan
 fn resolveSimulationPlan(
     allocator: Allocator,
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     setup: SimulationSetup,
-    wavelength_plan_storage: ?*Storage.SummaryStorage,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
 ) Storage.Error!ResolvedSimulationPlan {
+
+    // hot path:
+    //   when: once per simulation, with cached storage reused across OE iterations
+    //   work: resolves wavelength sampling, unique forward misses, and profile spectroscopy caches
+    //   reads: wavelength sampling rows, forward miss keys, profile-node spectroscopy cache array
+    //   follow: plan storage reuse and cache invalidation before prefetchSimulationPlan
+
     var plan: ResolvedSimulationPlan = .{};
     errdefer plan.deinit(allocator);
 
-    plan.wavelength_sampling = blk: {
+    plan.wavelength_sampling = resolve_wavelength_sampling: {
+
         // instrumentation: trace zone
         // captures: wavelength sampling plan resolution wall time
         // why: distinguish cache hits, plan rebuilds, and owned one-shot sampling setup.
@@ -493,7 +506,7 @@ fn resolveSimulationPlan(
 
         if (wavelength_plan_storage) |storage| {
             if (storage.wavelength_plan_valid and storage.wavelength_plan_key == setup.plan_key) {
-                break :blk storage.wavelength_sampling.view();
+                break :resolve_wavelength_sampling storage.wavelength_sampling.view();
             }
             storage.invalidateWavelengthPlan(allocator);
             storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
@@ -503,11 +516,10 @@ fn resolveSimulationPlan(
                 &setup.resolved_axis,
                 setup.radiance_calibration,
                 setup.irradiance_calibration,
-                implementations,
             );
             storage.wavelength_plan_key = setup.plan_key;
             storage.wavelength_plan_valid = true;
-            break :blk storage.wavelength_sampling.view();
+            break :resolve_wavelength_sampling storage.wavelength_sampling.view();
         }
         plan.owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
             allocator,
@@ -516,11 +528,11 @@ fn resolveSimulationPlan(
             &setup.resolved_axis,
             setup.radiance_calibration,
             setup.irradiance_calibration,
-            implementations,
         );
-        break :blk plan.owned_wavelength_sampling.view();
+        break :resolve_wavelength_sampling plan.owned_wavelength_sampling.view();
     };
-    plan.forward_miss_plan = blk: {
+    plan.forward_miss_plan = resolve_forward_miss_plan: {
+
         // instrumentation: trace zone
         // captures: forward-cache miss collection wall time
         // why: measure the unique high-resolution wavelength expansion before LABOS prefetch.
@@ -535,15 +547,16 @@ fn resolveSimulationPlan(
                 );
                 storage.forward_miss_plan_valid = true;
             }
-            break :blk storage.forward_miss_plan.view();
+            break :resolve_forward_miss_plan storage.forward_miss_plan.view();
         }
         plan.owned_forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
             allocator,
             plan.wavelength_sampling,
         );
-        break :blk plan.owned_forward_miss_plan.view();
+        break :resolve_forward_miss_plan plan.owned_forward_miss_plan.view();
     };
-    plan.profile_spectroscopy_caches = blk: {
+    plan.profile_spectroscopy_caches = resolve_profile_spectroscopy_caches: {
+
         // instrumentation: trace zone
         // captures: profile spectroscopy cache lookup/build wall time
         // why: isolate profile-node spectroscopy setup from transport execution.
@@ -551,9 +564,14 @@ fn resolveSimulationPlan(
         defer zone.end();
 
         if (wavelength_plan_storage) |storage| {
-            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, plan.forward_miss_plan.misses);
+            break :resolve_profile_spectroscopy_caches try ensureProfileSpectroscopyCaches(
+                allocator,
+                storage,
+                prepared,
+                plan.forward_miss_plan.misses,
+            );
         }
-        break :blk &.{};
+        break :resolve_profile_spectroscopy_caches &.{};
     };
     return plan;
 }
@@ -561,12 +579,13 @@ fn resolveSimulationPlan(
 fn prefetchSimulationPlan(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     simulation_plan: *ResolvedSimulationPlan,
-    wavelength_plan_storage: ?*Storage.SummaryStorage,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
 ) Storage.Error!void {
     {
+
         // instrumentation: trace zone
         // captures: forward prefetch wall time and miss count
         // why: track the batched high-resolution LABOS work hidden behind nominal samples.
@@ -574,81 +593,94 @@ fn prefetchSimulationPlan(
         zone.value(@intCast(simulation_plan.forward_miss_plan.misses.len));
         defer zone.end();
         const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_miss_plan.misses.len);
-        const thread_pool = if (wavelength_plan_storage) |storage|
-            storage.forwardPrefetchPool(allocator, worker_count)
-        else
-            null;
-        const results = if (wavelength_plan_storage) |storage|
-            try storage.forwardResultBuffer(allocator, simulation_plan.forward_miss_plan.misses.len)
-        else blk: {
-            simulation_plan.owned_forward_results = try allocator.alloc(
+
+        var thread_pool: ?*std.Thread.Pool = null;
+        var results: []SpectralEval.ForwardIntegratedSample = undefined;
+        if (wavelength_plan_storage) |storage| {
+            thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
+            results = try storage.forwardResultBuffer(
+                allocator,
+                simulation_plan.forward_miss_plan.misses.len,
+            );
+        } else {
+            results = try allocator.alloc(
                 SpectralEval.ForwardIntegratedSample,
                 simulation_plan.forward_miss_plan.misses.len,
             );
-            break :blk simulation_plan.owned_forward_results;
-        };
+            simulation_plan.owned_forward_results = results;
+        }
+
         try SpectralEval.prefetchForwardSamples(
             allocator,
             scene,
-            route,
+            rtm_config,
             prepared,
             simulation_plan.forward_miss_plan.misses,
             simulation_plan.profile_spectroscopy_caches,
             results,
             thread_pool,
         );
+
         simulation_plan.forward_results = results;
     }
 }
 
 fn validateTransportBuffers(
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     buffers: Storage.Buffers,
 ) Storage.Error!usize {
-    const transport_layer_count = Storage.resolvedTransportLayerCount(route, prepared);
+    const transport_layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
+
     if (buffers.layer_inputs.len < transport_layer_count) {
         return error.ShapeMismatch;
     }
-    if (Storage.routeMayUseSourceInterfaces(scene, route) and
+
+    if (Storage.configMayUseSourceInterfaces(scene, rtm_config) and
         buffers.source_interfaces.len < transport_layer_count + 1)
     {
         return error.ShapeMismatch;
     }
-    if (Storage.routeUsesRtmQuadrature(route) and
+
+    if (Storage.configUsesRtmQuadrature(rtm_config) and
         buffers.rtm_quadrature_levels.len < transport_layer_count + 1)
     {
         return error.ShapeMismatch;
     }
-    if (Storage.routeUsesPseudoSphericalGrid(route) and
+
+    if (Storage.configUsesPseudoSphericalGrid(rtm_config) and
         buffers.pseudo_spherical_level_starts.len < transport_layer_count + 1)
     {
         return error.ShapeMismatch;
     }
+
     return transport_layer_count;
 }
 
-// hot path:
-//   when: once per output wavelength after forward misses have been prefetched
-//   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
-//   data: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
-//   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
-//   math: L_out = C_slit(sum_j w_ij F(lambda_i + delta_ij)) followed by channel calibration
 fn fillRadianceSamples(
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     setup: SimulationSetup,
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     forward_miss_plan: Plan.ForwardMissPlan,
     forward_results: []const SpectralEval.ForwardIntegratedSample,
     buffers: Storage.Buffers,
 ) Storage.Error!void {
+
+    // hot path:
+    //   when: once per output wavelength after forward misses have been prefetched
+    //   work: integrates radiance samples, writes wavelength/radiance buffers, and records Jacobian rows
+    //   reads: wavelength sampling rows, dense forward results, direct miss-index rows, jacobian buffer
+    //   follow: SpectralEval.integratePrefetchedForwardAtNominal and convolution/postprocess passes
+    //   math: L_out = C_slit(sum_j w_ij F(lambda_i + delta_ij)) followed by channel calibration
+
     const active_jacobians = if (buffers.jacobian != null)
         ActiveJacobianStates.init(buffers.jacobian_state_mask)
     else
         ActiveJacobianStates{};
 
     {
+
         // instrumentation: trace zone
         // captures: radiance cache integration wall time
         // why: isolate nominal-wavelength gather work from later convolution and calibration.
@@ -660,7 +692,7 @@ fn fillRadianceSamples(
 
             if (index >= forward_miss_plan.rows.len) return error.ShapeMismatch;
             const integrated = try SpectralEval.integratePrefetchedForwardAtNominal(
-                route,
+                rtm_config,
                 forward_results,
                 forward_miss_plan.rows[index],
                 forward_miss_plan.sample_indices,
@@ -680,11 +712,13 @@ fn fillRadianceSamples(
         }
     }
     if (setup.uses_integrated_radiance_sampling) {
+
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
         //   instrument already performed the spectral integration.
         @memcpy(buffers.radiance, buffers.scratch);
     } else {
+
         // instrumentation: trace zone
         // captures: radiance slit convolution wall time
         // why: separate instrument-kernel cost from RTM cache integration.
@@ -693,24 +727,20 @@ fn fillRadianceSamples(
         try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.radiance);
     }
     {
+
         // instrumentation: trace zone
         // captures: radiance channel postprocess wall time
         // why: keep calibration/postprocess cost visible after convolution.
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
-        try Postprocess.applyChannelCorrections(
+        try calibration.applySignal(
             setup.radiance_calibration,
+            buffers.radiance,
             buffers.radiance,
         );
     }
 }
 
-// hot path:
-//   when: once per output wavelength for irradiance sampling
-//   work: integrates irradiance samples and applies convolution plus channel postprocess
-//   data: irradiance integration plans, irradiance cache, scratch buffer, output irradiance buffer
-//   follow: SpectralEval.integrateIrradianceAtNominal and calibration-only channel corrections
-//   math: E0_out = C_slit(sum_j w_ij E0(lambda_i + delta_ij)) followed by channel calibration
 fn fillIrradianceSamples(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -719,7 +749,16 @@ fn fillIrradianceSamples(
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!void {
+
+    // hot path:
+    //   when: once per output wavelength for irradiance sampling
+    //   work: integrates irradiance samples and applies convolution plus channel postprocess
+    //   reads: irradiance integration plans, irradiance cache, scratch buffer, output irradiance buffer
+    //   follow: SpectralEval.integrateIrradianceAtNominal and calibration-only channel corrections
+    //   math: E0_out = C_slit(sum_j w_ij E0(lambda_i + delta_ij)) followed by channel calibration
+
     {
+
         // instrumentation: trace zone
         // captures: irradiance sampling wall time
         // why: distinguish solar irradiance interpolation/integration from radiance transport.
@@ -741,6 +780,7 @@ fn fillIrradianceSamples(
     if (setup.uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
+
         // instrumentation: trace zone
         // captures: irradiance slit convolution wall time
         // why: separate solar-channel instrument-kernel cost from sampling.
@@ -749,13 +789,15 @@ fn fillIrradianceSamples(
         try convolution.apply(buffers.scratch, setup.irradiance_slit_kernel[0..], buffers.irradiance);
     }
     {
+
         // instrumentation: trace zone
         // captures: irradiance channel postprocess wall time
         // why: keep solar calibration cost visible before reflectance assembly.
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
-        try Postprocess.applyChannelCorrections(
+        try calibration.applySignal(
             setup.irradiance_calibration,
+            buffers.irradiance,
             buffers.irradiance,
         );
     }
@@ -769,19 +811,22 @@ fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSam
     return count;
 }
 
-// hot path:
-//   when: once per output wavelength after radiance and irradiance channels are materialized
-//   work: computes reflectance and accumulates summary statistics
-//   data: radiance, irradiance, reflectance, and running summary fields
-//   follow: contiguous output buffers and the summary accumulator write pattern
-//   math: rho_i = pi * L_i / max(E0_i * mu0, 1e-9)
 fn assembleReflectance(
     scene: *const Scene,
     sample_count: usize,
     buffers: Storage.Buffers,
     summary: *RunningSummary,
 ) void {
+
+    // hot path:
+    //   when: once per output wavelength after radiance and irradiance channels are materialized
+    //   work: computes reflectance and accumulates summary statistics
+    //   reads: radiance, irradiance, reflectance, and running summary fields
+    //   follow: contiguous output buffers and the summary accumulator write pattern
+    //   math: rho_i = pi * L_i / max(E0_i * mu0, 1e-9)
+
     {
+
         // instrumentation: trace zone
         // captures: reflectance assembly wall time
         // why: isolate final radiance/irradiance-to-reflectance conversion.
@@ -795,6 +840,7 @@ fn assembleReflectance(
             const denominator_raw = buffers.irradiance[index] * solar_cosine;
             const denominator = @max(denominator_raw, 1e-9);
             buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) / denominator;
+
             // instrumentation: calculation telemetry
             // captures: denominator clamps and final reflectance extrema
             // why: identify numerically fragile spectra where simple pruning would change outputs.
@@ -809,6 +855,7 @@ fn assembleReflectance(
                 buffers.reflectance[index],
             );
         }
+
         // instrumentation: calculation telemetry
         // captures: per-spectrum reflectance assembly summary
         // why: store one compact row for studying clamp incidence against scene geometry.
@@ -823,29 +870,37 @@ fn assembleReflectance(
     }
 }
 
-// hot path:
-//   when: once per simulation when a Jacobian buffer is requested
-//   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
-//   data: derivative state mask, state-major active-column buffer, wavelength array
-//   follow: jacobianColumn and Postprocess.applyChannelJacobianCorrections
 fn processJacobianSamples(
     derivative_state_mask: jacobian.StateMask,
     setup: SimulationSetup,
     buffers: Storage.Buffers,
     summary: *RunningSummary,
 ) Storage.Error!?jacobian.Vector {
+
+    // hot path:
+    //   when: once per simulation when a Jacobian buffer is requested
+    //   work: convolves and calibrates active derivative columns, then accumulates mean Jacobian rows
+    //   reads: derivative state mask, state-major active-column buffer, wavelength array
+    //   follow: jacobianColumn and calibration.applySignalDerivative
+
     if (buffers.jacobian) |jacobian_buffer| {
         {
+
             // instrumentation: trace zone
             // captures: Jacobian convolution, calibration, and reduction wall time
             // why: separate derivative-column postprocessing from RTM evaluation.
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
             const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
-            if (active_jacobians.count == 0 or jacobian_buffer.len != setup.sample_count * active_jacobians.count) return error.ShapeMismatch;
+            if (active_jacobians.count == 0 or
+                jacobian_buffer.len != setup.sample_count * active_jacobians.count)
+            {
+                return error.ShapeMismatch;
+            }
             if (!setup.uses_integrated_radiance_sampling) {
                 for (0..active_jacobians.count) |active_index| {
                     const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
+
                     if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                     const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                     try convolution.apply(column, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
@@ -854,10 +909,12 @@ fn processJacobianSamples(
             }
             for (0..active_jacobians.count) |active_index| {
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
+
                 if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
-                try Postprocess.applyChannelJacobianCorrections(
+                try calibration.applySignalDerivative(
                     setup.radiance_calibration,
+                    column,
                     column,
                 );
             }
@@ -866,15 +923,18 @@ fn processJacobianSamples(
                 const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
                 const state_index = jacobian.stateIndex(state);
                 var column_sum: f64 = 0.0;
+
                 var column_max_abs: f64 = 0.0;
                 for (column) |value| {
                     column_sum += value;
+
                     // instrumentation: calculation telemetry
                     // captures: maximum absolute derivative value per active state
                     // why: flag near-zero sensitivity columns that may be safe to skip.
                     if (Telemetry.enabled) column_max_abs = @max(column_max_abs, @abs(value));
                 }
                 summary.jacobian_sum[state_index] += column_sum;
+
                 // instrumentation: calculation telemetry
                 // captures: derivative column sum, mean, and max magnitude
                 // why: relate retrieval-state sensitivity to final spectrum impact.
@@ -896,10 +956,8 @@ fn processJacobianSamples(
 fn wavelengthPlanKey(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
 ) u64 {
     var hash = std.hash.Wyhash.init(0x4f32_4132_7761_7665);
-    hash.update(implementations.instrument.id);
     updateFloat(&hash, scene.spectral_grid.start_nm);
     updateFloat(&hash, scene.spectral_grid.end_nm);
     updateInt(&hash, scene.spectral_grid.sample_count);
@@ -950,15 +1008,39 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
     updateFloat(hash, response.high_resolution_step_nm);
     updateFloat(hash, response.high_resolution_half_span_nm);
     updateInt(hash, response.instrument_line_shape.sample_count);
-    updateFloatSlice(hash, response.instrument_line_shape.offsets_nm[0..@min(response.instrument_line_shape.offsets_nm.len, response.instrument_line_shape.sample_count)]);
-    updateFloatSlice(hash, response.instrument_line_shape.weights[0..@min(response.instrument_line_shape.weights.len, response.instrument_line_shape.sample_count)]);
+    const line_shape_sample_count = response.instrument_line_shape.sample_count;
+    const line_shape_offset_count = @min(
+        response.instrument_line_shape.offsets_nm.len,
+        line_shape_sample_count,
+    );
+    const line_shape_weight_count = @min(
+        response.instrument_line_shape.weights.len,
+        line_shape_sample_count,
+    );
+    updateFloatSlice(hash, response.instrument_line_shape.offsets_nm[0..line_shape_offset_count]);
+    updateFloatSlice(hash, response.instrument_line_shape.weights[0..line_shape_weight_count]);
     updateInt(hash, response.instrument_line_shape_table.nominal_count);
     updateInt(hash, response.instrument_line_shape_table.sample_count);
-    updateFloatSlice(hash, response.instrument_line_shape_table.nominal_wavelengths_nm[0..@min(response.instrument_line_shape_table.nominal_wavelengths_nm.len, response.instrument_line_shape_table.nominal_count)]);
-    updateFloatSlice(hash, response.instrument_line_shape_table.offsets_nm[0..@min(response.instrument_line_shape_table.offsets_nm.len, response.instrument_line_shape_table.sample_count)]);
+    const table_nominal_count = @min(
+        response.instrument_line_shape_table.nominal_wavelengths_nm.len,
+        response.instrument_line_shape_table.nominal_count,
+    );
+    const table_offset_count = @min(
+        response.instrument_line_shape_table.offsets_nm.len,
+        response.instrument_line_shape_table.sample_count,
+    );
+    updateFloatSlice(
+        hash,
+        response.instrument_line_shape_table.nominal_wavelengths_nm[0..table_nominal_count],
+    );
+    updateFloatSlice(
+        hash,
+        response.instrument_line_shape_table.offsets_nm[0..table_offset_count],
+    );
     const table_weight_count = @min(
         response.instrument_line_shape_table.weights.len,
-        @as(usize, response.instrument_line_shape_table.nominal_count) * @as(usize, response.instrument_line_shape_table.sample_count),
+        @as(usize, response.instrument_line_shape_table.nominal_count) *
+            @as(usize, response.instrument_line_shape_table.sample_count),
     );
     updateFloatSlice(hash, response.instrument_line_shape_table.weights[0..table_weight_count]);
 }
@@ -1007,38 +1089,36 @@ fn writeJacobianSample(
 pub fn simulate(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
     buffers: Storage.Buffers,
 ) Storage.Error!Types.InstrumentGridSummary {
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
     evaluation_cache.reset();
-    return simulateInternal(allocator, scene, route, prepared, implementations, buffers, &evaluation_cache, null);
+    return simulateInternal(allocator, scene, rtm_config, prepared, buffers, &evaluation_cache, null);
 }
 
 pub fn simulateSummary(
     allocator: Allocator,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
 ) Storage.Error!Types.InstrumentGridSummary {
-    var storage: Storage.SummaryStorage = .{};
+    var storage: Storage.ProductStorage = .{};
     defer storage.deinit(allocator);
-    return simulateSummaryWithWorkspace(allocator, &storage, scene, route, prepared, implementations);
+    return simulateSummaryWithWorkspace(allocator, &storage, scene, rtm_config, prepared);
 }
 
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
-    storage: *Storage.SummaryStorage,
+    storage: *Storage.ProductStorage,
     scene: *const Scene,
-    route: common.Route,
+    rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    implementations: Types.Implementations,
 ) Storage.Error!Types.InstrumentGridSummary {
     var summary_scene = scene.*;
+
     // GOTCHA:
     //   Summary mode truncates very long spectral grids so it can stay
     //   lightweight while preserving the full-product path for complete runs.
@@ -1048,10 +1128,9 @@ pub fn simulateSummaryWithWorkspace(
     return simulateInternal(
         allocator,
         &summary_scene,
-        route,
+        rtm_config,
         prepared,
-        implementations,
-        try storage.buffers(allocator, &summary_scene, route),
+        try storage.buffers(allocator, &summary_scene, rtm_config),
         try storage.spectralCache(allocator),
         storage,
     );

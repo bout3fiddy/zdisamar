@@ -1,0 +1,5 @@
+# Generated data belongs under out/ unless it is intentionally retained evidence.
+instrumentation/telemetry/data/
+instrumentation/telemetry/reports/
+instrumentation/perturbation/data/
+instrumentation/trace/evidence/captures/*.tracy

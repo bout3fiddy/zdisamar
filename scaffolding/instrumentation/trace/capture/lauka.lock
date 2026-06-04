@@ -1,0 +1,8 @@
+# Pinned Lauka source for Apple Silicon PMU tracing.
+#
+# This is intentionally a source checkout built under out/tools/, not vendored
+# Lauka code. Pin to a fixed commit from the project Lauka fork so the PMU run
+# can reproduce the same counter wrapper.
+LAUKA_REPO="https://github.com/bout3fiddy/lauka.git"
+LAUKA_REF="251ba8842884a4b6f175791342c75baae30c2ce6"
+LAUKA_ZIG_VERSION="0.15.2"

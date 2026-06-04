@@ -2,17 +2,17 @@
   "by_mode": {
     "fastmode": {
       "aerosol_mid_pressure_abs_error_hpa": {
-        "max": 0.5635396575535196,
-        "max_abs": 0.5635396575535196,
-        "mean": 0.05874247038221028,
-        "median": 0.02321486403855033,
+        "max": 0.5684813213017605,
+        "max_abs": 0.5684813213017605,
+        "mean": 0.05962271385057761,
+        "median": 0.024242966724102644,
         "min": 0.00010959518749587005
       },
       "aerosol_optical_depth_abs_error": {
         "max": 0.0003911229114034187,
         "max_abs": 0.0003911229114034187,
-        "mean": 4.0156177957713784e-05,
-        "median": 7.325925878265416e-06,
+        "mean": 3.7701576263501067e-05,
+        "median": 7.017592618285828e-06,
         "min": 3.048020447149469e-08
       },
       "converged": 100,
@@ -31,20 +31,20 @@
         "median": 4.0,
         "min": 4.0
       },
-      "full_correction_converged": 100,
+      "full_correction_converged": 2,
       "full_correction_state_vector_convergence": {
-        "max": 13.826810942023524,
-        "max_abs": 13.826810942023524,
-        "mean": 4.764618914688636,
-        "median": 4.332638033946331,
+        "max": 14.686035193022244,
+        "max_abs": 14.686035193022244,
+        "mean": 4.8316340943490275,
+        "median": 4.601517768019498,
         "min": 0.8387905521166391
       },
       "retrieval_s": {
-        "max": 0.4680703750345856,
-        "max_abs": 0.4680703750345856,
-        "mean": 0.36433267837855965,
-        "median": 0.34695504151750356,
-        "min": 0.2384885409846902
+        "max": 0.5064672499429435,
+        "max_abs": 0.5064672499429435,
+        "mean": 0.39985671583563087,
+        "median": 0.4107399166096002,
+        "min": 0.23550750012509525
       },
       "rows": 100
     },
@@ -65,11 +65,11 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.2554842920508236,
-        "max_abs": 2.2554842920508236,
-        "mean": 1.7435012933751568,
-        "median": 1.8045133125269786,
-        "min": 0.9184425419662148
+        "max": 2.4246600831393152,
+        "max_abs": 2.4246600831393152,
+        "mean": 1.7547040128731168,
+        "median": 1.815178812481463,
+        "min": 0.8780025420710444
       },
       "rows": 100
     }
@@ -87,7 +87,7 @@
         "controls": {
           "max_change_transformed_state": 1.0,
           "max_iterations": 10,
-          "state_vector_convergence_threshold": 30.0
+          "state_vector_convergence_threshold": 1.0
         },
         "fast_stage_sampling": {
           "enabled": true,
@@ -184,31 +184,31 @@
   "fastmode_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
       "max": 0.37432221438382385,
-      "max_abs": 0.5458586205186293,
-      "mean": -0.03477865204272632,
-      "median": -0.015911098004494306,
-      "min": -0.5458586205186293
+      "max_abs": 0.5508002842668702,
+      "mean": -0.03691951118203235,
+      "median": -0.016837212999064377,
+      "min": -0.5508002842668702
     },
     "aerosol_optical_depth_delta": {
       "max": 0.0004181641194220542,
       "max_abs": 0.0004181641194220542,
-      "mean": 6.473693389307394e-06,
-      "median": 2.693203663972632e-07,
+      "mean": 6.0532040428859515e-06,
+      "median": 2.5891302639358127e-07,
       "min": -0.00023283426228870585
     },
     "retrieval_speedup_s": {
-      "max": 1.8002397080417722,
-      "max_abs": 1.8002397080417722,
-      "mean": 1.3791686149965972,
-      "median": 1.4228081665933132,
-      "min": 0.6247947090305388
+      "max": 1.9418259160593152,
+      "max_abs": 1.9418259160593152,
+      "mean": 1.354847297037486,
+      "median": 1.4166533540701494,
+      "min": 0.5874059170018882
     }
   },
   "latency_position": {
-    "fastmode_median_s": 0.34695504151750356,
-    "fastmode_reference_speedup_s": 1.457558271009475,
+    "fastmode_median_s": 0.4107399166096002,
+    "fastmode_reference_speedup_s": 1.4044388958718628,
     "note": "Fastmode should stay below full-reference median latency while preserving the retained sparse fast-stage and final-correction sample counts.",
-    "reference_median_s": 1.8045133125269786
+    "reference_median_s": 1.815178812481463
   },
   "outputs": {
     "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",

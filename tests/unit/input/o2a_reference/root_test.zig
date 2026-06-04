@@ -36,7 +36,10 @@ test "default O2A input renders and parses as strict JSON" {
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
         parsed.value.inputs.raw_solar_reference.path,
     );
-    try std.testing.expectEqual(@as(?u16, null), parsed.value.rtm_controls.performance_thresholds.aerosol_tangent_order_cap);
+    try std.testing.expectEqual(
+        @as(?u16, null),
+        parsed.value.rtm_controls.performance_thresholds.aerosol_tangent_order_cap,
+    );
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_rd_product_suppression);
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_tu_product_suppression);
     try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_td_product_suppression);
@@ -90,50 +93,45 @@ test "O2A input validation rejects invalid sampling and assets" {
 
 test "O2A input validation consumes plan fields" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "none";
+    input.plan.derivative_mode = .none;
     try zdisamar.o2a.validateInput(&input);
 
     input = zdisamar.defaultO2AInput();
-    input.plan.model_family = "unsupported";
-    try std.testing.expectError(error.UnsupportedModelFamily, zdisamar.o2a.validateInput(&input));
-
-    input = zdisamar.defaultO2AInput();
-    input.plan.transport_solver = "unsupported";
-    try std.testing.expectError(error.UnsupportedTransportSolver, zdisamar.o2a.validateInput(&input));
-
-    input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "unsupported";
-    try std.testing.expectError(error.UnsupportedDerivativeMode, zdisamar.o2a.validateInput(&input));
-
-    input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "semi_analytical";
+    input.plan.derivative_mode = .semi_analytical;
     try zdisamar.o2a.validateInput(&input);
 }
 
-test "O2A plan modes are consumed when preparing the route" {
+test "O2A plan modes are consumed when preparing the rtm_config" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "none";
+    input.plan.derivative_mode = .none;
 
     var prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
     defer prepared.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(.scalar, prepared.route.execution_mode);
-    try std.testing.expectEqual(.none, prepared.route.derivative_mode);
+    try std.testing.expectEqual(.none, prepared.rtm_config.derivative_mode);
 
     input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "semi_analytical";
+    input.plan.derivative_mode = .semi_analytical;
     var jacobian_prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
     defer jacobian_prepared.deinit(std.testing.allocator);
-    try std.testing.expectEqual(.semi_analytical, jacobian_prepared.route.derivative_mode);
+    try std.testing.expectEqual(.semi_analytical, jacobian_prepared.rtm_config.derivative_mode);
 }
 
-test "O2A route preparation rejects unsupported derivative mode" {
-    var input = zdisamar.defaultO2AInput();
-    input.plan.execution_derivative_mode = "unsupported";
+test "O2A JSON rejects unsupported derivative mode" {
+    const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    const marker = "\"derivative_mode\": \"none\"";
+    const mode_index = std.mem.indexOf(u8, json, marker) orelse return error.TestUnexpectedResult;
+    const with_unsupported = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{s}\"derivative_mode\":\"unsupported\"{s}",
+        .{ json[0..mode_index], json[mode_index + marker.len ..] },
+    );
+    defer std.testing.allocator.free(with_unsupported);
 
     try std.testing.expectError(
-        error.UnsupportedDerivativeMode,
-        zdisamar.prepareO2A(std.testing.allocator, &input),
+        error.InvalidEnumTag,
+        zdisamar.parseO2AInputJson(std.testing.allocator, with_unsupported),
     );
 }
 

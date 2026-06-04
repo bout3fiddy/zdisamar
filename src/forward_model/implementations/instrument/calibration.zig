@@ -1,12 +1,12 @@
-const calibration = @import("../../instrument_grid/spectral_math/calibration.zig");
+const spectral_calibration = @import("../../instrument_grid/spectral_math/calibration.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
-pub const Calibration = calibration.Calibration;
-
-pub fn calibrationForScene(scene: *const Scene, channel: SpectralChannel) calibration.Calibration {
+pub fn calibrationForScene(scene: *const Scene, channel: SpectralChannel) spectral_calibration.Calibration {
     const controls = scene.observation_model.resolvedChannelControls(channel);
-    // math: channel correction uses lambda' = lambda + wavelength_shift, y' = gain*(y + stray_light*(mean(y)-y)) + offset.
+
+    // Channel correction applies shifted wavelengths and gain/offset after
+    // stray-light mixing: y' = gain * (y + s * (mean(y) - y)) + offset.
     return .{
         .gain = controls.multiplicative_offset,
         .offset = controls.additive_offset,

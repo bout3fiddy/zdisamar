@@ -1,14 +1,13 @@
 const std = @import("std");
 const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
 const OpticsPrepare = @import("../forward_model/optical_properties/root.zig");
-const implementations = @import("../forward_model/implementations/root.zig");
 const jacobian = @import("../forward_model/jacobian/root.zig");
 const o2a_runtime = @import("../input/o2a_reference/run.zig");
 const o2a_types = @import("../input/o2a_reference/types.zig");
 const o2a_prepared = @import("../input/o2a_reference/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
-const Telemetry = @import("../forward_model/calculation_telemetry.zig");
-const Trace = @import("../forward_model/performance_trace.zig");
+const Telemetry = @import("../forward_model/instrumentation/telemetry.zig");
+const Trace = @import("../forward_model/instrumentation/trace.zig");
 const work_partition = @import("../forward_model/work_partition.zig");
 const algebra = @import("algebra.zig");
 
@@ -77,7 +76,10 @@ pub const PressureAltitudeProfile = struct {
     }
 
     pub fn altitudeDerivativeAtPressure(self: PressureAltitudeProfile, pressure_hpa: f64) !f64 {
-        if (self.altitude_km.len < 2 or self.altitude_km.len != self.pressure_hpa.len or self.second.len != self.altitude_km.len) {
+        if (self.altitude_km.len < 2 or
+            self.altitude_km.len != self.pressure_hpa.len or
+            self.second.len != self.altitude_km.len)
+        {
             return error.InvalidPressureProfile;
         }
         const step_hpa = @max(@abs(pressure_hpa) * 1.0e-4, 1.0e-3);
@@ -142,19 +144,33 @@ pub const MeasurementWorkspace = struct {
         variance: []const f64,
     ) !MeasurementWorkspace {
         if (wavelength_nm.len == 0) return error.EmptyMeasurement;
+
         if (wavelength_nm.len != reflectance.len or wavelength_nm.len != variance.len) return error.InvalidMeasurement;
         var workspace: MeasurementWorkspace = .{};
         errdefer workspace.deinit(allocator);
         workspace.wavelength_nm = try allocator.dupe(f64, wavelength_nm);
         workspace.reflectance = try allocator.dupe(f64, reflectance);
         workspace.inv_variance = try allocator.alloc(f64, variance.len);
-        for (workspace.wavelength_nm, workspace.reflectance, variance, workspace.inv_variance, 0..) |wavelength, y, var_value, *inv, index| {
-            if (!std.math.isFinite(wavelength) or !std.math.isFinite(y) or !std.math.isFinite(var_value) or var_value <= 0.0) {
+
+        for (
+            workspace.wavelength_nm,
+            workspace.reflectance,
+            variance,
+
+            workspace.inv_variance,
+            0..,
+        ) |wavelength, y, var_value, *inv, index| {
+            if (!std.math.isFinite(wavelength) or
+                !std.math.isFinite(y) or
+                !std.math.isFinite(var_value) or
+                var_value <= 0.0)
+            {
                 return error.InvalidMeasurement;
             }
             if (index != 0 and wavelength <= workspace.wavelength_nm[index - 1]) return error.InvalidMeasurement;
             inv.* = 1.0 / var_value;
         }
+
         return workspace;
     }
 
@@ -220,12 +236,14 @@ pub const Result = struct {
         var result: Result = .{ .state_count = @intCast(state_count) };
         errdefer result.deinit(allocator);
         result.state_ids = try allocator.alloc(jacobian.State, state_count);
+
         result.state = try allocator.alloc(f64, state_count);
         result.initial_state = try allocator.alloc(f64, state_count);
         result.posterior_covariance = try allocator.alloc(f64, state_count * state_count);
         result.averaging_kernel = try allocator.alloc(f64, state_count * state_count);
         result.history_state = try allocator.alloc(f64, max_iterations * state_count);
         result.history_chi2 = try allocator.alloc(f64, max_iterations);
+
         result.history_chi2_reflectance = try allocator.alloc(f64, max_iterations);
         result.history_chi2_state_vector = try allocator.alloc(f64, max_iterations);
         result.history_state_vector_convergence = try allocator.alloc(f64, max_iterations);
@@ -268,12 +286,14 @@ pub const BatchResult = struct {
             .state_count = state_count,
             .history_capacity = history_capacity,
         };
+
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
         result.status = try allocator.alloc(u8, run_count);
         result.state = try allocator.alloc(f64, run_count * state_count);
         result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+
         initializeBatchOutput(result.output());
         return result;
     }
@@ -392,21 +412,30 @@ pub const FastmodeBatchResult = struct {
     full_correction_iteration_count: []usize = &.{},
     full_correction_converged: []u8 = &.{},
 
-    pub fn init(allocator: Allocator, run_count: usize, state_count: usize, history_capacity: usize) !FastmodeBatchResult {
+    pub fn init(
+        allocator: Allocator,
+        run_count: usize,
+        state_count: usize,
+        history_capacity: usize,
+    ) !FastmodeBatchResult {
         if (run_count == 0) return error.InvalidStateSpec;
         if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+
         if (history_capacity == 0 or history_capacity > max_iteration_count * 2) return error.InvalidStateSpec;
         var result: FastmodeBatchResult = .{
             .run_count = run_count,
             .state_count = state_count,
+
             .history_capacity = history_capacity,
         };
+
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
         result.status = try allocator.alloc(u8, run_count);
         result.state = try allocator.alloc(f64, run_count * state_count);
         result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+
         result.fast_stage_iteration_count = try allocator.alloc(usize, run_count);
         result.fast_stage_converged = try allocator.alloc(u8, run_count);
         result.full_correction_iteration_count = try allocator.alloc(usize, run_count);
@@ -459,7 +488,8 @@ const StateSpace = struct {
 //   size: 104 B, align: 8 B
 //   field storage: borrowed=96 B, captured=1 B; padding: 7 B
 //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays; keys summarize invariant spectroscopy support
+// out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays; keys summarize
+// invariant spectroscopy support
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: one per retrieval, reused across all OE state evaluations
 //   footprint: per instance = 104 B (0.102 KiB); referenced arrays are captured from the first prepared optical state
@@ -510,6 +540,7 @@ const ProfilePreparationSession = struct {
         }
         if (self.borrowed.weak_line_states) |states| {
             for (states) |*state| state.deinit(allocator);
+
             allocator.free(states);
         }
         if (self.borrowed.altitudes_km.len != 0) allocator.free(self.borrowed.altitudes_km);
@@ -520,7 +551,7 @@ const ProfilePreparationSession = struct {
 };
 
 // Retrieval-owned preparation for one inverse problem. State evaluations still
-// rebuild the state-dependent scene and optical state, but route selection and
+// rebuild the state-dependent scene and optical state, but rtm_config selection and
 // long-lived input/measurement ownership are outside the iteration loop.
 const RetrievalPreparedCase = struct {
     state_specs: []const StateSpec,
@@ -533,7 +564,7 @@ const RetrievalPreparedCase = struct {
     weak_cutoff_grid: o2a_runtime.WeakCutoffGridCache = .{},
     solar_rewindowed: bool = false,
     profile_preparation: ProfilePreparationSession = .{},
-    route: o2a_types.Route,
+    rtm_config: o2a_types.SolveConfig,
 
     fn init(
         allocator: Allocator,
@@ -577,7 +608,7 @@ const RetrievalPreparedCase = struct {
             .mutable_input = mutable_input,
             .mutable_intervals = mutable_intervals,
             .scene = scene,
-            .route = try o2a_runtime.prepareResolvedVendorO2ARouteFromResolved(base_input),
+            .rtm_config = try o2a_runtime.prepareResolvedVendorO2ASolveConfigFromResolved(base_input),
         };
     }
 
@@ -603,6 +634,7 @@ pub fn runO2A(
     controls: Controls,
 ) !Result {
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
     if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
 
@@ -670,10 +702,24 @@ fn runO2ABatchInto(
     batch: *BatchOutput,
 ) !void {
     const run_count = try validateBatchInputs(base_input, state_template, initial_states, prior_states, controls);
+
     if (batch.run_count != run_count or batch.state_count != state_template.len) return error.InvalidStateSpec;
-    if (batch.iteration_count.len != run_count or batch.converged.len != run_count or batch.status.len != run_count) return error.InvalidStateSpec;
+
+    if (batch.iteration_count.len != run_count or
+        batch.converged.len != run_count or
+        batch.status.len != run_count)
+    {
+        return error.InvalidStateSpec;
+    }
+
     if (batch.state.len != run_count * state_template.len) return error.InvalidStateSpec;
-    if (batch.history_capacity < controls.max_iterations or batch.history_start_offset + batch.history_capacity > batch.history_stride) return error.InvalidStateSpec;
+
+    if (batch.history_capacity < controls.max_iterations or
+        batch.history_start_offset + batch.history_capacity > batch.history_stride)
+    {
+        return error.InvalidStateSpec;
+    }
+
     if (batch.history_state.len != run_count * batch.history_stride * state_template.len) return error.InvalidStateSpec;
 
     const previous_context = Telemetry.currentContext();
@@ -735,14 +781,22 @@ fn telemetryContextWithStage(context: Telemetry.Context, stage: Telemetry.Stage)
     return resolved;
 }
 
-fn telemetryContextWithStartState(context: Telemetry.Context, start_index: usize, state: []const f64) Telemetry.Context {
+fn telemetryContextWithStartState(
+    context: Telemetry.Context,
+    start_index: usize,
+    state: []const f64,
+) Telemetry.Context {
     if (comptime !Telemetry.enabled) return context;
     var resolved = telemetryContextWithState(context, state);
     resolved.start_index = telemetryIndex(start_index);
     return resolved;
 }
 
-fn telemetryContextWithEvaluationState(context: Telemetry.Context, iteration_index: usize, state: []const f64) Telemetry.Context {
+fn telemetryContextWithEvaluationState(
+    context: Telemetry.Context,
+    iteration_index: usize,
+    state: []const f64,
+) Telemetry.Context {
     if (comptime !Telemetry.enabled) return context;
     var resolved = telemetryContextWithState(context, state);
     resolved.iteration_index = telemetryIndex(iteration_index);
@@ -795,12 +849,14 @@ fn validateBatchInputs(
     controls: Controls,
 ) !usize {
     if (state_template.len == 0 or state_template.len > max_state_count) return error.InvalidStateCount;
+
     if (controls.max_iterations == 0 or controls.max_iterations > max_iteration_count) return error.InvalidStateSpec;
     if (base_input.aerosol.profile.len > 1) return error.MultiLayerAerosolProfileUnsupportedForRetrieval;
     if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
     if (initial_states.len % state_template.len != 0) return error.InvalidStateSpec;
     const run_count = initial_states.len / state_template.len;
     if (run_count == 0) return error.InvalidStateSpec;
+
     return run_count;
 }
 
@@ -826,7 +882,13 @@ pub fn runO2AFastmodeBatch(
     batch_worker_count: usize,
 ) !FastmodeBatchResult {
     if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
-    const run_count = try validateBatchInputs(fast_input, fast_state_template, initial_states, prior_states, fast_controls);
+    const run_count = try validateBatchInputs(
+        fast_input,
+        fast_state_template,
+        initial_states,
+        prior_states,
+        fast_controls,
+    );
     if (correction_prior_states.len != run_count * correction_state_template.len) return error.InvalidStateSpec;
 
     const fast_history_capacity = fast_controls.max_iterations;
@@ -1032,7 +1094,8 @@ fn batchHistoryState(batch: BatchOutput, run_index: usize) []f64 {
 //   cache span: 4 cache line(s) at 64 B per line
 //   count: native batch worker count, usually CPU-core bounded for multi-start diagnosis
 //   footprint: per instance = 224 B (0.219 KiB); each worker owns its prepared case and product storage while running
-//   telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation telemetry executable
+// telemetry: telemetry_context is zero-size in product builds and stores row attribution only in the validation
+// telemetry executable
 const BatchWorker = struct {
     allocator: Allocator,
     base_input: *const o2a_types.ResolvedVendorO2ACase,
@@ -1069,14 +1132,16 @@ fn runO2ABatchParallel(
     defer allocator.free(threads);
     var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
     var shared_forward_prefetch_pool_valid = false;
-    const shared_forward_prefetch_pool = if (worker_count > 1)
-        initSharedForwardPrefetchPool(
-            allocator,
-            &shared_forward_prefetch_pool_storage,
-            &shared_forward_prefetch_pool_valid,
-        )
-    else
-        null;
+    const shared_forward_prefetch_pool = choose_shared_forward_prefetch_pool: {
+        break :choose_shared_forward_prefetch_pool if (worker_count > 1)
+            initSharedForwardPrefetchPool(
+                allocator,
+                &shared_forward_prefetch_pool_storage,
+                &shared_forward_prefetch_pool_valid,
+            )
+        else
+            null;
+    };
     defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
     // One-iteration correction batches are uniform enough that wider queue
@@ -1147,6 +1212,7 @@ fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
         &forward_storage,
     );
     defer prepared_case.deinit(worker.allocator);
+
     // Broad basin sweeps have variable iteration counts by start. Claim one
     // start at a time so a hard region does not pin the final worker tail.
     while (worker.queue.next()) |chunk| {
@@ -1218,15 +1284,18 @@ fn runPreparedO2ACore(
     full_result: ?*Result,
     history_state: []f64,
 ) !RunSummary {
+
     // instrumentation: trace zone
     // captures: full optimal-estimation retrieval wall time
     // why: anchor setup, iteration, forward/Jacobian, and solver phases to one inversion.
     const retrieval_zone = Trace.staticZone(@src(), "optimal_estimation.run");
     defer retrieval_zone.end();
+
     // instrumentation: trace counter
     // captures: active retrieval state count
     // why: normalize iteration and solver timing by inverse-problem dimension.
     Trace.plotU("optimal_estimation_state_count", @intCast(state_specs.len));
+
     // instrumentation: trace counter
     // captures: configured maximum OE iterations
     // why: make trace comparisons robust when controls change.
@@ -1236,8 +1305,8 @@ fn runPreparedO2ACore(
 
     const state_space = try initializeStateSpace(state_specs, full_result);
     var state = state_space.state;
-    prepared_case.route.derivative_mode = .semi_analytical;
-    prepared_case.route.derivative_state_mask = state_space.derivative_state_mask;
+    prepared_case.rtm_config.derivative_mode = .semi_analytical;
+    prepared_case.rtm_config.derivative_state_mask = state_space.derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
@@ -1247,6 +1316,7 @@ fn runPreparedO2ACore(
     var converged = false;
     var iteration_count: usize = 0;
     for (0..controls.max_iterations) |iteration_offset| {
+
         // instrumentation: trace zone
         // captures: one OE iteration wall time and iteration index
         // why: compare convergence cost across forward/Jacobian, normal-system, and solver phases.
@@ -1263,6 +1333,7 @@ fn runPreparedO2ACore(
                 previous[0..state_specs.len],
             ));
             defer Telemetry.setContext(previous_context);
+
             // instrumentation: trace zone
             // captures: RTM product and Jacobian evaluation wall time
             // why: keep forward-model cost separate from inverse-method linear algebra.
@@ -1276,6 +1347,7 @@ fn runPreparedO2ACore(
         };
 
         const accumulation = traced_normal_system: {
+
             // instrumentation: trace zone
             // captures: normal-system accumulation wall time
             // why: measure residual/Jacobian reduction independently from RTM solves.
@@ -1294,6 +1366,7 @@ fn runPreparedO2ACore(
         };
 
         const step = traced_solver_update: {
+
             // instrumentation: trace zone
             // captures: solver update wall time
             // why: isolate state-step computation from forward model and accumulation.
@@ -1329,6 +1402,7 @@ fn runPreparedO2ACore(
             result.history_chi2[iteration_offset] = accumulation.chi2_reflectance + chi2_state;
             result.history_chi2_reflectance[iteration_offset] = accumulation.chi2_reflectance;
             result.history_chi2_state_vector[iteration_offset] = chi2_state;
+
             result.history_state_vector_convergence[iteration_offset] = state_conv;
             result.history_snr_normal[iteration_offset] = if (step.snr_normal) 1 else 0;
             final_posterior_precision = step.posterior_precision;
@@ -1336,6 +1410,7 @@ fn runPreparedO2ACore(
         }
         if (history_state.len > 0) {
             const history_offset = iteration_offset * state_specs.len;
+
             for (0..state_specs.len) |index| history_state[history_offset + index] = state[index];
         }
         iteration_count = iteration_offset + 1;
@@ -1390,8 +1465,8 @@ pub fn correctPreparedO2A(
 
     const state_space = try initializeStateSpace(state_specs, &result);
     var prepared = prepared_case.*;
-    prepared.route.derivative_mode = .semi_analytical;
-    prepared.route.derivative_state_mask = state_space.derivative_state_mask;
+    prepared.rtm_config.derivative_mode = .semi_analytical;
+    prepared.rtm_config.derivative_state_mask = state_space.derivative_state_mask;
 
     var scratch: IterationWorkspace = .{};
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_specs.len], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
@@ -1403,9 +1478,8 @@ pub fn correctPreparedO2A(
             allocator,
             forward_storage,
             &prepared.scene,
-            prepared.route,
+            prepared.rtm_config,
             &prepared.prepared,
-            implementations.exact(),
         );
         break :traced_evaluation ForwardEvaluation{
             .view = view,
@@ -1505,15 +1579,24 @@ fn validateStateSpec(spec: StateSpec) !void {
     {
         return error.InvalidStateSpec;
     }
+
     if (std.math.isNan(spec.lower_bound) or std.math.isNan(spec.upper_bound)) return error.InvalidStateSpec;
     if (spec.lower_bound != no_lower_bound and !std.math.isFinite(spec.lower_bound)) return error.InvalidStateSpec;
     if (spec.upper_bound != no_upper_bound and !std.math.isFinite(spec.upper_bound)) return error.InvalidStateSpec;
+
     if (spec.lower_bound > spec.upper_bound) return error.InvalidStateSpec;
+
     if (spec.state == .aerosol_layer_mid_pressure_hpa) {
-        if (spec.thickness_hpa <= 0.0 or spec.interval_index_1based == 0 or !spec.pressure_altitude_profile.hasSamples()) {
+        if (spec.thickness_hpa <= 0.0 or
+            spec.interval_index_1based == 0 or
+            !spec.pressure_altitude_profile.hasSamples())
+        {
             return error.InvalidStateSpec;
         }
-    } else if (spec.thickness_hpa != 0.0 or spec.interval_index_1based != 0 or spec.pressure_altitude_profile.hasSamples()) {
+    } else if (spec.thickness_hpa != 0.0 or
+        spec.interval_index_1based != 0 or
+        spec.pressure_altitude_profile.hasSamples())
+    {
         return error.InvalidStateSpec;
     }
 }
@@ -1552,11 +1635,13 @@ fn evaluateO2AState(
     state: Vector,
 ) !ForwardEvaluation {
     {
+
         // instrumentation: trace zone
         // captures: retrieval-state application wall time
         // why: separate mutable scene/control updates from optical and RTM recomputation.
         const zone = Trace.staticZone(@src(), "optimal_estimation.state_application");
         defer zone.end();
+
         // The mutable case starts as the base case once. Each evaluation overwrites
         // every retrieval-owned field, so the iteration path avoids recopying the
         // full resolved case and interval grid before the RTM preparation.
@@ -1570,15 +1655,17 @@ fn evaluateO2AState(
     }
 
     var prepared_optics = prepared_runtime_optics: {
+
         // instrumentation: trace zone
         // captures: per-iteration optical preparation wall time
         // why: measure setup rebuilt after aerosol and pressure-state changes.
         const zone = Trace.staticZone(@src(), "optimal_estimation.prepare_evaluation");
         defer zone.end();
+
         // OE state updates do not change the adaptive weak-line cutoff grid.
         // Cache that support once per retrieval while rebuilding the optical
         // layers that depend on aerosol amount and pressure placement.
-        //
+
         // The mutable scene is retrieval-owned. Solar rewindow support is
         // derived from the instrument grid and line-list plan, so it is
         // installed once and then reused while optical state is refreshed.
@@ -1593,6 +1680,7 @@ fn evaluateO2AState(
     };
     defer prepared_optics.deinit(allocator);
     const view = simulated_forward_view: {
+
         // instrumentation: trace zone
         // captures: per-iteration forward product plus Jacobian wall time
         // why: isolate the model evaluation consumed by the OE residual step.
@@ -1602,9 +1690,8 @@ fn evaluateO2AState(
             allocator,
             prepared_case.forward_storage,
             &prepared_case.scene,
-            prepared_case.route,
+            prepared_case.rtm_config,
             &prepared_optics,
-            implementations.exact(),
         );
     };
     prepared_case.profile_preparation.captureFromPrepared(&prepared_optics);
@@ -1634,12 +1721,14 @@ fn writeStateToInput(
 ) !void {
     for (state_specs, 0..) |spec, index| {
         const value = state[index];
+
         switch (spec.state) {
             .surface_albedo => input.surface_albedo = value,
             .aerosol_optical_depth => input.aerosol.optical_depth = value,
             .aerosol_layer_mid_pressure_hpa => {
                 const fit_interval_index = @as(u64, spec.interval_index_1based);
                 const half_thickness = 0.5 * spec.thickness_hpa;
+
                 const top_pressure = value - half_thickness;
                 const bottom_pressure = value + half_thickness;
                 input.aerosol.placement.top_pressure_hpa = top_pressure;
@@ -1647,6 +1736,7 @@ fn writeStateToInput(
                 var updated = false;
                 for (intervals) |*interval| {
                     const interval_index = @as(u64, interval.index_1based);
+
                     if (interval_index == fit_interval_index) {
                         interval.top_pressure_hpa = top_pressure;
                         interval.bottom_pressure_hpa = bottom_pressure;
@@ -1657,6 +1747,7 @@ fn writeStateToInput(
                         interval.top_pressure_hpa = bottom_pressure;
                     }
                 }
+
                 if (!updated) return error.InvalidStateSpec;
             },
         }
@@ -1691,18 +1782,21 @@ fn accumulateNormalSystem(
     scratch: *IterationWorkspace,
 ) !Accumulation {
     if (view.wavelengths.len != measurement.wavelength_nm.len) return error.WavelengthGridMismatch;
+
     const raw_jacobian = view.jacobian orelse return error.MissingJacobian;
     const active_jacobian_count = jacobian.activeStateCount(view.jacobian_state_mask);
     if (active_jacobian_count == 0 or raw_jacobian.len != measurement.wavelength_nm.len * active_jacobian_count) {
         return error.MissingJacobian;
     }
     scratch.b = algebra.zeroVector();
+
     scratch.g = algebra.zeroMatrix();
     scratch.jt_invse_j = algebra.zeroMatrix();
     var projection: JacobianProjection = .{};
     for (0..state_specs.len) |index| {
         scratch.dx_white[index] = (previous[index] - prior[index]) / sqrt_sa[index];
         const spec = state_specs[index];
+
         const active_index = jacobian.activeStateIndex(view.jacobian_state_mask, spec.state) orelse
             return error.MissingJacobian;
         projection.source_offset[index] = active_index * measurement.wavelength_nm.len;
@@ -1718,6 +1812,7 @@ fn accumulateNormalSystem(
     for (measurement.wavelength_nm, 0..) |wavelength_nm, sample_index| {
         if (view.wavelengths[sample_index] != wavelength_nm) return error.WavelengthGridMismatch;
         const residual = measurement.reflectance[sample_index] - view.reflectance[sample_index];
+
         const inv_variance = measurement.inv_variance[sample_index];
         chi2_reflectance += residual * residual * inv_variance;
         const reflectance_scale = reflectance_scale_numerator / @max(view.irradiance[sample_index], 1.0e-300);
@@ -1731,6 +1826,7 @@ fn accumulateNormalSystem(
             scratch.b[row] += sqrt_sa[row] * weighted_row * residual;
             for (0..state_specs.len) |col| {
                 const normal = weighted_row * column_values[col];
+
                 scratch.jt_invse_j[row][col] += normal;
                 scratch.g[row][col] += sqrt_sa[row] * normal * sqrt_sa[col];
             }
@@ -1768,7 +1864,14 @@ fn solveStep(
     const max_change = @max(max_change_transformed_state, max_dx_trans);
     var lambda_scale: f64 = 1.0;
     var snr_normal = true;
-    computeTransformedUpdate(eig.values, scratch.rhs_trans, scratch.dx_trans, state_count, lambda_scale, &scratch.dx_trans_new);
+    computeTransformedUpdate(
+        eig.values,
+        scratch.rhs_trans,
+        scratch.dx_trans,
+        state_count,
+        lambda_scale,
+        &scratch.dx_trans_new,
+    );
     var change = transformedChange(scratch.dx_trans_new, scratch.dx_trans, state_count);
     if (change > 1.01 * max_change) {
         snr_normal = false;
@@ -1776,7 +1879,14 @@ fn solveStep(
         for (0..10) |_| {
             factor_total *= 0.75;
             const scale2 = factor_total * factor_total;
-            computeTransformedUpdate(eig.values, scratch.rhs_trans, scratch.dx_trans, state_count, scale2, &scratch.dx_trans_new);
+            computeTransformedUpdate(
+                eig.values,
+                scratch.rhs_trans,
+                scratch.dx_trans,
+                state_count,
+                scale2,
+                &scratch.dx_trans_new,
+            );
             change = transformedChange(scratch.dx_trans_new, scratch.dx_trans, state_count);
             if (change < max_change) {
                 lambda_scale = scale2;
@@ -1867,24 +1977,40 @@ pub fn freePressureProfile(allocator: Allocator, profile: PressureAltitudeProfil
     allocator.free(profile.second);
 }
 
-fn validatePressureProfileSamples(altitude_km: []const f64, pressure_hpa: []const f64) !void {
+fn validatePressureProfileSamples(
+    altitude_km: []const f64,
+    pressure_hpa: []const f64,
+) !void {
     if (altitude_km.len < 2 or altitude_km.len != pressure_hpa.len) return error.InvalidPressureProfile;
+
     for (0..altitude_km.len) |index| {
-        if (!std.math.isFinite(altitude_km[index]) or !std.math.isFinite(pressure_hpa[index]) or pressure_hpa[index] <= 0.0) {
+        if (!std.math.isFinite(altitude_km[index]) or
+            !std.math.isFinite(pressure_hpa[index]) or
+            pressure_hpa[index] <= 0.0)
+        {
             return error.InvalidPressureProfile;
         }
-        if (index != 0 and (altitude_km[index] <= altitude_km[index - 1] or pressure_hpa[index] >= pressure_hpa[index - 1])) {
+        if (index != 0 and
+            (altitude_km[index] <= altitude_km[index - 1] or
+                pressure_hpa[index] >= pressure_hpa[index - 1]))
+        {
             return error.InvalidPressureProfile;
         }
     }
 }
 
-fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressure_hpa: []const f64, second: []f64) !void {
+fn endpointSplineSecondDerivatives(
+    allocator: Allocator,
+    x: []const f64,
+    pressure_hpa: []const f64,
+    second: []f64,
+) !void {
     const count = x.len;
     if (count != pressure_hpa.len or count != second.len or count < 2) return error.InvalidPressureProfile;
     try validatePressureProfileSamples(x, pressure_hpa);
     if (count == 2) {
         second[0] = 0.0;
+
         second[1] = 0.0;
         return;
     }
@@ -1897,18 +2023,21 @@ fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressur
     matrix[0][0] = 2.0 * width0;
     matrix[0][1] = width0;
     rhs[0] = 0.0;
+
     for (1..count - 1) |index| {
         const width_left = x[index] - x[index - 1];
         const width_right = x[index + 1] - x[index];
         const slope_left = (@log(pressure_hpa[index]) - @log(pressure_hpa[index - 1])) / width_left;
         const slope_right = (@log(pressure_hpa[index + 1]) - @log(pressure_hpa[index])) / width_right;
         matrix[index][index - 1] = width_left;
+
         matrix[index][index] = 2.0 * (width_left + width_right);
         matrix[index][index + 1] = width_right;
         rhs[index] = 6.0 * (slope_right - slope_left);
     }
     const last = count - 1;
     const width_last = x[last] - x[last - 1];
+
     matrix[last][last - 1] = width_last;
     matrix[last][last] = 2.0 * width_last;
     const inverse = try algebra.invertSymmetric(matrix, count);
@@ -1916,7 +2045,12 @@ fn endpointSplineSecondDerivatives(allocator: Allocator, x: []const f64, pressur
     for (0..count) |index| second[index] = solved[index];
 }
 
-fn endpointSplineSecondDerivativesDynamic(allocator: Allocator, x: []const f64, pressure_hpa: []const f64, second: []f64) !void {
+fn endpointSplineSecondDerivativesDynamic(
+    allocator: Allocator,
+    x: []const f64,
+    pressure_hpa: []const f64,
+    second: []f64,
+) !void {
     const count = x.len;
     var lower = try allocator.alloc(f64, count);
     defer allocator.free(lower);
@@ -1956,7 +2090,9 @@ fn endpointSplineSecondDerivativesDynamic(allocator: Allocator, x: []const f64, 
     var reverse_index = last;
     while (reverse_index > 0) {
         reverse_index -= 1;
-        second[reverse_index] = (rhs[reverse_index] - upper[reverse_index] * second[reverse_index + 1]) / diag[reverse_index];
+        const numerator = rhs[reverse_index] -
+            upper[reverse_index] * second[reverse_index + 1];
+        second[reverse_index] = numerator / diag[reverse_index];
     }
 }
 

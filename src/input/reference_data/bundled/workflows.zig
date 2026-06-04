@@ -41,41 +41,54 @@ pub fn applyLutWorkflows(
     var xsec_applied = false;
 
     if (assets.sceneRequestsSpectroscopyMode(source_scene, .o2, .line_by_line)) {
+        const primary_support = source_scene.observation_model.primaryOperationalBandSupport();
+
         switch (xsec_controls.mode) {
             .direct => {
-                if (source_scene.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled()) {
+                if (primary_support.o2_operational_lut.enabled()) {
                     try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:consume");
                 } else {
                     try appendExecutionLabel(allocator, execution_entries, "o2:xsec:direct");
                 }
+
                 xsec_applied = true;
             },
             .consume => {
-                if (!source_scene.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled()) {
+                if (!primary_support.o2_operational_lut.enabled()) {
                     return error.InvalidRequest;
                 }
+
                 try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:consume");
                 xsec_applied = true;
             },
             .generate => {
                 const o2_lines = line_list orelse return error.InvalidRequest;
+
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
                 defer allocator.free(wavelengths_nm);
+
                 const o2_absorber = try findUniqueAbsorberBySpeciesAndMode(
                     source_scene.absorbers.items,
                     .o2,
                     .line_by_line,
                 ) orelse return error.InvalidRequest;
-                const o2_hitran_index = (AbsorberModel.resolvedAbsorberSpecies(o2_absorber) orelse return error.InvalidRequest).hitranIndex() orelse return error.InvalidRequest;
+
+                const o2_species = AbsorberModel.resolvedAbsorberSpecies(
+                    o2_absorber,
+                ) orelse return error.InvalidRequest;
+                const o2_hitran_index = o2_species.hitranIndex() orelse return error.InvalidRequest;
+
                 var controlled_o2_lines = try o2_lines.clone(allocator);
                 defer controlled_o2_lines.deinit(allocator);
+
+                const active_line_controls = o2_absorber.spectroscopy.line_gas_controls.active();
                 try controlled_o2_lines.applyRuntimeControls(
                     allocator,
                     o2_hitran_index,
-                    o2_absorber.spectroscopy.line_gas_controls.activeIsotopes(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeThresholdLine(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeCutoffCm1(),
-                    o2_absorber.spectroscopy.line_gas_controls.activeLineMixingFactor(),
+                    active_line_controls.isotopes,
+                    active_line_controls.threshold_line,
+                    active_line_controls.cutoff_cm1,
+                    active_line_controls.line_mixing_factor,
                 );
 
                 generated_o2_lut.* = try OperationalCrossSectionLut.buildFromSource(
@@ -128,6 +141,7 @@ pub fn applyLutWorkflows(
                 try appendExecutionLabel(allocator, execution_entries, "o2o2:xsec_lut:consume");
                 xsec_applied = true;
             },
+
             .generate => {
                 const o2o2_table = cia_table orelse return error.InvalidRequest;
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
@@ -170,6 +184,7 @@ pub fn applyLutWorkflows(
         if (absorber.spectroscopy.mode != .cross_sections) continue;
         if (AbsorberModel.resolvedAbsorberSpecies(absorber) == null) {
             if (xsec_controls.mode != .direct) return error.InvalidRequest;
+
             continue;
         }
         switch (xsec_controls.mode) {
@@ -177,6 +192,7 @@ pub fn applyLutWorkflows(
                 if (absorber.spectroscopy.resolved_cross_section_lut != null) {
                     try appendExecutionLabelOwned(
                         allocator,
+
                         execution_entries,
                         "{s}:xsec_lut:consume",
                         .{absorber.id},
@@ -185,10 +201,12 @@ pub fn applyLutWorkflows(
                     try appendExecutionLabelOwned(
                         allocator,
                         execution_entries,
+
                         "{s}:xsec:direct",
                         .{absorber.id},
                     );
                 }
+
                 xsec_applied = true;
             },
             .consume => {
@@ -198,6 +216,7 @@ pub fn applyLutWorkflows(
                 try appendExecutionLabelOwned(
                     allocator,
                     execution_entries,
+
                     "{s}:xsec_lut:consume",
                     .{absorber.id},
                 );
@@ -206,10 +225,15 @@ pub fn applyLutWorkflows(
             .generate => {
                 const table = absorber.spectroscopy.resolved_cross_section_table orelse return error.InvalidRequest;
                 const wavelengths_nm = try selection.sampleSceneWavelengthsOwned(allocator, source_scene);
+
                 defer allocator.free(wavelengths_nm);
 
                 const owned = try ensureOwnedAbsorbers(allocator, source_scene, working_scene, owned_absorbers);
-                const target_absorber = @constCast(&owned.items[findAbsorberIndexById(owned.items, absorber.id) orelse return error.InvalidRequest]);
+                const target_index = findAbsorberIndexById(
+                    owned.items,
+                    absorber.id,
+                ) orelse return error.InvalidRequest;
+                const target_absorber = @constCast(&owned.items[target_index]);
                 target_absorber.spectroscopy.cross_section_table.deinitOwned(allocator);
                 if (target_absorber.spectroscopy.resolved_cross_section_table) |*owned_table| {
                     var cleanup = owned_table.*;
@@ -220,12 +244,13 @@ pub fn applyLutWorkflows(
                 target_absorber.spectroscopy.operational_lut = .{
                     .asset = .{ .name = try allocator.dupe(u8, "generated.xsec_lut") },
                 };
-                target_absorber.spectroscopy.resolved_cross_section_lut = try OperationalCrossSectionLut.buildFromSource(
+                const resolved_cross_section_lut = try OperationalCrossSectionLut.buildFromSource(
                     allocator,
                     wavelengths_nm,
                     .{ .cross_section_table = &table },
                     xsec_controls,
                 );
+                target_absorber.spectroscopy.resolved_cross_section_lut = resolved_cross_section_lut;
                 try appendExecutionLabelOwned(
                     allocator,
                     execution_entries,
@@ -405,10 +430,12 @@ fn findUniqueAbsorberBySpeciesAndMode(
     var matched: ?AbsorberModel.Absorber = null;
     for (items) |absorber| {
         if (absorber.spectroscopy.mode != mode) continue;
+
         if ((AbsorberModel.resolvedAbsorberSpecies(absorber) orelse continue) != species) continue;
         if (matched != null) return error.InvalidRequest;
         matched = absorber;
     }
+
     return matched;
 }
 

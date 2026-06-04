@@ -2,13 +2,19 @@ pub const Error = error{
     KernelShapeMismatch,
 };
 
-// hot path:
-//   when: radiance, irradiance, or active Jacobian columns use slit convolution
-//   work: applies edge-normalized samples plus a SIMD full-kernel interior
-//   data: signal array, kernel weights, output array
-//   math: output_i = sum_j signal_{i+j-half_width} * kernel_j / sum_j kernel_j, with boundary j clipped to valid signal samples
-//   follow: simulate radiance/irradiance convolution and processJacobianSamples
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
+    // apply --------------------------------------------------------------------------------------------------|
+    // Slit convolution for radiance, irradiance, and active Jacobian columns.                                 |
+    //                                                                                                         |
+    // Steps:                                                                                                  |
+    //   1. use edge-normalized samples near the signal boundaries                                             |
+    //   2. use the full kernel norm through the dense interior                                                |
+    //   3. write one output sample per input sample                                                           |
+    //                                                                                                         |
+    // output[i] = sum_j signal[i + j - half_width] * kernel[j] / sum_j kernel[j]                              |
+    // Boundary samples clip j to valid signal samples before normalizing.                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
 
     const half_width = kernel.len / 2;
@@ -34,25 +40,41 @@ pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void
 }
 
 fn applyBoundarySample(signal: []const f64, kernel: []const f64, half_width: usize, index: usize) f64 {
+    // applyBoundarySample ------------------------------------------------------------------------------------|
+    // Edge sample with partial-kernel normalization. Only valid signal samples contribute to the norm.        |
+    // --------------------------------------------------------------------------------------------------------|
+
     const kernel_start = if (index < half_width) half_width - index else 0;
     const kernel_end = @min(kernel.len, signal.len + half_width - index);
+
     var acc: f64 = 0.0;
     var norm: f64 = 0.0;
+
     for (kernel_start..kernel_end) |kernel_index| {
         const signal_index = index + kernel_index - half_width;
         const weight = kernel[kernel_index];
         acc += signal[signal_index] * weight;
         norm += weight;
     }
+
     return if (norm == 0.0) 0.0 else acc / norm;
 }
 
 fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: f64) f64 {
+    // applyFullKernelSample ----------------------------------------------------------------------------------|
+    // Full-kernel interior convolution sample. Boundary samples are handled by applyBoundarySample.           |
+    //                                                                                                         |
+    // Two-lane vector path                                                                                    |
+    //   vector_sum accumulates two signal*kernel products at a time with @mulAdd.                             |
+    //   @reduce(.Add, vector_sum) collapses the lanes before the scalar tail and normalization.               |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (norm == 0.0) return 0.0;
     const Vec2 = @Vector(2, f64);
     var vector_sum: Vec2 = @splat(0.0);
     var kernel_index: usize = 0;
-    // math: vector lanes accumulate dot(signal_window, kernel) before scalar normalization by norm.
+
+    // Vector lanes accumulate dot(signal_window, kernel) before scalar normalization by norm.
     while (kernel_index + 2 <= kernel.len) : (kernel_index += 2) {
         vector_sum = @mulAdd(
             Vec2,
@@ -69,12 +91,23 @@ fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: 
 }
 
 fn kernelSum(kernel: []const f64) f64 {
+    // kernelSum ----------------------------------------------------------------------------------------------|
+    // Sum kernel weights once so interior samples can reuse the same normalization.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     var sum: f64 = 0.0;
     for (kernel) |weight| sum += weight;
     return sum;
 }
 
 inline fn loadPair(values: []const f64, index: usize) @Vector(2, f64) {
+    // loadPair (two adjacent f64 values as one vector) -------------------------------------------------------|
+    // Read values[index] and values[index + 1] as one two-lane vector. The convolution interior uses this for |
+    // two signal*kernel products at a time.                                                                   |
+    //                                                                                                         |
+    // align(1) is deliberate: slices are contiguous, but this helper does not require vector-aligned storage. |
+    // --------------------------------------------------------------------------------------------------------|
+
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&values[index]);
     return pair.*;
 }

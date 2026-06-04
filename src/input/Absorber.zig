@@ -4,8 +4,43 @@ const errors = @import("../common/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
-const species_helpers = @import("absorber/species.zig");
-pub const AbsorberSpecies = @import("atmospheric_types.zig").AbsorberSpecies;
+
+pub const AbsorberSpecies = enum {
+    o2_o2,
+    o2,
+
+    pub fn isLineAbsorbing(self: AbsorberSpecies) bool {
+        return switch (self) {
+            .o2 => true,
+            else => false,
+        };
+    }
+
+    pub fn isCrossSection(self: AbsorberSpecies) bool {
+        return switch (self) {
+            .o2_o2 => true,
+            else => false,
+        };
+    }
+
+    pub fn hitranIndex(self: AbsorberSpecies) ?u8 {
+        return switch (self) {
+            .o2 => 7,
+            else => null,
+        };
+    }
+
+    pub fn fromVendorName(name: []const u8) ?AbsorberSpecies {
+        const map = .{
+            .{ "O2-O2", .o2_o2 },
+            .{ "O2", .o2 },
+        };
+        inline for (map) |entry| {
+            if (std.mem.eql(u8, name, entry[0])) return entry[1];
+        }
+        return null;
+    }
+};
 
 pub const SpectroscopyMode = enum {
     none,
@@ -20,6 +55,13 @@ pub const SpectroscopyStage = enum {
     retrieval,
 };
 
+pub const ActiveLineGasControls = struct {
+    isotopes: []const u8 = &.{},
+    threshold_line: ?f64 = null,
+    cutoff_cm1: ?f64 = null,
+    line_mixing_factor: f64 = 1.0,
+};
+
 pub const AbsorptionRepresentation = union(enum) {
     none,
     line_abs: *const ReferenceData.SpectroscopyLineList,
@@ -27,13 +69,23 @@ pub const AbsorptionRepresentation = union(enum) {
     xsec_lut: *const OperationalCrossSectionLut,
 };
 
-pub const resolveAbsorberSpeciesName = species_helpers.resolveAbsorberSpeciesName;
+pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
+    if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2_o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2-o2")) return .o2_o2;
+    return null;
+}
 
-pub const resolvedAbsorberSpecies = species_helpers.resolvedAbsorberSpecies;
+pub fn resolvedAbsorberSpecies(absorber: anytype) ?AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    return resolveAbsorberSpeciesName(absorber.species);
+}
 
 // layout(64-bit):
 //   size: 136 B, align: 8 B
-//   field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7 B (56 bits)
+// field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7
+// B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   out-of-line: isotopes_sim, isotopes_retr carry references/descriptors; referenced storage is not included in size
 //   cache span: 3 cache line(s) at 64 B per line
@@ -54,6 +106,7 @@ pub const LineGasControls = struct {
         if (self.factor_lm_sim) |value| {
             if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
         }
+
         if (self.factor_lm_retr) |value| {
             if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
         }
@@ -63,6 +116,7 @@ pub const LineGasControls = struct {
         if (self.threshold_line_retr) |value| {
             if (!std.math.isFinite(value) or value < 0.0) return errors.Error.InvalidRequest;
         }
+
         if (self.cutoff_sim_cm1) |value| {
             if (!std.math.isFinite(value) or value <= 0.0) return errors.Error.InvalidRequest;
         }
@@ -84,44 +138,46 @@ pub const LineGasControls = struct {
             self.cutoff_retr_cm1 != null;
     }
 
-    pub fn activeLineMixingFactor(self: LineGasControls) f64 {
-        return switch (self.active_stage) {
-            .simulation => self.factor_lm_sim orelse 1.0,
-            .retrieval => self.factor_lm_retr orelse 1.0,
-            .none => self.factor_lm_sim orelse self.factor_lm_retr orelse 1.0,
-        };
-    }
+    pub fn active(self: LineGasControls) ActiveLineGasControls {
+        switch (self.active_stage) {
+            .simulation => return .{
+                .isotopes = self.isotopes_sim,
+                .threshold_line = self.threshold_line_sim,
+                .cutoff_cm1 = self.cutoff_sim_cm1,
+                .line_mixing_factor = self.factor_lm_sim orelse 1.0,
+            },
+            .retrieval => return .{
+                .isotopes = self.isotopes_retr,
+                .threshold_line = self.threshold_line_retr,
+                .cutoff_cm1 = self.cutoff_retr_cm1,
+                .line_mixing_factor = self.factor_lm_retr orelse 1.0,
+            },
+            .none => {},
+        }
 
-    pub fn activeIsotopes(self: LineGasControls) []const u8 {
-        return switch (self.active_stage) {
-            .simulation => self.isotopes_sim,
-            .retrieval => self.isotopes_retr,
-            .none => if (self.isotopes_sim.len != 0) self.isotopes_sim else self.isotopes_retr,
-        };
-    }
+        var isotopes = self.isotopes_retr;
+        if (self.isotopes_sim.len != 0) isotopes = self.isotopes_sim;
 
-    pub fn activeThresholdLine(self: LineGasControls) ?f64 {
-        return switch (self.active_stage) {
-            .simulation => self.threshold_line_sim,
-            .retrieval => self.threshold_line_retr,
-            .none => self.threshold_line_sim orelse self.threshold_line_retr,
-        };
-    }
-
-    pub fn activeCutoffCm1(self: LineGasControls) ?f64 {
-        return switch (self.active_stage) {
-            .simulation => self.cutoff_sim_cm1,
-            .retrieval => self.cutoff_retr_cm1,
-            .none => self.cutoff_sim_cm1 orelse self.cutoff_retr_cm1,
+        return .{
+            .isotopes = isotopes,
+            .threshold_line = self.threshold_line_sim orelse self.threshold_line_retr,
+            .cutoff_cm1 = self.cutoff_sim_cm1 orelse self.cutoff_retr_cm1,
+            .line_mixing_factor = self.factor_lm_sim orelse self.factor_lm_retr orelse 1.0,
         };
     }
 
     pub fn clone(self: LineGasControls, allocator: Allocator) !LineGasControls {
+        const isotopes_sim = try cloneIsotopeSelection(allocator, self.isotopes_sim);
+        errdefer if (isotopes_sim.len != 0) allocator.free(isotopes_sim);
+
+        const isotopes_retr = try cloneIsotopeSelection(allocator, self.isotopes_retr);
+        errdefer if (isotopes_retr.len != 0) allocator.free(isotopes_retr);
+
         return .{
             .factor_lm_sim = self.factor_lm_sim,
             .factor_lm_retr = self.factor_lm_retr,
-            .isotopes_sim = if (self.isotopes_sim.len != 0) try allocator.dupe(u8, self.isotopes_sim) else &.{},
-            .isotopes_retr = if (self.isotopes_retr.len != 0) try allocator.dupe(u8, self.isotopes_retr) else &.{},
+            .isotopes_sim = isotopes_sim,
+            .isotopes_retr = isotopes_retr,
             .threshold_line_sim = self.threshold_line_sim,
             .threshold_line_retr = self.threshold_line_retr,
             .cutoff_sim_cm1 = self.cutoff_sim_cm1,
@@ -137,17 +193,25 @@ pub const LineGasControls = struct {
     }
 };
 
+fn cloneIsotopeSelection(allocator: Allocator, isotopes: []const u8) ![]const u8 {
+    if (isotopes.len == 0) return &.{};
+    return try allocator.dupe(u8, isotopes);
+}
+
 // layout(64-bit):
-//   size: 848 B, align: 8 B
-//   field storage: 841 B across 13 fields; largest: resolved_line_list=216 B, line_gas_controls=136 B, resolved_cross_section_lut=80 B; padding: 7 B (56 bits)
+//   size: 832 B, align: 8 B
+//   field storage:
+//     825 B across 12 fields; largest: resolved_line_list=216 B, line_gas_controls=136 B
+//     resolved_cross_section_lut=80 B; padding: 7 B (56 bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: provider carry references/descriptors; referenced storage is not included in size
-//   cache span: 14 cache line(s) at 64 B per line
+//   out-of-line:
+//     bindings and resolved spectroscopy payloads carry referenced storage
+//     referenced storage is not included in size
+//   cache span: 13 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 848 B (0.828 KiB); total also includes referenced storage above
+//   footprint: per instance = 832 B (0.812 KiB); total also includes referenced storage above
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
-    provider: []const u8 = "",
     line_list: Binding = .none,
     line_mixing: Binding = .none,
     strong_lines: Binding = .none,
@@ -169,9 +233,9 @@ pub const Spectroscopy = struct {
         try self.operational_lut.validate();
         try self.line_gas_controls.validate();
 
-        if (self.mode == .none and
-            (self.provider.len != 0 or
-                self.line_list.enabled() or
+        const disabled_mode_has_attached_state =
+            self.mode == .none and
+            (self.line_list.enabled() or
                 self.line_mixing.enabled() or
                 self.strong_lines.enabled() or
                 self.cia_table.enabled() or
@@ -181,20 +245,29 @@ pub const Spectroscopy = struct {
                 self.resolved_line_list != null or
                 self.resolved_cia_table != null or
                 self.resolved_cross_section_table != null or
-                self.resolved_cross_section_lut != null))
-        {
-            // INVARIANT:
-            //   `.mode == .none` is a true disabled state. No implementation, binding, control, or
-            //   resolved reference payload may remain attached in that case.
+                self.resolved_cross_section_lut != null);
+        if (disabled_mode_has_attached_state) {
+
+            // `.mode == .none` is a true disabled state. No implementation, binding, control, or
+            // resolved reference payload may remain attached in that case.
             return errors.Error.InvalidRequest;
         }
-        // GOTCHA:
-        //   Resolved line and CIA tables are only legal when their matching spectroscopy modes
-        //   are active. Carrying them across mode switches would silently desynchronize the scene.
-        if (self.resolved_line_list != null and self.mode != .line_by_line) return errors.Error.InvalidRequest;
-        if (self.resolved_cia_table != null and self.mode != .cia) return errors.Error.InvalidRequest;
-        if (self.resolved_cross_section_table != null and self.mode != .cross_sections) return errors.Error.InvalidRequest;
-        if (self.resolved_cross_section_lut != null and !self.operational_lut.enabled()) return errors.Error.InvalidRequest;
+
+        // Resolved payloads are only legal when their matching spectroscopy modes are active.
+        // Carrying them across mode switches would silently desynchronize the scene.
+        const has_line_list_payload = self.resolved_line_list != null;
+        if (has_line_list_payload and self.mode != .line_by_line) return errors.Error.InvalidRequest;
+
+        const has_cia_payload = self.resolved_cia_table != null;
+        if (has_cia_payload and self.mode != .cia) return errors.Error.InvalidRequest;
+
+        const has_cross_section_payload = self.resolved_cross_section_table != null;
+        if (has_cross_section_payload and self.mode != .cross_sections) return errors.Error.InvalidRequest;
+
+        const has_operational_lut_payload = self.resolved_cross_section_lut != null;
+        if (has_operational_lut_payload and !self.operational_lut.enabled()) {
+            return errors.Error.InvalidRequest;
+        }
 
         const has_cross_section_table = self.cross_section_table.enabled() or self.resolved_cross_section_table != null;
         const has_cross_section_lut = self.operational_lut.enabled() or self.resolved_cross_section_lut != null;
@@ -204,9 +277,6 @@ pub const Spectroscopy = struct {
     }
 
     pub fn clone(self: Spectroscopy, allocator: Allocator) !Spectroscopy {
-        const provider = if (self.provider.len != 0) try allocator.dupe(u8, self.provider) else "";
-        errdefer if (provider.len != 0) allocator.free(provider);
-
         const line_list = try self.line_list.clone(allocator);
         errdefer {
             var owned = line_list;
@@ -261,12 +331,14 @@ pub const Spectroscopy = struct {
             owned.deinit(allocator);
         };
 
-        const resolved_cross_section_table = if (self.resolved_cross_section_table) |cross_section_table_data|
-            ReferenceData.CrossSectionTable{
-                .points = try allocator.dupe(ReferenceData.CrossSectionPoint, cross_section_table_data.points),
-            }
-        else
-            null;
+        const resolved_cross_section_table = choose_resolved_cross_section_table: {
+            break :choose_resolved_cross_section_table if (self.resolved_cross_section_table) |cross_section_table_data|
+                ReferenceData.CrossSectionTable{
+                    .points = try allocator.dupe(ReferenceData.CrossSectionPoint, cross_section_table_data.points),
+                }
+            else
+                null;
+        };
         errdefer if (resolved_cross_section_table) |*cross_section_table_data| {
             var owned = cross_section_table_data.*;
             owned.deinit(allocator);
@@ -283,7 +355,6 @@ pub const Spectroscopy = struct {
 
         return .{
             .mode = self.mode,
-            .provider = provider,
             .line_list = line_list,
             .line_mixing = line_mixing,
             .strong_lines = strong_lines,
@@ -299,7 +370,6 @@ pub const Spectroscopy = struct {
     }
 
     pub fn deinitOwned(self: *Spectroscopy, allocator: Allocator) void {
-        if (self.provider.len != 0) allocator.free(self.provider);
         self.line_list.deinitOwned(allocator);
         self.line_mixing.deinitOwned(allocator);
         self.strong_lines.deinitOwned(allocator);
@@ -336,15 +406,18 @@ pub const Spectroscopy = struct {
 
 // layout(64-bit):
 //   size: 960 B, align: 8 B
-//   field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48 bits)
+// field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48
+// bits)
 //   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not included in size
+// out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not
+// included in size
 //   cache span: 15 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 960 B (0.938 KiB); total also includes referenced storage above
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
+
     // Typed species identity resolved from the string `species` field.
     // Null when the species string has not been resolved against the
     // vendor species catalogue.
@@ -364,15 +437,17 @@ pub const Absorber = struct {
     }
 
     pub fn clone(self: Absorber, allocator: Allocator) !Absorber {
+        const volume_mixing_ratio_profile_ppmv = if (self.volume_mixing_ratio_profile_ppmv.len != 0)
+            try allocator.dupe([2]f64, self.volume_mixing_ratio_profile_ppmv)
+        else
+            &.{};
+
         return .{
             .id = try allocator.dupe(u8, self.id),
             .species = try allocator.dupe(u8, self.species),
             .resolved_species = self.resolved_species,
             .profile_source = try self.profile_source.clone(allocator),
-            .volume_mixing_ratio_profile_ppmv = if (self.volume_mixing_ratio_profile_ppmv.len != 0)
-                try allocator.dupe([2]f64, self.volume_mixing_ratio_profile_ppmv)
-            else
-                &.{},
+            .volume_mixing_ratio_profile_ppmv = volume_mixing_ratio_profile_ppmv,
             .spectroscopy = try self.spectroscopy.clone(allocator),
         };
     }
@@ -448,8 +523,10 @@ pub fn validateVolumeMixingRatioProfile(profile_ppmv: []const [2]f64) errors.Err
         if (entry[0] <= 0.0 or entry[1] < 0.0) {
             return errors.Error.InvalidRequest;
         }
+
         if (previous_pressure_hpa) |previous| {
             if (entry[0] == previous) return errors.Error.InvalidRequest;
+
             const entry_descending = entry[0] < previous;
             if (descending) |expected_descending| {
                 if (entry_descending != expected_descending) return errors.Error.InvalidRequest;

@@ -1,20 +1,23 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const integration = internal.forward_model.implementations.instrument_integration;
+const integration = internal.forward_model.instrument_integration;
 const PreparedOpticalState = internal.forward_model.optical_properties.PreparedOpticalState;
 const Instrument = internal.instrument.Instrument;
 const Scene = internal.Scene;
 const SpectralChannel = internal.instrument.SpectralChannel;
-const integrationForWavelength = integration.integrationForWavelength;
 const integrationForWavelengthChecked = integration.integrationForWavelengthChecked;
 const IntegrationKernel = integration.IntegrationKernel;
 const usesIntegratedInstrumentSampling = integration.usesIntegratedInstrumentSampling;
 const ReferenceData = internal.reference_data;
-const Error = integration.Error;
 const default_integration_sample_count = integration.default_integration_sample_count;
 
 test "high-resolution integration retains the full symmetric sampling span" {
+    const support = [_]Instrument.OperationalBandSupport{.{
+        .id = "primary",
+        .high_resolution_step_nm = 0.01,
+        .high_resolution_half_span_nm = 0.40,
+    }};
     const scene: Scene = .{
         .spectral_grid = .{
             .start_nm = 758.0,
@@ -25,19 +28,40 @@ test "high-resolution integration retains the full symmetric sampling span" {
             .instrument = .tropomi,
             .sampling = .native,
             .instrument_line_fwhm_nm = 0.54,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 0.40,
+            .operational_band_support = support[0..],
         },
     };
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, null, .radiance, 760.5, &kernel);
+    try integrationForWavelengthChecked(&scene, null, .radiance, 760.5, &kernel);
     try std.testing.expect(kernel.enabled);
     try std.testing.expectEqual(@as(usize, 81), kernel.sample_count);
     try std.testing.expectApproxEqAbs(@as(f64, -0.40), kernel.offsets_nm[0], 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.40), kernel.offsets_nm[kernel.sample_count - 1], 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), kernel.offsets_nm[kernel.sample_count / 2], 1e-12);
     try std.testing.expectApproxEqAbs(kernel.weights[0], kernel.weights[kernel.sample_count - 1], 1e-12);
+}
+
+test "checked explicit-grid integration reports missing grid metadata" {
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 758.0,
+            .end_nm = 771.0,
+            .sample_count = 1301,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .instrument_line_fwhm_nm = 0.54,
+            .integration_mode = .explicit_hr_grid,
+        },
+    };
+
+    var kernel: IntegrationKernel = undefined;
+    try std.testing.expectError(
+        error.InstrumentKernelRealizationFailed,
+        integrationForWavelengthChecked(&scene, null, .radiance, 760.5, &kernel),
+    );
 }
 
 test "measured-channel sampling bypasses legacy post-convolution even without explicit slit metadata" {
@@ -57,7 +81,7 @@ test "measured-channel sampling bypasses legacy post-convolution even without ex
     try std.testing.expect(usesIntegratedInstrumentSampling(&scene, .radiance));
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, null, .radiance, 761.03, &kernel);
+    try integrationForWavelengthChecked(&scene, null, .radiance, 761.03, &kernel);
     try std.testing.expectEqual(@as(usize, 1), kernel.sample_count);
     try std.testing.expect(!kernel.enabled);
 }
@@ -112,7 +136,7 @@ test "dense adaptive strong-line windows do not fall back to the five-point kern
     };
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, &prepared, .radiance, 759.53, &kernel);
+    try integrationForWavelengthChecked(&scene, &prepared, .radiance, 759.53, &kernel);
     try std.testing.expect(kernel.enabled);
     try std.testing.expect(kernel.sample_count > 1000);
     try std.testing.expect(kernel.sample_count != default_integration_sample_count);

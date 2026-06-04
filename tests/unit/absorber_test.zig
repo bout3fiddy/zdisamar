@@ -23,7 +23,6 @@ test "absorber set validates explicit spectroscopy bindings" {
                 .profile_source = .atmosphere,
                 .spectroscopy = .{
                     .mode = .line_by_line,
-                    .provider = "builtin.cross_sections",
                     .line_list = .{ .asset = .{ .name = "o2_hitran" } },
                 },
             },
@@ -160,34 +159,27 @@ test "line-gas controls validate stage-specific isotope and cutoff selections" {
         .active_stage = .simulation,
     }).validate();
 
-    try std.testing.expectApproxEqAbs(
-        @as(f64, 1.0),
-        (LineGasControls{ .factor_lm_sim = 1.0, .active_stage = .simulation }).activeLineMixingFactor(),
-        1.0e-12,
-    );
-    try std.testing.expectApproxEqAbs(
-        @as(f64, 1.0),
-        (LineGasControls{ .active_stage = .simulation }).activeLineMixingFactor(),
-        1.0e-12,
-    );
-    try std.testing.expectEqualSlices(
-        u8,
-        &.{ 1, 2 },
-        (LineGasControls{ .isotopes_retr = &.{ 1, 2 }, .active_stage = .retrieval }).activeIsotopes(),
-    );
-    try std.testing.expectEqualSlices(
-        u8,
-        &.{ 2, 4 },
-        (LineGasControls{ .isotopes_sim = &.{ 2, 4 } }).activeIsotopes(),
-    );
-    try std.testing.expectEqual(
-        @as(?f64, 0.05),
-        (LineGasControls{ .threshold_line_sim = 0.05 }).activeThresholdLine(),
-    );
-    try std.testing.expectEqual(
-        @as(?f64, 12.0),
-        (LineGasControls{ .cutoff_sim_cm1 = 12.0 }).activeCutoffCm1(),
-    );
+    const simulation_controls = (LineGasControls{
+        .factor_lm_sim = 1.0,
+        .threshold_line_sim = 0.05,
+        .cutoff_sim_cm1 = 12.0,
+        .active_stage = .simulation,
+    }).active();
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), simulation_controls.line_mixing_factor, 1.0e-12);
+    try std.testing.expectEqual(@as(?f64, 0.05), simulation_controls.threshold_line);
+    try std.testing.expectEqual(@as(?f64, 12.0), simulation_controls.cutoff_cm1);
+
+    const default_simulation_controls = (LineGasControls{ .active_stage = .simulation }).active();
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), default_simulation_controls.line_mixing_factor, 1.0e-12);
+
+    const retrieval_controls = (LineGasControls{
+        .isotopes_retr = &.{ 1, 2 },
+        .active_stage = .retrieval,
+    }).active();
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, retrieval_controls.isotopes);
+
+    const default_stage_controls = (LineGasControls{ .isotopes_sim = &.{ 2, 4 } }).active();
+    try std.testing.expectEqualSlices(u8, &.{ 2, 4 }, default_stage_controls.isotopes);
 
     try std.testing.expectError(
         error.InvalidRequest,

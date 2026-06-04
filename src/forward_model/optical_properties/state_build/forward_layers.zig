@@ -22,13 +22,6 @@ fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
     return std.math.degreesToRadians(transport_dphi_deg);
 }
 
-pub fn toForwardInput(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-) transport_common.ForwardInput {
-    return toForwardInputWithLayers(prepared, scene, null);
-}
-
 pub fn toForwardInputWithLayers(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -40,14 +33,6 @@ pub fn toForwardInputWithLayers(
         (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,
         layer_inputs,
     );
-}
-
-pub fn toForwardInputAtWavelength(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-) transport_common.ForwardInput {
-    return toForwardInputAtWavelengthWithLayers(prepared, scene, wavelength_nm, null);
 }
 
 pub fn toForwardInputAtWavelengthWithLayers(

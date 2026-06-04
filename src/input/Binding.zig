@@ -9,7 +9,6 @@ pub const BindingKind = enum {
     asset,
     ingest,
     stage_product,
-    external_observation,
 };
 
 // layout(64-bit):
@@ -39,7 +38,8 @@ pub const NamedRef = struct {
 //   size: 48 B, align: 8 B
 //   field storage: full_name=16 B, ingest_name=16 B, output_name=16 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in size
+// out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in
+// size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 pub const IngestRef = struct {
@@ -49,10 +49,18 @@ pub const IngestRef = struct {
 
     pub fn fromFullName(full_name: []const u8) IngestRef {
         const dot_index = std.mem.indexOfScalar(u8, full_name, '.');
+        if (dot_index) |index| {
+            return .{
+                .full_name = full_name,
+                .ingest_name = full_name[0..index],
+                .output_name = full_name[index + 1 ..],
+            };
+        }
+
         return .{
             .full_name = full_name,
-            .ingest_name = if (dot_index) |index| full_name[0..index] else "",
-            .output_name = if (dot_index) |index| full_name[index + 1 ..] else "",
+            .ingest_name = "",
+            .output_name = "",
         };
     }
 
@@ -78,7 +86,6 @@ pub const Binding = union(BindingKind) {
     asset: NamedRef,
     ingest: IngestRef,
     stage_product: NamedRef,
-    external_observation: NamedRef,
 
     pub fn enabled(self: Binding) bool {
         return self.kind() != .none;
@@ -93,7 +100,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| value.name,
             .ingest => |value| value.full_name,
             .stage_product => |value| value.name,
-            .external_observation => |value| value.name,
             .none, .atmosphere, .bundle_default => "",
         };
     }
@@ -111,7 +117,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| try value.validate(),
             .ingest => |value| try value.validate(),
             .stage_product => |value| try value.validate(),
-            .external_observation => |value| try value.validate(),
         }
     }
 
@@ -123,7 +128,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| .{ .asset = try value.clone(allocator) },
             .ingest => |value| .{ .ingest = try value.clone(allocator) },
             .stage_product => |value| .{ .stage_product = try value.clone(allocator) },
-            .external_observation => |value| .{ .external_observation = try value.clone(allocator) },
         };
     }
 
@@ -132,7 +136,6 @@ pub const Binding = union(BindingKind) {
             .asset => |value| value.deinitOwned(allocator),
             .ingest => |value| value.deinitOwned(allocator),
             .stage_product => |value| value.deinitOwned(allocator),
-            .external_observation => |value| value.deinitOwned(allocator),
             .none, .atmosphere, .bundle_default => {},
         }
         self.* = .none;

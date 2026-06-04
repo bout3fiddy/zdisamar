@@ -2,6 +2,7 @@ const std = @import("std");
 const errors = @import("../common/errors.zig");
 const LutControls = @import("../common/lut_controls.zig");
 const Allocator = std.mem.Allocator;
+const AbsorberModel = @import("Absorber.zig");
 
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
 pub const Binding = @import("Binding.zig").Binding;
@@ -12,10 +13,10 @@ pub const SpectralGrid = @import("Spectrum.zig").SpectralGrid;
 pub const SpectralWindow = @import("Bands.zig").SpectralWindow;
 pub const SpectralBand = @import("Bands.zig").SpectralBand;
 pub const SpectralBandSet = @import("Bands.zig").SpectralBandSet;
-pub const Absorber = @import("Absorber.zig").Absorber;
-pub const AbsorberSet = @import("Absorber.zig").AbsorberSet;
-pub const Spectroscopy = @import("Absorber.zig").Spectroscopy;
-pub const SpectroscopyMode = @import("Absorber.zig").SpectroscopyMode;
+pub const Absorber = AbsorberModel.Absorber;
+pub const AbsorberSet = AbsorberModel.AbsorberSet;
+pub const Spectroscopy = AbsorberModel.Spectroscopy;
+pub const SpectroscopyMode = AbsorberModel.SpectroscopyMode;
 pub const Surface = @import("Surface.zig").Surface;
 pub const Aerosol = @import("Aerosol.zig").Aerosol;
 pub const Instrument = @import("Instrument.zig").Instrument;
@@ -29,7 +30,6 @@ pub const MeasurementErrorModel = @import("Measurement.zig").ErrorModel;
 pub const DerivativeMode = enum {
     none,
     semi_analytical,
-    numerical,
 };
 
 // layout(64-bit):
@@ -83,6 +83,7 @@ pub const Scene = struct {
         if (self.observation_model.measured_wavelengths_nm.len != 0 and
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {
+
             // INVARIANT:
             //   Explicit measured channels and the scene spectral grid must describe the same
             //   sample count once the scene is ready for execution.
@@ -108,12 +109,10 @@ pub const Scene = struct {
             .high_resolution_step_nm = support.high_resolution_step_nm,
             .high_resolution_half_span_nm = support.high_resolution_half_span_nm,
             .lut_sampling_half_span_nm = self.observation_model.lutSamplingHalfSpanNm(),
+            .spectroscopy_source_hash = self.lutSpectroscopySourceHash(),
         };
     }
 
-    // layout(64-bit):
-    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn lutNominalWavelengthBounds(self: *const Scene) struct { start_nm: f64, end_nm: f64 } {
         const nominal_wavelengths = self.observation_model.measured_wavelengths_nm;
         if (nominal_wavelengths.len != 0) {
@@ -134,9 +133,6 @@ pub const Scene = struct {
             self.observation_model.lutSamplingHalfSpanNm() > 0.0;
     }
 
-    // layout(64-bit):
-    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per returned value = 16 B (0.016 KiB)
     fn lutLowResolutionSamplingIdentity(self: *const Scene) struct {
         sample_count: u32,
         wavelength_hash: u64,
@@ -168,6 +164,63 @@ pub const Scene = struct {
             hasher.update(std.mem.asBytes(&wavelength_nm));
         }
         return hasher.final();
+    }
+
+    fn lutSpectroscopySourceHash(self: *const Scene) u64 {
+        var hasher = std.hash.Wyhash.init(0x6c75_742d_7370_6563);
+        for (self.absorbers.items) |absorber| {
+            hashBytes(&hasher, absorber.id);
+            hashBytes(&hasher, absorber.species);
+            hashEnum(&hasher, absorber.spectroscopy.mode);
+            hashBinding(&hasher, absorber.spectroscopy.line_list);
+            hashBinding(&hasher, absorber.spectroscopy.line_mixing);
+            hashBinding(&hasher, absorber.spectroscopy.strong_lines);
+            hashBinding(&hasher, absorber.spectroscopy.cia_table);
+            hashBinding(&hasher, absorber.spectroscopy.cross_section_table);
+            hashBinding(&hasher, absorber.spectroscopy.operational_lut);
+            if (absorber.spectroscopy.mode == .line_by_line) {
+                hashActiveLineControls(&hasher, absorber.spectroscopy.line_gas_controls);
+            }
+        }
+        return hasher.final();
+    }
+
+    fn hashBinding(hasher: *std.hash.Wyhash, binding: Binding) void {
+        hashEnum(hasher, binding.kind());
+        hashBytes(hasher, binding.name());
+    }
+
+    fn hashActiveLineControls(
+        hasher: *std.hash.Wyhash,
+        controls: AbsorberModel.LineGasControls,
+    ) void {
+        const active_controls = controls.active();
+        hashEnum(hasher, controls.active_stage);
+        hashBytes(hasher, active_controls.isotopes);
+        hashFloat(hasher, active_controls.line_mixing_factor);
+        hashOptionalFloat(hasher, active_controls.threshold_line);
+        hashOptionalFloat(hasher, active_controls.cutoff_cm1);
+    }
+
+    fn hashEnum(hasher: *std.hash.Wyhash, value: anytype) void {
+        const tag_value: u16 = @intFromEnum(value);
+        hasher.update(std.mem.asBytes(&tag_value));
+    }
+
+    fn hashBytes(hasher: *std.hash.Wyhash, value: []const u8) void {
+        const length: u64 = value.len;
+        hasher.update(std.mem.asBytes(&length));
+        hasher.update(value);
+    }
+
+    fn hashFloat(hasher: *std.hash.Wyhash, value: f64) void {
+        hasher.update(std.mem.asBytes(&value));
+    }
+
+    fn hashOptionalFloat(hasher: *std.hash.Wyhash, value: ?f64) void {
+        const has_value = value != null;
+        hasher.update(std.mem.asBytes(&has_value));
+        if (value) |resolved| hashFloat(hasher, resolved);
     }
 
     pub fn deinitOwned(self: *Scene, allocator: Allocator) void {

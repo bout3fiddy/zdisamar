@@ -26,10 +26,7 @@ test "labos semi-analytical surface albedo tangent matches local finite differen
             .num_orders_max = 8,
         },
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -55,14 +52,14 @@ test "labos semi-analytical surface albedo tangent matches local finite differen
         .rtm_controls = controls,
     };
 
-    const tangent_result = try labos.execute(allocator, route, base_input);
+    const tangent_result = try labos.execute(allocator, rtm_config, base_input);
     const tangent = jacobian.get(tangent_result.jacobian.?, .surface_albedo);
 
     var plus_input = base_input;
     plus_input.surface_albedo += 1.0e-6;
     var minus_input = base_input;
     minus_input.surface_albedo -= 1.0e-6;
-    var value_route = route;
+    var value_route = rtm_config;
     value_route.derivative_mode = .none;
     const plus = try labos.execute(allocator, value_route, plus_input);
     const minus = try labos.execute(allocator, value_route, minus_input);
@@ -71,7 +68,7 @@ test "labos semi-analytical surface albedo tangent matches local finite differen
     try std.testing.expectApproxEqAbs(finite_difference, tangent, 3.0e-6);
 }
 
-test "labos no-scattering route returns surface albedo tangent" {
+test "labos no-scattering rtm_config returns surface albedo tangent" {
     const allocator = std.testing.allocator;
     const common = internal.forward_model.radiative_transfer;
     const jacobian = common.Jacobian;
@@ -79,10 +76,7 @@ test "labos no-scattering route returns surface albedo tangent" {
         .scattering = .none,
         .n_streams = 4,
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -94,14 +88,14 @@ test "labos no-scattering route returns surface albedo tangent" {
         .rtm_controls = controls,
     };
 
-    const tangent_result = try labos.execute(allocator, route, input);
+    const tangent_result = try labos.execute(allocator, rtm_config, input);
     const tangent = jacobian.get(tangent_result.jacobian.?, .surface_albedo);
 
     var plus_input = input;
     plus_input.surface_albedo += 1.0e-6;
     var minus_input = input;
     minus_input.surface_albedo -= 1.0e-6;
-    var value_route = route;
+    var value_route = rtm_config;
     value_route.derivative_mode = .none;
     const plus = try labos.execute(allocator, value_route, plus_input);
     const minus = try labos.execute(allocator, value_route, minus_input);
@@ -119,10 +113,7 @@ test "labos no-scattering surface albedo tangent is active at zero albedo" {
         .scattering = .none,
         .n_streams = 4,
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -134,12 +125,12 @@ test "labos no-scattering surface albedo tangent is active at zero albedo" {
         .rtm_controls = controls,
     };
 
-    const tangent_result = try labos.execute(allocator, route, input);
+    const tangent_result = try labos.execute(allocator, rtm_config, input);
     const tangent = jacobian.get(tangent_result.jacobian.?, .surface_albedo);
 
     var plus_input = input;
     plus_input.surface_albedo += 1.0e-6;
-    var value_route = route;
+    var value_route = rtm_config;
     value_route.derivative_mode = .none;
     const plus = try labos.execute(allocator, value_route, plus_input);
     const base = try labos.execute(allocator, value_route, input);
@@ -162,10 +153,7 @@ test "labos rejects non-integrated pressure tangent without layer pressure jacob
             .num_orders_max = 8,
         },
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -187,10 +175,10 @@ test "labos rejects non-integrated pressure tangent without layer pressure jacob
         .rtm_controls = controls,
     };
 
-    try std.testing.expectError(error.UnsupportedDerivativeMode, labos.execute(allocator, route, input));
+    try std.testing.expectError(error.UnsupportedDerivativeMode, labos.execute(allocator, rtm_config, input));
 }
 
-test "labos synthetic single-layer route returns surface albedo tangent" {
+test "labos synthetic single-layer rtm_config returns surface albedo tangent" {
     const allocator = std.testing.allocator;
     const common = internal.forward_model.radiative_transfer;
     const jacobian = common.Jacobian;
@@ -204,10 +192,7 @@ test "labos synthetic single-layer route returns surface albedo tangent" {
             .num_orders_max = 8,
         },
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -221,14 +206,14 @@ test "labos synthetic single-layer route returns surface albedo tangent" {
         .rtm_controls = controls,
     };
 
-    const tangent_result = try labos.execute(allocator, route, input);
+    const tangent_result = try labos.execute(allocator, rtm_config, input);
     const tangent = jacobian.get(tangent_result.jacobian.?, .surface_albedo);
 
     var plus_input = input;
     plus_input.surface_albedo += 1.0e-6;
     var minus_input = input;
     minus_input.surface_albedo -= 1.0e-6;
-    var value_route = route;
+    var value_route = rtm_config;
     value_route.derivative_mode = .none;
     const plus = try labos.execute(allocator, value_route, plus_input);
     const minus = try labos.execute(allocator, value_route, minus_input);
@@ -252,10 +237,7 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
             .num_orders_max = 8,
         },
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -277,7 +259,7 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
         .rtm_controls = controls,
     };
 
-    try std.testing.expectError(error.UnsupportedDerivativeMode, labos.execute(allocator, route, input));
+    try std.testing.expectError(error.UnsupportedDerivativeMode, labos.execute(allocator, rtm_config, input));
 }
 
 test "labos non-integrated aerosol layer pressure tangent follows layer jacobian" {
@@ -294,10 +276,7 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
             .num_orders_max = 8,
         },
     };
-    const route: common.Route = .{
-        .family = .labos,
-        .regime = .nadir,
-        .execution_mode = .scalar,
+    const rtm_config: common.SolveConfig = .{
         .derivative_mode = .semi_analytical,
         .rtm_controls = controls,
     };
@@ -323,18 +302,22 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
         .rtm_controls = controls,
     };
 
-    const tangent_result = try labos.execute(allocator, route, base_input);
+    const tangent_result = try labos.execute(allocator, rtm_config, base_input);
     const tangent = jacobian.get(tangent_result.jacobian.?, .aerosol_layer_mid_pressure_hpa);
 
     const eps = 1.0e-5;
     var plus_layer = layer;
     plus_layer.optical_depth += eps * jacobian.get(layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    plus_layer.scattering_optical_depth += eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    plus_layer.single_scatter_albedo += eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
+    plus_layer.scattering_optical_depth +=
+        eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
+    plus_layer.single_scatter_albedo +=
+        eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
     var minus_layer = layer;
     minus_layer.optical_depth -= eps * jacobian.get(layer.optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    minus_layer.scattering_optical_depth -= eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
-    minus_layer.single_scatter_albedo -= eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
+    minus_layer.scattering_optical_depth -=
+        eps * jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_layer_mid_pressure_hpa);
+    minus_layer.single_scatter_albedo -=
+        eps * jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_layer_mid_pressure_hpa);
 
     const plus_layers = [_]common.LayerInput{plus_layer};
     const minus_layers = [_]common.LayerInput{minus_layer};
@@ -342,7 +325,7 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
     plus_input.layers = &plus_layers;
     var minus_input = base_input;
     minus_input.layers = &minus_layers;
-    var value_route = route;
+    var value_route = rtm_config;
     value_route.derivative_mode = .none;
     const plus = try labos.execute(allocator, value_route, plus_input);
     const minus = try labos.execute(allocator, value_route, minus_input);
@@ -393,9 +376,9 @@ test "multiple scattering drops the first below-threshold order" {
     defer multiple_workspace.deinit();
     var local_sum_workspace = try OrdersWorkspace.init(allocator, nlevel);
     defer local_sum_workspace.deinit();
-    var lazy_workspace = try OrdersWorkspace.initForRoute(allocator, nlevel, false);
-    defer lazy_workspace.deinit();
-    try std.testing.expectEqual(@as(usize, 0), lazy_workspace.ud_sum_local.len);
+    var no_local_sum_workspace = try OrdersWorkspace.initWithLocalSumStorage(allocator, nlevel, false);
+    defer no_local_sum_workspace.deinit();
+    try std.testing.expectEqual(@as(usize, 0), no_local_sum_workspace.ud_sum_local.len);
 
     const single_result = ordersScatInto(
         &single_workspace,
@@ -445,8 +428,8 @@ test "multiple scattering drops the first below-threshold order" {
         },
         20,
     );
-    const lazy_result = ordersScatInto(
-        &lazy_workspace,
+    const no_local_sum_result = ordersScatInto(
+        &no_local_sum_workspace,
         0,
         1,
         &geo,
@@ -464,11 +447,11 @@ test "multiple scattering drops the first below-threshold order" {
 
     try std.testing.expectEqual(@as(usize, 0), single_result.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, 0), multiple_result.ud_sum_local.len);
-    try std.testing.expectEqual(@as(usize, 0), lazy_result.ud_sum_local.len);
+    try std.testing.expectEqual(@as(usize, 0), no_local_sum_result.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, nlevel), local_sum_result.ud_sum_local.len);
 
-    try lazy_workspace.ensureLocalSumCapacity(nlevel);
-    try std.testing.expectEqual(@as(usize, nlevel), lazy_workspace.ud_sum_local.len);
+    try no_local_sum_workspace.ensureLocalSumCapacity(nlevel);
+    try std.testing.expectEqual(@as(usize, nlevel), no_local_sum_workspace.ud_sum_local.len);
 
     for (0..nlevel) |ilevel| {
         for (0..2) |col| {

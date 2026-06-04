@@ -1,6 +1,6 @@
-const instrument_integration = @import("../../implementations/instrument.zig");
+const instrument_types = @import("../../implementations/instrument/types.zig");
 
-pub const inline_integration_sample_count: usize = instrument_integration.default_integration_sample_count;
+pub const inline_integration_sample_count: usize = instrument_types.default_integration_sample_count;
 
 // layout(64-bit):
 //   size: 32 B, align: 8 B

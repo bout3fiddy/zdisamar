@@ -13,7 +13,7 @@ const transport_common = @import("../../forward_model/radiative_transfer/root.zi
 const Allocator = std.mem.Allocator;
 const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
 pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
-pub const Route = transport_common.Route;
+pub const SolveConfig = transport_common.SolveConfig;
 pub const RadiativeTransferPerformanceThresholds = transport_common.RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
@@ -61,7 +61,8 @@ pub const OutputRequest = struct {
 
 // layout(64-bit):
 //   size: 3 B, align: 1 B
-//   field storage: strict_unknown_fields=1 B, require_resolved_assets=1 B, require_resolved_stage_references=1 B; padding: 0 B (0 bits)
+// field storage: strict_unknown_fields=1 B, require_resolved_assets=1 B, require_resolved_stage_references=1 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 21 bool-storage slack = 21 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 3 B (0.003 KiB); total = per instance * live instance count
@@ -72,32 +73,20 @@ pub const ValidationPolicy = struct {
 };
 
 // layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: model_family=16 B, transport_solver=16 B, execution_derivative_mode=16 B; padding: 0 B (0 bits)
+//   size: 1 B, align: 1 B
+//   field storage: derivative_mode=1 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: model_family, transport_solver, execution_derivative_mode carry references/descriptors; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+//   footprint: per instance = 1 B (0.001 KiB); total = per instance * live instance count
 pub const PlanSpec = struct {
-    model_family: []const u8,
-    transport_solver: []const u8,
-    execution_derivative_mode: []const u8,
+    derivative_mode: transport_common.DerivativeMode = .none,
 
     pub fn validate(self: PlanSpec) !void {
-        if (!std.mem.eql(u8, self.model_family, "disamar_standard")) {
-            return error.UnsupportedModelFamily;
-        }
-        if (!std.mem.eql(u8, self.transport_solver, "dispatcher")) {
-            return error.UnsupportedTransportSolver;
-        }
-        _ = try self.derivativeMode();
+        _ = self.derivativeMode();
     }
 
-    pub fn derivativeMode(self: PlanSpec) !transport_common.DerivativeMode {
-        if (std.mem.eql(u8, self.execution_derivative_mode, "none")) return .none;
-        if (std.mem.eql(u8, self.execution_derivative_mode, "semi_analytical")) return .semi_analytical;
-        return error.UnsupportedDerivativeMode;
+    pub fn derivativeMode(self: PlanSpec) transport_common.DerivativeMode {
+        return self.derivative_mode;
     }
 };
 
@@ -116,7 +105,8 @@ pub const Metadata = struct {
 
 // layout(64-bit):
 //   size: 32 B, align: 8 B
-//   field storage: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B, model=1 B; padding: 7 B (56 bits)
+// field storage: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B, model=1 B; padding: 7 B (56
+// bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
@@ -129,7 +119,8 @@ pub const GeometrySpec = struct {
 
 // layout(64-bit):
 //   size: 80 B, align: 8 B
-//   field storage: 80 B across 6 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding: 0 B (0 bits)
+// field storage: 80 B across 6 fields; largest: placement=40 B, optical_depth=8 B, single_scatter_albedo=8 B; padding:
+// 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -146,15 +137,17 @@ pub const AerosolSpec = struct {
 
 // layout(64-bit):
 //   size: 88 B, align: 8 B
-//   field storage: 81 B across 10 fields; largest: instrument_name=16 B, measured_wavelengths_nm=16 B; padding: 7 B (56 bits)
+// field storage: 81 B across 10 fields; largest: instrument_name=16 B, measured_wavelengths_nm=16 B; padding: 7 B (56
+// bits)
 //   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: instrument_name, solar_reference_asset_id, measured_wavelengths_nm carry references/descriptors; referenced storage is not included in size
+// out-of-line: instrument_name, solar_reference_asset_id, measured_wavelengths_nm carry references/descriptors;
+// referenced storage is not included in size
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 88 B (0.086 KiB); total also includes referenced storage above
 pub const ObservationSpec = struct {
     instrument_name: []const u8,
-    regime: ObservationModel.ObservationRegime,
+    regime: ObservationModel.ObservationRegime = .nadir,
     sampling: Instrument.SamplingMode,
     instrument_line_fwhm_nm: f64,
     builtin_line_shape: BuiltinLineShapeKind,
@@ -167,7 +160,8 @@ pub const ObservationSpec = struct {
 
 // layout(64-bit):
 //   size: 208 B, align: 8 B
-//   field storage: 208 B across 7 fields; largest: line_list_asset=48 B, line_mixing_asset=48 B, strong_lines_asset=48 B; padding: 0 B (0 bits)
+// field storage: 208 B across 7 fields; largest: line_list_asset=48 B, line_mixing_asset=48 B, strong_lines_asset=48 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   out-of-line: isotopes_sim carry references/descriptors; referenced storage is not included in size
 //   cache span: 4 cache line(s) at 64 B per line
@@ -197,7 +191,8 @@ pub const CiaSpec = struct {
 
 // layout(64-bit):
 //   size: 192 B, align: 8 B
-//   field storage: atmosphere_profile=48 B, vendor_reference_csv=48 B, raw_solar_reference=48 B, airmass_factor_lut=48 B; padding: 0 B (0 bits)
+// field storage: atmosphere_profile=48 B, vendor_reference_csv=48 B, raw_solar_reference=48 B, airmass_factor_lut=48 B;
+// padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances

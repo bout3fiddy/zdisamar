@@ -1,8 +1,9 @@
 const std = @import("std");
 const Optics = @import("../forward_model/optical_properties/root.zig");
 const ReferenceData = @import("../input/ReferenceData.zig");
-const LineListOps = @import("../input/reference/spectroscopy/line_list_ops.zig");
-const Physics = @import("../input/reference/spectroscopy/physics.zig");
+const LineListOps = @import("../input/reference/spectroscopy/line_list.zig");
+const SpectroscopyPhysics = @import("../input/reference/spectroscopy/physics_core.zig");
+const SpectroscopyStrongLines = @import("../input/reference/spectroscopy/strong_lines.zig");
 const SpectroscopySupport = @import("../input/reference/spectroscopy/support.zig");
 const SpectroscopyTypes = @import("../input/reference/spectroscopy/types.zig");
 
@@ -228,7 +229,7 @@ fn appendRowsForWavelength(
     if (line_list.hasStrongLineSidecars()) {
         const strong_lines = line_list.strong_lines.?;
         const relaxation_matrix = line_list.relaxation_matrix.?;
-        const strong_state = Physics.prepareStrongLineConvTPState(
+        const strong_state = SpectroscopyStrongLines.prepareStrongLineConvTPState(
             strong_lines,
             relaxation_matrix,
             safe_temperature,
@@ -284,7 +285,7 @@ fn weakLineRow(
     const contribution = if (excluded)
         zeroEvaluation()
     else
-        Physics.weakLineContribution(
+        SpectroscopyPhysics.weakLineContribution(
             wavelength_nm,
             line,
             temperature_k,
@@ -310,10 +311,10 @@ fn weakLineRow(
         .matched_strong_line_index = optionalIndex(matched_strong_index),
         .gas_index = line.gas_index,
         .isotope_number = line.isotope_number,
-        .isotopologue_code = Physics.deriveIsotopologueCode(line.gas_index, line.isotope_number),
+        .isotopologue_code = SpectroscopyStrongLines.deriveIsotopologueCode(line.gas_index, line.isotope_number),
         .center_wavelength_nm = line.center_wavelength_nm,
         .center_wavenumber_cm1 = SpectroscopySupport.lineCenterWavenumberCm1(line),
-        .shifted_center_wavenumber_cm1 = Physics.shiftedLineCenterWavenumberCm1(line, pressure_scale),
+        .shifted_center_wavenumber_cm1 = SpectroscopyStrongLines.shiftedLineCenterWavenumberCm1(line, pressure_scale),
         .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
         .air_half_width_cm1 = SpectroscopySupport.lineAirHalfWidthCm1(line),
         .pressure_shift_cm1 = SpectroscopySupport.linePressureShiftCm1(line),
@@ -339,13 +340,13 @@ fn strongLineRow(
     strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
-    strong_state: *const Physics.StrongLineConvTPState,
+    strong_state: *const SpectroscopyStrongLines.StrongLineConvTPState,
 ) O2LineContributionRow {
     const pressure_atm = @max(
         thermodynamic_state.pressure_hpa / 1013.25,
         SpectroscopyTypes.min_spectroscopy_pressure_atm,
     );
-    const contribution = Physics.strongLineContribution(
+    const contribution = SpectroscopyStrongLines.strongLineContribution(
         wavelength_nm,
         strong_lines,
         strong_index,
@@ -371,7 +372,7 @@ fn strongLineRow(
         .gas_index = if (anchor) |owned| owned.line.gas_index else 7,
         .isotope_number = if (anchor) |owned| owned.line.isotope_number else 1,
         .isotopologue_code = if (anchor) |owned|
-            Physics.deriveIsotopologueCode(owned.line.gas_index, owned.line.isotope_number)
+            SpectroscopyStrongLines.deriveIsotopologueCode(owned.line.gas_index, owned.line.isotope_number)
         else
             66,
         .center_wavelength_nm = strong_line.center_wavelength_nm,

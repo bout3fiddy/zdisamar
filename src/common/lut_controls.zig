@@ -17,7 +17,8 @@ pub const Mode = enum {
 
 // layout(64-bit):
 //   size: 16 B, align: 8 B
-//   field storage: surface_albedo=8 B, reflectance_mode=1 B, correction_mode=1 B, use_chandra_formula=1 B; padding: 5 B (40 bits)
+//   field storage: surface_albedo=8 B, reflectance_mode=1 B,
+//     correction_mode=1 B, use_chandra_formula=1 B; padding: 5 B (40 bits)
 //   unused bits: 40 padding + 7 bool-storage slack = 47 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
@@ -47,7 +48,8 @@ pub const ReflectanceControls = struct {
 
 // layout(64-bit):
 //   size: 40 B, align: 8 B
-//   field storage: 37 B across 9 fields; largest: min_temperature_k=8 B, max_temperature_k=8 B, min_pressure_hpa=8 B; padding: 3 B (24 bits)
+//   field storage: 37 B across 9 fields; largest: min_temperature_k=8 B,
+//     max_temperature_k=8 B, min_pressure_hpa=8 B; padding: 3 B (24 bits)
 //   unused bits: 24 padding + 0 bool-storage slack = 24 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
@@ -83,12 +85,15 @@ pub const XsecControls = struct {
         {
             return errors.Error.InvalidRequest;
         }
+
         if (self.min_temperature_k <= 0.0 or self.max_temperature_k <= self.min_temperature_k) {
             return errors.Error.InvalidRequest;
         }
+
         if (self.min_pressure_hpa <= 0.0 or self.max_pressure_hpa <= self.min_pressure_hpa) {
             return errors.Error.InvalidRequest;
         }
+
         if (self.temperature_grid_count == 0 or
             self.pressure_grid_count == 0 or
             self.temperature_coefficient_count == 0 or
@@ -96,6 +101,7 @@ pub const XsecControls = struct {
         {
             return errors.Error.InvalidRequest;
         }
+
         if (self.temperature_coefficient_count > self.temperature_grid_count or
             self.pressure_coefficient_count > self.pressure_grid_count)
         {
@@ -141,12 +147,13 @@ pub const Controls = struct {
 };
 
 // layout(64-bit):
-//   size: 152 B, align: 8 B
-//   field storage: 148 B across 13 fields; largest: controls=56 B, spectral_start_nm=8 B, spectral_end_nm=8 B; padding: 4 B (32 bits)
+//   size: 160 B, align: 8 B
+//   field storage: 156 B across 14 fields; largest: controls=56 B,
+//     spectral_start_nm=8 B, spectral_end_nm=8 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
+//   footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count
 pub const CompatibilityKey = struct {
     controls: Controls = .{},
     spectral_start_nm: f64 = 0.0,
@@ -161,6 +168,7 @@ pub const CompatibilityKey = struct {
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
     lut_sampling_half_span_nm: f64 = 0.0,
+    spectroscopy_source_hash: u64 = 0,
 
     pub fn enabled(self: CompatibilityKey) bool {
         return self.controls.enabled();
@@ -183,16 +191,20 @@ pub const CompatibilityKey = struct {
         {
             return errors.Error.InvalidRequest;
         }
+
         if (self.spectral_end_nm <= self.spectral_start_nm) return errors.Error.InvalidRequest;
         if (self.surface_albedo < 0.0) return errors.Error.InvalidRequest;
         if (self.instrument_line_fwhm_nm < 0.0) return errors.Error.InvalidRequest;
+
         if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
+
         if (self.lut_sampling_half_span_nm < 0.0) return errors.Error.InvalidRequest;
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
+
         if (self.high_resolution_step_nm > 0.0) {
             if (self.nominal_sample_count != 0 or self.nominal_wavelength_hash != 0) {
                 return errors.Error.InvalidRequest;
@@ -215,7 +227,8 @@ pub const CompatibilityKey = struct {
             approxEqCompatibleF64(self.instrument_line_fwhm_nm, other.instrument_line_fwhm_nm) and
             approxEqCompatibleF64(self.high_resolution_step_nm, other.high_resolution_step_nm) and
             approxEqCompatibleF64(self.high_resolution_half_span_nm, other.high_resolution_half_span_nm) and
-            approxEqCompatibleF64(self.lut_sampling_half_span_nm, other.lut_sampling_half_span_nm);
+            approxEqCompatibleF64(self.lut_sampling_half_span_nm, other.lut_sampling_half_span_nm) and
+            self.spectroscopy_source_hash == other.spectroscopy_source_hash;
     }
 };
 

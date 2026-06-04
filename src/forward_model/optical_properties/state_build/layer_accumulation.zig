@@ -10,7 +10,7 @@ const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
-const Trace = @import("../../performance_trace.zig");
+const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../../common/math/interpolation/spline.zig");
@@ -95,7 +95,8 @@ const AerosolSublayers = union(enum) {
 
 // layout(64-bit):
 //   size: 1048 B, align: 8 B
-//   field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=512 B, log_complex_second=512 B; padding: 0 B (0 bits)
+// field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=512 B, log_complex_second=512 B; padding:
+// 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   inline arrays: log_complex_vmr_fraction:[64]f64=512 B, log_complex_second:[64]f64=512 B
 //   out-of-line: altitudes_km carries a slice descriptor; referenced storage is not included in size
@@ -116,6 +117,7 @@ const CollisionComplexProfileCache = struct {
         }
         const node_count = context.spectroscopy_profile_altitudes_km.len;
         if (node_count > max_collision_complex_profile_nodes) return error.InvalidRequest;
+
         if (node_count < 3 or
             context.spectroscopy_profile_pressures_hpa.len != node_count or
             context.spectroscopy_profile_temperatures_k.len != node_count)
@@ -132,6 +134,7 @@ const CollisionComplexProfileCache = struct {
         for (0..node_count) |index| {
             const pressure_hpa = context.spectroscopy_profile_pressures_hpa[index];
             const temperature_k = context.spectroscopy_profile_temperatures_k[index];
+
             // math: n_air = p / (k_B * T); complex VMR proxy = n_o2^2 / n_air, stored as log for spline sampling.
             const node_air_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k;
             const parent_fraction = Spectroscopy.speciesMixingRatioAtPressure(
@@ -141,12 +144,14 @@ const CollisionComplexProfileCache = struct {
                 pressure_hpa,
                 oxygen_volume_mixing_ratio,
             ) orelse oxygen_volume_mixing_ratio;
+
             const parent_density_cm3 = node_air_density_cm3 * parent_fraction;
             const complex_vmr_fraction = if (node_air_density_cm3 > 0.0)
                 parent_density_cm3 * parent_density_cm3 / node_air_density_cm3
             else
                 0.0;
             if (complex_vmr_fraction <= 0.0) return .{};
+
             cache.log_complex_vmr_fraction[index] = @log(complex_vmr_fraction);
         }
         spline.endpointSecantSecondDerivatives(
@@ -154,6 +159,7 @@ const CollisionComplexProfileCache = struct {
             cache.log_complex_vmr_fraction[0..node_count],
             cache.log_complex_second[0..node_count],
         ) catch return .{};
+
         return cache;
     }
 
@@ -164,6 +170,7 @@ const CollisionComplexProfileCache = struct {
         fallback_oxygen_number_density_cm3: f64,
     ) f64 {
         if (self.node_count < 3 or air_number_density_cm3 <= 0.0) {
+
             // math: fallback collision-pair density = n_O2^2.
             return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
         }
@@ -171,10 +178,12 @@ const CollisionComplexProfileCache = struct {
         const log_complex_vmr_fraction = self.log_complex_vmr_fraction[0..self.node_count];
         const log_complex_second = self.log_complex_second[0..self.node_count];
         if (altitude_km <= altitudes[0]) {
+
             // math: lower-edge pair density = exp(log(n_o2^2/n_air)) * n_air.
             return @exp(log_complex_vmr_fraction[0]) * air_number_density_cm3;
         }
         if (altitude_km >= altitudes[self.node_count - 1]) {
+
             // math: upper-edge pair density = exp(log(n_o2^2/n_air)) * n_air.
             return @exp(log_complex_vmr_fraction[self.node_count - 1]) * air_number_density_cm3;
         }
@@ -184,6 +193,7 @@ const CollisionComplexProfileCache = struct {
             log_complex_second,
             altitude_km,
         ) catch return fallback_oxygen_number_density_cm3 * fallback_oxygen_number_density_cm3;
+
         // math: n_pair = exp(spline(log(n_o2^2 / n_air), z)) * n_air
         return @exp(sampled_log_vmr) * air_number_density_cm3;
     }
@@ -208,9 +218,11 @@ const ParitySupportRowErrorState = struct {
 
 // layout(64-bit):
 //   size: 344 B, align: 8 B
-//   field storage: 344 B across 17 fields; largest: totals=160 B, aerosol_sublayers=48 B, allocator=16 B; padding: 0 B (0 bits)
+// field storage: 344 B across 17 fields; largest: totals=160 B, aerosol_sublayers=48 B, allocator=16 B; padding: 0 B (0
+// bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayers, +3 more carry references/descriptors; referenced storage is not included in size
+// out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayers, +3 more
+// carry references/descriptors; referenced storage is not included in size
 //   cache span: 6 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 344 B (0.336 KiB); total also includes referenced storage above
@@ -242,7 +254,8 @@ fn collisionComplexPairDensityCm6(
 
 // layout(64-bit):
 //   size: 136 B, align: 8 B
-//   field storage: 136 B across 17 fields; largest: base_single_scatter_albedo=8 B, aerosol_single_scatter_albedo=8 B, total_optical_depth=8 B; padding: 0 B (0 bits)
+// field storage: 136 B across 17 fields; largest: base_single_scatter_albedo=8 B, aerosol_single_scatter_albedo=8 B,
+// total_optical_depth=8 B; padding: 0 B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 3 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -269,7 +282,8 @@ pub const LayerAccumulation = struct {
 
 // layout(64-bit):
 //   size: 64 B, align: 8 B
-//   field storage: 61 B across 10 fields; largest: top_altitude_km=8 B, bottom_altitude_km=8 B, center_altitude_km=8 B; padding: 3 B (24 bits)
+// field storage: 61 B across 10 fields; largest: top_altitude_km=8 B, bottom_altitude_km=8 B, center_altitude_km=8 B;
+// padding: 3 B (24 bits)
 //   unused bits: 24 padding + 0 bool-storage slack = 24 bits
 //   cache span: 1 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -288,7 +302,8 @@ const LayerGeometry = struct {
 
 // layout(64-bit):
 //   size: 112 B, align: 8 B
-//   field storage: 112 B across 14 fields; largest: density_weight=8 B, density=8 B, temperature_weighted=8 B; padding: 0 B (0 bits)
+// field storage: 112 B across 14 fields; largest: density_weight=8 B, density=8 B, temperature_weighted=8 B; padding: 0
+// B (0 bits)
 //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
 //   cache span: 2 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -311,6 +326,7 @@ const LayerSums = struct {
     aerosol_angstrom_sum: f64 = 0.0,
 
     fn addSublayer(self: *LayerSums, terms: SublayerLayerTerms) void {
+
         // math: layer means are density-weighted, e.g. T_bar numerator += T_i * n_i * w_i and denominator += n_i * w_i.
         self.density_weight += terms.density * terms.weight;
         self.density += terms.density * terms.weight;
@@ -375,17 +391,20 @@ const SublayerLayerTerms = struct {
     aerosol_angstrom_exponent: f64,
 };
 
-// hot path:
-//   when: once per optical-state preparation before repeated wavelength solves
-//   work: accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM data
-//   data: scene atmosphere, absorber sets, particle profiles, support-row storage
-//   math: aerosol fraction and Angstrom-scaled sublayer weights feed tau_aerosol_i; phase coefficients use HG(g) before gas/aerosol mixing
-//   follow: populateParitySupportRowsParallel, populateLayer, and shared carrier reduction
 pub fn populate(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
 ) !LayerAccumulation {
+
+    // hot path:
+    //   when: once per optical-state preparation before repeated wavelength solves
+    //   work: accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM data
+    //   reads: scene atmosphere, absorber sets, particle profiles, support-row storage
+    // math: aerosol fraction and Angstrom-scaled sublayer weights feed tau_aerosol_i; phase coefficients use HG(g)
+    // before gas/aerosol mixing
+    //   follow: populateParitySupportRowsParallel, populateLayer, and shared carrier reduction
+
     var totals: LayerAccumulation = .{
         .base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(
             context.scene,
@@ -473,12 +492,14 @@ fn buildAerosolSublayers(
         context.vertical_grid.borrow(),
     );
 
-    const aerosol_fraction = if (context.scene.aerosol.fraction.enabled)
-        context.scene.aerosol.fraction.valueAtWavelength(context.midpoint_nm)
-    else if (context.scene.aerosol.enabled)
-        @as(f64, 1.0)
-    else
-        @as(f64, 0.0);
+    const aerosol_fraction = choose_aerosol_fraction: {
+        break :choose_aerosol_fraction if (context.scene.aerosol.fraction.enabled)
+            context.scene.aerosol.fraction.valueAtWavelength(context.midpoint_nm)
+        else if (context.scene.aerosol.enabled)
+            @as(f64, 1.0)
+        else
+            @as(f64, 0.0);
+    };
 
     return .{
         .scalar = .{
@@ -511,6 +532,7 @@ fn buildAerosolProfileSublayerProperties(
             context.vertical_grid.sublayer_bottom_pressures_hpa,
         ) |*property, sublayer_top_pressure, sublayer_bottom_pressure| {
             const overlap_top = @max(profile_layer.top_pressure_hpa, sublayer_top_pressure);
+
             const overlap_bottom = @min(profile_layer.bottom_pressure_hpa, sublayer_bottom_pressure);
             const overlap = overlap_bottom - overlap_top;
             if (overlap <= 0.0) continue;
@@ -533,21 +555,29 @@ fn buildAerosolProfileSublayerProperties(
                 std.math.clamp(new_scattering / new_optical_depth, 0.0, 1.0)
             else
                 0.0;
-            property.reference_wavelength_nm = if (new_optical_depth > 0.0)
-                (old_optical_depth * property.reference_wavelength_nm +
-                    added_optical_depth * profile_layer.reference_wavelength_nm) / new_optical_depth
-            else
-                profile_layer.reference_wavelength_nm;
-            property.angstrom_exponent = if (new_optical_depth > 0.0)
-                (old_optical_depth * property.angstrom_exponent +
-                    added_optical_depth * profile_layer.angstrom_exponent) / new_optical_depth
-            else
-                profile_layer.angstrom_exponent;
-            property.asymmetry_factor = if (new_scattering > 0.0)
-                (old_scattering * property.asymmetry_factor +
-                    added_scattering * profile_layer.asymmetry_factor) / new_scattering
-            else
-                profile_layer.asymmetry_factor;
+
+            property.reference_wavelength_nm = choose_value: {
+                break :choose_value if (new_optical_depth > 0.0)
+                    (old_optical_depth * property.reference_wavelength_nm +
+                        added_optical_depth * profile_layer.reference_wavelength_nm) / new_optical_depth
+                else
+                    profile_layer.reference_wavelength_nm;
+            };
+            property.angstrom_exponent = choose_value: {
+                break :choose_value if (new_optical_depth > 0.0)
+                    (old_optical_depth * property.angstrom_exponent +
+                        added_optical_depth * profile_layer.angstrom_exponent) / new_optical_depth
+                else
+                    profile_layer.angstrom_exponent;
+            };
+
+            property.asymmetry_factor = choose_value: {
+                break :choose_value if (new_scattering > 0.0)
+                    (old_scattering * property.asymmetry_factor +
+                        added_scattering * profile_layer.asymmetry_factor) / new_scattering
+                else
+                    profile_layer.asymmetry_factor;
+            };
         }
         if (covered_pressure_span + profile_pressure_tolerance_hpa < layer_pressure_span) {
             return error.InvalidRequest;
@@ -590,6 +620,7 @@ fn profileMeanSingleScatterAlbedo(
 ) f64 {
     var optical_depth: f64 = 0.0;
     var scattering: f64 = 0.0;
+
     for (aerosol_sublayers) |property| {
         if (property.optical_depth <= 0.0) continue;
         const scaled_optical_depth = ParticleProfiles.scaleOpticalDepth(
@@ -598,6 +629,7 @@ fn profileMeanSingleScatterAlbedo(
             property.angstrom_exponent,
             context.midpoint_nm,
         );
+
         optical_depth += scaled_optical_depth;
         scattering += scaled_optical_depth * property.single_scatter_albedo;
     }
@@ -613,16 +645,19 @@ fn profileEquivalentPhaseCoefficients(
 ) [PhaseFunctions.phase_coefficient_count]f64 {
     var scattering: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
+
     for (aerosol_sublayers) |property| {
         const sublayer_scattering = profileScatteringAtMidpoint(context, property);
         if (sublayer_scattering <= 0.0) continue;
         scattering += sublayer_scattering;
+
         asymmetry_sum += sublayer_scattering * property.asymmetry_factor;
     }
     const asymmetry_factor = if (scattering > 0.0)
         asymmetry_sum / scattering
     else
         context.scene.aerosol.asymmetry_factor;
+
     return PhaseFunctions.hgPhaseCoefficientsWithThreshold(
         asymmetry_factor,
         context.scene.phase_function_truncation_threshold,
@@ -655,11 +690,6 @@ fn populateParitySupportRows(
     }
 }
 
-// hot path:
-//   when: during parity-route support-row preparation across worker chunks
-//   work: fills independent support rows for later wavelength carrier caching
-//   data: support-row arrays, layer/sublayer descriptors, active absorber state
-//   follow: paritySupportRowWorkerMain and reduceParityLayer
 fn populateParitySupportRowsParallel(
     allocator: Allocator,
     context: *Context,
@@ -669,6 +699,13 @@ fn populateParitySupportRowsParallel(
     totals: *LayerAccumulation,
     aerosol_sublayers: AerosolSublayers,
 ) !void {
+
+    // hot path:
+    //   when: during parity-rtm_config support-row preparation across worker chunks
+    //   work: fills independent support rows for later wavelength carrier caching
+    //   reads: support-row arrays, layer/sublayer descriptors, active absorber state
+    //   follow: paritySupportRowWorkerMain and reduceParityLayer
+
     const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
     if (worker_count == 1) {
         return populateParitySupportRows(
@@ -702,6 +739,7 @@ fn populateParitySupportRowsParallel(
             .error_state = &error_state,
             .worker_index = worker_index,
         };
+
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
                 .{},
@@ -709,6 +747,7 @@ fn populateParitySupportRowsParallel(
                 .{&workers[worker_index]},
             ) catch {
                 paritySupportRowWorkerMain(&workers[worker_index]);
+
                 continue;
             };
             started_thread_count += 1;
@@ -717,6 +756,7 @@ fn populateParitySupportRowsParallel(
         }
     }
     for (threads[0..started_thread_count]) |thread| thread.join();
+
     if (error_state.err) |err| return err;
 
     for (workers) |worker| {
@@ -731,6 +771,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
         "zdisamar-accum-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-accum-worker";
+
     // instrumentation: trace thread label
     // captures: parity support-row worker identity
     // why: make parallel optical-accumulation lanes separable in timeline traces.
@@ -745,6 +786,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
 
     while (worker.queue.next()) |chunk| {
         {
+
             // instrumentation: trace zone
             // captures: parity support-row chunk wall time and row count
             // why: reveal chunking overhead in optical-state support-row preparation.
@@ -753,6 +795,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
             defer chunk_zone.end();
 
             for (chunk.start..chunk.end) |write_index| {
+
                 // Hot path:
                 //   Parent-layer ownership is seeded into the support-row
                 //   output buffer before fanout. Workers then load the row-local
@@ -859,7 +902,9 @@ fn reduceParityLayer(
     layer: *State.PreparedLayer,
     index: usize,
 ) void {
-    // math: parity layer totals sum interior support rows; tau = tau_gas + tau_cia + tau_aerosol, omega0 = tau_sca / max(tau_abs + tau_sca, eps).
+
+    // math: parity layer totals sum interior support rows; tau = tau_gas + tau_cia + tau_aerosol, omega0 = tau_sca /
+    // max(tau_abs + tau_sca, eps).
     const layer_top_altitude_km = context.vertical_grid.layer_top_altitudes_km[index];
     const layer_bottom_altitude_km = context.vertical_grid.layer_bottom_altitudes_km[index];
     const layer_top_pressure_hpa = context.vertical_grid.layer_top_pressures_hpa[index];
@@ -890,13 +935,16 @@ fn reduceParityLayer(
             layer_line_sigma_sum += support_row.line_cross_section_cm2_per_molecule;
             layer_line_mixing_sum += support_row.line_mixing_cross_section_cm2_per_molecule;
             layer_d_cross_section_sum += support_row.d_cross_section_d_temperature_cm2_per_molecule_per_k;
-            layer_gas_optical_depth += support_row.gas_absorption_optical_depth + support_row.gas_scattering_optical_depth;
+            layer_gas_optical_depth +=
+                support_row.gas_absorption_optical_depth + support_row.gas_scattering_optical_depth;
             layer_gas_scattering_optical_depth += support_row.gas_scattering_optical_depth;
             layer_cia_optical_depth += support_row.cia_optical_depth;
             layer_aerosol_optical_depth += support_row.aerosol_optical_depth;
             layer_aerosol_base_optical_depth += support_row.aerosol_base_optical_depth;
-            layer_aerosol_scattering_optical_depth += support_row.aerosol_optical_depth * support_row.aerosol_single_scatter_albedo;
-            layer_reference_wavelength_sum += support_row.aerosol_optical_depth * support_row.aerosol_reference_wavelength_nm;
+            layer_aerosol_scattering_optical_depth +=
+                support_row.aerosol_optical_depth * support_row.aerosol_single_scatter_albedo;
+            layer_reference_wavelength_sum +=
+                support_row.aerosol_optical_depth * support_row.aerosol_reference_wavelength_nm;
             layer_angstrom_sum += support_row.aerosol_optical_depth * support_row.aerosol_angstrom_exponent;
             support_point_count += 1;
         }
@@ -916,6 +964,29 @@ fn reduceParityLayer(
         gas_scattering,
         aerosol_scattering,
     );
+    var layer_line_cross_section: f64 = 0.0;
+    var layer_line_mixing_cross_section: f64 = 0.0;
+    var layer_d_cross_section_d_temperature: f64 = 0.0;
+    if (support_point_count != 0) {
+        const support_point_divisor = @as(f64, @floatFromInt(support_point_count));
+        layer_line_cross_section = layer_line_sigma_sum / support_point_divisor;
+        layer_line_mixing_cross_section = layer_line_mixing_sum / support_point_divisor;
+        layer_d_cross_section_d_temperature = layer_d_cross_section_sum / support_point_divisor;
+    }
+
+    var layer_aerosol_single_scatter_albedo = lower_boundary.aerosol_single_scatter_albedo;
+    var layer_aerosol_reference_wavelength_nm = lower_boundary.aerosol_reference_wavelength_nm;
+    var layer_aerosol_angstrom_exponent = lower_boundary.aerosol_angstrom_exponent;
+    if (layer_aerosol_optical_depth > 0.0) {
+        layer_aerosol_single_scatter_albedo = std.math.clamp(
+            layer_aerosol_scattering_optical_depth / layer_aerosol_optical_depth,
+            0.0,
+            1.0,
+        );
+        layer_aerosol_reference_wavelength_nm =
+            layer_reference_wavelength_sum / layer_aerosol_optical_depth;
+        layer_aerosol_angstrom_exponent = layer_angstrom_sum / layer_aerosol_optical_depth;
+    }
 
     layer.* = .{
         .layer_index = @intCast(index),
@@ -926,26 +997,17 @@ fn reduceParityLayer(
         .temperature_k = lower_boundary.temperature_k,
         .number_density_cm3 = lower_boundary.number_density_cm3,
         .continuum_cross_section_cm2_per_molecule = lower_boundary.continuum_cross_section_cm2_per_molecule,
-        .line_cross_section_cm2_per_molecule = if (support_point_count == 0) 0.0 else layer_line_sigma_sum / @as(f64, @floatFromInt(support_point_count)),
-        .line_mixing_cross_section_cm2_per_molecule = if (support_point_count == 0) 0.0 else layer_line_mixing_sum / @as(f64, @floatFromInt(support_point_count)),
+        .line_cross_section_cm2_per_molecule = layer_line_cross_section,
+        .line_mixing_cross_section_cm2_per_molecule = layer_line_mixing_cross_section,
         .cia_optical_depth = layer_cia_optical_depth,
-        .d_cross_section_d_temperature_cm2_per_molecule_per_k = if (support_point_count == 0) 0.0 else layer_d_cross_section_sum / @as(f64, @floatFromInt(support_point_count)),
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_d_cross_section_d_temperature,
         .gas_optical_depth = layer_gas_optical_depth,
         .gas_scattering_optical_depth = gas_scattering,
         .aerosol_optical_depth = layer_aerosol_optical_depth,
         .aerosol_base_optical_depth = layer_aerosol_base_optical_depth,
-        .aerosol_single_scatter_albedo = if (layer_aerosol_optical_depth > 0.0)
-            std.math.clamp(layer_aerosol_scattering_optical_depth / layer_aerosol_optical_depth, 0.0, 1.0)
-        else
-            lower_boundary.aerosol_single_scatter_albedo,
-        .aerosol_reference_wavelength_nm = if (layer_aerosol_optical_depth > 0.0)
-            layer_reference_wavelength_sum / layer_aerosol_optical_depth
-        else
-            lower_boundary.aerosol_reference_wavelength_nm,
-        .aerosol_angstrom_exponent = if (layer_aerosol_optical_depth > 0.0)
-            layer_angstrom_sum / layer_aerosol_optical_depth
-        else
-            lower_boundary.aerosol_angstrom_exponent,
+        .aerosol_single_scatter_albedo = layer_aerosol_single_scatter_albedo,
+        .aerosol_reference_wavelength_nm = layer_aerosol_reference_wavelength_nm,
+        .aerosol_angstrom_exponent = layer_aerosol_angstrom_exponent,
         .layer_single_scatter_albedo = layer_single_scatter_albedo,
         .depolarization_factor = depolarization,
         .optical_depth = optical_depth,
@@ -958,12 +1020,6 @@ fn reduceParityLayer(
     };
 }
 
-// hot path:
-//   when: for each physical transport layer during optical-state accumulation
-//   work: iterates sublayers and accumulates optical depth, scattering, particle, and phase terms
-//   data: layer descriptors, sublayer rows, absorber/cross-section state, particle distributions
-//   math: tau_layer = sum(tau_gas_i + tau_cia_i + tau_aerosol_i); tau_sca = tau_gas_sca + tau_aerosol * omega0_aerosol; omega0_layer = tau_sca / max(tau_layer, eps)
-//   follow: populateSublayer and layer output storage consumed by forward input construction
 fn populateLayer(
     allocator: Allocator,
     context: *Context,
@@ -975,6 +1031,15 @@ fn populateLayer(
     layer: *State.PreparedLayer,
     index: usize,
 ) !void {
+
+    // hot path:
+    //   when: for each physical transport layer during optical-state accumulation
+    //   work: iterates sublayers and accumulates optical depth, scattering, particle, and phase terms
+    //   reads: layer descriptors, sublayer rows, absorber/cross-section state, particle distributions
+    // math: tau_layer = sum(tau_gas_i + tau_cia_i + tau_aerosol_i); tau_sca = tau_gas_sca + tau_aerosol *
+    // omega0_aerosol; omega0_layer = tau_sca / max(tau_layer, eps)
+    //   follow: populateSublayer and layer output storage consumed by forward input construction
+
     const geometry = layerGeometry(context, index);
     var layer_sums: LayerSums = .{};
 
@@ -1013,6 +1078,22 @@ fn populateLayer(
         gas_scattering,
         aerosol_scattering,
     );
+    const layer_aerosol_fraction = if (aerosol_base_optical_depth > 0.0)
+        aerosol_optical_depth / aerosol_base_optical_depth
+    else
+        0.0;
+    var layer_aerosol_single_scatter_albedo: f64 = 0.0;
+    var layer_aerosol_reference_wavelength_nm: f64 = context.scene.aerosol.reference_wavelength_nm;
+    var layer_aerosol_angstrom_exponent: f64 = context.scene.aerosol.angstrom_exponent;
+    var layer_aerosol_fraction_value: f64 = 0.0;
+    if (aerosol_optical_depth > 0.0) {
+        layer_aerosol_single_scatter_albedo =
+            std.math.clamp(aerosol_scattering / aerosol_optical_depth, 0.0, 1.0);
+        layer_aerosol_reference_wavelength_nm =
+            layer_sums.aerosol_reference_wavelength_sum / aerosol_optical_depth;
+        layer_aerosol_angstrom_exponent = layer_sums.aerosol_angstrom_sum / aerosol_optical_depth;
+        layer_aerosol_fraction_value = layer_aerosol_fraction;
+    }
 
     totals.total_optical_depth += optical_depth;
     totals.total_temperature_weighted += temperature * density;
@@ -1024,6 +1105,7 @@ fn populateLayer(
     totals.total_aerosol_base_optical_depth += aerosol_base_optical_depth;
     totals.total_scattering_optical_depth += scattering;
     totals.depolarization_weighted += depolarization * optical_depth;
+    const layer_temperature_derivative = layer_sums.meanTemperatureDerivative(geometry.sublayer_count);
 
     layer.* = .{
         .layer_index = @intCast(index),
@@ -1037,23 +1119,14 @@ fn populateLayer(
         .line_cross_section_cm2_per_molecule = layer_sums.meanLineSigma(geometry.sublayer_count),
         .line_mixing_cross_section_cm2_per_molecule = layer_sums.meanLineMixing(geometry.sublayer_count),
         .cia_optical_depth = layer_sums.cia_optical_depth,
-        .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_sums.meanTemperatureDerivative(geometry.sublayer_count),
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_temperature_derivative,
         .gas_optical_depth = gas_optical_depth,
         .gas_scattering_optical_depth = gas_scattering,
         .aerosol_optical_depth = aerosol_optical_depth,
         .aerosol_base_optical_depth = aerosol_base_optical_depth,
-        .aerosol_single_scatter_albedo = if (aerosol_optical_depth > 0.0)
-            std.math.clamp(aerosol_scattering / aerosol_optical_depth, 0.0, 1.0)
-        else
-            0.0,
-        .aerosol_reference_wavelength_nm = if (aerosol_optical_depth > 0.0)
-            layer_sums.aerosol_reference_wavelength_sum / aerosol_optical_depth
-        else
-            context.scene.aerosol.reference_wavelength_nm,
-        .aerosol_angstrom_exponent = if (aerosol_optical_depth > 0.0)
-            layer_sums.aerosol_angstrom_sum / aerosol_optical_depth
-        else
-            context.scene.aerosol.angstrom_exponent,
+        .aerosol_single_scatter_albedo = layer_aerosol_single_scatter_albedo,
+        .aerosol_reference_wavelength_nm = layer_aerosol_reference_wavelength_nm,
+        .aerosol_angstrom_exponent = layer_aerosol_angstrom_exponent,
         .layer_single_scatter_albedo = layer_single_scatter_albedo,
         .depolarization_factor = depolarization,
         .optical_depth = optical_depth,
@@ -1062,19 +1135,10 @@ fn populateLayer(
         .top_pressure_hpa = geometry.top_pressure_hpa,
         .bottom_pressure_hpa = geometry.bottom_pressure_hpa,
         .interval_index_1based = geometry.interval_index_1based,
-        .aerosol_fraction = if (aerosol_base_optical_depth > 0.0)
-            aerosol_optical_depth / aerosol_base_optical_depth
-        else
-            0.0,
+        .aerosol_fraction = layer_aerosol_fraction_value,
     };
 }
 
-// hot path:
-//   when: for each sublayer or support row during optical-state accumulation
-//   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles
-//   data: sublayer thermodynamics, active absorber sets, optical-depth outputs
-//   math: column = density * path_cm; tau_abs = sigma_cont * N_cont + sigma_line * N_line + sigma_xs * N_xs; tau_cia = sigma_cia * pair_density * path_cm; tau_rayleigh = sigma_rayleigh * N_air
-//   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
 fn populateSublayer(
     allocator: Allocator,
     context: *Context,
@@ -1089,37 +1153,57 @@ fn populateSublayer(
     write_index: usize,
     layer_sums: *LayerSums,
 ) !void {
+
+    // hot path:
+    //   when: for each sublayer or support row during optical-state accumulation
+    //   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles
+    //   reads: sublayer thermodynamics, active absorber sets, optical-depth outputs
+    // math: column = density * path_cm; tau_abs = sigma_cont * N_cont + sigma_line * N_line + sigma_xs * N_xs; tau_cia
+    // = sigma_cia * pair_density * path_cm; tau_rayleigh = sigma_rayleigh * N_air
+    //   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
+
     const top_altitude_km = context.vertical_grid.sublayer_top_altitudes_km[write_index];
     const bottom_altitude_km = context.vertical_grid.sublayer_bottom_altitudes_km[write_index];
     const top_pressure_hpa = context.vertical_grid.sublayer_top_pressures_hpa[write_index];
     const bottom_pressure_hpa = context.vertical_grid.sublayer_bottom_pressures_hpa[write_index];
     const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
     const disamar_support_grid = usesDisamarParitySupportGrid(context);
+
     const parity_support_state = if (disamar_support_grid)
         paritySupportThermodynamicsFromProfile(context.profile, altitude_km)
     else
         null;
-    const pressure = if (parity_support_state) |state|
-        state.pressure_hpa
-    else if (context.scene.atmosphere.interval_grid.enabled() and
-        top_pressure_hpa > 0.0 and
-        bottom_pressure_hpa > 0.0)
-        // math: midpoint pressure for log-spaced pressure bounds is geometric mean sqrt(p_top * p_bottom).
-        @sqrt(top_pressure_hpa * bottom_pressure_hpa)
-    else
-        context.profile.interpolatePressure(altitude_km);
-    const temperature = if (parity_support_state) |state|
-        state.temperature_k
-    else
-        context.profile.interpolateTemperature(altitude_km);
-    const density = if (parity_support_state) |state|
-        state.density_cm3
-    else
-        context.profile.interpolateDensity(altitude_km);
+    const pressure = choose_pressure: {
+        if (parity_support_state) |state| {
+            break :choose_pressure state.pressure_hpa;
+        }
+
+        if (context.scene.atmosphere.interval_grid.enabled() and
+            top_pressure_hpa > 0.0 and
+            bottom_pressure_hpa > 0.0)
+        {
+
+            // math: midpoint pressure for log-spaced pressure bounds is geometric mean sqrt(p_top * p_bottom).
+            break :choose_pressure @sqrt(top_pressure_hpa * bottom_pressure_hpa);
+        }
+
+        break :choose_pressure context.profile.interpolatePressure(altitude_km);
+    };
+    var temperature: f64 = undefined;
+    var density: f64 = undefined;
+    if (parity_support_state) |state| {
+        temperature = state.temperature_k;
+        density = state.density_cm3;
+    } else {
+        temperature = context.profile.interpolateTemperature(altitude_km);
+        density = context.profile.interpolateDensity(altitude_km);
+    }
+
     const support_weight_km = if (disamar_support_grid)
         context.vertical_grid.sublayer_support_weights_km[write_index]
     else
         @max(top_altitude_km - bottom_altitude_km, 0.0);
+
     const sublayer_path_length_cm = if (usesDisamarParitySupportGrid(context))
         @max(support_weight_km, 0.0) * centimeters_per_kilometer
     else
@@ -1129,6 +1213,7 @@ fn populateSublayer(
         context.scene,
         .o2,
         &.{},
+
         pressure,
         oxygen_volume_mixing_ratio,
     ) orelse oxygen_volume_mixing_ratio;
@@ -1137,7 +1222,10 @@ fn populateSublayer(
     var cross_section_absorber_density_cm3: f64 = 0.0;
     var cross_section_optical_depth: f64 = 0.0;
     var cross_section_d_optical_depth_d_temperature: f64 = 0.0;
-    for (absorbers.owned_cross_section_absorbers, absorbers.active_cross_section_absorbers) |*cross_section_absorber, active_absorber| {
+    for (
+        absorbers.owned_cross_section_absorbers,
+        absorbers.active_cross_section_absorbers,
+    ) |*cross_section_absorber, active_absorber| {
         const absorber_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
             context.scene,
             cross_section_absorber.species,
@@ -1145,6 +1233,7 @@ fn populateSublayer(
             pressure,
             if (cross_section_absorber.species == .o2) oxygen_volume_mixing_ratio else null,
         ) orelse return error.InvalidRequest;
+
         const absorber_density = density * absorber_mixing_ratio;
         cross_section_absorber.number_densities_cm3[write_index] = absorber_density;
         cross_section_absorber_density_cm3 += absorber_density;
@@ -1162,33 +1251,35 @@ fn populateSublayer(
         cross_section_absorber.column_density_factor += absorber_density * sublayer_path_length_cm;
     }
 
-    const spectroscopy_eval = if (absorbers.owned_line_absorbers.len == 0 and
-        absorbers.strong_line_states == null and
-        profile_spectroscopy_cache != null)
-        LayerSpectroscopy.resolveCachedSingleLineEvaluation(
-            context,
-            absorbers,
-            write_index,
-            density,
-            pressure,
-            temperature,
-            &absorber_density_cm3,
-            profile_spectroscopy_cache.?,
-        )
-    else
-        try LayerSpectroscopy.resolveSpectroscopyEvaluation(
-            allocator,
-            context,
-            absorbers,
-            write_index,
-            density,
-            pressure,
-            temperature,
-            oxygen_mixing_ratio,
-            sublayer_path_length_cm,
-            &absorber_density_cm3,
-            profile_spectroscopy_cache,
-        );
+    const spectroscopy_eval = choose_spectroscopy_eval: {
+        break :choose_spectroscopy_eval if (absorbers.owned_line_absorbers.len == 0 and
+            absorbers.strong_line_states == null and
+            profile_spectroscopy_cache != null)
+            LayerSpectroscopy.resolveCachedSingleLineEvaluation(
+                context,
+                absorbers,
+                write_index,
+                density,
+                pressure,
+                temperature,
+                &absorber_density_cm3,
+                profile_spectroscopy_cache.?,
+            )
+        else
+            try LayerSpectroscopy.resolveSpectroscopyEvaluation(
+                allocator,
+                context,
+                absorbers,
+                write_index,
+                density,
+                pressure,
+                temperature,
+                oxygen_mixing_ratio,
+                sublayer_path_length_cm,
+                &absorber_density_cm3,
+                profile_spectroscopy_cache,
+            );
+    };
 
     const o2_density_cm3 = density * oxygen_mixing_ratio;
     const continuum_density_cm3 = LayerSpectroscopy.continuumCarrierDensity(
@@ -1198,53 +1289,84 @@ fn populateSublayer(
         absorber_density_cm3,
         o2_density_cm3,
     );
-    const total_gas_density_cm3 = if (absorbers.owned_cross_section_absorbers.len != 0 and !absorbers.has_line_absorbers)
+
+    const has_only_cross_section_absorbers =
+        absorbers.owned_cross_section_absorbers.len != 0 and !absorbers.has_line_absorbers;
+    const total_gas_density_cm3 = if (has_only_cross_section_absorbers)
         cross_section_absorber_density_cm3
     else
         absorber_density_cm3 + cross_section_absorber_density_cm3;
     const line_gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
     const continuum_column_density_cm2 = continuum_density_cm3 * sublayer_path_length_cm;
+
     const total_gas_column_density_cm2 = total_gas_density_cm3 * sublayer_path_length_cm;
     const molecular_gas_optical_depth =
         absorbers.midpoint_continuum_sigma * continuum_column_density_cm2 +
         spectroscopy_eval.total_sigma_cm2_per_molecule * line_gas_column_density_cm2 +
         cross_section_optical_depth;
-    const cia_sigma_cm5_per_molecule2 = if (context.operational_o2o2_lut.enabled())
-        context.operational_o2o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure)
-    else if (context.collision_induced_absorption) |cia_table|
-        cia_table.sigmaAt(context.midpoint_nm, temperature)
-    else
-        0.0;
-    const d_cia_sigma_d_temperature = if (context.operational_o2o2_lut.enabled())
-        context.operational_o2o2_lut.dSigmaDTemperatureAt(context.midpoint_nm, temperature, pressure)
-    else if (context.collision_induced_absorption) |cia_table|
-        cia_table.dSigmaDTemperatureAt(context.midpoint_nm, temperature)
-    else
-        0.0;
+    const cia_sigma_cm5_per_molecule2 = choose_cia_sigma_cm5_per_molecule2: {
+        break :choose_cia_sigma_cm5_per_molecule2 if (context.operational_o2o2_lut.enabled())
+            context.operational_o2o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure)
+        else if (context.collision_induced_absorption) |cia_table|
+            cia_table.sigmaAt(context.midpoint_nm, temperature)
+        else
+            0.0;
+    };
+
+    const d_cia_sigma_d_temperature = choose_d_cia_sigma_d_temperature: {
+        break :choose_d_cia_sigma_d_temperature if (context.operational_o2o2_lut.enabled())
+            context.operational_o2o2_lut.dSigmaDTemperatureAt(context.midpoint_nm, temperature, pressure)
+        else if (context.collision_induced_absorption) |cia_table|
+            cia_table.dSigmaDTemperatureAt(context.midpoint_nm, temperature)
+        else
+            0.0;
+    };
+
     const cia_pair_density_cm6 = collisionComplexPairDensityCm6(
         collision_complex_cache,
         altitude_km,
         density,
         o2_density_cm3,
     );
+
     const cia_pair_column_factor_cm5 = cia_pair_density_cm6 * sublayer_path_length_cm;
     const cia_optical_depth = cia_sigma_cm5_per_molecule2 * cia_pair_column_factor_cm5;
     const gas_scattering_optical_depth = Rayleigh.scatteringOpticalDepthForColumn(
         context.midpoint_nm,
         density * sublayer_path_length_cm,
     );
+
     const gas_absorption_optical_depth = molecular_gas_optical_depth;
-    const gas_extinction_optical_depth = gas_absorption_optical_depth + cia_optical_depth + gas_scattering_optical_depth;
+    const gas_extinction_optical_depth =
+        gas_absorption_optical_depth + cia_optical_depth + gas_scattering_optical_depth;
     const d_cia_optical_depth_d_temperature = d_cia_sigma_d_temperature * cia_pair_column_factor_cm5;
+    const spectroscopy_temperature_derivative =
+        spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k;
     const d_gas_optical_depth_d_temperature =
-        spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * line_gas_column_density_cm2 +
+        spectroscopy_temperature_derivative * line_gas_column_density_cm2 +
         cross_section_d_optical_depth_d_temperature;
+
     // math: tau_aerosol(lambda_ref) is already distributed onto the prepared
     // sublayer grid. Single-layer cases use the existing placement logic;
     // aerosol-profile cases write the pressure-overlap profile directly.
     const aerosol_property = aerosol_sublayers.propertyAt(write_index);
     const aerosol_base_optical_depth = aerosol_property.base_optical_depth;
     const aerosol_optical_depth = aerosol_property.optical_depth;
+    const sublayer_aerosol_fraction = if (aerosol_base_optical_depth > 0.0)
+        aerosol_optical_depth / aerosol_base_optical_depth
+    else
+        0.0;
+
+    const continuum_cross_section = if (absorbers.owned_cross_section_absorbers.len == 0)
+        absorbers.midpoint_continuum_sigma
+    else
+        0.0;
+
+    const support_row_kind: State.PreparedSupportRowKind = choose_support_row_kind: {
+        if (!disamar_support_grid) break :choose_support_row_kind .physical;
+        if (support_weight_km > 0.0) break :choose_support_row_kind .parity_active;
+        break :choose_support_row_kind .parity_boundary;
+    };
 
     context.sublayers[write_index] = .{
         .parent_layer_index = @intCast(parent_layer_index),
@@ -1258,15 +1380,12 @@ fn populateSublayer(
         .cia_pair_density_cm6 = cia_pair_density_cm6,
         .absorber_number_density_cm3 = total_gas_density_cm3,
         .path_length_cm = sublayer_path_length_cm,
-        .continuum_cross_section_cm2_per_molecule = if (absorbers.owned_cross_section_absorbers.len == 0)
-            absorbers.midpoint_continuum_sigma
-        else
-            0.0,
+        .continuum_cross_section_cm2_per_molecule = continuum_cross_section,
         .line_cross_section_cm2_per_molecule = spectroscopy_eval.line_sigma_cm2_per_molecule,
         .line_mixing_cross_section_cm2_per_molecule = spectroscopy_eval.line_mixing_sigma_cm2_per_molecule,
         .cia_sigma_cm5_per_molecule2 = cia_sigma_cm5_per_molecule2,
         .cia_optical_depth = cia_optical_depth,
-        .d_cross_section_d_temperature_cm2_per_molecule_per_k = spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k,
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = spectroscopy_temperature_derivative,
         .gas_absorption_optical_depth = gas_absorption_optical_depth,
         .gas_scattering_optical_depth = gas_scattering_optical_depth,
         .gas_extinction_optical_depth = gas_extinction_optical_depth,
@@ -1282,13 +1401,8 @@ fn populateSublayer(
         .top_pressure_hpa = top_pressure_hpa,
         .bottom_pressure_hpa = bottom_pressure_hpa,
         .interval_index_1based = context.vertical_grid.sublayer_interval_indices_1based[write_index],
-        .aerosol_fraction = if (aerosol_base_optical_depth > 0.0) aerosol_optical_depth / aerosol_base_optical_depth else 0.0,
-        .support_row_kind = if (!disamar_support_grid)
-            .physical
-        else if (support_weight_km > 0.0)
-            .parity_active
-        else
-            .parity_boundary,
+        .aerosol_fraction = sublayer_aerosol_fraction,
+        .support_row_kind = support_row_kind,
     };
 
     layer_sums.addSublayer(.{
@@ -1333,6 +1447,11 @@ fn layerGeometry(context: *const Context, index: usize) LayerGeometry {
 }
 
 fn usesDisamarParitySupportGrid(context: *const Context) bool {
-    return context.scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
-        context.scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
+    const radiance_integration_mode =
+        context.scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode;
+    const irradiance_integration_mode =
+        context.scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode;
+
+    return radiance_integration_mode == .disamar_hr_grid or
+        irradiance_integration_mode == .disamar_hr_grid;
 }
