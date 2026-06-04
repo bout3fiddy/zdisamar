@@ -2,10 +2,10 @@
 
 Source: [Data-Oriented Design online book, "How is data formed?"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00250000000000000000) (printed-book p18).
 
-Summary: Fabian's lesson is that real project data keeps changing. New file
-formats, tools, hardware, and features keep breaking old assumptions, so a
-program needs a clear step that turns messy outside material into data it can
-actually use.
+Summary: Fabian's lesson is that real project data does not stay in one neat
+shape. Tools, file formats, hardware, and game features keep changing what the
+data needs to represent, so a runtime layout copied from yesterday's asset
+model will keep fighting the next change.
 
 He gets there from game-engine migration history. Old texture assumptions broke
 when new texture formats appeared, graphics-program changes altered how
@@ -13,9 +13,9 @@ animation data was sent to the machine, open worlds changed rendering data, and
 some hardware forced data to be laid out more carefully. The lasting lesson is
 that the input world keeps moving.
 
-Take home: Do setup once before repeated work starts. Turn files, settings, and
-assets into clean data that later code can use without rereading or
-reinterpreting them.
+Take home: Do not let the outside asset or control-file shape become the runtime
+shape by default. Add a preparation step that reshapes messy input around the
+computations that will use it.
 
 ## Main Lessons
 
@@ -66,38 +66,6 @@ reinterpreting them.
   separate phase index, or it would recompute that index inside the repeated
   path. Preparation chooses the index once and stores it beside the optical
   values that use it.
-
-## Code Material
-
-The code material is the preparation chain: load reusable reference assets, then
-build scene-specific runtime input:
-
-```zig
-pub fn loadReferenceData(allocator: Allocator) !ReferenceAssets {
-    // File-backed assets become reusable tables before the model runs.
-    return .{
-        .absorption_tables = try loadTables(allocator),
-        .solar_spectrum = try loadSolar(allocator),
-    };
-}
-
-pub fn prepareInput(scene: SceneInput, assets: ReferenceAssets) !PreparedInput {
-    // Scene input and reference assets become RTM-ready data.
-    return .{
-        .optical = try buildOpticalState(scene, assets),
-        .rtm_config = scene.rtm_config,
-    };
-}
-```
-
-Notice that loading creates `ReferenceAssets`, then `prepareInput` creates
-`PreparedInput`. The later model run should use `PreparedInput` so it does not
-repeat file-loading or asset-shaping work.
-
-These named values mark two different stages. `ReferenceAssets` is reusable
-loaded data, while `PreparedInput` is the scene-specific runtime shape built
-from those assets.
-
 
 ## Practical Example
 
@@ -163,11 +131,6 @@ define dso_local void @fillLayerSource(
 After data has been formed, the repeated function can receive read-only
 prepared input and a write-only output buffer. The loader/parser is not part of
 that compiled symbol.
-
-A benchmark for caller-owned reflectance output showed it was `1.50x`
-faster than allocating output on every run, with the same checksum. This
-supports the chapter lesson: do setup and shape-building before the repeated
-run.
 
 ## zdisamar Reading Notes
 

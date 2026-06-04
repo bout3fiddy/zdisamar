@@ -55,45 +55,6 @@ data it needs, and make it clear what shape comes out.
   Notice that the final answer is made from two partial answers. That means
   the two halves can be computed separately if needed.
 
-
-## Code Material
-
-The code material separates prepared read data from the output being filled:
-
-```zig
-const PreparedContext = struct {
-    // Prepared inputs are the only data this transform needs to read.
-    layers: []const PreparedLayer,
-    carriers: []const CarrierRow,
-};
-
-fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
-    for (ctx.layers, out.layers) |layer, *dst| {
-        // One prepared layer becomes one RTM layer input.
-        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
-    }
-}
-
-fn solveAtWavelength(
-    ctx: PreparedContext,
-    wavelength_nm: f64,
-    out: *ForwardInput,
-    workspace: *Workspace,
-) ForwardResult {
-    fillForwardInput(ctx, wavelength_nm, out);
-    return solveForward(out, workspace);
-}
-```
-
-Notice that the function receives prepared `layers` and `carriers`, then
-writes RTM layer input. `solveAtWavelength` passes that filled `out` value to
-the solver.
-
-The transform could take `layers` and `carriers` as separate arguments. That is
-fine for a tiny helper, but it becomes easy to pass prepared `layers` with
-`carriers` from a different cache. `PreparedContext` keeps the prepared inputs
-together, while output stays separate because the transform writes it.
-
 ## Practical Example
 
 Here is a pattern that hides preparation inside a transform.

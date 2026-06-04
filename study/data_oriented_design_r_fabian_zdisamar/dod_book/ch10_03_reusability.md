@@ -34,28 +34,6 @@ one project.
   reusable storage. It should not ask for files, parser state, or Python wrapper
   state.
 
-## Code Material
-
-The code material reuses prepared input and caller-owned storage:
-
-```zig
-pub fn runPrepared(
-    prepared: *const PreparedInput,
-    storage: *ProductStorage,
-    options: RunOptions,
-) !ProductView {
-    // Match storage to the prepared input before running.
-    try storage.ensureShape(prepared.shape(), options);
-    // The run step receives explicit storage instead of allocating inside.
-    return simulateProductWithWorkspace(prepared, storage, options);
-}
-```
-
-Notice that the reusable call takes prepared data and reusable storage. It
-does not own every setup path; callers adapt their data into `PreparedInput`
-first.
-
-
 ## Practical Example
 
 Here is a pattern that ties reusable work to setup and allocation.
@@ -119,9 +97,6 @@ define dso_local void @fillReflectance(
 
 The repeated function can read prepared input and write into provided storage.
 It does not need to allocate output inside the loop.
-
-A benchmark for caller-owned output showed it was `1.50x` faster than
-allocating output every run, with the same checksum.
 
 ## zdisamar Reading Notes
 

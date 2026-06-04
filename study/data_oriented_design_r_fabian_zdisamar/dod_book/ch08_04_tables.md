@@ -59,6 +59,15 @@ common work clearer or faster.
       return total;
   }
 
+  fn sumSourceContribution(table: LayerTables) f64 {
+      var total: f64 = 0;
+      for (table.optical_depth, table.source) |tau, src| {
+          // This loop reads aligned columns from the same prepared table.
+          total += tau * src;
+      }
+      return total;
+  }
+
   fn sumPreparedOpticalDepth(layers: []const Layer, table: LayerTables) f64 {
       buildLayerTables(layers, table);
       return sumOpticalDepth(table);
@@ -68,6 +77,8 @@ common work clearer or faster.
   Notice that `buildLayerTables` splits larger layer rows into columns.
   `sumPreparedOpticalDepth` then passes the filled table to
   `sumOpticalDepth`, which reads only `table.optical_depth`.
+  `sumSourceContribution` shows the other case: a loop can read two aligned
+  columns from the same table when it needs both values.
 
   The columns could be passed as separate slices, but their lengths and order
   still have to match. If one column is filtered or reordered alone, optical
@@ -87,63 +98,6 @@ common work clearer or faster.
 
   Notice that the code advances through both lists once. It does not scan
   all of `b` for every item in `a`.
-
-## Code Material
-
-The code material shows two table patterns: paired columns for stepping, and
-sorted rows for joining:
-
-```zig
-const MotionTable = struct {
-    // Position is written in place; velocity is read-only input.
-    positions: []Vec3,
-    velocities: []const Vec3,
-
-    fn step(self: MotionTable, dt: f32) void {
-        for (self.positions, self.velocities) |*pos, vel| {
-            // Both lists advance together.
-            pos.* = pos.* + vel.scale(dt);
-        }
-    }
-};
-
-fn mergeJoin(a: []const RowA, b: []const RowB, out: *ArrayList(Joined)) !void {
-    var ia: usize = 0;
-    var ib: usize = 0;
-    // The inputs are sorted by id, so one pass can join matching rows.
-    while (ia < a.len and ib < b.len) {
-        if (a[ia].id == b[ib].id) {
-            try out.append(.{ .a = a[ia], .b = b[ib] });
-            ia += 1;
-            ib += 1;
-        } else if (a[ia].id < b[ib].id) {
-            ia += 1;
-        } else {
-            ib += 1;
-        }
-    }
-}
-
-fn joinedRows(
-    a: []const RowA,
-    b: []const RowB,
-    out: *ArrayList(Joined),
-) ![]const Joined {
-    try mergeJoin(a, b, out);
-    return out.items;
-}
-```
-
-Notice that `MotionTable.step` writes positions in order while reading
-velocities in order. `mergeJoin` walks two sorted lists once instead of nesting
-one full scan inside another. `joinedRows` shows that `mergeJoin` fills the
-caller-owned `out` list.
-
-Passing `positions` and `velocities` separately makes it easier to pass arrays
-with different lengths or different ordering. Then a `positions` slot can be
-updated with the wrong `velocities` slot. `MotionTable` keeps the paired slices
-together while still making the read side and write side clear.
-
 
 ## Practical Example
 

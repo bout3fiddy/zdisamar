@@ -46,13 +46,9 @@ and saved positions when the program needs to visit many related values.
   This can be easier for the CPU than reading full rows with many unused fields.
 
   ```zig
-  const OpticalDepths = struct {
-      values: []const f64,
-  };
-
-  fn sumOpticalDepths(data: OpticalDepths) f64 {
+  fn sumOpticalDepths(optical_depths: []const f64) f64 {
       var total: f64 = 0;
-      for (data.values) |tau| {
+      for (optical_depths) |tau| {
           // The loop walks one plain optical-depth list.
           total += tau;
       }
@@ -60,45 +56,10 @@ and saved positions when the program needs to visit many related values.
   }
   ```
 
-  Notice that `sumOpticalDepths` reads the plain list directly. The loop no
-  longer has to step through full layer rows to find one field.
-
-  A plain `[]const f64` is enough for the summing loop. The wrapper is for the
-  place where prepared data is named. It says these numbers are optical depths;
-  the small numeric helper can still work on the slice inside it.
-
-## Code Material
-
-The code material follows saved sample indexes into the result array:
-
-```zig
-fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) void {
-    for (plan.rows, out) |row, *dst| {
-        var sum: f64 = 0;
-        // The row points at prepared result indexes.
-        const indexes = plan.sample_indices[row.start .. row.start + row.count];
-        for (indexes) |sample_index| {
-            // Read the index first, then read radiance from results.
-            sum += results[sample_index].radiance;
-        }
-        dst.* = sum;
-    }
-}
-
-fn integratedRadiance(
-    plan: ForwardMissPlan,
-    results: []const ForwardResult,
-    out: []f64,
-) []const f64 {
-    integrate(plan, results, out);
-    return out;
-}
-```
-
-Notice that the inner loop follows saved indexes into one result array. It
-does not walk a chain of objects or maps to find each radiance value.
-`integratedRadiance` returns the caller-owned `out` slice after `integrate`
-fills it.
+  Notice that `sumOpticalDepths` receives the optical-depth list directly. A
+  struct with only `values: []const f64` would add a name, but it would not keep
+  any related fields together. Use a wrapper only when there is more context
+  that must travel with the values, such as layer indexes or wavelength metadata.
 
 ## Practical Example
 

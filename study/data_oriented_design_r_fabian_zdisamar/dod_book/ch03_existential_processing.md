@@ -53,43 +53,6 @@ nothing to do; a non-empty list tells the program exactly what to process.
   Notice that the code treats "no rows" as "no Jacobian buffers." That keeps
   the meaning of the list clear.
 
-## Code Material
-
-The code material uses an explicit list of derivative work:
-
-```zig
-const ActiveDerivative = struct {
-    // Being present in this list means the derivative must be computed.
-    layer_index: usize,
-    state: JacobianState,
-};
-
-fn fillJacobians(active: []const ActiveDerivative, out: []JacobianRow) void {
-    for (active, out) |derivative, *row| {
-        // No enabled flag is needed here; the list already selected the work.
-        row.* = computeDerivative(derivative.layer_index, derivative.state);
-    }
-}
-
-fn jacobianRows(
-    active: []const ActiveDerivative,
-    out: []JacobianRow,
-) []const JacobianRow {
-    const filled = out[0..active.len];
-    fillJacobians(active, filled);
-    return filled;
-}
-```
-
-Notice that the row existing in `active` means "this derivative must be
-computed". `fillJacobians` fills caller-owned `out`, and `jacobianRows` returns
-the filled part of that slice.
-
-The other shape is a list of all possible derivatives plus an enabled flag on
-each one. Then the loop still has to check rows that will not be computed. Here,
-the list already contains only the work to do, and each row carries the target
-layer with the state being perturbed.
-
 ## Practical Example
 
 Here is a pattern that stores every possible Jacobian state and checks an

@@ -72,33 +72,6 @@ people and the compiler to follow.
   resizes and fills that existing array instead of making a new output array
   from scratch.
 
-
-## Code Material
-
-The code material receives output storage from the caller:
-
-```zig
-fn fillReflectance(radiance: []const f64, irradiance: []const f64, out: []f64) void {
-    for (radiance, irradiance, out) |l, e, *dst| {
-        // Caller-owned output keeps allocation outside this loop.
-        dst.* = if (e != 0.0) l / e else 0.0;
-    }
-}
-
-fn reflectanceView(
-    radiance: []const f64,
-    irradiance: []const f64,
-    out: []f64,
-) []const f64 {
-    fillReflectance(radiance, irradiance, out);
-    return out;
-}
-```
-
-Notice that `radiance` and `irradiance` are read-only inputs. `out` is the
-writable output slice, and `reflectanceView` returns it after the loop writes
-it from left to right.
-
 ## Practical Example
 
 Here is a pattern that allocates output as part of the output fill.

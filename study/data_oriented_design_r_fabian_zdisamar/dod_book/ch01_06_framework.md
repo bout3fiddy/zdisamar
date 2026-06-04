@@ -2,9 +2,10 @@
 
 Source: [Data-Oriented Design online book, "The framework"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00260000000000000000) (printed-book p21).
 
-Summary: Fabian looks at databases because they show how to handle important
-data through careful steps. The point is not to copy database software, but to
-make the order of work visible and reliable.
+Summary: Fabian looks at databases because they are a worked example of keeping
+important state in a form that can survive change. The point is not to copy a
+query engine into a game; it is to learn from tables, explicit operations, and
+careful updates when program state matters.
 
 The circumstance is large-scale game development. A rare bug can become common
 when millions of players run the game, and mistakes in live economies or
@@ -12,15 +13,16 @@ payments can become business failures. Databases had already learned from
 money-handling systems, so Fabian borrows their habit of making each step
 explicit.
 
-Take home: Make the top-level flow easy to read: prepare the data, do the work,
-then produce the result. Avoid hiding important steps inside vague helper calls.
+Take home: Keep important state changes explicit. In `zdisamar`, that usually
+means a visible path from input preparation, to RTM work, to output assembly,
+rather than hiding state changes behind vague helper calls.
 
 ## Main Lessons
 
-- The top-level code should show the order of work.
-  A reader should be able to see that the program prepares data first, then runs
-  the model on that prepared data.
-  The important part is the visible order: prepare first, run second.
+- Important state changes should be named.
+  A reader should be able to see where input becomes prepared data, where
+  prepared data becomes product data, and where product data becomes output.
+  The lesson is not the exact names; it is that state-changing steps are visible.
 
 - Give each big data change its own function.
   For example, one function builds optical state. Another function turns that
@@ -30,28 +32,12 @@ then produce the result. Avoid hiding important steps inside vague helper calls.
 - Avoid hiding important work inside a method with a vague name.
   The high-level path should read like a small list of steps.
 
-## Code Material
-
-The code material is the stage order: prepare data, run the prepared model, then
-finish the product:
-
-```zig
-pub fn simulate(input: Input, storage: *ProductStorage) !Output {
-    // Prepare first, then run, then finish the product.
-    const prepared = try prepare(input, storage.prepare_scratch);
-    const product = try runPrepared(prepared, storage.product_workspace);
-    return finish(product, storage.output_scratch);
-}
-```
-
-Notice that this function is a readable chain. It prepares data, runs the
-prepared data, then turns the product into output.
-
-
 ## Practical Example
 
 Here is a pattern where one wrapper owns preparation, allocation, running, and
-finishing.
+finishing. In Fabian's database comparison, the risk is hidden state change. In
+this `zdisamar`-shaped example, the hidden part is that allocation and setup sit
+inside the same wrapper as the repeated product computation.
 
 ```zig
 pub fn simulate(input: Input, allocator: Allocator) !Output {
@@ -86,8 +72,8 @@ pub fn simulate(input: Input, storage: *ProductStorage) !Output {
 ```
 
 The first wrapper keeps allocation and setup attached to each product run. The
-better wrapper gives each phase its own storage, so the repeated step can become
-plain numeric work.
+better wrapper names the state owned by each phase, so the repeated step can
+stay focused on prepared input and product workspace.
 
 The generated output for the better approach is easier to read.
 
@@ -109,12 +95,9 @@ store <2 x double> %17, ptr %scevgep29
 ```
 
 When the framework separates preparation from the repeated array transform, the
-repeated step becomes plain numeric work.
-
-A benchmark for caller-owned reflectance output showed that version
-was `1.50x` faster than allocating output every run. That gives a concrete
-reason for the framework shape: keep setup and storage ownership outside the
-repeated call.
+repeated step becomes plain numeric work. This compiler output supports the
+local `zdisamar` mapping of Fabian's framework lesson: explicit stages make it
+clear which state is being created and which state is being consumed.
 
 ## zdisamar Reading Notes
 

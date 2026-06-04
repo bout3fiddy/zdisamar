@@ -80,39 +80,6 @@ should exist only when a later step will actually read it.
   Notice that the absorption-only path returns early. It does not build the
   data needed only by scattering.
 
-
-## Code Material
-
-The code material allocates Jacobian storage only after the requested states are
-known:
-
-```zig
-fn ensureJacobianStorage(storage: *ProductStorage, states: JacobianMask) !void {
-    if (states.isEmpty()) {
-        // No requested states means no Jacobian buffer is needed.
-        storage.releaseJacobians();
-        return;
-    }
-
-    // Allocate only enough storage for the requested states.
-    try storage.ensureJacobians(states.count());
-}
-
-fn solveRequestedStates(
-    storage: *ProductStorage,
-    states: JacobianMask,
-    input: ForwardInput,
-) !ProductView {
-    try ensureJacobianStorage(storage, states);
-    return solveForward(input, storage);
-}
-```
-
-Notice that the function releases Jacobian storage when no states are
-active, and only allocates it when the state mask says it will be used.
-`solveRequestedStates` then runs the forward solve with the same `storage`
-after it has been cleared or sized for the requested states.
-
 ## Practical Example
 
 Here is a pattern that checks `config.has_scattering` once per layer.

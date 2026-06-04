@@ -52,32 +52,6 @@ work. Combine shared results after the worker has finished its local loop.
 - Do not guess that false sharing is the problem.
   First compare one worker, two workers, four workers, and so on.
 
-## Code Material
-
-The code material keeps each worker's running sum local until the worker is
-done:
-
-```zig
-fn workerSum(range: Range, values: []const f64) f64 {
-    var local: f64 = 0;
-    for (range.start..range.end) |i| {
-        // Keep the running sum in local until the loop is done.
-        local += values[i];
-    }
-    return local;
-}
-
-fn reduceWorkerSums(partials: []const f64) f64 {
-    var total: f64 = 0;
-    // Combine the returned worker sums after workerSum has finished.
-    for (partials) |value| total += value;
-    return total;
-}
-```
-
-Notice that each worker returns one local sum. The shared combine step
-happens after the worker loop, not on every item.
-
 ## Practical Example
 
 Here is a pattern that writes each worker's partial result on every item.

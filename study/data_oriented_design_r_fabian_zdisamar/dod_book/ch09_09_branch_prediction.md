@@ -48,31 +48,6 @@ grouping the data first. Only do that when the grouping cost is worth it.
   The comparison should include the cost of making the groups, not only the
   cost after the groups already exist.
 
-## Code Material
-
-The code material compares a per-row branch with grouped processing:
-
-```zig
-fn sumSelected(flags: []const bool, values: []const i32) i32 {
-    var sum: i32 = 0;
-    for (flags, values) |flag, value| {
-        // This branch depends on the current flag.
-        if (flag) sum += value;
-    }
-    return sum;
-}
-
-fn processByScatteringNeed(rows: []const Row) void {
-    // Group first so each solve loop sees one kind of row.
-    const split = partitionByScatteringNeed(rows);
-    solveAbsorptionRows(split.absorption);
-    solveScatteringRows(split.scattering);
-}
-```
-
-Notice that `partitionByScatteringNeed` moves the decision before the
-repeated solve work. Each solver receives rows for one branch of the physics.
-
 ## Practical Example
 
 Here is a pattern that branches on each row in the repeated loop.

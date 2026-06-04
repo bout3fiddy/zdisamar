@@ -66,61 +66,6 @@ item.
   Notice that each start is the previous start plus the previous count.
   Counts become positions.
 
-
-## Code Material
-
-The code material stores small groups inline and larger groups as a range into
-side storage:
-
-```zig
-const KernelRef = struct {
-    // Small kernels stay inside the row.
-    inline_count: u8,
-    inline_samples: [4]Sample,
-    // Larger kernels use a range in side storage.
-    side_start: u32,
-    side_count: u32,
-};
-
-fn samples(ref: KernelRef, side: []const Sample) []const Sample {
-    if (ref.inline_count > 0) {
-        // Small kernels do not need a side-storage lookup.
-        return ref.inline_samples[0..ref.inline_count];
-    }
-    // Larger kernels use one saved range into side storage.
-    return side[ref.side_start .. ref.side_start + ref.side_count];
-}
-
-fn prefixStarts(counts: []const usize, starts: []usize) void {
-    var total: usize = 0;
-    for (counts, starts) |count, *start| {
-        // Save where this group begins before adding its length.
-        start.* = total;
-        total += count;
-    }
-}
-
-fn groupSamples(
-    index: usize,
-    counts: []const usize,
-    starts: []const usize,
-    all: []const Sample,
-) []const Sample {
-    const start = starts[index];
-    return all[start .. start + counts[index]];
-}
-```
-
-Notice that `KernelRef` stores either inline samples or a side-list range.
-`prefixStarts` turns per-group counts into start positions for a packed output
-list. `groupSamples` then reads those filled `starts` values to return one
-group.
-
-The caller should not need to know whether a kernel's samples are inline or in
-side storage. `KernelRef` keeps both storage choices behind the same
-`samples(...)` access path.
-
-
 ## Practical Example
 
 Here is a pattern that recomputes the start offset for a group whose length can

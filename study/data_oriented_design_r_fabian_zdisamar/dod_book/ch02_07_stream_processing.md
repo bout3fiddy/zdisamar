@@ -58,33 +58,6 @@ again.
   Notice that `fillRadiance` writes `radiance`, then `assembleReflectance`
   reads `radiance` and writes `reflectance`. The handoff is explicit.
 
-## Code Material
-
-The code material is a row stream: each input row writes one matching output
-slot:
-
-```zig
-fn fillRadiance(rows: []const MissRow, constants: Constants, out: []f64) void {
-    for (rows, out) |row, *dst| {
-        // One input row writes one matching output slot.
-        dst.* = solveOne(row, constants);
-    }
-}
-
-fn fillReflectance(
-    rows: []const MissRow,
-    constants: Constants,
-    storage: *ProductStorage,
-) void {
-    fillRadiance(rows, constants, storage.radiance);
-    assembleReflectance(storage.radiance, storage.reflectance);
-}
-```
-
-Notice that `fillRadiance` fills caller-owned `storage.radiance`. The next line
-uses that filled slice to write `storage.reflectance`.
-There is no hidden global accumulator inside the loop.
-
 ## Practical Example
 
 Here is a pattern that appends results while the stream is running.

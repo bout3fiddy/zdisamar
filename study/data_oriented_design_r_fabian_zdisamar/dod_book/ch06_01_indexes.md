@@ -45,32 +45,6 @@ the original data.
   Notice that the loop does not search for the result. It uses the saved
   `result_index` and reads the radiance directly.
 
-## Code Material
-
-The code material keeps miss rows next to the packed indexes they point into:
-
-```zig
-const ForwardMissPlan = struct {
-    rows: []const MissRow,
-    // Packed result indexes for all rows.
-    sample_indices: []const usize,
-};
-
-fn samplesFor(plan: ForwardMissPlan, row_index: usize) []const usize {
-    const row = plan.rows[row_index];
-    // The saved start/count chooses this row's indexes.
-    return plan.sample_indices[row.start .. row.start + row.count];
-}
-```
-
-Notice that `MissRow` stores `start` and `count`. That lets the function
-return the saved sample indexes for one nominal wavelength without searching.
-
-Each row's `start` and `count` point into `sample_indices`. If `rows` and
-`sample_indices` are passed around separately, it becomes easy to pair a row
-list with the wrong `sample_indices` list and read the wrong samples.
-
-
 ## Practical Example
 
 Here is a pattern that searches for a result during every integration row.

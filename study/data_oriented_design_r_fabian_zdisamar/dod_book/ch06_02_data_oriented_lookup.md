@@ -63,55 +63,6 @@ needs. Find the position first, then fetch the larger data once.
   Notice that `first_stage` chooses a smaller range. The final search only
   scans that range.
 
-
-## Code Material
-
-The code material separates lookup keys from payloads, then adds a small coarse
-index:
-
-```zig
-const KeyPayload = struct {
-    // Larger data returned after a time key has found one row.
-    translation: Vec3,
-    scale: Vec3,
-    rotation: Quat,
-};
-
-const KeyTable = struct {
-    // Search the compact time column first.
-    times: []const f32,
-    payloads: []const KeyPayload,
-
-    fn find(self: KeyTable, t: f32) KeyPayload {
-        const index = lowerBound(self.times, t);
-        // Read the payload only after the lookup chooses an index.
-        return self.payloads[index];
-    }
-};
-
-const IndexedKeyTable = struct {
-    times: []const f32,
-    payloads: []const KeyPayload,
-    // Coarse time index used to narrow the final search.
-    first_stage: [11]f32,
-
-    fn find(self: IndexedKeyTable, t: f32) KeyPayload {
-        const block = firstStageBlock(self.first_stage, t);
-        const index = linearSearchBlock(self.times, block, t);
-        return self.payloads[index];
-    }
-};
-```
-
-Notice that `times` is searched first because it is the small lookup data.
-`payloads` is read only after the index is found. `first_stage` is an extra
-helper that narrows the search range.
-
-The `times` column and `payloads` column have to stay in the same order. If
-helpers accepted those columns separately, a caller could pass mismatched slices
-and get a `payloads` entry for the wrong `times` entry. The table keeps the
-paired columns together.
-
 ## Practical Example
 
 Here is a pattern that searches full payload rows even though the search key is

@@ -55,68 +55,6 @@ the storage.
   Notice that one `kernel` can append several items to `samples`, so the
   output list can grow faster than the input list.
 
-## Code Material
-
-The code material shows the common input/output shapes:
-
-```zig
-fn writeOneOutputPerInput(in_rows: []const LayerInput, out_rows: []LayerOutput) void {
-    // Every input row has a matching output row.
-    for (in_rows, out_rows) |input, *output| output.* = solveLayer(input);
-}
-
-fn layerOutputs(
-    in_rows: []const LayerInput,
-    out_rows: []LayerOutput,
-) []const LayerOutput {
-    writeOneOutputPerInput(in_rows, out_rows);
-    return out_rows;
-}
-
-fn keepOnlyEnabledRows(rows: []const Candidate, kept: *ArrayList(Candidate)) !void {
-    // Only enabled rows are appended to the output list.
-    for (rows) |row| if (row.enabled) try kept.append(row);
-}
-
-fn appendManySamplesPerKernel(rows: []const KernelRef, samples: *ArrayList(Sample)) !void {
-    // One kernel can append several samples.
-    for (rows) |row| try appendKernelSamples(row, samples);
-}
-
-fn fillOutputWithoutInputRows(out: []f64, value: f64) void {
-    // Output is produced without reading an input row list.
-    @memset(out, value);
-}
-
-fn constantOutput(out: []f64, value: f64) []const f64 {
-    fillOutputWithoutInputRows(out, value);
-    return out;
-}
-
-fn selectedRows(
-    rows: []const Candidate,
-    kept: *ArrayList(Candidate),
-) ![]const Candidate {
-    try keepOnlyEnabledRows(rows, kept);
-    return kept.items;
-}
-
-fn samplesForKernels(
-    rows: []const KernelRef,
-    samples: *ArrayList(Sample),
-) ![]const Sample {
-    try appendManySamplesPerKernel(rows, samples);
-    return samples.items;
-}
-```
-
-Notice that each function name says the input/output shape. One writes one
-output per input, one may write fewer rows, one may write more rows, and one
-writes output without reading input rows. The wrapper functions return the
-filled caller-owned storage, so the fill step is connected to a result the next
-step can read.
-
-
 ## Practical Example
 
 Here is a pattern that filters samples and sums them in the same loop.

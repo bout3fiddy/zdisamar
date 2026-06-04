@@ -55,24 +55,6 @@ tells only half the story.
   Notice that the run records a separate event only when it misses the
   budget. Slow cases are easier to find later.
 
-## Code Material
-
-The code material traces one phase and records the amount of work in that
-phase:
-
-```zig
-const zone = trace.begin(.fill_radiance);
-// The timing region ends when this scope exits.
-defer zone.end();
-
-try fillRadiance(product, plan, storage);
-// The count gives the timing a workload size.
-telemetry.count(.forward_misses, plan.miss_count);
-```
-
-Notice that the timer covers one named phase, and the count records how much
-work that phase did.
-
 ## Practical Example
 
 Here is a pattern that records elapsed time without the size of the work.

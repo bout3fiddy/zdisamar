@@ -53,33 +53,6 @@ expensive work, keep a clear list of the items that really need updating.
   Notice that the key is checked before reuse. A different key forces a
   rebuild.
 
-
-## Code Material
-
-The code material passes the refresh list to the refresh loop:
-
-```zig
-const DirtyPlan = struct {
-    // This is already the refresh list, not every possible wavelength.
-    wavelengths: []const f64,
-};
-
-fn refreshOnlyDirty(plan: DirtyPlan, cache: *SpectralCache) !void {
-    for (plan.wavelengths) |wavelength_nm| {
-        // Refresh only the entries listed in the plan.
-        try cache.refresh(wavelength_nm);
-    }
-}
-```
-
-Notice that `plan.wavelengths` is the list of work to refresh. The function
-does not scan every possible wavelength looking for dirty flags.
-
-The refresh function could scan the whole cache and decide which entries are
-dirty. Then every refresh pass also pays for dirty checks, and the loop hides
-how much work was selected. `DirtyPlan` is built first, so the refresh loop only
-refreshes the listed wavelengths.
-
 ## Practical Example
 
 Here is a pattern that scans every wavelength to check whether its cached value

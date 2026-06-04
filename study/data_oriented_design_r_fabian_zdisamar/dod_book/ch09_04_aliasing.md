@@ -16,8 +16,11 @@ Avoid letting input and output secretly refer to the same storage.
 
 ## Main Lessons
 
-- Mark input slices as read-only when the function should not change them.
-  This helps the reader and the compiler know that `input` is not written.
+- Mark input slices as read-only when the function should not change them, but
+  do not treat that as a full aliasing guarantee.
+  `[]const` says the function will not write through `input`. The caller still
+  needs to keep `input` and `output` from overlapping when the loop depends on
+  that.
 
   ```zig
   fn scale(input: []const f64, factor: f64, output: []f64) void {
@@ -30,9 +33,9 @@ Avoid letting input and output secretly refer to the same storage.
   }
   ```
 
-  Notice that `input` is `[]const f64`, so this function promises not to
-  write through that slice. `output` is writable, and `scaledValues` returns
-  the filled output slice for the next step to read.
+  Notice that `input` is `[]const f64`, so this function promises not to write
+  through that slice. The separate `output` argument is the writable result, and
+  the caller is responsible for keeping it separate from `input`.
 
 - Do not let input and output secretly point to the same memory.
   If they overlap, a write to the output can change a value the function has not
@@ -45,34 +48,6 @@ Avoid letting input and output secretly refer to the same storage.
   is running.
   This is useful for small configuration values. Do not use it as an excuse to
   copy large arrays.
-
-## Code Material
-
-The code material keeps input read-only and writes into a separate output:
-
-```zig
-fn fillOutput(input: []const f64, scale: f64, output: []f64) void {
-    // Callers keep output separate from input.
-    for (input, output) |value, *dst| {
-        // Read input and write the separate output slot.
-        dst.* = value * scale;
-    }
-}
-
-fn scaledOutput(
-    prepared: *const PreparedInput,
-    workspace: *Workspace,
-) ![]const f64 {
-    // Prepared data is read; temporary output lives in workspace.
-    try fillOutput(prepared.optical_depths, prepared.scale, workspace.tmp);
-    return workspace.tmp;
-}
-```
-
-Notice that prepared data is read through `*const PreparedInput`, and output
-goes into `workspace.tmp`. The returned slice is still workspace memory, so the
-read side and write side stay separate without allocating a new result.
-
 
 ## Practical Example
 
@@ -99,7 +74,7 @@ sub     x9, x2, x1  ; repeat the overlap check for the second input
 When aliasing is possible, the compiler adds runtime overlap checks before it
 can use the fast vector loop.
 
-A better approach marks input read-only and says the output must be separate.
+A better approach marks input read-only and states the separate-output rule.
 
 ```zig
 fn fillOutput(input: []const f64, output: []f64) void {
@@ -116,9 +91,9 @@ fn doubledValues(input: []const f64, output: []f64) []const f64 {
 ```
 
 The first signature does not tell the reader which slice is input and which
-slice is output. The better signature marks the input read-only and states that
-output is separate. `doubledValues` then hands the filled output slice to the
-caller. That is the simple no-overlap case the fast vector loop needs.
+slice is output. The better signature marks the input read-only, and the comment
+states the rule Fabian's aliasing section cares about: the output slice is
+separate. `doubledValues` then hands the filled output slice to the caller.
 
 The generated output for the better approach is easier to read.
 
@@ -141,9 +116,6 @@ br i1 %conflict.rdx, label %Then.preheader13, label %vector.ph
 
 `vector.memcheck` is the compiler's overlap check before the fast vector loop.
 Clear read/write ownership makes that fast path easier to justify.
-
-A benchmark for caller-owned output showed it was `1.50x` faster than
-allocating output every run, with the same checksum.
 
 ## zdisamar Reading Notes
 

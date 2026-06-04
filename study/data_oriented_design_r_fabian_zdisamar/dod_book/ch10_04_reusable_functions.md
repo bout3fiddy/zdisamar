@@ -60,35 +60,6 @@ less a function knows about the larger program, the easier it is to reuse.
   explains the direction of data movement. `copiedValues` shows the filled
   caller-owned `output` slice being returned as a read-only view.
 
-
-## Code Material
-
-The code material uses slices so helpers receive only the data they read or
-write:
-
-```zig
-fn lowerBound(values: []const f64, needle: f64) usize {
-    var low: usize = 0;
-    var high: usize = values.len;
-    while (low < high) {
-        // The search needs only the sorted values slice.
-        const mid = low + (high - low) / 2;
-        if (values[mid] < needle) low = mid + 1 else high = mid;
-    }
-    return low;
-}
-
-fn integrateWeighted(values: []const f64, weights: []const f64) f64 {
-    var sum: f64 = 0;
-    // Matching slices keep the loop independent of caller-specific types.
-    for (values, weights) |value, weight| sum += value * weight;
-    return sum;
-}
-```
-
-Notice that both functions work on slices, not on a large model object.
-That is why they can be reused wherever the data can be presented as slices.
-
 ## Practical Example
 
 Here is a pattern that ties a small search helper to a large model object.
@@ -129,9 +100,6 @@ The generated output for the better approach is easier to read.
 
 The helper works on the slice it was given. It does not need a large model
 object.
-
-A benchmark for prepared prefix starts showed they were `2039.62x` faster
-than re-summing counts for every query, with the same checksum.
 
 ## zdisamar Reading Notes
 

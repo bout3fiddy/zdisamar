@@ -84,46 +84,6 @@ let repeated work run on simple, direct values.
   Notice that the loop says the real work directly: visit each layer and
   read its optical depth.
 
-## Code Material
-
-The runtime entry point keeps prepared input separate from reusable workspace:
-
-```zig
-const RuntimeInput = struct {
-    // Runtime data is already shaped for the RTM loop.
-    layers: []const LayerInput,
-    wavelength_nm: f64,
-    config: SolveConfig,
-};
-
-pub fn prepareRuntimeInput(scene: SceneInput, config: SolveConfig) RuntimeInput {
-    return .{
-        .layers = scene.prepared_layers,
-        .wavelength_nm = scene.wavelength_nm,
-        .config = config,
-    };
-}
-
-pub fn solve(input: RuntimeInput, workspace: *Workspace) ForwardResult {
-    // The RTM sees prepared data, not control-file text or DISAMAR objects.
-    return radiativeTransfer(
-        input.layers,
-        input.wavelength_nm,
-        input.config,
-        workspace,
-    );
-}
-```
-
-Notice that `prepareRuntimeInput` is where the larger scene becomes runtime
-data. `solve` then passes only `layers`, `wavelength_nm`, `config`, and
-workspace memory into the RTM math.
-
-The alternative is to pass `layers`, `wavelength_nm`, and `config` separately
-through every function. That makes it easier to mix values from different
-prepared scenes. `RuntimeInput` keeps the input group together, while workspace
-stays separate because it is reusable memory, not input data.
-
 ## Practical Example
 
 Here is a pattern that stores each layer as a larger science row, then reads

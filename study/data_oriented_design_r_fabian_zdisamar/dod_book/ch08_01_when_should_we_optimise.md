@@ -36,26 +36,6 @@ the target, and the new result so you can tell whether the change helped.
 - Keep the old result next to the new result.
   Without the old result, you cannot tell whether the change helped.
 
-## Code Material
-
-The code material measures the product run and records the budget miss:
-
-```zig
-const budget_ns = 2_000_000;
-
-const start = timer.read();
-// Time the product run itself, not unrelated setup or reporting.
-try simulateProductWithWorkspace(input, storage);
-const elapsed = timer.read() - start;
-
-// Record the measured cost and the budget miss separately.
-try telemetry.record(.product_run_ns, elapsed);
-if (elapsed > budget_ns) try telemetry.record(.product_budget_miss, elapsed);
-```
-
-Notice that the code records both the actual time and the budget miss. That
-makes the optimization question measurable.
-
 ## Practical Example
 
 Here is a pattern that states a performance conclusion without evidence.
