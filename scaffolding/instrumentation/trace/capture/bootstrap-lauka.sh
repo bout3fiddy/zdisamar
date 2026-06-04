@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "$script_dir/../../.." && pwd)"
+repo_root="$(cd "$script_dir/../../../.." && pwd)"
 lock_path="$script_dir/lauka.lock"
 
 # shellcheck source=/dev/null
