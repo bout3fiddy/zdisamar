@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Branch prediction"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001090000000000000000) (printed-book p172).
 
-Summary: Move unpredictable per-row decisions into preparation so hot loops avoid branches the CPU cannot guess well.
+Summary: Fabian's branch-prediction lesson is that CPUs do better when branch
+outcomes are predictable in large chunks, but grouping or sorting has a cost and
+may be pointless if the compiler can remove the branch.
+
+His path to the rule is a small sum-if-data example: random branch directions
+hurt, sorted data can help, but the trivial case may compile into conditional
+execution anyway. The historical lesson is to include compiler behavior in the
+story, not just CPU folklore.
+
+Take home: Move unpredictable per-row decisions into preparation so hot loops
+avoid branches the CPU cannot guess well. In `zdisamar`, do this only when
+measurement shows the grouping cost pays for itself.
 
 ## Main Lessons
 

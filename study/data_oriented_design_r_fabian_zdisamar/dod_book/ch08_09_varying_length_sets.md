@@ -2,7 +2,20 @@
 
 Source: [Data-Oriented Design online book, "Varying length sets"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00990000000000000000) (printed-book p155).
 
-Summary: Store variable-length outputs with counts, starts, or ranges so later loops can jump straight to each set.
+Summary: Fabian explains that filters and emissions break the fixed
+one-input-one-output stream shape, so variable-length results need counts,
+starts, reductions, or prefix sums. The reason is to regain contiguous output
+without per-row allocation.
+
+Fabian comes at this from shader-style fixed buffers, radix/counting-sort
+histograms, and multi-threaded filtering where each thread writes a private
+output vector before a reduce step concatenates them. He then connects the same
+problem to deletion, pools, and thread-bound ownership.
+
+Take home: Store variable-length outputs with counts, starts, or ranges so later
+loops can jump straight to each set. `zdisamar` kernel samples and optional
+derivative groups should use side storage plus refs/counts instead of per-row
+allocation.
 
 ## Main Lessons
 

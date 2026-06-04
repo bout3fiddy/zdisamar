@@ -2,7 +2,20 @@
 
 Source: [Data-Oriented Design online book, "The framework"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00260000000000000000) (printed-book p21).
 
-Summary: Keep the top-level flow visible so readers can see where data is prepared and where model work begins.
+Summary: Fabian uses database practice as the model for handling complex data
+through staged, valid transformations rather than hidden object interactions.
+The lesson is that framework shape should make data integrity and operation
+order visible.
+
+The circumstance he points to is large-scale game development: rare
+one-in-a-million data bugs become public when millions of players run the game,
+and live economies or in-app purchases make integrity failures business
+failures. That is why he looks back to database ACID ideas from financial
+transaction systems.
+
+Take home: Keep the top-level flow visible so readers can see where data is
+prepared and where model work begins. In `zdisamar`, that means named phases for
+load, prepare, run, and output, with boundaries that are easy to inspect.
 
 ## Main Lessons
 

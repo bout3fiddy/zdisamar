@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Stream Processing"](https://www.dataorienteddesign.com/dodbook/node3.html#SECTION00370000000000000000) (printed-book p54).
 
-Summary: Stream stages should read rows and write outputs in a regular loop so the work is easy to follow and optimize.
+Summary: Fabian recasts table data as streams: a transform should read declared
+inputs, use local scratch, and write declared outputs without mutating hidden
+global state. That matters because order becomes less important and the work is
+easier to parallelize, test, and replace.
+
+He reaches this through two histories at once: relational tables can be viewed
+as unordered sets, and graphics hardware had already forced shader work into
+constant inputs plus per-vertex or per-pixel scratch. If shader kernels wrote
+random globals, graphics cards would need locking or become serial machines.
+
+Take home: Stream stages should read rows and write outputs in a regular loop
+so the work is easy to follow and optimize. `zdisamar` product stages should
+expose rows, scratch, and output buffers directly.
 
 ## Main Lessons
 

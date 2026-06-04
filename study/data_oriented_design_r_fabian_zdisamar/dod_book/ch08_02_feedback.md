@@ -2,7 +2,20 @@
 
 Source: [Data-Oriented Design online book, "Feedback"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00920000000000000000) (printed-book p138).
 
-Summary: Put timing around the exact boundary you want to improve so the measurement answers the right question.
+Summary: Fabian says feedback must be immediate and about the right thing:
+broad averages can hide spikes, and coarse profiling can measure the wrong
+phase.
+
+The experience behind the lesson is partly tool failure: third-party engines
+often exposed only coarse CPU/GPU/physics/render budgets, and their built-in
+profilers could be incomplete or unavailable in optimized publishing builds. He
+also uses latency stories from Amazon, Google, and trading systems to show why
+the measured resource must match the real business limit.
+
+Take home: Put timing around the exact boundary you want to improve so the
+measurement answers the right question. In `zdisamar`, trace zones and telemetry
+should surround the stage under study and record counts or budget misses that
+explain the timing.
 
 ## Main Lessons
 

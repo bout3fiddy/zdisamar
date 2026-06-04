@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Tables"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00940000000000000000) (printed-book p146).
 
-Summary: Use table-like arrays for repeated row or column work so loops read memory in a predictable shape.
+Summary: Fabian recommends arrays and table-like layouts because most work is
+reading arrays, transforming one array into another, or modifying a table in
+place. He also warns that structure-of-arrays is not a universal rule; the
+right layout follows the access pattern.
+
+He gets there through small measured layout examples: a particle/node update
+improves when read and write streams become continuous, but blindly splitting
+`x`, `y`, and `z` can make a vector operation load more cache lines. The
+anecdote is a warning against turning data-oriented design into a recipe.
+
+Take home: Use table-like arrays for repeated row or column work so loops read
+memory in a predictable shape. `zdisamar` should choose row, column, join, or
+cache shapes based on what each loop really reads and writes.
 
 ## Main Lessons
 

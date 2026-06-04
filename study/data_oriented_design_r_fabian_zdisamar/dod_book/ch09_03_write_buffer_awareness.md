@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Write buffer awareness"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001030000000000000000) (printed-book p165).
 
-Summary: Prefer straight output writes into caller-owned buffers so repeated result-building avoids allocation and scattered stores.
+Summary: Fabian's write-buffer advice is to separate read-only, modified, and
+write-only streams, then write contiguous memory in useful chunks. That matters
+because it helps the cache and gives the compiler simpler stores to optimize.
+
+He links this to Ulrich Drepper's memory work and the hardware idea of
+non-temporal streaming operations: if data will not be reused soon, keeping it
+in cache can evict more useful random-access data. Simple transforms give the
+compiler a chance to choose those operations.
+
+Take home: Prefer straight output writes into caller-owned buffers so repeated
+result-building avoids allocation and scattered stores. In `zdisamar`,
+caller-owned output buffers and straight fills are the concrete form of that
+lesson.
 
 ## Main Lessons
 

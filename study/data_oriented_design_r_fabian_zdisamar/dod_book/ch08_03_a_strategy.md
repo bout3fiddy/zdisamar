@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "A strategy"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00930000000000000000) (printed-book p142).
 
-Summary: State the problem, measure a baseline, change one thing, and measure again so each result teaches something.
+Summary: Fabian's optimization strategy is procedural discipline: define the
+problem in objective terms, measure reproducibly, analyze the evidence, try an
+experiment, then confirm and report what happened. The point is to stop guesses
+from becoming "optimizations."
+
+Fabian borrows the process shape from outside game programming, especially
+Toyota-style lean optimization: define the waste, measure it, analyze it, change
+it, and confirm the result. The history matters because the method is about
+making improvement repeatable, not about clever local tuning.
+
+Take home: State the problem, measure a baseline, change one thing, and measure
+again so each result teaches something. `zdisamar` study notes should keep the
+baseline, change, result, and interpretation together.
 
 ## Main Lessons
 

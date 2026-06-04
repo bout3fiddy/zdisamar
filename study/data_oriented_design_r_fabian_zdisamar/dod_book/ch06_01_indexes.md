@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Indexes"](https://www.dataorienteddesign.com/dodbook/node7.html#SECTION00710000000000000000) (printed-book p113).
 
-Summary: Build indexes once so repeated loops use saved positions instead of searching every time.
+Summary: Fabian treats indexes as retained answers to repeated queries, built
+when telemetry shows a query is hot enough to justify the extra structure. The
+index is both an optimization and evidence of where the data hotspots are.
+
+The origin is database management systems: indexes appeared after a query had
+been run often enough, and the query could become an object that updates its
+answer as the referenced tables change. Fabian imports that feedback loop into
+game data rather than treating indexes as hand-written one-offs.
+
+Take home: Build indexes once so repeated loops use saved positions instead of
+searching every time. In `zdisamar`, wavelength and sample plans should turn
+repeated lookup work into saved positions.
 
 ## Main Lessons
 

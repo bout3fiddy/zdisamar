@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Reducing memory dependency"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001020000000000000000) (printed-book p164).
 
-Summary: Avoid pointer chains in hot loops because each dependent load can make the CPU wait for the next address.
+Summary: Fabian's memory-dependency point is that pointer chains stall because
+the address of the next load depends on the result of the previous load. The
+hardware cannot hide that latency.
+
+The concrete cases are linked lists, tree-shaped maps/sets, and pointer-based
+entity-component composition. The lesson is not that every lookup is bad; it is
+that a load whose address depends on another load creates a chain the CPU cannot
+prefetch away.
+
+Take home: Avoid pointer chains in hot loops because each dependent load can
+make the CPU wait for the next address. `zdisamar` hot loops should prefer flat
+arrays, indexes, and saved result positions over walking through object-like
+state.
 
 ## Main Lessons
 

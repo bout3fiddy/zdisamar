@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Transforms"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00950000000000000000) (printed-book p151).
 
-Summary: Keep loading and setup outside the repeated data-changing step so the hot transform only changes prepared data.
+Summary: Fabian frames transforms as a separation between gathering/loading data
+and performing operations on it. He also notes that some reductions that look
+serial can be split when the combine step is associative.
+
+The route here is language and algorithm history: map/reduce is basic in some
+languages but not natural in C++, so Fabian rebuilds the idea from table
+schemas and associative reductions such as matrix chains, color modulation,
+strings, and lists.
+
+Take home: Keep loading and setup outside the repeated data-changing step so the
+hot transform only changes prepared data. In `zdisamar`, prepared array work
+should expose the data needed for splitting, combining, and measurement.
 
 ## Main Lessons
 

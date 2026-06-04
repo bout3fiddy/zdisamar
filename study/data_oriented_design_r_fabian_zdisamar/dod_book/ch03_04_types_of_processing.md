@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Types of processing"](https://www.dataorienteddesign.com/dodbook/node4.html#SECTION00440000000000000000) (printed-book p66).
 
-Summary: Name the kind of data change so the loop shape matches the real output being produced.
+Summary: Fabian separates transforms by output cardinality: mutation writes one
+row per input row, filtering writes zero or one, emission writes zero or many,
+and generation writes without input rows. Naming that shape matters because it
+drives the storage choice.
+
+The classification comes out of existential processing, compute shaders, and
+map-reduce style work: once a kernel is running the same instructions over a
+homogeneous contiguous set, the remaining design question is how many output
+rows each input can create.
+
+Take home: Name the kind of data change so the loop shape matches the real
+output being produced. In `zdisamar`, this decides whether a stage needs fixed
+slices, append lists, or count/range tables.
 
 ## Main Lessons
 

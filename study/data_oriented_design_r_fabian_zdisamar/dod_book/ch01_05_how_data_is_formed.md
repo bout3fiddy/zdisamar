@@ -2,7 +2,21 @@
 
 Source: [Data-Oriented Design online book, "How is data formed?"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00250000000000000000) (printed-book p18).
 
-Summary: Turn messy input files into clean prepared arrays so repeated model work does not parse or rebuild setup data.
+Summary: Fabian's lesson is that real production data keeps changing: assets,
+formats, platforms, and features do not fit one permanent object taxonomy. The
+stable design move is to form messy external data into the representation the
+current engine actually runs.
+
+He gets there from engine migration history: old texture assumptions broke when
+floating-point textures arrived, vertex-shader texture reads changed skinning
+uploads, shaders and the PlayStation 2 changed what a material meant, open
+worlds changed rendering data, and alignment-sensitive hardware forced more
+layout changes.
+
+Take home: Turn messy input files into clean prepared arrays so repeated model
+work does not parse or rebuild setup data. In `zdisamar`, this means parsing
+control files and reference assets into prepared optical data before repeated
+solves begin.
 
 ## Main Lessons
 

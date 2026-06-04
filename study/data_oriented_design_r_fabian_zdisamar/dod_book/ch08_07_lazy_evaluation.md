@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Lazy evaluation"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00970000000000000000) (printed-book p153).
 
-Summary: Delay work only when the saved work is larger than the check, because lazy code can add its own cost.
+Summary: Fabian warns that lazy evaluation is not automatically cheaper:
+checking dirty flags can cost more than recomputing cheap values. For expensive
+work, the better shape is to keep a dirty table where membership itself means
+"update this."
+
+The context is render-engine and compiler history. Fabian cites the shift from
+dirty-bit scene hierarchy updates toward recomputing matrices every frame, and
+Tony Albrecht's talks where an old manual devirtualization win stopped helping
+as compilers and hardware moved on.
+
+Take home: Delay work only when the saved work is larger than the check, because
+lazy code can add its own cost. `zdisamar` caches should have explicit keys and
+dirty lists, and add laziness only when avoided work exceeds validation cost.
 
 ## Main Lessons
 

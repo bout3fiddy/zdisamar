@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Existential Processing"](https://www.dataorienteddesign.com/dodbook/node4.html) (printed-book p57).
 
-Summary: Represent optional work as rows or counts so loops skip work that was never requested.
+Summary: Fabian's existential-processing lesson is to remove repeated
+"should this be processed?" checks by making presence in a table mean the work
+exists and is valid.
+
+This is one of the few places where Fabian is explicit about his own path: he
+describes the chapter's runtime-polymorphism technique as the first
+data-oriented-friendly solution he discovered, and ties it to component and
+compute-shader practice.
+
+Take home: Represent optional work as rows or counts so loops skip work that was
+never requested. For `zdisamar`, optional work such as Jacobians should be
+active rows or counts, not booleans carried through every hot layer row.
 
 ## Main Lessons
 

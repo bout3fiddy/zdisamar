@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "When should we optimise?"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00910000000000000000) (printed-book p137).
 
-Summary: Measure the real slow part before changing code so optimization starts from evidence, not guesses.
+Summary: Fabian defines premature optimization as changing code without data
+showing the change will matter. Measurement turns "slow" into a failure,
+success, or progress criterion.
+
+The practical setting is production risk: if a game can hit 5fps on target
+hardware, has memory limits, or may drain a phone battery, performance is not
+optional. The process conclusion is to start profiling early enough that
+content and features are not built on untested assumptions.
+
+Take home: Measure the real slow part before changing code so optimization
+starts from evidence, not guesses. For `zdisamar`, a performance claim needs a
+baseline, a target or budget, and retained evidence for comparison.
 
 ## Main Lessons
 

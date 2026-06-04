@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Cache line utilisation"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001060000000000000000) (printed-book p168).
 
-Summary: Put fields together only when the same loop reads them together so cache lines carry useful data.
+Summary: Fabian reminds the reader that memory arrives as cache lines, not
+individual fields. The useful question is whether the extra bytes loaded with a
+value answer the same hot-loop question or just carry cold baggage.
+
+The section ties back to his animation lookup example and to a codebase partly
+migrated to components. Fabian uses measured cache-presence/query variants on
+an i5-4430 to show that putting the right answer or predicate into otherwise
+loaded cache-line space can dominate a map lookup.
+
+Take home: Put fields together only when the same loop reads them together so
+cache lines carry useful data. `zdisamar` should co-locate fields consumed
+together and move debug names or rare data out of repeated rows.
 
 ## Main Lessons
 

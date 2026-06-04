@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Necessity"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00980000000000000000) (printed-book p154).
 
-Summary: Carry only needed data into a loop so unused fields and optional work do not take time or memory.
+Summary: Fabian's necessity lesson is that object layouts often force unrelated
+fields into the same cache lines, so a function loads data it never asked for.
+The fix is to carry only the fields a transaction needs.
+
+The source of the lesson is C++ object practice: classes gather multiple roles,
+inheritance adds baggage, and virtual dispatch first loads the cache line with
+the vtable pointer before the CPU even knows which data the function will need.
+
+Take home: Carry only needed data into a loop so unused fields and optional work
+do not take time or memory. In `zdisamar`, hot rows and workspaces should
+exclude unused layer fields and allocate optional physics or Jacobian buffers
+only when a later step will read them.
 
 ## Main Lessons
 

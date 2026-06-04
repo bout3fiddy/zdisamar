@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "False sharing"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001070000000000000000) (printed-book p169).
 
-Summary: Give workers separate memory while they work so threads do not keep invalidating the same cache line.
+Summary: Fabian describes false sharing as independent threads slowing each
+other down by repeatedly writing different addresses that live on the same cache
+line. He also warns not to assume this is the problem without evidence.
+
+This is another place where he describes the experimental process: trying to
+reproduce false sharing in trivial examples only showed the effect after
+turning optimizations off. That failure is part of the lesson: validate that the
+suspected hardware problem is real before and after the change.
+
+Take home: Give workers separate memory while they work so threads do not keep
+invalidating the same cache line. `zdisamar` worker code should accumulate in
+local or worker-owned storage, then combine results after checking scaling
+behavior.
 
 ## Main Lessons
 

@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Data is not the problem domain"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00220000000000000000) (printed-book p6).
 
-Summary: Prepare science input into small runtime data so solver loops do not drag parser or domain state through hot math.
+Summary: Fabian argues that data should not inherit the problem-domain model in
+the code. Meaning is applied by context, but the machine transforms plain facts
+rather than human concepts.
+
+Fabian grounds this in shipping-game failures where grid-like worlds were kept
+as object collections instead of grid data. The result was extra neighbor links,
+full-list scans, and auxiliary spatial maps just to recover the locality that
+the original data layout had hidden.
+
+Take home: Prepare science input into small runtime data so solver loops do not
+drag parser or domain state through hot math. This follows directly from
+Fabian's warning: O2 A and DISAMAR vocabulary belongs at input and validation
+boundaries, while RTM loops should receive only the values the math reads.
 
 ## Main Lessons
 

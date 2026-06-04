@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Aliasing"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001040000000000000000) (printed-book p166).
 
-Summary: Make read-only inputs and writable outputs obvious so readers and the compiler know what may overlap.
+Summary: Fabian explains aliasing as the compiler's uncertainty about whether
+two references point at the same memory; after a write, it may have to reload
+values it otherwise could have kept.
+
+Fabian makes this concrete with C/C++ examples: overlapping `memcpy` has to
+proceed carefully because output can affect later input, and passing a loop
+bound by reference can force reloads because the output pointer might alias it.
+
+Take home: Make read-only inputs and writable outputs obvious so readers and the
+compiler know what may overlap. `zdisamar` functions should use read-only input
+slices, separate output buffers, and small settings passed by value where that
+clarifies mutation boundaries.
 
 ## Main Lessons
 

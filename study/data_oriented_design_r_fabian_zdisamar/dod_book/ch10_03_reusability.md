@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Reusability"](https://www.dataorienteddesign.com/dodbook/node11.html#SECTION001130000000000000000) (printed-book p183).
 
-Summary: Reuse clear data-changing steps by feeding them simple data so functions are not tied to one large domain object.
+Summary: Fabian redefines reusability as preserving useful information: the
+order and existence of tasks performed on data, not merely copying source files
+or classes.
+
+He develops this against the object-oriented story of reuse through adapters,
+wrappers, and agents. The positive example he keeps is `FILE` from `stdio.h`:
+an agent into a complex platform system, not a large object graph that every
+caller must inherit.
+
+Take home: Reuse clear data-changing steps by feeding them simple data so
+functions are not tied to one large domain object. For `zdisamar`, the reusable
+asset is the prepare/run sequence over prepared data and caller-owned storage.
 
 ## Main Lessons
 

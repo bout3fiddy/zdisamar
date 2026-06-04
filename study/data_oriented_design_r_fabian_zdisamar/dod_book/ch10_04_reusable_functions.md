@@ -2,7 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Reusable functions"](https://www.dataorienteddesign.com/dodbook/node11.html#SECTION001140000000000000000) (printed-book p186).
 
-Summary: Small functions should accept simple arrays so they can be reused anywhere the same data shape exists.
+Summary: Fabian argues that rigid, simple containers make transforms
+accidentally reusable: if data can be presented in the shape a transform needs,
+the transform can operate on it.
+
+The process lesson comes from languages and databases: Haskell-like signatures
+can make many transforms understandable from their arguments, and database query
+optimizations work across tables because the data is held in regular shapes.
+Reusable functions emerge from that regularity.
+
+Take home: Small functions should accept simple arrays so they can be reused
+anywhere the same data shape exists. `zdisamar` helpers should take slices,
+counts, and small tables rather than large model objects.
 
 ## Main Lessons
 

@@ -2,7 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Data-oriented Lookup"](https://www.dataorienteddesign.com/dodbook/node7.html#SECTION00720000000000000000) (printed-book p115).
 
-Summary: Search narrow key arrays so lookup code does not pull full payload rows into the search loop.
+Summary: Fabian's lookup example separates the search criterion from the
+payload: the hunt needs the time values, not the whole animation key. The reason
+is cache behavior; narrow key arrays fill cache lines with data the search will
+actually compare.
+
+His concrete example is animation-key lookup, a common pattern in animation
+libraries and hand-rolled sorted structures. He first rewrites a full-key binary
+search, then pushes further because PS3 and Xbox 360 work made poor cache-line
+utilisation a major cost.
+
+Take home: Search narrow key arrays so lookup code does not pull full payload
+rows into the search loop. `zdisamar` should find wavelength/key positions
+first, then fetch larger spectroscopy or RTM payloads after the index is known.
 
 ## Main Lessons
 
