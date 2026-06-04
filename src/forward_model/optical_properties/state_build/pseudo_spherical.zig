@@ -48,7 +48,7 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     }
 
     var sample_index: usize = 0;
-    for (geometry.layers, layer_inputs, 0..) |layer_geometry, layer_input, layer_index| {
+    for (geometry.layers, layer_inputs, 0..) |*layer_geometry, *layer_input, layer_index| {
         level_sample_starts[layer_index] = sample_index;
         if (subgrid_divisions <= 1) {
             attenuation_samples[sample_index] = .{
@@ -182,7 +182,8 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     } else {
         level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
         for (1..solver_layer_count) |ilevel| {
-            const start_index: usize = @intCast(self.layers[ilevel].sublayer_start_index);
+            const layer = &self.layers[ilevel];
+            const start_index: usize = @intCast(layer.sublayer_start_index);
             level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, start_index);
         }
         level_altitudes_km[solver_layer_count] = shared_geometry.levelAltitudeFromSublayers(sublayers, sublayers.len);
@@ -200,7 +201,7 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                 .upper_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, solver_level + 1),
             }
         else blk: {
-            const layer = self.layers[solver_level];
+            const layer = &self.layers[solver_level];
             const start: usize = @intCast(layer.sublayer_start_index);
             const count: usize = @intCast(layer.sublayer_count);
             if (count == 0) return false;

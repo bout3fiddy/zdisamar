@@ -104,7 +104,7 @@ pub fn resolveContinuumOwnerSpecies(
     if (operational_o2_lut.enabled()) return .o2;
     if (active_line_species) |species| return species;
     if (line_absorbers.len == 1) return line_absorbers[0].species;
-    for (line_absorbers) |line_absorber| {
+    for (line_absorbers) |*line_absorber| {
         if (line_absorber.species == .o2) return .o2;
     }
     return null;

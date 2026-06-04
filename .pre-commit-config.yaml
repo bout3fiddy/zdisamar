@@ -62,6 +62,23 @@ repos:
         pass_filenames: false
         verbose: true
 
+      - id: zig-styleguide-src
+        name: zig styleguide (src, advisory)
+        # Advisory until the existing src/ styleguide backlog is drained.
+        entry: sh -c 'uv run scripts/linting/check-zig-styleguide.py --format text "$@" || true' --
+        language: system
+        files: '^src/.*\.zig$'
+        verbose: true
+
+      - id: zig-dod-layout-src
+        name: zig DOD layout audit (src, advisory)
+        # Advisory ranking pass; use --fail-on once findings are triaged.
+        entry: sh -c 'uv run scripts/linting/check-zig-dod-layout.py src || true'
+        language: system
+        files: '^src/.*\.zig$'
+        pass_filenames: false
+        verbose: true
+
       - id: zig-fmt
         name: zig fmt
         entry: zig fmt --check

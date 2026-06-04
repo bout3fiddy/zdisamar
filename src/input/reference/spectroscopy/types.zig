@@ -191,7 +191,7 @@ pub const SpectroscopyRuntimeControls = struct {
         if (lines.len == 0) return null;
 
         var max_strength: f64 = 0.0;
-        for (lines) |line| {
+        for (lines) |*line| {
             max_strength = @max(max_strength, line.line_strength_cm2_per_molecule);
         }
         return max_strength * scale;

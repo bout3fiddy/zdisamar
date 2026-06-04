@@ -501,7 +501,7 @@ fn collectAdaptiveStrongLineCentersFromList(
     center_count: *usize,
 ) bool {
     const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
-    for (line_list.lines) |line| {
+    for (line_list.lines) |*line| {
         if (line.line_strength_cm2_per_molecule < threshold_strength) continue;
         if (line.center_wavelength_nm < global_start_nm or line.center_wavelength_nm > global_end_nm) continue;
         if (center_count.* >= types.max_integration_sample_count) return false;

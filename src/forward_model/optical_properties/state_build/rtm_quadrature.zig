@@ -28,7 +28,7 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     var total_weight: f64 = 0.0;
     var total_scattering_derivative: f64 = 0.0;
 
-    for (layer_inputs) |layer| {
+    for (layer_inputs) |*layer| {
         const derivative = transport_common.Jacobian.get(
             layer.scattering_optical_depth_jacobian,
             .aerosol_optical_depth,
@@ -38,7 +38,7 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     }
     if (total_scattering_derivative <= 0.0 or self.aerosol_phase_coefficients[0] == 0.0) return;
 
-    for (rtm_levels, 0..) |level, level_index| {
+    for (rtm_levels, 0..) |*level, level_index| {
         if (level.weight <= 0.0) continue;
         const below_active = level_index > 0 and
             transport_common.Jacobian.get(
@@ -134,7 +134,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             //   RTM level. The source quadrature is not renormalized back to
             //   the sublayer-integrated layer scattering totals.
             var has_active_quadrature = false;
-            for (rtm_levels) |rtm_level| {
+            for (rtm_levels) |*rtm_level| {
                 if (rtm_level.weightedScattering() > 0.0) {
                     has_active_quadrature = true;
                     break;
@@ -166,7 +166,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     }
 
     var has_active_quadrature = false;
-    for (self.layers) |layer| {
+    const layers: []const State.PreparedLayer = self.layers;
+    for (layers) |*layer| {
         const start: usize = @intCast(layer.sublayer_start_index);
         const count: usize = @intCast(layer.sublayer_count);
         if (count == 0) continue;
@@ -182,9 +183,9 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 
         var total_span_km: f64 = 0.0;
         var total_scattering: f64 = 0.0;
-        for (sublayers[start..stop], layer_inputs[start..stop]) |sublayer, layer_input| {
-            total_span_km += @max(sublayer.path_length_cm / 1.0e5, 0.0);
-            total_scattering += @max(layer_input.scattering_optical_depth, 0.0);
+        for (start..stop) |row| {
+            total_span_km += @max(sublayers[row].path_length_cm / 1.0e5, 0.0);
+            total_scattering += @max(layer_inputs[row].scattering_optical_depth, 0.0);
         }
         if (total_span_km <= 0.0) continue;
 
@@ -309,7 +310,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     if (compute_jacobian) fillSharedAerosolSourceJacobianFromLayers(self, layer_inputs, rtm_levels);
 
     var has_active_quadrature = false;
-    for (rtm_levels) |rtm_level| {
+    for (rtm_levels) |*rtm_level| {
         if (rtm_level.weightedScattering() > 0.0) {
             has_active_quadrature = true;
             break;

@@ -541,7 +541,7 @@ fn buildAerosolProfileSublayerProperties(
             const added_optical_depth = profile_layer.optical_depth * (overlap / layer_pressure_span);
             if (added_optical_depth <= 0.0) continue;
             const old_optical_depth = property.optical_depth;
-            if (old_optical_depth > 0.0 and !profileSpectralScalingMatches(property.*, profile_layer)) {
+            if (old_optical_depth > 0.0 and !profileSpectralScalingMatches(property, profile_layer)) {
                 return error.InvalidRequest;
             }
             const new_optical_depth = old_optical_depth + added_optical_depth;
@@ -587,7 +587,7 @@ fn buildAerosolProfileSublayerProperties(
 }
 
 fn profileSpectralScalingMatches(
-    property: AerosolSublayerProperties,
+    property: *const AerosolSublayerProperties,
     profile_layer: AerosolModel.ProfileLayer,
 ) bool {
     return std.math.approxEqAbs(
@@ -603,7 +603,7 @@ fn profileSpectralScalingMatches(
     );
 }
 
-fn profileScatteringAtMidpoint(context: *const Context, property: AerosolSublayerProperties) f64 {
+fn profileScatteringAtMidpoint(context: *const Context, property: *const AerosolSublayerProperties) f64 {
     if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
     const optical_depth = ParticleProfiles.scaleOpticalDepth(
         property.optical_depth,
@@ -621,7 +621,7 @@ fn profileMeanSingleScatterAlbedo(
     var optical_depth: f64 = 0.0;
     var scattering: f64 = 0.0;
 
-    for (aerosol_sublayers) |property| {
+    for (aerosol_sublayers) |*property| {
         if (property.optical_depth <= 0.0) continue;
         const scaled_optical_depth = ParticleProfiles.scaleOpticalDepth(
             property.optical_depth,
@@ -646,7 +646,7 @@ fn profileEquivalentPhaseCoefficients(
     var scattering: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
 
-    for (aerosol_sublayers) |property| {
+    for (aerosol_sublayers) |*property| {
         const sublayer_scattering = profileScatteringAtMidpoint(context, property);
         if (sublayer_scattering <= 0.0) continue;
         scattering += sublayer_scattering;

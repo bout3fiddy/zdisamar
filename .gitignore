@@ -66,3 +66,7 @@ validation/release/
 
 # Scratch / experiments
 /tmp
+
+# Study notes are tracked; book PDFs should stay local.
+study/**/*.pdf
+study/**/*.o

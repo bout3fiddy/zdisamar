@@ -5,21 +5,21 @@ const std = @import("std");
 const PhysicsCore = @import("physics_core.zig");
 const Types = @import("types.zig");
 
-pub fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
+pub fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.center_wavenumber_cm1))
         line.center_wavenumber_cm1
     else
         PhysicsCore.wavelengthToWavenumberCm1(line.center_wavelength_nm);
 }
 
-pub fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
+pub fn lineAirHalfWidthCm1(line: *const Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.air_half_width_cm1))
         line.air_half_width_cm1
     else
         PhysicsCore.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
 }
 
-pub fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
+pub fn linePressureShiftCm1(line: *const Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.pressure_shift_cm1))
         line.pressure_shift_cm1
     else
@@ -45,11 +45,11 @@ pub fn zeroEvaluation() Types.SpectroscopyEvaluation {
     };
 }
 
-pub fn lineHasVendorStrongLineMetadata(line: Types.SpectroscopyLine) bool {
+pub fn lineHasVendorStrongLineMetadata(line: *const Types.SpectroscopyLine) bool {
     return line.branch_ic1 != null and line.branch_ic2 != null and line.rotational_nf != null;
 }
 
-pub fn lineHasVendorStrongLineMetadataFromSource(line: Types.SpectroscopyLine) bool {
+pub fn lineHasVendorStrongLineMetadataFromSource(line: *const Types.SpectroscopyLine) bool {
     return line.vendor_filter_metadata_from_source and lineHasVendorStrongLineMetadata(line);
 }
 
@@ -57,7 +57,7 @@ pub fn wavenumberCm1ToWavelengthNm(wavenumber_cm1: f64) f64 {
     return 1.0e7 / @max(wavenumber_cm1, 1.0);
 }
 
-pub fn isVendorO2AStrongCandidate(line: Types.SpectroscopyLine) bool {
+pub fn isVendorO2AStrongCandidate(line: *const Types.SpectroscopyLine) bool {
     return line.gas_index == 7 and
         line.isotope_number == 1 and
         line.branch_ic1 != null and
@@ -68,14 +68,14 @@ pub fn isVendorO2AStrongCandidate(line: Types.SpectroscopyLine) bool {
         line.rotational_nf.? <= 35;
 }
 
-pub fn isVendorO2AStrongCandidateFromSource(line: Types.SpectroscopyLine) bool {
+pub fn isVendorO2AStrongCandidateFromSource(line: *const Types.SpectroscopyLine) bool {
     return line.vendor_filter_metadata_from_source and isVendorO2AStrongCandidate(line);
 }
 
 pub fn runtimeControlsMatchLine(
     gas_index: ?u16,
     active_isotopes: []const u8,
-    line: Types.SpectroscopyLine,
+    line: *const Types.SpectroscopyLine,
 ) bool {
     if (gas_index) |expected_gas_index| {
         if (line.gas_index != expected_gas_index) return false;

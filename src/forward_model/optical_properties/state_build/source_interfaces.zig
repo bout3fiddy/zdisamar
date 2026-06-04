@@ -87,7 +87,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
 
         if (self.layers.len != layer_inputs.len) return;
         for (1..layer_inputs.len) |ilevel| {
-            const layer = self.layers[ilevel];
+            const layer = &self.layers[ilevel];
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const sublayer_count: usize = @intCast(layer.sublayer_count);
             if (sublayer_count == 0) {

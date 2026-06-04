@@ -487,7 +487,7 @@ pub const RtmQuadratureLevel = struct {
     phase_aerosol_weight: f64 = 0.0,
     phase_rayleigh2_weight: f64 = 0.0,
 
-    pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
+    pub fn weightedScattering(self: *const RtmQuadratureLevel) f64 {
         // RtmQuadratureLevel.weightedScattering --------------------------------------------------------------|
         // Source contribution from this quadrature level before phase rows and radiation fields are applied.  |
         //                                                                                                     |
