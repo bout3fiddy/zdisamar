@@ -23,10 +23,16 @@ Avoid letting input and output secretly refer to the same storage.
   fn scale(input: []const f64, factor: f64, output: []f64) void {
       for (input, output) |value, *dst| dst.* = value * factor;
   }
+
+  fn scaledValues(input: []const f64, factor: f64, output: []f64) []const f64 {
+      scale(input, factor, output);
+      return output;
+  }
   ```
 
   Notice that `input` is `[]const f64`, so this function promises not to
-  write through that slice. `output` is writable.
+  write through that slice. `output` is writable, and `scaledValues` returns
+  the filled output slice for the next step to read.
 
 - Do not let input and output secretly point to the same memory.
   If they overlap, a write to the output can change a value the function has not
@@ -53,14 +59,19 @@ fn fillOutput(input: []const f64, scale: f64, output: []f64) void {
     }
 }
 
-fn run(prepared: *const PreparedInput, workspace: *Workspace) !void {
+fn scaledOutput(
+    prepared: *const PreparedInput,
+    workspace: *Workspace,
+) ![]const f64 {
     // Prepared data is read; temporary output lives in workspace.
     try fillOutput(prepared.optical_depths, prepared.scale, workspace.tmp);
+    return workspace.tmp;
 }
 ```
 
 Notice that prepared data is read through `*const PreparedInput`, and output
-goes into `workspace.tmp`. The read side and write side are separate.
+goes into `workspace.tmp`. The returned slice is still workspace memory, so the
+read side and write side stay separate without allocating a new result.
 
 
 ## Practical Example
@@ -97,11 +108,17 @@ fn fillOutput(input: []const f64, output: []f64) void {
         dst.* = value * 2.0;
     }
 }
+
+fn doubledValues(input: []const f64, output: []f64) []const f64 {
+    fillOutput(input, output);
+    return output;
+}
 ```
 
 The first signature does not tell the reader which slice is input and which
 slice is output. The better signature marks the input read-only and states that
-output is separate, which is the case the fast vector loop needs.
+output is separate. `doubledValues` then hands the filled output slice to the
+caller. That is the simple no-overlap case the fast vector loop needs.
 
 The generated output for the better approach is easier to read.
 

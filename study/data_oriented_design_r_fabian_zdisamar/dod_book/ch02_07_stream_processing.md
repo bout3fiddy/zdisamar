@@ -70,9 +70,19 @@ fn fillRadiance(rows: []const MissRow, constants: Constants, out: []f64) void {
         dst.* = solveOne(row, constants);
     }
 }
+
+fn fillReflectance(
+    rows: []const MissRow,
+    constants: Constants,
+    storage: *ProductStorage,
+) void {
+    fillRadiance(rows, constants, storage.radiance);
+    assembleReflectance(storage.radiance, storage.reflectance);
+}
 ```
 
-Notice that every row uses the same constants and writes one output slot.
+Notice that `fillRadiance` fills caller-owned `storage.radiance`. The next line
+uses that filled slice to write `storage.reflectance`.
 There is no hidden global accumulator inside the loop.
 
 ## Practical Example

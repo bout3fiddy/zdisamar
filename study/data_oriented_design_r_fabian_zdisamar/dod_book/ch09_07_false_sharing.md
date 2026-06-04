@@ -24,10 +24,17 @@ work. Combine shared results after the worker has finished its local loop.
   fn runWorker(range: Range, output: []Miss) !void {
       try fillWorkerMisses(range, output);
   }
+
+  fn workerMisses(range: Range, output: []Miss) ![]const Miss {
+      try runWorker(range, output);
+      return output;
+  }
   ```
 
   Notice that the worker receives the output area it is allowed to write. The
-  main work writes there, not into another worker's output.
+  main work writes there, not into another worker's output. `workerMisses`
+  returns that filled worker slice for the caller to read after `runWorker`
+  finishes.
 
 
 - Add into a local variable first.

@@ -70,10 +70,20 @@ fn fillJacobians(active: []const ActiveDerivative, out: []JacobianRow) void {
         row.* = computeDerivative(derivative.layer_index, derivative.state);
     }
 }
+
+fn jacobianRows(
+    active: []const ActiveDerivative,
+    out: []JacobianRow,
+) []const JacobianRow {
+    const filled = out[0..active.len];
+    fillJacobians(active, filled);
+    return filled;
+}
 ```
 
 Notice that the row existing in `active` means "this derivative must be
-computed". The loop does not need another enabled flag.
+computed". `fillJacobians` fills caller-owned `out`, and `jacobianRows` returns
+the filled part of that slice.
 
 The other shape is a list of all possible derivatives plus an enabled flag on
 each one. Then the loop still has to check rows that will not be computed. Here,

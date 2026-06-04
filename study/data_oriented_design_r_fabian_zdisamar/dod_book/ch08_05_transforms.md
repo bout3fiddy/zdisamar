@@ -73,10 +73,21 @@ fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput
         dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
     }
 }
+
+fn solveAtWavelength(
+    ctx: PreparedContext,
+    wavelength_nm: f64,
+    out: *ForwardInput,
+    workspace: *Workspace,
+) ForwardResult {
+    fillForwardInput(ctx, wavelength_nm, out);
+    return solveForward(out, workspace);
+}
 ```
 
 Notice that the function receives prepared `layers` and `carriers`, then
-writes RTM layer input. It does not load reference files or parse scene data.
+writes RTM layer input. `solveAtWavelength` passes that filled `out` value to
+the solver.
 
 The transform could take `layers` and `carriers` as separate arguments. That is
 fine for a tiny helper, but it becomes easy to pass prepared `layers` with
@@ -117,15 +128,30 @@ the prepare call in the repeated loop.
 A better approach sends prepared context into the transform.
 
 ```zig
-fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
+fn fillForwardInput(
+    ctx: PreparedContext,
+    wavelength_nm: f64,
+    out: *ForwardInput,
+) void {
     for (ctx.layers, out.layers) |layer, *dst| {
         dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
     }
+}
+
+fn solvePreparedWavelength(
+    ctx: PreparedContext,
+    wavelength_nm: f64,
+    out: *ForwardInput,
+    workspace: *Workspace,
+) ForwardResult {
+    fillForwardInput(ctx, wavelength_nm, out);
+    return solveForward(out, workspace);
 }
 ```
 
 The first version hides preparation inside the transform. The better version
 gives the repeated transform prepared input and a place to write.
+`solvePreparedWavelength` then passes the filled `out` value to the solver.
 
 The generated output for the better approach is easier to read.
 

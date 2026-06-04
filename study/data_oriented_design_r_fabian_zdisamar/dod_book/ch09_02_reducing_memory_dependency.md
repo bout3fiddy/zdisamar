@@ -83,10 +83,21 @@ fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) 
         dst.* = sum;
     }
 }
+
+fn integratedRadiance(
+    plan: ForwardMissPlan,
+    results: []const ForwardResult,
+    out: []f64,
+) []const f64 {
+    integrate(plan, results, out);
+    return out;
+}
 ```
 
 Notice that the inner loop follows saved indexes into one result array. It
 does not walk a chain of objects or maps to find each radiance value.
+`integratedRadiance` returns the caller-owned `out` slice after `integrate`
+fills it.
 
 ## Practical Example
 

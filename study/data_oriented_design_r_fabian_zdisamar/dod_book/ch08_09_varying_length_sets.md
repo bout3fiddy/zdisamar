@@ -99,11 +99,22 @@ fn prefixStarts(counts: []const usize, starts: []usize) void {
         total += count;
     }
 }
+
+fn groupSamples(
+    index: usize,
+    counts: []const usize,
+    starts: []const usize,
+    all: []const Sample,
+) []const Sample {
+    const start = starts[index];
+    return all[start .. start + counts[index]];
+}
 ```
 
 Notice that `KernelRef` stores either inline samples or a side-list range.
 `prefixStarts` turns per-group counts into start positions for a packed output
-list.
+list. `groupSamples` then reads those filled `starts` values to return one
+group.
 
 The caller should not need to know whether a kernel's samples are inline or in
 side storage. `KernelRef` keeps both storage choices behind the same

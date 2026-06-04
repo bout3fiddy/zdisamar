@@ -46,6 +46,11 @@ people and the compiler to follow.
           dst.* = solveRadianceAt(wavelength_nm);
       }
   }
+
+  fn radianceView(buffers: ProductBuffers) []const f64 {
+      fillRadiance(buffers);
+      return buffers.radiance;
+  }
   ```
 
   Notice that `fillRadiance` reads `wavelengths` and writes `radiance`. Passing
@@ -79,10 +84,20 @@ fn fillReflectance(radiance: []const f64, irradiance: []const f64, out: []f64) v
         dst.* = if (e != 0.0) l / e else 0.0;
     }
 }
+
+fn reflectanceView(
+    radiance: []const f64,
+    irradiance: []const f64,
+    out: []f64,
+) []const f64 {
+    fillReflectance(radiance, irradiance, out);
+    return out;
+}
 ```
 
 Notice that `radiance` and `irradiance` are read-only inputs. `out` is the
-writable output slice, and the loop writes it from left to right.
+writable output slice, and `reflectanceView` returns it after the loop writes
+it from left to right.
 
 ## Practical Example
 

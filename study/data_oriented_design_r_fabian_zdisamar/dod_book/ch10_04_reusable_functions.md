@@ -49,10 +49,16 @@ less a function knows about the larger program, the easier it is to reuse.
   fn fillOutput(input: []const f64, output: []f64) void {
       for (input, output) |value, *dst| dst.* = value;
   }
+
+  fn copiedValues(input: []const f64, output: []f64) []const f64 {
+      fillOutput(input, output);
+      return output;
+  }
   ```
 
   Notice that `input` is read-only and `output` is writable. The signature
-  explains the direction of data movement.
+  explains the direction of data movement. `copiedValues` shows the filled
+  caller-owned `output` slice being returned as a read-only view.
 
 
 ## Code Material

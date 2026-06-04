@@ -41,10 +41,16 @@ should exist only when a later step will actually read it.
       }
       return total;
   }
+
+  fn scatteringForLayers(layers: []const Layer, hot_layers: []HotLayer) f64 {
+      buildHotLayers(layers, hot_layers);
+      return sumScattering(hot_layers);
+  }
   ```
 
-  Notice that `buildHotLayers` is where the larger layer is narrowed. The
-  repeated `sumScattering` loop then reads only the two fields it needs.
+  Notice that `buildHotLayers` does not return a new list. It fills the
+  caller-provided `hot_layers` slice, and `scatteringForLayers` passes that
+  filled slice into `sumScattering`.
 
   The simpler-looking alternative is to pass full `Layer` rows into
   `sumScattering`. That makes the loop carry fields it never reads. `HotLayer`
@@ -91,10 +97,21 @@ fn ensureJacobianStorage(storage: *ProductStorage, states: JacobianMask) !void {
     // Allocate only enough storage for the requested states.
     try storage.ensureJacobians(states.count());
 }
+
+fn solveRequestedStates(
+    storage: *ProductStorage,
+    states: JacobianMask,
+    input: ForwardInput,
+) !ProductView {
+    try ensureJacobianStorage(storage, states);
+    return solveForward(input, storage);
+}
 ```
 
 Notice that the function releases Jacobian storage when no states are
 active, and only allocates it when the state mask says it will be used.
+`solveRequestedStates` then runs the forward solve with the same `storage`
+after it has been cleared or sized for the requested states.
 
 ## Practical Example
 

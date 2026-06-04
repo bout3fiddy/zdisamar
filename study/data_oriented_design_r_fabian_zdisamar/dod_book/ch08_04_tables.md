@@ -58,11 +58,16 @@ common work clearer or faster.
       }
       return total;
   }
+
+  fn sumPreparedOpticalDepth(layers: []const Layer, table: LayerTables) f64 {
+      buildLayerTables(layers, table);
+      return sumOpticalDepth(table);
+  }
   ```
 
   Notice that `buildLayerTables` splits larger layer rows into columns.
-  `sumOpticalDepth` then reads only `table.optical_depth`, so it does not need
-  to step through source values.
+  `sumPreparedOpticalDepth` then passes the filled table to
+  `sumOpticalDepth`, which reads only `table.optical_depth`.
 
   The columns could be passed as separate slices, but their lengths and order
   still have to match. If one column is filtered or reordered alone, optical
@@ -118,11 +123,21 @@ fn mergeJoin(a: []const RowA, b: []const RowB, out: *ArrayList(Joined)) !void {
         }
     }
 }
+
+fn joinedRows(
+    a: []const RowA,
+    b: []const RowB,
+    out: *ArrayList(Joined),
+) ![]const Joined {
+    try mergeJoin(a, b, out);
+    return out.items;
+}
 ```
 
 Notice that `MotionTable.step` writes positions in order while reading
 velocities in order. `mergeJoin` walks two sorted lists once instead of nesting
-one full scan inside another.
+one full scan inside another. `joinedRows` shows that `mergeJoin` fills the
+caller-owned `out` list.
 
 Passing `positions` and `velocities` separately makes it easier to pass arrays
 with different lengths or different ordering. Then a `positions` slot can be
