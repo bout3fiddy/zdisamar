@@ -59,7 +59,7 @@ tells only half the story.
 
 Here is a pattern that records elapsed time without the size of the work.
 
-```text
+```
 bench integrate elapsed_ns=28061000
 ```
 
@@ -70,7 +70,7 @@ matches the baseline.
 A better approach records the workload and the correctness signal with the
 timing.
 
-```text
+```
 bench integrate_linear_search items=512 iterations=30 elapsed_ns=28061000 ns_per_item=1826.888 checksum=3113100.000
 bench integrate_prepared_indexes items=512 iterations=30 elapsed_ns=34917 ns_per_item=2.273 checksum=3113100.000
 ```
