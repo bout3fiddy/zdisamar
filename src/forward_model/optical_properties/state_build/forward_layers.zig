@@ -185,7 +185,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             }
 
             var totals: OpticalDepthBreakdown = .{};
-            for (self.layers, layer_inputs) |layer, *layer_input| {
+            const layers: []const State.PreparedLayer = self.layers;
+            for (layers, layer_inputs) |*layer, *layer_input| {
                 const start_index: usize = @intCast(layer.sublayer_start_index);
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
@@ -234,7 +235,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         }
 
         var totals: OpticalDepthBreakdown = .{};
-        for (self.layers, layer_inputs) |layer, *layer_input| {
+        const layers: []const State.PreparedLayer = self.layers;
+        for (layers, layer_inputs) |*layer, *layer_input| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
             const evaluated = self.evaluateLayerAtWavelengthWithSpectroscopyCache(
@@ -256,7 +258,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     const aerosol_single_scatter_albedo = self.resolvedAerosolSingleScatterAlbedo();
 
     var totals: OpticalDepthBreakdown = .{};
-    for (self.layers, layer_inputs) |layer, *layer_input| {
+    const layers: []const State.PreparedLayer = self.layers;
+    for (layers, layer_inputs) |*layer, *layer_input| {
         const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
             layer.aerosol_optical_depth,
             layer.aerosol_base_optical_depth,

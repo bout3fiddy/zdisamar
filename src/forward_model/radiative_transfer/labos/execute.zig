@@ -1235,7 +1235,7 @@ fn hasLayerJacobian(layers: []const common.LayerInput, state: common.Jacobian.St
     // Non-integrated pressure weighting only makes sense with a pressure derivative.                          |
     // --------------------------------------------------------------------------------------------------------|
 
-    for (layers) |layer| {
+    for (layers) |*layer| {
         if (common.Jacobian.get(layer.optical_depth_jacobian, state) != 0.0) return true;
         if (common.Jacobian.get(layer.scattering_optical_depth_jacobian, state) != 0.0) return true;
         if (common.Jacobian.get(layer.single_scatter_albedo_jacobian, state) != 0.0) return true;

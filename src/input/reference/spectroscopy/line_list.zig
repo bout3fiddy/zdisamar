@@ -356,11 +356,11 @@ pub fn totalSigmaWithStrongLineSidecars(
     var strong_line_sigma: f64 = 0.0;
     var line_mixing_sigma: f64 = 0.0;
 
-    for (relevant_lines, 0..) |line, line_index| {
+    for (relevant_lines, 0..) |*line, line_index| {
         if (line_list_module.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, strong_line_anchors)) continue;
         const contribution = PhysicsCore.weakLineContribution(
             wavelength_nm,
-            line,
+            line.*,
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
@@ -476,7 +476,7 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     else
         null;
 
-    for (window.lines, 0..) |line, line_index| {
+    for (window.lines, 0..) |*line, line_index| {
         if (vendor_weak_exclusions) |matches| {
             const global_index = window.start_index + line_index;
             if (global_index < matches.len and matches[global_index] != null) continue;
@@ -492,7 +492,7 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
         } else {
             const contribution = PhysicsCore.weakLineContributionWithWavelengthState(
                 wavelength_nm,
-                line,
+                line.*,
                 safe_temperature,
                 pressure_scale,
                 Types.hitran_reference_temperature_k,
@@ -558,7 +558,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
 
     const matches = try allocator.alloc(?u16, self.lines.len);
     errdefer allocator.free(matches);
-    for (self.lines, 0..) |line, line_index| {
+    for (self.lines, 0..) |*line, line_index| {
         if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line)) {
             matches[line_index] = null;
             continue;
@@ -600,16 +600,16 @@ pub fn applyRuntimeControls(
 
     if (gas_index != null or active_isotopes.len != 0) {
         var retained_count: usize = 0;
-        for (self.lines) |line| {
+        for (self.lines) |*line| {
             if (Support.runtimeControlsMatchLine(gas_index, active_isotopes, line)) retained_count += 1;
         }
         if (retained_count != self.lines.len) {
             const retained = try allocator.alloc(Types.SpectroscopyLine, retained_count);
             errdefer allocator.free(retained);
             var write_index: usize = 0;
-            for (self.lines) |line| {
+            for (self.lines) |*line| {
                 if (!Support.runtimeControlsMatchLine(gas_index, active_isotopes, line)) continue;
-                retained[write_index] = line;
+                retained[write_index] = line.*;
                 write_index += 1;
             }
             allocator.free(self.lines);
@@ -849,14 +849,14 @@ pub fn selectStrongLineAnchors(
     @memset(anchors, Types.missing_strong_line_anchor_index);
 
     var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
-    for (relevant_lines, 0..) |line, line_index| {
+    for (relevant_lines, 0..) |*line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
         if (strong_index >= anchors.len) continue;
         if (line_index > std.math.maxInt(Types.StrongLineAnchorIndex)) continue;
         const delta = @abs(strong_lines[strong_index].center_wavelength_nm - line.center_wavelength_nm);
         if (delta > deltas[strong_index]) continue;
         if (delta == deltas[strong_index] and anchors[strong_index] != Types.missing_strong_line_anchor_index) {
-            const incumbent = relevant_lines[@intCast(anchors[strong_index])];
+            const incumbent = &relevant_lines[@intCast(anchors[strong_index])];
             if (incumbent.line_strength_cm2_per_molecule >= line.line_strength_cm2_per_molecule) continue;
         }
         anchors[strong_index] = @intCast(line_index);
@@ -868,7 +868,7 @@ pub fn selectStrongLineAnchors(
 pub fn matchedStrongIndexForRelevantLine(
     self: SpectroscopyLineList,
     start_index: usize,
-    line: Types.SpectroscopyLine,
+    line: *const Types.SpectroscopyLine,
     line_index: usize,
 ) ?usize {
     if (self.strong_line_match_by_line) |matches| {
@@ -893,7 +893,7 @@ pub fn matchedStrongIndexForRelevantLine(
 pub fn shouldExcludeWeakLine(
     self: SpectroscopyLineList,
     start_index: usize,
-    line: Types.SpectroscopyLine,
+    line: *const Types.SpectroscopyLine,
     line_index: usize,
     strong_line_anchors: []const Types.StrongLineAnchorIndex,
 ) bool {
@@ -917,7 +917,7 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
 
     var saw_candidate = false;
     var matched_candidate = false;
-    for (self.lines) |line| {
+    for (self.lines) |*line| {
         if (!Support.isVendorO2AStrongCandidateFromSource(line)) continue;
         saw_candidate = true;
         _ = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
@@ -945,7 +945,7 @@ fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
     if (self.runtime_controls.gas_index) |gas_index| {
         if (gas_index != 7) return false;
     }
-    for (self.lines) |line| {
+    for (self.lines) |*line| {
         if (line.gas_index != 7) continue;
         if (Support.lineHasVendorStrongLineMetadata(line)) return true;
     }

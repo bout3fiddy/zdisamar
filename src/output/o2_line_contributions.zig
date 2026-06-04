@@ -207,7 +207,7 @@ fn appendRowsForWavelength(
         &anchor_storage,
     );
 
-    for (relevant_lines, 0..) |line, line_index| {
+    for (relevant_lines, 0..) |*line, line_index| {
         total_row_count.* += 1;
         if (rows.items.len >= max_rows) continue;
         try rows.append(
@@ -265,7 +265,7 @@ fn weakLineRow(
     temperature_k: f64,
     pressure_scale: f64,
     start_index: usize,
-    line: SpectroscopyLine,
+    line: *const SpectroscopyLine,
     line_index: usize,
     strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
 ) O2LineContributionRow {
@@ -287,7 +287,7 @@ fn weakLineRow(
     else
         SpectroscopyPhysics.weakLineContribution(
             wavelength_nm,
-            line,
+            line.*,
             temperature_k,
             pressure_scale,
             SpectroscopyTypes.hitran_reference_temperature_k,
@@ -314,7 +314,7 @@ fn weakLineRow(
         .isotopologue_code = SpectroscopyStrongLines.deriveIsotopologueCode(line.gas_index, line.isotope_number),
         .center_wavelength_nm = line.center_wavelength_nm,
         .center_wavenumber_cm1 = SpectroscopySupport.lineCenterWavenumberCm1(line),
-        .shifted_center_wavenumber_cm1 = SpectroscopyStrongLines.shiftedLineCenterWavenumberCm1(line, pressure_scale),
+        .shifted_center_wavenumber_cm1 = SpectroscopyStrongLines.shiftedLineCenterWavenumberCm1(line.*, pressure_scale),
         .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
         .air_half_width_cm1 = SpectroscopySupport.lineAirHalfWidthCm1(line),
         .pressure_shift_cm1 = SpectroscopySupport.linePressureShiftCm1(line),
@@ -401,10 +401,11 @@ fn strongAnchorLine(
     relevant_start_index: usize,
     strong_index: usize,
 ) ?struct {
+
     // layout(64-bit):
-    //   anonymous optional payload: size 112 B, align 8 B; padding is included in payload size
-    //   footprint: per present payload = 112 B (0.109 KiB)
-    line: SpectroscopyLine,
+    //   anonymous optional payload: size 16 B, align 8 B; padding: 4 B after line_index
+    //   footprint: per present payload = 16 B (0.016 KiB); line points into the relevant-line slice
+    line: *const SpectroscopyLine,
     line_index: u32,
 } {
     if (strong_index >= strong_line_anchors.len) return null;
@@ -413,7 +414,7 @@ fn strongAnchorLine(
     const relevant_index_usize: usize = @intCast(relevant_index);
     if (relevant_index_usize >= relevant_lines.len) return null;
     return .{
-        .line = relevant_lines[relevant_index_usize],
+        .line = &relevant_lines[relevant_index_usize],
         .line_index = @intCast(relevant_start_index + relevant_index_usize),
     };
 }

@@ -25,7 +25,8 @@ pub fn opticalDepthBreakdownAtWavelength(
     var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
     if (self.sublayers) |sublayers| {
         var totals: OpticalDepthBreakdown = .{};
-        for (self.layers) |layer| {
+        const layers: []const Types.PreparedLayer = self.layers;
+        for (layers) |*layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
             const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(

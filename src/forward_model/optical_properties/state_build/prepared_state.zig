@@ -180,7 +180,8 @@ pub const PreparedOpticalState = struct {
         if (self.interval_semantics == .none) return false;
         const sublayers = self.sublayers orelse return false;
         var referenced_support_rows: usize = 0;
-        for (self.layers) |layer| referenced_support_rows += @as(usize, @intCast(layer.sublayer_count));
+        const layers: []const Types.PreparedLayer = self.layers;
+        for (layers) |*layer| referenced_support_rows += @as(usize, @intCast(layer.sublayer_count));
         return referenced_support_rows > sublayers.len;
     }
 
