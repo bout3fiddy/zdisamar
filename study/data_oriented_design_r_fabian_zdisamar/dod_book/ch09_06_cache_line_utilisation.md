@@ -26,12 +26,21 @@ question needs them, and move rarely used details away from hot repeated rows.
   const KernelRef = struct {
       start: u32,
       count: u16,
-      inline_count: u8,
   };
+
+  fn sideSamples(ref: KernelRef, samples: []const SampleRef) []const SampleRef {
+      // Turn the saved range into the sample references for this kernel.
+      return samples[ref.start .. ref.start + ref.count];
+  }
   ```
 
-  Notice that `start`, `count`, and `inline_count` describe how to read the
-  kernel samples. Keeping them together helps the sample-reading loop.
+  Notice that `sideSamples` reads `start` and `count` together. Keeping those
+  fields together helps the loop that repeatedly finds kernel samples.
+
+  Passing `start` without `count` is not enough to read a sample range. Passing
+  both separately is possible, but then a caller can mix `start` from one kernel
+  with `count` from another. `KernelRef` gives the loop the complete range
+  descriptor.
 
 - Move debug names and rarely used data away from the row used by the loop that
   runs many times.
@@ -41,30 +50,44 @@ question needs them, and move rarely used details away from hot repeated rows.
   ```zig
   const KernelDebug = struct {
       source_name: []const u8,
-      build_note: []const u8,
   };
+
+  fn describeKernel(debug: KernelDebug) []const u8 {
+      // Debug text is read away from the repeated sample loop.
+      return debug.source_name;
+  }
   ```
 
-  Notice that `source_name` and `build_note` are useful for debugging, but
-  not for the repeated sample loop. Keeping them elsewhere avoids loading them
-  by accident.
+  Notice that `describeKernel` uses the debug row outside the repeated sample
+  loop. The repeated sample loop can use `KernelRef` without carrying
+  `source_name`.
+
+  Keeping debug text in `KernelRef` would make the hot lookup row carry data it
+  does not read. `KernelDebug` keeps reporting data available without putting it
+  in the repeated sample path.
 
 
 ## Code Material
 
-Fabian references the lookup examples from Chapter 6 and gives cache-line size
-reasoning. Adapted:
+The code material keeps the fields needed to find samples in the hot row:
 
 ```zig
 const KernelRef = extern struct {
     // Fields read together by the sample loop stay in this row.
-    nominal_index: u32,
     side_start: u32,
     side_count: u16,
     inline_count: u8,
-    flags: u8,
     inline_samples: [4]SampleRef,
 };
+
+fn sampleRefs(ref: KernelRef, side: []const SampleRef) []const SampleRef {
+    if (ref.inline_count > 0) {
+        // Small kernels keep their sample references inside the row.
+        return ref.inline_samples[0..ref.inline_count];
+    }
+    // Larger kernels keep only a range into side storage.
+    return side[ref.side_start .. ref.side_start + ref.side_count];
+}
 
 comptime {
     // Keep the row within the intended compact size.
@@ -72,9 +95,13 @@ comptime {
 }
 ```
 
-Notice that the fields in `KernelRef` are the fields the sample-reading
-loop needs together. The point is not "make every struct 64 bytes"; it is to
-keep related repeated-read fields together.
+Notice that `sampleRefs` reads the fields that decide where the samples live.
+The point is not "make every struct 64 bytes"; it is to keep related repeated
+read fields together.
+
+The alternative is to make callers branch on inline storage versus side storage
+before reading samples. `sampleRefs` keeps that branch inside the row access
+code, so callers use one access path.
 
 
 ## Practical Example

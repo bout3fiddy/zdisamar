@@ -32,7 +32,8 @@ then produce the result. Avoid hiding important steps inside vague helper calls.
 
 ## Code Material
 
-Fabian's section is prose. The study code shape is:
+The code material is the stage order: prepare data, run the prepared model, then
+finish the product:
 
 ```zig
 pub fn simulate(input: Input, storage: *ProductStorage) !Output {

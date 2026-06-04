@@ -31,8 +31,8 @@ Avoid letting input and output secretly refer to the same storage.
 - Do not let input and output secretly point to the same memory.
   If they overlap, a write to the output can change a value the function has not
   read yet.
-  Keep the read buffer and write buffer separate, and document that contract
-  near the function that writes output.
+  Keep the read buffer and write buffer separate, and say that rule near the
+  function that writes output.
 
 - Pass small settings directly.
   A copied setting cannot be changed through another pointer while the function
@@ -42,8 +42,7 @@ Avoid letting input and output secretly refer to the same storage.
 
 ## Code Material
 
-Fabian gives examples where overlapping buffers and reference parameters force
-the compiler to be conservative. Adapted:
+The code material keeps input read-only and writes into a separate output:
 
 ```zig
 fn fillOutput(input: []const f64, scale: f64, output: []f64) void {
@@ -89,11 +88,11 @@ sub     x9, x2, x1  ; repeat the overlap check for the second input
 When aliasing is possible, the compiler adds runtime overlap checks before it
 can use the fast vector loop.
 
-A better approach marks input read-only and documents the no-overlap contract.
+A better approach marks input read-only and says the output must be separate.
 
 ```zig
 fn fillOutput(input: []const f64, output: []f64) void {
-    // Contract: output does not overlap input.
+    // The caller passes a separate output slice.
     for (input, output) |value, *dst| {
         dst.* = value * 2.0;
     }
@@ -101,8 +100,8 @@ fn fillOutput(input: []const f64, output: []f64) void {
 ```
 
 The first signature does not tell the reader which slice is input and which
-slice is output. The better signature marks the input read-only and documents
-the no-overlap contract used by the fast vector loop.
+slice is output. The better signature marks the input read-only and states that
+output is separate, which is the case the fast vector loop needs.
 
 The generated output for the better approach is easier to read.
 
@@ -124,7 +123,7 @@ br i1 %conflict.rdx, label %Then.preheader13, label %vector.ph
 ```
 
 `vector.memcheck` is the compiler's overlap check before the fast vector loop.
-Clear ownership and non-overlap contracts make that fast path easier to justify.
+Clear read/write ownership makes that fast path easier to justify.
 
 A benchmark for caller-owned output showed it was `1.50x` faster than
 allocating output every run, with the same checksum.

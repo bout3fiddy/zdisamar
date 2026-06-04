@@ -30,11 +30,25 @@ let repeated work run on simple, direct values.
       layers: []const LayerInput,
       config: SolveConfig,
   };
+
+  fn buildRtmInput(scene: SceneInput, config: SolveConfig) RtmInput {
+      // Pull only the already prepared runtime values out of the larger scene.
+      return .{
+          .wavelength_nm = scene.wavelength_nm,
+          .layers = scene.prepared_layers,
+          .config = config,
+      };
+  }
   ```
 
-  Notice that this struct names the values the solver reads. It does not
-  include the whole O2 A case, the input file, or a DISAMAR-style control
-  object.
+  Notice that `buildRtmInput` is the handoff. It reads the larger scene, then
+  returns only the values the solver will read.
+
+  Passing `wavelength_nm`, `layers`, and `config` separately would work for one
+  call. As more functions join the run, it becomes easier to pass
+  `wavelength_nm` from one scene with `layers` from another, or to forget one
+  setting. `RtmInput` keeps the prepared run input together and keeps the larger
+  scene out of solver code.
 
 
 - The solver should not need to know where the numbers came from.
@@ -44,7 +58,12 @@ let repeated work run on simple, direct values.
 
   ```zig
   fn solve(input: RtmInput, workspace: *Workspace) ForwardResult {
-      return runLayerMath(input.layers, input.wavelength_nm, workspace);
+      return runLayerMath(
+          input.layers,
+          input.wavelength_nm,
+          input.config,
+          workspace,
+      );
   }
   ```
 
@@ -67,8 +86,7 @@ let repeated work run on simple, direct values.
 
 ## Code Material
 
-Fabian's section is mainly conceptual. The code lesson for `zdisamar` is this
-shape:
+The runtime entry point keeps prepared input separate from reusable workspace:
 
 ```zig
 const RuntimeInput = struct {
@@ -78,15 +96,33 @@ const RuntimeInput = struct {
     config: SolveConfig,
 };
 
+pub fn prepareRuntimeInput(scene: SceneInput, config: SolveConfig) RuntimeInput {
+    return .{
+        .layers = scene.prepared_layers,
+        .wavelength_nm = scene.wavelength_nm,
+        .config = config,
+    };
+}
+
 pub fn solve(input: RuntimeInput, workspace: *Workspace) ForwardResult {
     // The RTM sees prepared data, not control-file text or DISAMAR objects.
-    return radiativeTransfer(input.layers, input.config, workspace);
+    return radiativeTransfer(
+        input.layers,
+        input.wavelength_nm,
+        input.config,
+        workspace,
+    );
 }
 ```
 
-Notice that the code that calls `radiativeTransfer` passes `layers`,
-`config`, and workspace memory. It does not pass a parser result or a full
-science case object into the RTM math.
+Notice that `prepareRuntimeInput` is where the larger scene becomes runtime
+data. `solve` then passes only `layers`, `wavelength_nm`, `config`, and
+workspace memory into the RTM math.
+
+The alternative is to pass `layers`, `wavelength_nm`, and `config` separately
+through every function. That makes it easier to mix values from different
+prepared scenes. `RuntimeInput` keeps the input group together, while workspace
+stays separate because it is reusable memory, not input data.
 
 ## Practical Example
 

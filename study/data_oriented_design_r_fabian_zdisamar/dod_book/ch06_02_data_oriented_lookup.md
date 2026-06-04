@@ -25,10 +25,20 @@ needs. Find the position first, then fetch the larger data once.
       times: []const f32,
       payloads: []const KeyPayload,
   };
+
+  fn findPayload(table: KeyTable, t: f32) KeyPayload {
+      // Search compact keys first, then read one larger payload.
+      const index = lowerBound(table.times, t);
+      return table.payloads[index];
+  }
   ```
 
-  Notice that `times` is separate from `payloads`. Searching by time reads
-  only the small time values.
+  Notice that `findPayload` searches the small `times` array first. It reads
+  one payload only after the index is known.
+
+  `times` and `payloads` are separate arrays, but they are still one table. The
+  index found in `times` must be used on `payloads`. Keeping both arrays in
+  `KeyTable` prevents code from searching one table and reading another.
 
 - Find the position first, then read the larger data once.
   The search loop should touch small key values. After it finds the index, it
@@ -56,9 +66,8 @@ needs. Find the position first, then fetch the larger data once.
 
 ## Code Material
 
-Fabian gives animation-key lookup listings: first binary search through full key
-objects, then separate key times from key payloads, then add a small pre-index
-using otherwise spare cache-line space. Adapted:
+The code material separates lookup keys from payloads, then adds a small coarse
+index:
 
 ```zig
 const KeyPayload = struct {
@@ -97,6 +106,11 @@ const IndexedKeyTable = struct {
 Notice that `times` is searched first because it is the small lookup data.
 `payloads` is read only after the index is found. `first_stage` is an extra
 helper that narrows the search range.
+
+The `times` column and `payloads` column have to stay in the same order. If
+helpers accepted those columns separately, a caller could pass mismatched slices
+and get a `payloads` entry for the wrong `times` entry. The table keeps the
+paired columns together.
 
 ## Practical Example
 

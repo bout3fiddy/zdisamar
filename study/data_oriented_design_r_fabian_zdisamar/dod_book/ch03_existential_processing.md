@@ -55,7 +55,7 @@ nothing to do; a non-empty list tells the program exactly what to process.
 
 ## Code Material
 
-Fabian's chapter uses health/regeneration examples. Adapted to Zig:
+The code material uses an explicit list of derivative work:
 
 ```zig
 const ActiveDerivative = struct {
@@ -74,6 +74,11 @@ fn fillJacobians(active: []const ActiveDerivative, out: []JacobianRow) void {
 
 Notice that the row existing in `active` means "this derivative must be
 computed". The loop does not need another enabled flag.
+
+The other shape is a list of all possible derivatives plus an enabled flag on
+each one. Then the loop still has to check rows that will not be computed. Here,
+the list already contains only the work to do, and each row carries the target
+layer with the state being perturbed.
 
 ## Practical Example
 

@@ -39,7 +39,7 @@ work. Combine shared results after the worker has finished its local loop.
   partial_sums[worker_id] = local_sum;
   ```
 
-  Notice that the loop updates `local_sum`, which belongs to one worker.
+  Notice that the loop updates `local_sum`, which only one worker can see.
   Shared memory is written once at the end.
 
 - Do not guess that false sharing is the problem.
@@ -47,8 +47,8 @@ work. Combine shared results after the worker has finished its local loop.
 
 ## Code Material
 
-Fabian gives an OpenMP example contrasting per-thread shared slots with a local
-accumulator. Adapted:
+The code material keeps each worker's running sum local until the worker is
+done:
 
 ```zig
 fn workerSum(range: Range, values: []const f64) f64 {

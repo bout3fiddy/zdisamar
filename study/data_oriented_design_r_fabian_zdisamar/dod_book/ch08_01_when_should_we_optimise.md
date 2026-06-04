@@ -38,14 +38,13 @@ the target, and the new result so you can tell whether the change helped.
 
 ## Code Material
 
-Fabian's section is prose. The actionable code shape is a budgeted measurement
-surface:
+The code material measures the product run and records the budget miss:
 
 ```zig
 const budget_ns = 2_000_000;
 
 const start = timer.read();
-// Time the product run boundary, not unrelated setup or reporting.
+// Time the product run itself, not unrelated setup or reporting.
 try simulateProductWithWorkspace(input, storage);
 const elapsed = timer.read() - start;
 
@@ -77,11 +76,11 @@ bench fill_reflectance_allocate_output items=131072 iterations=300 elapsed_ns=39
 ratio caller_output_vs_allocate_output 1.50x
 ```
 
-The first line gives no boundary, no workload, no iteration count, and no
-correctness signal. The better lines say exactly what was timed and show that
+The first line does not say what was timed, how much work ran, or whether the
+output still matched. The better lines say exactly what was timed and show that
 both versions produced the same checksum.
 
-The optimization claim is tied to a measured boundary, iteration count, elapsed
+The optimization claim is tied to a timed code region, iteration count, elapsed
 time, and checksum. Without those numbers, "faster" is only a guess.
 
 ## zdisamar Reading Notes

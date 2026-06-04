@@ -55,13 +55,13 @@ again.
   try assembleReflectance(storage.radiance, storage.reflectance);
   ```
 
-  Notice that `fillRadiance` writes radiance, then `assembleReflectance`
-  reads radiance and writes reflectance. The handoff is explicit.
+  Notice that `fillRadiance` writes `radiance`, then `assembleReflectance`
+  reads `radiance` and writes `reflectance`. The handoff is explicit.
 
 ## Code Material
 
-Fabian does not provide a standalone listing in this section. The code lesson is
-to structure stages like kernels:
+The code material is a row stream: each input row writes one matching output
+slot:
 
 ```zig
 fn fillRadiance(rows: []const MissRow, constants: Constants, out: []f64) void {

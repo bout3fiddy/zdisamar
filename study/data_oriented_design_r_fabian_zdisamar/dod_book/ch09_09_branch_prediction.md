@@ -50,8 +50,7 @@ grouping the data first. Only do that when the grouping cost is worth it.
 
 ## Code Material
 
-Fabian gives a simple sum-if-data example and compares random versus sorted
-branch behavior. Adapted:
+The code material compares a per-row branch with grouped processing:
 
 ```zig
 fn sumSelected(flags: []const bool, values: []const i32) i32 {

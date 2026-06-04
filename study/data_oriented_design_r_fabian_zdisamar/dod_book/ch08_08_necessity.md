@@ -23,10 +23,32 @@ should exist only when a later step will actually read it.
       optical_depth: f64,
       single_scatter_albedo: f64,
   };
+
+  fn buildHotLayers(layers: []const Layer, out: []HotLayer) void {
+      for (layers, out) |layer, *hot| {
+          // Keep only the fields the scattering loop will read.
+          hot.* = .{
+              .optical_depth = layer.optical_depth,
+              .single_scatter_albedo = layer.single_scatter_albedo,
+          };
+      }
+  }
+
+  fn sumScattering(hot_layers: []const HotLayer) f64 {
+      var total: f64 = 0;
+      for (hot_layers) |layer| {
+          total += layer.optical_depth * layer.single_scatter_albedo;
+      }
+      return total;
+  }
   ```
 
-  Notice that this row has only the two fields the example loop needs. It
-  does not carry unrelated layer data.
+  Notice that `buildHotLayers` is where the larger layer is narrowed. The
+  repeated `sumScattering` loop then reads only the two fields it needs.
+
+  The simpler-looking alternative is to pass full `Layer` rows into
+  `sumScattering`. That makes the loop carry fields it never reads. `HotLayer`
+  is the loop's input shape, not a replacement for the full layer description.
 
 - Only allocate optional data when a later step will read it.
   Jacobian buffers should exist for Jacobian runs, not for every run.
@@ -55,7 +77,8 @@ should exist only when a later step will actually read it.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material allocates Jacobian storage only after the requested states are
+known:
 
 ```zig
 fn ensureJacobianStorage(storage: *ProductStorage, states: JacobianMask) !void {
@@ -95,7 +118,7 @@ str     d1, [x11]      ; write output for the active row
 
 The loop repeats the same scattering check for every layer. If
 `config.has_scattering` is false, none of the layers can enter
-`solveScattering`, so the check belongs before the loop.
+`solveScattering`, so the check should happen before the loop.
 
 A better approach checks `config.has_scattering` once, then runs the loop that
 is actually needed.

@@ -47,7 +47,7 @@ the original data.
 
 ## Code Material
 
-Fabian's section is conceptual. A direct `zdisamar`-shaped sketch:
+The code material keeps miss rows next to the packed indexes they point into:
 
 ```zig
 const ForwardMissPlan = struct {
@@ -65,6 +65,10 @@ fn samplesFor(plan: ForwardMissPlan, row_index: usize) []const usize {
 
 Notice that `MissRow` stores `start` and `count`. That lets the function
 return the saved sample indexes for one nominal wavelength without searching.
+
+Each row's `start` and `count` point into `sample_indices`. If `rows` and
+`sample_indices` are passed around separately, it becomes easy to pair a row
+list with the wrong `sample_indices` list and read the wrong samples.
 
 
 ## Practical Example

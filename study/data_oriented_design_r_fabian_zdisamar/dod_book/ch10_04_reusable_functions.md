@@ -57,7 +57,8 @@ less a function knows about the larger program, the easier it is to reuse.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material uses slices so helpers receive only the data they read or
+write:
 
 ```zig
 fn lowerBound(values: []const f64, needle: f64) usize {

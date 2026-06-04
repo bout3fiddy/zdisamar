@@ -41,10 +41,33 @@ common work clearer or faster.
       optical_depth: []const f64,
       source: []const f64,
   };
+
+  fn buildLayerTables(layers: []const Layer, table: LayerTables) void {
+      for (layers, table.optical_depth, table.source) |layer, *tau, *src| {
+          // Split the larger layer row into the columns later loops read.
+          tau.* = layer.optical_depth;
+          src.* = layer.source;
+      }
+  }
+
+  fn sumOpticalDepth(table: LayerTables) f64 {
+      var total: f64 = 0;
+      for (table.optical_depth) |tau| {
+          // This loop reads optical depth and does not touch source.
+          total += tau;
+      }
+      return total;
+  }
   ```
 
-  Notice that `optical_depth` and `source` are separate arrays. This only
-  helps if some loops read one without the other.
+  Notice that `buildLayerTables` splits larger layer rows into columns.
+  `sumOpticalDepth` then reads only `table.optical_depth`, so it does not need
+  to step through source values.
+
+  The columns could be passed as separate slices, but their lengths and order
+  still have to match. If one column is filtered or reordered alone, optical
+  depth for one layer can line up with source data from another. `LayerTables`
+  keeps the columns together while still allowing loops to read only one column.
 
 - Avoid "loop over everything inside another loop" for large data.
   If two lists are sorted by the same id, walk them together instead of scanning
@@ -62,9 +85,8 @@ common work clearer or faster.
 
 ## Code Material
 
-Fabian gives listings that move from mixed `pos/velocity` structs to separate
-position and velocity streams, then compares merge joins with nested-loop joins.
-Adapted:
+The code material shows two table patterns: paired columns for stepping, and
+sorted rows for joining:
 
 ```zig
 const MotionTable = struct {
@@ -101,6 +123,11 @@ fn mergeJoin(a: []const RowA, b: []const RowB, out: *ArrayList(Joined)) !void {
 Notice that `MotionTable.step` writes positions in order while reading
 velocities in order. `mergeJoin` walks two sorted lists once instead of nesting
 one full scan inside another.
+
+Passing `positions` and `velocities` separately makes it easier to pass arrays
+with different lengths or different ordering. Then a `positions` slot can be
+updated with the wrong `velocities` slot. `MotionTable` keeps the paired slices
+together while still making the read side and write side clear.
 
 
 ## Practical Example

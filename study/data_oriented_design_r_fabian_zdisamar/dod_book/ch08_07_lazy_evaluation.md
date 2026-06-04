@@ -56,7 +56,7 @@ expensive work, keep a clear list of the items that really need updating.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material passes the refresh list to the refresh loop:
 
 ```zig
 const DirtyPlan = struct {
@@ -74,6 +74,11 @@ fn refreshOnlyDirty(plan: DirtyPlan, cache: *SpectralCache) !void {
 
 Notice that `plan.wavelengths` is the list of work to refresh. The function
 does not scan every possible wavelength looking for dirty flags.
+
+The refresh function could scan the whole cache and decide which entries are
+dirty. Then every refresh pass also pays for dirty checks, and the loop hides
+how much work was selected. `DirtyPlan` is built first, so the refresh loop only
+refreshes the listed wavelengths.
 
 ## Practical Example
 

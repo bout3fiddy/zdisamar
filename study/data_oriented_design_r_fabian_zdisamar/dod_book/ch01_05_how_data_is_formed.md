@@ -40,15 +40,37 @@ reinterpreting them.
       single_scatter_albedo: f64,
       phase_index: usize,
   };
+
+  fn prepareLayer(input: SceneLayer, phase_index: usize) PreparedLayer {
+      // Copy only the values the layer solve will read.
+      return .{
+          .optical_depth = input.optical_depth,
+          .single_scatter_albedo = input.single_scatter_albedo,
+          .phase_index = phase_index,
+      };
+  }
+
+  fn layerContribution(layer: PreparedLayer, phase_weight: []const f64) f64 {
+      // The later solve reads the prepared row directly.
+      return layer.optical_depth *
+          layer.single_scatter_albedo *
+          phase_weight[layer.phase_index];
+  }
   ```
 
-  Notice that this row contains the values a layer calculation needs close
-  together. It leaves out file names and setup-only data.
+  Notice that `prepareLayer` is where the larger scene layer is turned into the
+  smaller row. `layerContribution` then reads that row without carrying file
+  names or setup-only data.
+
+  Without `PreparedLayer`, the solve would receive raw scene fields plus a
+  separate phase index, or it would recompute that index inside the repeated
+  path. Preparation chooses the index once and stores it beside the optical
+  values that use it.
 
 ## Code Material
 
-Fabian discusses asset/toolchain conversion rather than a standalone listing in
-this section. The applicable code shape is:
+The code material is the preparation chain: load reusable reference assets, then
+build scene-specific runtime input:
 
 ```zig
 pub fn loadReferenceData(allocator: Allocator) !ReferenceAssets {
@@ -71,6 +93,10 @@ pub fn prepareInput(scene: SceneInput, assets: ReferenceAssets) !PreparedInput {
 Notice that loading creates `ReferenceAssets`, then `prepareInput` creates
 `PreparedInput`. The later model run should use `PreparedInput` so it does not
 repeat file-loading or asset-shaping work.
+
+These named values mark two different stages. `ReferenceAssets` is reusable
+loaded data, while `PreparedInput` is the scene-specific runtime shape built
+from those assets.
 
 
 ## Practical Example
@@ -123,7 +149,8 @@ b.ne    LBB5_5                                        ; repeat the cheap loop bo
 Once the input is already prepared, the repeated loop no longer includes the
 prepare call.
 
-A related compiler output from a repeated transform shows the same boundary.
+A related compiler output from a repeated transform shows the same split between
+preparation and the loop.
 
 ```llvm
 define dso_local void @fillLayerSource(

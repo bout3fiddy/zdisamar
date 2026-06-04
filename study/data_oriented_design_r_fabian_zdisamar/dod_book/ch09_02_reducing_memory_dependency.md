@@ -48,14 +48,27 @@ and saved positions when the program needs to visit many related values.
   const OpticalDepths = struct {
       values: []const f64,
   };
+
+  fn sumOpticalDepths(data: OpticalDepths) f64 {
+      var total: f64 = 0;
+      for (data.values) |tau| {
+          // The loop walks one plain optical-depth list.
+          total += tau;
+      }
+      return total;
+  }
   ```
 
-  Notice that this stores optical depths as one plain list. A loop that only
-  needs optical depths can read this list without loading full layer rows.
+  Notice that `sumOpticalDepths` reads the plain list directly. The loop no
+  longer has to step through full layer rows to find one field.
+
+  A plain `[]const f64` is enough for the summing loop. The wrapper is for the
+  place where prepared data is named. It says these numbers are optical depths;
+  the small numeric helper can still work on the slice inside it.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material follows saved sample indexes into the result array:
 
 ```zig
 fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) void {

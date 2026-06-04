@@ -57,7 +57,7 @@ the storage.
 
 ## Code Material
 
-Adapted data-changing step shapes:
+The code material shows the common input/output shapes:
 
 ```zig
 fn writeOneOutputPerInput(in_rows: []const LayerInput, out_rows: []LayerOutput) void {

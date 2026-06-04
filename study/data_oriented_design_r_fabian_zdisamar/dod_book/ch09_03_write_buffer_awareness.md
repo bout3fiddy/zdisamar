@@ -39,11 +39,20 @@ people and the compiler to follow.
       wavelengths: []const f64,
       radiance: []f64,
   };
+
+  fn fillRadiance(buffers: ProductBuffers) void {
+      for (buffers.wavelengths, buffers.radiance) |wavelength_nm, *dst| {
+          // Read one wavelength and write the matching radiance slot.
+          dst.* = solveRadianceAt(wavelength_nm);
+      }
+  }
   ```
 
-  Notice that `wavelengths` is `[]const`, so code using this struct can
-  read wavelength values but should not change them. `radiance` is `[]f64`, so
-  it is a buffer the run is allowed to write.
+  Notice that `fillRadiance` reads `wavelengths` and writes `radiance`. Passing
+  those slices separately is possible, but the two lengths must match and slot
+  `i` in `radiance` must be the output for slot `i` in `wavelengths`.
+  `ProductBuffers` keeps that pairing visible while still separating read-only
+  input from writable output.
 
 
 - Let the caller keep output memory between runs.
@@ -61,7 +70,7 @@ people and the compiler to follow.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material receives output storage from the caller:
 
 ```zig
 fn fillReflectance(radiance: []const f64, irradiance: []const f64, out: []f64) void {

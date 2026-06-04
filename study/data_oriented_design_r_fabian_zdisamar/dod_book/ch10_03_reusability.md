@@ -36,7 +36,7 @@ one project.
 
 ## Code Material
 
-Fabian's section is prose. Adapted:
+The code material reuses prepared input and caller-owned storage:
 
 ```zig
 pub fn runPrepared(
@@ -105,7 +105,8 @@ b.ne    LBB5_5                                        ; no prepare call in the l
 Because the function accepts prepared input, callers can keep setup out of the
 repeated run.
 
-A related output-shape example shows the same reusable boundary.
+A related output-shape example shows the same split between input data and
+reusable storage.
 
 ```llvm
 define dso_local void @fillReflectance(

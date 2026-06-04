@@ -38,10 +38,20 @@ item.
       sample_start: u32,
       sample_count: u16,
   };
+
+  fn kernelSamples(ref: KernelRef, samples: []const Sample) []const Sample {
+      // Turn the saved start/count into the samples for this kernel.
+      return samples[ref.sample_start .. ref.sample_start + ref.sample_count];
+  }
   ```
 
-  Notice that the row does not store the samples themselves. It stores where
-  its samples start and how many to read.
+  Notice that `kernelSamples` is how the row is used. `KernelRef` stores where
+  the samples start and how many to read from the packed sample list.
+
+  Passing `sample_start` and `sample_count` separately is not wrong by itself.
+  The problem is that the two values must always change together. If one is
+  copied without the other, the range can point at the wrong `samples`.
+  `KernelRef` keeps the range with the kernel that uses it.
 
 - A prefix sum turns counts into starting positions.
   If worker 0 wrote 3 items and worker 1 wrote 5 items, worker 1 starts at 3.
@@ -59,8 +69,8 @@ item.
 
 ## Code Material
 
-Fabian discusses steps that keep some rows, steps that make extra rows, prefix
-sums, worker-local output, and pooling. Adapted:
+The code material stores small groups inline and larger groups as a range into
+side storage:
 
 ```zig
 const KernelRef = struct {
@@ -94,6 +104,10 @@ fn prefixStarts(counts: []const usize, starts: []usize) void {
 Notice that `KernelRef` stores either inline samples or a side-list range.
 `prefixStarts` turns per-group counts into start positions for a packed output
 list.
+
+The caller should not need to know whether a kernel's samples are inline or in
+side storage. `KernelRef` keeps both storage choices behind the same
+`samples(...)` access path.
 
 
 ## Practical Example
@@ -139,7 +153,7 @@ The generated output for the better approach is easier to read.
 store i32 %7, ptr %lsr.iv19
 ```
 
-Building starts is a real setup pass. It reads counts and writes starts.
+Building `starts` is a real setup pass. It reads `counts` and writes `starts`.
 
 A benchmark for prepared starts showed querying them was `2039.62x` faster than
 re-summing counts for every query, with the same checksum. That is why the setup

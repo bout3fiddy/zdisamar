@@ -57,8 +57,8 @@ tells only half the story.
 
 ## Code Material
 
-Fabian's section is prose. The corresponding code shape is narrow phase
-instrumentation:
+The code material traces one phase and records the amount of work in that
+phase:
 
 ```zig
 const zone = trace.begin(.fill_radiance);

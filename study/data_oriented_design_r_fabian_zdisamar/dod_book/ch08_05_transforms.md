@@ -33,8 +33,13 @@ data it needs, and make it clear what shape comes out.
   };
   ```
 
-  Notice that `ForwardContext` lists the data the next step needs: layers,
-  carrier rows, and one wavelength.
+  Notice that `ForwardContext` lists the data the next step needs: `layers`,
+  `carriers`, and `wavelength_nm`.
+
+  The next step could take each value separately, but those values were prepared
+  as one set. If they travel separately, a later call can mix `layers` from one
+  prepared scene with `carriers` from another. `ForwardContext` passes the
+  prepared read set without also passing the full scene or reference assets.
 
 
 - Some totals can be built from smaller totals.
@@ -53,7 +58,7 @@ data it needs, and make it clear what shape comes out.
 
 ## Code Material
 
-Fabian's section is prose with examples of data-changing steps. Adapted:
+The code material separates prepared read data from the output being filled:
 
 ```zig
 const PreparedContext = struct {
@@ -70,8 +75,13 @@ fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput
 }
 ```
 
-Notice that the function receives prepared layers and carrier rows, then
+Notice that the function receives prepared `layers` and `carriers`, then
 writes RTM layer input. It does not load reference files or parse scene data.
+
+The transform could take `layers` and `carriers` as separate arguments. That is
+fine for a tiny helper, but it becomes easy to pass prepared `layers` with
+`carriers` from a different cache. `PreparedContext` keeps the prepared inputs
+together, while output stays separate because the transform writes it.
 
 ## Practical Example
 
@@ -101,7 +111,7 @@ subs    x19, x19, #1                                  ; count down repeated runs
 b.ne    LBB2_2                                        ; loop back to prepare again
 ```
 
-This shows that the transform boundary includes setup, so the compiler keeps
+This shows that setup still runs inside the transform, so the compiler keeps
 the prepare call in the repeated loop.
 
 A better approach sends prepared context into the transform.

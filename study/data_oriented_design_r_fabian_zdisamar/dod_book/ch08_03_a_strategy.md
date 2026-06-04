@@ -27,19 +27,7 @@ Change one thing, then write down what happened. The note should let a later
 reader see the starting point, the change, the result, and whether the output
 still matched.
 
-## Code Material
-
-Fabian's section is procedural rather than code-heavy. The useful material is
-not a Zig snippet; it is the record left behind after an optimization attempt.
-That record should say what was slow, how the original version behaved, what
-change was tried, how the changed version behaved, and whether both versions
-still produced the same result.
-
 ## Practical Example
-
-This chapter does not need a code block for the practical example. The useful
-material is the difference between a vague optimization note and a note that
-can be checked later.
 
 An under-specified note might say that the branch code was slow, the data was
 grouped, and the result was faster. That records an opinion after the fact, but
