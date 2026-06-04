@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Aliasing"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001040000000000000000) (printed-book p166).
 
-Summary: Fabian explains aliasing as the compiler's uncertainty about whether
-two references point at the same memory; after a write, it may have to reload
-values it otherwise could have kept.
+Summary: Fabian explains aliasing as uncertainty: two references might point to
+the same memory. When that is possible, the compiler has to be more cautious
+after a write.
 
-Fabian makes this concrete with C/C++ examples: overlapping `memcpy` has to
-proceed carefully because output can affect later input, and passing a loop
-bound by reference can force reloads because the output pointer might alias it.
+Fabian makes this concrete with C and C++ examples. Copying between overlapping
+memory ranges has to proceed carefully because output can affect later input,
+and passing a loop limit by reference can force reloads because another pointer
+might change it.
 
-Take home: Make read-only inputs and writable outputs obvious so readers and the
-compiler know what may overlap. `zdisamar` functions should use read-only input
-slices, separate output buffers, and small settings passed by value where that
-clarifies mutation boundaries.
+Take home: Make it obvious which data is only read and which data is written.
+Avoid letting input and output secretly refer to the same storage.
 
 ## Main Lessons
 
@@ -65,20 +64,9 @@ goes into `workspace.tmp`. The read side and write side are separate.
 Zig syntax note: `*const PreparedInput` means a pointer to prepared input that
 this function should not modify through that pointer.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-fn fillOutput(input: []const f64, scale: f64, output: []f64) void {
-    // Contract: output does not overlap input.
-    for (input, output) |value, *dst| {
-        dst.* = value * scale;
-    }
-}
-```
-
-Wrong pattern:
+Here is a pattern whose signature leaves input/output ownership unclear.
 
 ```zig
 fn fillOutput(input: []f64, output: []f64) void {
@@ -88,7 +76,20 @@ fn fillOutput(input: []f64, output: []f64) void {
 }
 ```
 
-Better pattern:
+The compiler output below is generated machine code. It makes the runtime
+overlap checks from the code above visible.
+
+```asm
+sub     x9, x2, x0  ; compute distance between output and first input
+cmp     x9, #64     ; check whether the slices might overlap
+b.lo    LBB8_3      ; use scalar fallback if overlap is too close
+sub     x9, x2, x1  ; repeat the overlap check for the second input
+```
+
+When aliasing is possible, the compiler adds runtime overlap checks before it
+can use the fast vector loop.
+
+A better approach marks input read-only and documents the no-overlap contract.
 
 ```zig
 fn fillOutput(input: []const f64, output: []f64) void {
@@ -99,25 +100,11 @@ fn fillOutput(input: []const f64, output: []f64) void {
 }
 ```
 
-Why this contrast matters: the wrong signature does not tell the reader which
-slice is input and which slice is output. The better signature marks the input
-read-only and documents the no-overlap contract used by the fast path.
+The first signature does not tell the reader which slice is input and which
+slice is output. The better signature marks the input read-only and documents
+the no-overlap contract used by the fast vector loop.
 
-Wrong-pattern compiler artifact from
-[`fillReflectance`](codegen/dod_codegen_examples.zig):
-
-```asm
-sub     x9, x2, x0  ; compute distance between output and first input
-cmp     x9, #64     ; check whether the slices might overlap
-b.lo    LBB8_3      ; use scalar fallback if overlap is too close
-sub     x9, x2, x1  ; repeat the overlap check for the second input
-```
-
-What goes wrong: when aliasing is possible, the compiler adds runtime overlap
-checks before it can use the vector path.
-
-Better-pattern compiler artifact from
-[`fillReflectanceNoAlias`](codegen/dod_codegen_examples.zig):
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q0, q1, [x10, #-32]  ; load radiance vectors directly
@@ -126,22 +113,21 @@ fdiv.2d v0, v0, v4           ; divide vector lanes
 stp     q0, q1, [x9, #-32]   ; store output vectors
 ```
 
-What this proves: the no-alias version can enter the vector loop without the
-same overlap-check setup.
+The no-alias version can enter the vector loop without the same overlap-check
+setup.
 
-Related compiler artifact from the vector path setup:
+A related vector-path output shows why overlap matters.
 
 ```llvm
 vector.memcheck:
 br i1 %conflict.rdx, label %Then.preheader13, label %vector.ph
 ```
 
-What this proves: when overlap is possible, the compiler adds a check before
-using the vector path. Clear ownership and non-overlap contracts make the fast
-path easier to justify.
+`vector.memcheck` is the compiler's overlap check before the fast vector loop.
+Clear ownership and non-overlap contracts make that fast path easier to justify.
 
-Benchmark evidence: caller-owned output was `1.50x` faster than allocating
-output every run, with the same checksum.
+A benchmark for caller-owned output showed it was `1.50x` faster than
+allocating output every run, with the same checksum.
 
 ## zdisamar Reading Notes
 

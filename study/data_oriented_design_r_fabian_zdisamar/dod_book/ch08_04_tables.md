@@ -2,19 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Tables"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00940000000000000000) (printed-book p146).
 
-Summary: Fabian recommends arrays and table-like layouts because most work is
-reading arrays, transforming one array into another, or modifying a table in
-place. He also warns that structure-of-arrays is not a universal rule; the
-right layout follows the access pattern.
+Summary: Fabian recommends lists and table-like layouts because many programs
+spend their time reading lists, changing lists, or joining lists. He also warns
+that no layout rule is always right.
 
-He gets there through small measured layout examples: a particle/node update
-improves when read and write streams become continuous, but blindly splitting
-`x`, `y`, and `z` can make a vector operation load more cache lines. The
-anecdote is a warning against turning data-oriented design into a recipe.
+He gets there through small measured layout examples. A particle or node update
+can improve when reads and writes become continuous, but blindly splitting
+`x`, `y`, and `z` can make a vector operation load more memory blocks than
+before. The anecdote is a warning against turning data-oriented design into a
+recipe.
 
-Take home: Use table-like arrays for repeated row or column work so loops read
-memory in a predictable shape. `zdisamar` should choose row, column, join, or
-cache shapes based on what each loop really reads and writes.
+Take home: Choose the layout that matches how the data is used. Keep values
+together when they are read together, and split them only when that makes the
+common work clearer or faster.
 
 ## Main Lessons
 
@@ -104,17 +104,9 @@ one full scan inside another.
 Zig syntax note: `*pos` in the loop captures a pointer to the current position,
 so `pos.* = ...` updates the position stored in the array.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-for (layers) |layer| {
-    total_tau += layer.optical_depth;
-}
-```
-
-Wrong pattern:
+Here is a pattern that stores rows but reads only one field from each row.
 
 ```zig
 for (layers) |layer| {
@@ -122,20 +114,8 @@ for (layers) |layer| {
 }
 ```
 
-Better pattern:
-
-```zig
-for (optical_depths) |tau| {
-    total_tau += tau;
-}
-```
-
-Why this contrast matters: the wrong version uses a row table even though the
-loop only needs one column. The better version stores that one hot value as the
-thing the loop walks.
-
-Wrong-pattern compiler artifact from
-[`sumOpticalDepth`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the row stride
+from the code above visible.
 
 ```asm
 ldur    d1, [x9, #-48]  ; load one f64 field from an earlier unrolled row
@@ -143,10 +123,21 @@ ldur    d2, [x9, #-24]  ; load the same field from the next unrolled row
 add     x9, x9, #96     ; advance the row pointer by four 24-byte rows
 ```
 
-What goes wrong: the compiler does not load unused fields, but the loop still
+This shows that the compiler does not load unused fields, but the loop still
 steps through full 24-byte rows to read one field.
 
-Better-pattern compiler artifact from [`sum`](codegen/dod_codegen_examples.zig):
+A better approach stores the field the loop reads repeatedly in its own list.
+
+```zig
+for (optical_depths) |tau| {
+    total_tau += tau;
+}
+```
+
+The first loop uses a row table even though it only needs one column. The better
+loop stores that one repeated value as the thing the loop walks.
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q1, q2, [x9, #-32]  ; load four adjacent f64 values
@@ -155,12 +146,12 @@ fadd    d0, d0, d1          ; add one loaded lane into the running total
 fadd    d0, d0, d3          ; add another loaded lane into the running total
 ```
 
-What this proves: a column loop walks contiguous numeric values instead of
-striding through larger rows.
+A column loop walks contiguous numeric values instead of striding through larger
+rows.
 
-Benchmark evidence: reading a separate `[]f64` optical-depth column was `1.49x`
-faster than reading the field out of full rows, with the same checksum. That
-proves the table layout choice can matter.
+A benchmark for a separate `[]f64` optical-depth column showed it was `1.49x`
+faster than reading the field out of full rows, with the same checksum. That is
+why the table layout choice can matter.
 
 ## zdisamar Reading Notes
 

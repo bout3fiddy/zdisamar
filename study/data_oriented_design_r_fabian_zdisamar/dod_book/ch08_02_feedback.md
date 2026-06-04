@@ -2,20 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Feedback"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00920000000000000000) (printed-book p138).
 
-Summary: Fabian says feedback must be immediate and about the right thing:
-broad averages can hide spikes, and coarse profiling can measure the wrong
-phase.
+Summary: Fabian's feedback lesson is that measurements must arrive soon enough
+and must measure the right thing. Broad averages can hide the exact failure you
+need to fix.
 
-The experience behind the lesson is partly tool failure: third-party engines
-often exposed only coarse CPU/GPU/physics/render budgets, and their built-in
-profilers could be incomplete or unavailable in optimized publishing builds. He
-also uses latency stories from Amazon, Google, and trading systems to show why
-the measured resource must match the real business limit.
+The experience behind the lesson is partly tool failure. Some third-party game
+engines exposed only broad CPU, graphics, physics, or rendering numbers, and
+their profilers could be incomplete or missing from release builds. Fabian also
+uses latency stories from Amazon, Google, and trading systems to show why the
+measured resource must match the real limit.
 
-Take home: Put timing around the exact boundary you want to improve so the
-measurement answers the right question. In `zdisamar`, trace zones and telemetry
-should surround the stage under study and record counts or budget misses that
-explain the timing.
+Take home: Put measurements around the specific part you care about, and record
+enough context to explain the number. A timing without the amount of work often
+tells only half the story.
 
 ## Main Lessons
 
@@ -74,35 +73,32 @@ telemetry.count(.forward_misses, plan.miss_count);
 What to notice: the timer covers one named phase, and the count records how much
 work that phase did.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-telemetry.count(.forward_misses, plan.miss_count);
-telemetry.count(.nominal_wavelengths, plan.rows.len);
-```
-
-Wrong evidence:
+Here is a pattern that records elapsed time without the size of the work.
 
 ```text
 bench integrate elapsed_ns=28061000
 ```
 
-Better evidence:
+This shows that the timing has no scale. It says time passed, but not how many
+items were processed, how many iterations ran, or whether the result still
+matches the baseline.
+
+A better approach records the workload and the correctness signal with the
+timing.
 
 ```text
 bench integrate_linear_search items=512 iterations=30 elapsed_ns=28061000 ns_per_item=1826.888 checksum=3113100.000
 bench integrate_prepared_indexes items=512 iterations=30 elapsed_ns=34917 ns_per_item=2.273 checksum=3113100.000
 ```
 
-Why this contrast matters: the wrong line says time went somewhere, but not how
-much work produced that time. The better lines include rows, iterations, and
-checksum, so the feedback can explain the speed difference.
+The first line says time elapsed, but not how much work produced that time. The
+better lines include rows, iterations, and checksum, so the feedback can explain
+the speed difference.
 
-What this proves: the useful feedback is not just time. It also records how much
-work was done. Here the same 512 rows and same checksum make the `803.65x`
-speedup meaningful.
+Useful feedback is not just time. It also records how much work was done. Here
+the same 512 rows and same checksum make the `803.65x` speedup meaningful.
 
 ## zdisamar Reading Notes
 

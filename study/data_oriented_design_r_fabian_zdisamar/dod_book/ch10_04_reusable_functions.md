@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Reusable functions"](https://www.dataorienteddesign.com/dodbook/node11.html#SECTION001140000000000000000) (printed-book p186).
 
-Summary: Fabian argues that rigid, simple containers make transforms
-accidentally reusable: if data can be presented in the shape a transform needs,
-the transform can operate on it.
+Summary: Fabian argues that simple data shapes make functions accidentally
+reusable. If different data can be presented in the same shape, the same
+transform can often work on it.
 
-The process lesson comes from languages and databases: Haskell-like signatures
-can make many transforms understandable from their arguments, and database query
-optimizations work across tables because the data is held in regular shapes.
-Reusable functions emerge from that regularity.
+The process lesson comes from languages and databases. Some languages make a
+function's inputs and outputs clear from its type, and databases can optimize
+many different queries because tables have regular shapes. Reusable functions
+emerge from that regularity.
 
-Take home: Small functions should accept simple arrays so they can be reused
-anywhere the same data shape exists. `zdisamar` helpers should take slices,
-counts, and small tables rather than large model objects.
+Take home: Write small functions around simple lists, counts, and tables. The
+less a function knows about the larger program, the easier it is to reuse.
 
 ## Main Lessons
 
@@ -83,32 +82,16 @@ fn integrateWeighted(values: []const f64, weights: []const f64) f64 {
 What to notice: both functions work on slices, not on a large model object.
 That is why they can be reused wherever the data can be presented as slices.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-fn lowerBound(values: []const f64, needle: f64) usize
-```
-
-Wrong pattern:
+Here is a pattern that ties a small search helper to a large model object.
 
 ```zig
 fn lowerBoundInModel(model: *const FullModel, needle: f64) usize
 ```
 
-Better pattern:
-
-```zig
-fn lowerBound(values: []const f64, needle: f64) usize
-```
-
-Why this contrast matters: the wrong helper can only be used by callers that
-have a `FullModel`. The better helper works for any caller that can provide a
-sorted slice of numbers.
-
-Wrong-pattern compiler artifact from
-[`lowerBoundInModel`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the model-object
+loads from the code above visible.
 
 ```asm
 ldr     x9, [x0, #8]          ; load model.len from the model object
@@ -117,11 +100,19 @@ ldr     d1, [x8, x10, lsl #3] ; load values[mid]
 fcmp    d1, d0                ; compare values[mid] with the needle
 ```
 
-What goes wrong: the helper is tied to the larger model shape before it can do
+This shows that the helper is tied to the larger model shape before it can do
 the slice search.
 
-Better-pattern compiler artifact from
-[`lowerBound`](codegen/dod_codegen_examples.zig):
+A better approach accepts only the sorted values it needs.
+
+```zig
+fn lowerBound(values: []const f64, needle: f64) usize
+```
+
+The first helper can only be used by callers that have a `FullModel`. The
+better helper works for any caller that can provide a sorted slice of numbers.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %7 = load double, ptr %6
@@ -129,12 +120,11 @@ Better-pattern compiler artifact from
 %.17 = select i1 %8, i64 %9, i64 %.068
 ```
 
-What this proves: the helper works on the slice it was given. It does not need a
-large model object or payload table.
+The helper works on the slice it was given. It does not need a large model
+object.
 
-Benchmark evidence from reusable prepared data: prepared prefix starts were
-`2039.62x` faster than re-summing counts for every query, with the same
-checksum.
+A benchmark for prepared prefix starts showed they were `2039.62x` faster
+than re-summing counts for every query, with the same checksum.
 
 ## zdisamar Reading Notes
 

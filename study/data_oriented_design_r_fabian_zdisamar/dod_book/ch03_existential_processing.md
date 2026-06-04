@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Existential Processing"](https://www.dataorienteddesign.com/dodbook/node4.html) (printed-book p57).
 
-Summary: Fabian's existential-processing lesson is to remove repeated
-"should this be processed?" checks by making presence in a table mean the work
-exists and is valid.
+Summary: Fabian's idea is to stop asking "should I process this?" for every
+item. If something appears in the work list, that should already mean it is
+valid and needs work.
 
-This is one of the few places where Fabian is explicit about his own path: he
-describes the chapter's runtime-polymorphism technique as the first
-data-oriented-friendly solution he discovered, and ties it to component and
-compute-shader practice.
+This is one of the few places where Fabian is explicit about his own path. He
+describes the chapter's way of handling different kinds of work at runtime as
+the first data-oriented-friendly solution he discovered, and connects it to
+component systems and graphics-style batch processing.
 
-Take home: Represent optional work as rows or counts so loops skip work that was
-never requested. For `zdisamar`, optional work such as Jacobians should be
-active rows or counts, not booleans carried through every hot layer row.
+Take home: Use lists to represent requested work. An empty list means there is
+nothing to do; a non-empty list tells the program exactly what to process.
 
 ## Main Lessons
 
@@ -74,17 +73,10 @@ fn fillJacobians(active: []const ActiveDerivative, out: []JacobianRow) void {
 What to notice: the row existing in `active` means "this derivative must be
 computed". The loop does not need another enabled flag.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-for (active_jacobians) |state| {
-    try fillJacobian(state, storage);
-}
-```
-
-Wrong pattern:
+Here is a pattern that stores every possible Jacobian state and checks an
+enabled flag for each one.
 
 ```zig
 for (jacobian_states) |state| {
@@ -92,19 +84,8 @@ for (jacobian_states) |state| {
 }
 ```
 
-Better pattern:
-
-```zig
-for (active_jacobians) |state| {
-    try fillJacobian(state, storage);
-}
-```
-
-Why this contrast matters: the wrong version asks every row whether it exists as
-work. The better version makes the list itself mean "these are the rows to do."
-
-Wrong-pattern compiler artifact from
-[`refreshScanAllFlags`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the enabled-flag
+load and branch from the code above visible.
 
 ```asm
 ldrb    w12, [x9], #1  ; load one enabled/dirty flag
@@ -113,11 +94,21 @@ ldr     d1, [x10]      ; load the value only after the flag passes
 str     d1, [x11]      ; write the refreshed output
 ```
 
-What goes wrong: every row carries a question into the loop. The compiler has
-to keep the flag load and branch.
+Every row carries an `enabled` flag into the loop. The compiler has to keep the
+flag load and branch.
 
-Better-pattern compiler artifact from
-[`refreshDirty`](codegen/dod_codegen_examples.zig):
+A better approach stores only Jacobian states that need work.
+
+```zig
+for (active_jacobians) |state| {
+    try fillJacobian(state, storage);
+}
+```
+
+The first loop asks every possible state whether it should run. The better loop
+receives the states to run, so row membership already means "do this work."
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp       q1, q2, [x10, #-32]  ; load dirty-row input values into vector registers
@@ -126,16 +117,17 @@ fadd.2d   v1, v1, v1           ; double two f64 lanes for the refreshed value
 stp       q1, q2, [x9, #-32]   ; store refreshed output values
 ```
 
-What this proves: the better loop walks only rows that were already selected as
-work. There is no per-row flag load and no branch around the work.
+The better loop walks only rows that were already selected as work. There is no
+per-row flag load and no branch around the work.
 
-Related compiler artifact from the optional-storage example:
+A related compiler output for optional storage shows that the presence check
+can stay outside the row loop.
 
 ```llvm
 define dso_local i64 @ensureJacobianStorage(i64 %0, i64 %1)
 ```
 
-Machine code:
+The matching machine code keeps the presence check outside any row loop.
 
 ```asm
 cmp     x1, x0          ; compare capacity with requested state count
@@ -144,13 +136,12 @@ cmp     x0, #0          ; check whether there are zero requested states
 csel    x0, xzr, x8, eq ; return 0 for no work, otherwise return chosen size
 ```
 
-What this proves: the "do we have optional work?" decision can compile to a few
-compare/select instructions. The expensive part is not the decision; the
-expensive part is carrying optional buffers and loops when no optional work
-exists.
+A zero requested-state check can compile to a few compare/select instructions.
+The expensive part is not the decision; the expensive part is carrying optional
+buffers and loops when no Jacobian state needs work.
 
-Benchmark evidence from the dirty-list example: processing only requested rows
-was `4.18x` faster elapsed time than scanning all rows with flags.
+A benchmark for requested-state lists showed processing only requested rows was
+`4.18x` faster elapsed time than scanning all rows with flags.
 
 ## zdisamar Reading Notes
 

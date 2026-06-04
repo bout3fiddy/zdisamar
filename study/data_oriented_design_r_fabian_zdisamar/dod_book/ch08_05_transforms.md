@@ -2,18 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Transforms"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00950000000000000000) (printed-book p151).
 
-Summary: Fabian frames transforms as a separation between gathering/loading data
-and performing operations on it. He also notes that some reductions that look
-serial can be split when the combine step is associative.
+Summary: Fabian uses "transform" for a step that changes data from one shape
+into another. A good transform separates collecting the data from doing the
+operation.
 
-The route here is language and algorithm history: map/reduce is basic in some
-languages but not natural in C++, so Fabian rebuilds the idea from table
-schemas and associative reductions such as matrix chains, color modulation,
-strings, and lists.
+The route here is language and algorithm history. Some languages make
+list-changing operations feel natural, while C++ often makes programmers build
+that shape themselves. Fabian rebuilds the idea from tables and from combine
+steps that can be split, such as joining strings, multiplying matrices, or
+combining colors.
 
-Take home: Keep loading and setup outside the repeated data-changing step so the
-hot transform only changes prepared data. In `zdisamar`, prepared array work
-should expose the data needed for splitting, combining, and measurement.
+Take home: Keep loading and setup out of the repeated work. Give each step the
+data it needs, and make it clear what shape comes out.
 
 ## Main Lessons
 
@@ -75,22 +75,17 @@ fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput
 What to notice: the function receives prepared layers and carrier rows, then
 writes RTM layer input. It does not load reference files or parse scene data.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
-    for (ctx.layers, out.layers) |layer, *dst| {
-        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
-    }
-}
-```
-
-Wrong pattern:
+Here is a pattern that hides preparation inside a transform.
 
 ```zig
-fn fillForwardInput(scene: SceneInput, assets: ReferenceAssets, wavelength_nm: f64, out: *ForwardInput) !void {
+fn fillForwardInput(
+    scene: SceneInput,
+    assets: ReferenceAssets,
+    wavelength_nm: f64,
+    out: *ForwardInput,
+) !void {
     const ctx = try prepareContext(scene, assets);
     for (ctx.layers, out.layers) |layer, *dst| {
         dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
@@ -98,22 +93,8 @@ fn fillForwardInput(scene: SceneInput, assets: ReferenceAssets, wavelength_nm: f
 }
 ```
 
-Better pattern:
-
-```zig
-fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
-    for (ctx.layers, out.layers) |layer, *dst| {
-        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
-    }
-}
-```
-
-Why this contrast matters: the wrong version hides preparation inside the
-transform. The better version gives the repeated transform prepared input and a
-place to write.
-
-Wrong-pattern compiler artifact from
-[`prepareEveryProduct`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the prepare call
+inside the repeated transform visible.
 
 ```asm
 bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside the repeated path
@@ -122,25 +103,37 @@ subs    x19, x19, #1                                  ; count down repeated runs
 b.ne    LBB2_2                                        ; loop back to prepare again
 ```
 
-What goes wrong: the transform boundary includes setup, so the compiler keeps
+This shows that the transform boundary includes setup, so the compiler keeps
 the prepare call in the repeated loop.
 
-Better-pattern compiler artifact from
-[`fillLayerSource`](codegen/dod_codegen_examples.zig):
+A better approach sends prepared context into the transform.
+
+```zig
+fn fillForwardInput(ctx: PreparedContext, wavelength_nm: f64, out: *ForwardInput) void {
+    for (ctx.layers, out.layers) |layer, *dst| {
+        dst.* = makeLayerInput(layer, ctx.carriers, wavelength_nm);
+    }
+}
+```
+
+The first version hides preparation inside the transform. The better version
+gives the repeated transform prepared input and a place to write.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 tail call <2 x double> @llvm.fma.v2f64(...)
 store <2 x double> ...
 ```
 
-What this proves: once loading and parsing are outside the transform, the
-compiler sees numeric input and output arrays. It can generate vector arithmetic
-for the repeated step.
+Once loading and parsing are outside the transform, the compiler sees numeric
+input and output arrays. It can generate vector arithmetic for the repeated
+step.
 
-Benchmark evidence: the related caller-owned output benchmark was `1.50x`
-faster than allocating output every run, with the same checksum. That supports
-making the transform step receive prepared data and storage instead of doing
-setup inside the repeated work.
+A benchmark for caller-owned output showed it was `1.50x` faster than
+allocating output every run, with the same checksum. That supports making the
+transform step receive prepared data and storage instead of doing setup inside
+the repeated work.
 
 ## zdisamar Reading Notes
 

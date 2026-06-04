@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Cache line utilisation"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001060000000000000000) (printed-book p168).
 
-Summary: Fabian reminds the reader that memory arrives as cache lines, not
-individual fields. The useful question is whether the extra bytes loaded with a
-value answer the same hot-loop question or just carry cold baggage.
+Summary: Fabian reminds readers that memory is fetched in blocks, not single
+fields. When the program asks for one value, nearby values often come along for
+free.
 
-The section ties back to his animation lookup example and to a codebase partly
-migrated to components. Fabian uses measured cache-presence/query variants on
-an i5-4430 to show that putting the right answer or predicate into otherwise
-loaded cache-line space can dominate a map lookup.
+The section ties back to his animation lookup example and to a codebase that
+had only partly changed its data layout. Fabian uses measurements on an i5-4430
+to show that putting the right nearby value into an already-loaded memory block
+can matter more than using a fancier lookup structure.
 
-Take home: Put fields together only when the same loop reads them together so
-cache lines carry useful data. `zdisamar` should co-locate fields consumed
-together and move debug names or rare data out of repeated rows.
+Take home: Put nearby fields to good use. Keep values together when the same
+question needs them, and move rarely used details away from hot repeated rows.
 
 ## Main Lessons
 
@@ -81,19 +80,9 @@ Zig syntax note: `extern struct` asks Zig to use a C-like field layout.
 `comptime { ... }` runs at compile time. `@sizeOf(KernelRef)` asks the compiler
 for the size of the type.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-const KernelRef = struct {
-    start: u32,
-    count: u16,
-    inline_count: u8,
-};
-```
-
-Wrong pattern:
+Here is a pattern that walks full rows to read the same field from each row.
 
 ```zig
 for (layers) |layer| {
@@ -101,20 +90,8 @@ for (layers) |layer| {
 }
 ```
 
-Better pattern:
-
-```zig
-for (optical_depths) |tau| {
-    total_tau += tau;
-}
-```
-
-Why this contrast matters: the wrong version walks whatever else is stored next
-to `optical_depth` in each row. The better version puts the hot field in the
-memory order the loop actually reads.
-
-Wrong-pattern compiler artifact from
-[`sumOpticalDepth`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the row stride
+from the code above visible.
 
 ```asm
 ldur    d1, [x9, #-48]  ; load one f64 field from an earlier unrolled row
@@ -122,10 +99,22 @@ ldur    d2, [x9, #-24]  ; load the same field from the next unrolled row
 add     x9, x9, #96     ; advance the row pointer by four 24-byte rows
 ```
 
-What goes wrong: unused fields are not loaded, but full row stride still
+This shows that unused fields are not loaded, but full row stride still
 matters. The loop advances by 96 bytes to consume four `f64` values.
 
-Better-pattern compiler artifact from [`sum`](codegen/dod_codegen_examples.zig):
+A better approach puts the field the loop reads repeatedly in contiguous memory.
+
+```zig
+for (optical_depths) |tau| {
+    total_tau += tau;
+}
+```
+
+The first version walks whatever else is stored next to `optical_depth` in each
+row. The better version puts the repeatedly read field in the memory order the
+loop actually reads.
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q1, q2, [x9, #-32]  ; load four adjacent f64 values
@@ -134,11 +123,10 @@ fadd    d0, d0, d1          ; add one loaded lane into the running total
 fadd    d0, d0, d3          ; add another loaded lane into the running total
 ```
 
-What this proves: the column layout keeps the repeated reads closer together in
-memory.
+The column layout keeps the repeated reads closer together in memory.
 
-Benchmark evidence: the optical-depth column was `1.49x` faster than reading
-the same field out of full rows.
+A benchmark for the optical-depth column showed it was `1.49x` faster
+than reading the same field out of full rows.
 
 ## zdisamar Reading Notes
 

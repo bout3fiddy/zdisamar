@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "When should we optimise?"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00910000000000000000) (printed-book p137).
 
-Summary: Fabian defines premature optimization as changing code without data
-showing the change will matter. Measurement turns "slow" into a failure,
-success, or progress criterion.
+Summary: Fabian says optimization should start with evidence, not a hunch. A
+change is premature when there is no measured problem and no clear target for
+improvement.
 
-The practical setting is production risk: if a game can hit 5fps on target
-hardware, has memory limits, or may drain a phone battery, performance is not
-optional. The process conclusion is to start profiling early enough that
-content and features are not built on untested assumptions.
+The practical setting is production risk. If a game falls to 5 frames per
+second, runs out of memory, or drains a phone battery, performance is not an
+optional polish task. Fabian's process answer is to measure early enough that
+features are not built on untested assumptions.
 
-Take home: Measure the real slow part before changing code so optimization
-starts from evidence, not guesses. For `zdisamar`, a performance claim needs a
-baseline, a target or budget, and retained evidence for comparison.
+Take home: Measure the real problem before changing code. Keep the old result,
+the target, and the new result so you can tell whether the change helped.
 
 ## Main Lessons
 
@@ -56,23 +55,19 @@ if (elapsed > budget_ns) try telemetry.record(.product_budget_miss, elapsed);
 What to notice: the code records both the actual time and the budget miss. That
 makes the optimization question measurable.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-const start = timer.read();
-try simulateProductWithWorkspace(input, storage);
-const elapsed_ns = timer.read() - start;
-```
-
-Wrong evidence:
+Here is a pattern that states a performance conclusion without evidence.
 
 ```text
 caller-owned output is faster
 ```
 
-Better evidence:
+This is a conclusion without the evidence that would make it checkable. The
+reader cannot see what was timed, how much work ran, whether the two versions
+produced the same result, or how large the difference was.
+
+A better approach writes the benchmark so the comparison can be checked.
 
 ```text
 bench fill_reflectance_caller_output items=131072 iterations=300 elapsed_ns=26615500 ns_per_item=0.677 checksum=127247609.700
@@ -80,13 +75,12 @@ bench fill_reflectance_allocate_output items=131072 iterations=300 elapsed_ns=39
 ratio caller_output_vs_allocate_output 1.50x
 ```
 
-Why this contrast matters: the wrong line gives no boundary, no workload, no
-iteration count, and no correctness signal. The better lines say exactly what
-was timed and show that both versions produced the same checksum.
+The first line gives no boundary, no workload, no iteration count, and no
+correctness signal. The better lines say exactly what was timed and show that
+both versions produced the same checksum.
 
-What this proves: the optimization claim is tied to a measured boundary,
-iteration count, elapsed time, and checksum. Without those numbers, "faster" is
-only a guess.
+The optimization claim is tied to a measured boundary, iteration count, elapsed
+time, and checksum. Without those numbers, "faster" is only a guess.
 
 ## zdisamar Reading Notes
 

@@ -2,18 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Reusability"](https://www.dataorienteddesign.com/dodbook/node11.html#SECTION001130000000000000000) (printed-book p183).
 
-Summary: Fabian redefines reusability as preserving useful information: the
-order and existence of tasks performed on data, not merely copying source files
-or classes.
+Summary: Fabian argues that reuse is not just copying source files. The more
+important thing to reuse is the knowledge of what steps happen and what data
+they need.
 
 He develops this against the object-oriented story of reuse through adapters,
 wrappers, and agents. The positive example he keeps is `FILE` from `stdio.h`:
-an agent into a complex platform system, not a large object graph that every
-caller must inherit.
+a small handle into a complex platform system, not a large object graph that
+every caller must inherit.
 
-Take home: Reuse clear data-changing steps by feeding them simple data so
-functions are not tied to one large domain object. For `zdisamar`, the reusable
-asset is the prepare/run sequence over prepared data and caller-owned storage.
+Take home: Make reusable work depend on simple inputs, not one large object. A
+clear sequence of data-changing steps is easier to reuse than a class tied to
+one project.
 
 ## Main Lessons
 
@@ -56,19 +56,9 @@ first.
 Zig syntax note: `options: RunOptions` is passed by value. `!ProductView` means
 the function may return an error instead of a `ProductView`.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-pub fn runPrepared(
-    prepared: *const PreparedInput,
-    storage: *ProductStorage,
-    options: RunOptions,
-) !ProductView
-```
-
-Wrong pattern:
+Here is a pattern that ties reusable work to setup and allocation.
 
 ```zig
 pub fn run(scene: SceneInput, allocator: Allocator, options: RunOptions) !ProductView {
@@ -77,7 +67,20 @@ pub fn run(scene: SceneInput, allocator: Allocator, options: RunOptions) !Produc
 }
 ```
 
-Better pattern:
+The compiler output below is generated machine code. It makes the repeated
+prepare call from the code above visible.
+
+```asm
+bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside repeated use
+bl      _dod_codegen_examples.runPreparedForCodegen   ; run after rebuilding state
+subs    x19, x19, #1                                  ; count down uses
+b.ne    LBB2_2                                        ; repeat prepare and run
+```
+
+This shows that a non-reusable function owns preparation, so each repeated use
+rebuilds data before running.
+
+A better approach exposes the prepared run as its own function.
 
 ```zig
 pub fn runPrepared(
@@ -87,25 +90,10 @@ pub fn runPrepared(
 ) !ProductView
 ```
 
-Why this contrast matters: the wrong version owns setup and allocation, so it is
-hard to reuse the repeated run. The better version accepts prepared data and
-storage from the caller.
+The first version owns setup and allocation, so it is hard to reuse the repeated
+run. The better version accepts prepared data and storage from the caller.
 
-Wrong-pattern compiler artifact from
-[`prepareEveryProduct`](codegen/dod_codegen_examples.zig):
-
-```asm
-bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside repeated use
-bl      _dod_codegen_examples.runPreparedForCodegen   ; run after rebuilding state
-subs    x19, x19, #1                                  ; count down uses
-b.ne    LBB2_2                                        ; repeat prepare and run
-```
-
-What goes wrong: a non-reusable function owns preparation, so each repeated use
-rebuilds data before running.
-
-Better-pattern compiler artifact from
-[`runAlreadyPreparedProducts`](codegen/dod_codegen_examples.zig):
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     d0, d1, [x0]                                  ; load reusable prepared input
@@ -114,10 +102,10 @@ fadd    d1, d0, d1                                    ; repeated loop only accum
 b.ne    LBB5_5                                        ; no prepare call in the loop
 ```
 
-What this proves: a reusable prepared boundary lets callers keep setup out of
-the repeated run.
+Because the function accepts prepared input, callers can keep setup out of the
+repeated run.
 
-Related compiler artifact from a reusable output shape:
+A related output-shape example shows the same reusable boundary.
 
 ```llvm
 define dso_local void @fillReflectance(
@@ -128,11 +116,11 @@ define dso_local void @fillReflectance(
 )
 ```
 
-What this proves: the repeated function can read prepared input and write into
-provided storage. It does not need to allocate output inside the loop.
+The repeated function can read prepared input and write into provided storage.
+It does not need to allocate output inside the loop.
 
-Benchmark evidence: caller-owned output was `1.50x` faster than allocating
-output every run, with the same checksum.
+A benchmark for caller-owned output showed it was `1.50x` faster than
+allocating output every run, with the same checksum.
 
 ## zdisamar Reading Notes
 

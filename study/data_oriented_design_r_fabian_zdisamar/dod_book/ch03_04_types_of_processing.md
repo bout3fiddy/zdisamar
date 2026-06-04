@@ -2,19 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Types of processing"](https://www.dataorienteddesign.com/dodbook/node4.html#SECTION00440000000000000000) (printed-book p66).
 
-Summary: Fabian separates transforms by output cardinality: mutation writes one
-row per input row, filtering writes zero or one, emission writes zero or many,
-and generation writes without input rows. Naming that shape matters because it
-drives the storage choice.
+Summary: Fabian groups work by how many results it can create. Some steps turn
+each input into one output, some keep or drop inputs, some create many outputs,
+and some create data without an input list at all.
 
-The classification comes out of existential processing, compute shaders, and
-map-reduce style work: once a kernel is running the same instructions over a
-homogeneous contiguous set, the remaining design question is how many output
-rows each input can create.
+The classification comes from stream-style processing, where the program runs
+the same kind of work over a regular group of items. Once the repeated work is
+clear, the next design question is simple: how many results can one input
+produce?
 
-Take home: Name the kind of data change so the loop shape matches the real
-output being produced. In `zdisamar`, this decides whether a stage needs fixed
-slices, append lists, or count/range tables.
+Take home: Before choosing a data structure, ask what the step produces. Does
+each input make one result, no result, or many results? The answer should shape
+the storage.
 
 ## Main Lessons
 
@@ -89,19 +88,9 @@ writes output without reading input rows.
 Zig syntax note: `*ArrayList(T)` means the function receives a pointer to a
 growable list, so appending inside the function changes the caller's list.
 
-## Compiler Note
+## Practical Example
 
-Chapter examples tied to this note:
-
-```zig
-for (layers, out_layers) |layer, *out| out.* = prepareLayer(layer);
-
-for (samples) |sample| {
-    if (sample.in_band) try kept.append(sample);
-}
-```
-
-Wrong pattern:
+Here is a pattern that filters samples and sums them in the same loop.
 
 ```zig
 for (samples) |sample| {
@@ -109,21 +98,8 @@ for (samples) |sample| {
 }
 ```
 
-Better pattern:
-
-```zig
-const in_band_values = collectInBandValues(samples, scratch);
-for (in_band_values) |value| {
-    sum += value;
-}
-```
-
-Why this contrast matters: the wrong version mixes filtering and summing inside
-one repeated loop. The better version makes the filter step create a smaller
-list, then the sum step walks only values that will be used.
-
-Wrong-pattern compiler artifact from
-[`sumSelected`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the keep/drop
+flag load and branch from the code above visible.
 
 ```asm
 ldrb    w10, [x8], #1  ; load one keep/drop flag
@@ -132,11 +108,23 @@ ldr     w10, [x11]     ; load the value only for a kept row
 add     w0, w10, w0    ; add the kept value
 ```
 
-What goes wrong: filtering and summing are mixed, so the repeated loop keeps a
+This shows that filtering and summing are mixed, so the repeated loop keeps a
 branch for every row.
 
-Better-pattern compiler artifact from
-[`sumGroupedValues`](codegen/dod_codegen_examples.zig):
+A better approach separates selection from summing.
+
+```zig
+const in_band_values = collectInBandValues(samples, scratch);
+for (in_band_values) |value| {
+    sum += value;
+}
+```
+
+The first loop mixes filtering and summing. The better version makes the filter
+step create a smaller list, then the sum step walks only values that will be
+used.
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q4, q5, [x8, #-32]  ; load grouped values with no flag array
@@ -145,8 +133,8 @@ add.4s  v0, v4, v0          ; add four i32 lanes
 add.4s  v1, v5, v1          ; add four more i32 lanes
 ```
 
-What this proves: once filtering has produced a grouped value list, the sum loop
-does not need the per-row keep/drop branch.
+Once filtering has produced a grouped value list, the sum loop does not need the
+per-row keep/drop branch.
 
 The one-output-per-input shape compiles to vector work in the transform example:
 
@@ -162,11 +150,10 @@ The filter shape keeps a branch in the branch example:
 br i1 %.not, label %Block2, label %Then1
 ```
 
-Benchmark evidence: grouping values before summing was `33.56x` faster than
-branching on every flag, with the same checksum. This proves that the type of
-transform matters: mutation, filtering, and expansion create different machine
-work. The benchmark excludes grouping setup, so include setup if the group must
-be rebuilt every call.
+A benchmark for grouped values showed summing after grouping was `33.56x`
+faster than branching on every flag, with the same checksum. Mutation,
+filtering, and expansion create different machine work. The benchmark excludes
+grouping setup, so include setup if the group must be rebuilt every call.
 
 ## zdisamar Reading Notes
 

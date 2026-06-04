@@ -2,19 +2,20 @@
 
 Source: [Data-Oriented Design online book, "Stream Processing"](https://www.dataorienteddesign.com/dodbook/node3.html#SECTION00370000000000000000) (printed-book p54).
 
-Summary: Fabian recasts table data as streams: a transform should read declared
-inputs, use local scratch, and write declared outputs without mutating hidden
-global state. That matters because order becomes less important and the work is
-easier to parallelize, test, and replace.
+Summary: Fabian's stream-processing lesson is simple: many tasks become easier
+when each item is handled the same way, using only the input it was given and
+writing its own result.
 
-He reaches this through two histories at once: relational tables can be viewed
-as unordered sets, and graphics hardware had already forced shader work into
-constant inputs plus per-vertex or per-pixel scratch. If shader kernels wrote
-random globals, graphics cards would need locking or become serial machines.
+He reaches this through two histories at once. Database tables can be treated
+as sets of rows, and graphics hardware had already pushed small graphics
+programs into a similar shape: read shared inputs, use temporary local work
+space, and write the result for one vertex or pixel. If those small programs
+could change random shared data, the machine would need locks or would have to
+run much more work one item at a time.
 
-Take home: Stream stages should read rows and write outputs in a regular loop
-so the work is easy to follow and optimize. `zdisamar` product stages should
-expose rows, scratch, and output buffers directly.
+Take home: Prefer steps that read a list, process each item, and write a clear
+output list. This makes the work easier to understand, test, split up, and run
+again.
 
 ## Main Lessons
 
@@ -80,17 +81,9 @@ fn fillRadiance(rows: []const MissRow, constants: Constants, out: []f64) void {
 What to notice: every row uses the same constants and writes one output slot.
 There is no hidden global accumulator inside the loop.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-for (misses, results) |miss, *result| {
-    result.* = solveMiss(miss, constants);
-}
-```
-
-Wrong pattern:
+Here is a pattern that appends results while the stream is running.
 
 ```zig
 for (misses) |miss| {
@@ -98,20 +91,8 @@ for (misses) |miss| {
 }
 ```
 
-Better pattern:
-
-```zig
-for (misses, results) |miss, *result| {
-    result.* = solveMiss(miss, constants);
-}
-```
-
-Why this contrast matters: the wrong version may check list capacity or grow
-storage inside the stream. The better version writes into already-sized output
-slots, so the compiler sees a regular read/write loop.
-
-Wrong-pattern compiler artifact from
-[`appendLayerSourceChecked`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the capacity
+check, length update, and store from the code above visible.
 
 ```asm
 ldr     x9, [x1, #16]          ; load output capacity
@@ -121,31 +102,43 @@ str     d1, [x9, x0, lsl #3]   ; store at items[len]
 str     x0, [x1, #8]           ; write the updated length
 ```
 
-What goes wrong: append-style output keeps capacity checks and length updates in
+This shows that append-style output keeps capacity checks and length updates in
 the stream loop.
 
-Better-pattern compiler artifact from
-[`fillLayerSource`](codegen/dod_codegen_examples.zig):
+A better approach sizes the output ahead of time and writes each result into
+its slot.
+
+```zig
+for (misses, results) |miss, *result| {
+    result.* = solveMiss(miss, constants);
+}
+```
+
+The append loop may check list capacity or grow storage while the stream is
+running. The better loop writes into already-sized output slots, so the
+compiler sees a regular read/write pass.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %17 = tail call <2 x double> @llvm.fma.v2f64(...)
 store <2 x double> %17, ptr %scevgep29
 ```
 
-Machine code from the same function:
+The matching machine code shows the vector arithmetic and vector stores.
 
 ```asm
 fmla.2d  v22, v3, v2           ; do two f64 multiply-adds in one vector register
 stp      q22, q2, [x9, #-32]   ; store two vector registers into output slots
 ```
 
-What this proves: the compiler recognized a regular stream transform and used
-vector multiply-add plus vector stores. This only works because the source shape
-has clear input rows and output slots.
+The compiler recognized a regular stream transform and used vector multiply-add
+plus vector stores. That happens because the loop has clear input rows and
+output slots.
 
-Benchmark evidence: the related caller-owned output benchmark was `1.50x`
-faster than allocating output every run, with the same checksum. That supports
-the stream-processing habit of passing output storage into the stage.
+A benchmark for caller-owned output showed it was `1.50x` faster than
+allocating output every run, with the same checksum. That supports the
+stream-processing habit of passing output storage into the stage.
 
 ## zdisamar Reading Notes
 

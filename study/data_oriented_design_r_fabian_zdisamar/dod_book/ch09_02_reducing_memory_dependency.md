@@ -2,19 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Reducing memory dependency"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001020000000000000000) (printed-book p164).
 
-Summary: Fabian's memory-dependency point is that pointer chains stall because
-the address of the next load depends on the result of the previous load. The
-hardware cannot hide that latency.
+Summary: Fabian's memory-dependency lesson is that a program can stall when
+each memory read tells it where the next read is. The CPU cannot fetch the next
+address early if it does not know it yet.
 
-The concrete cases are linked lists, tree-shaped maps/sets, and pointer-based
-entity-component composition. The lesson is not that every lookup is bad; it is
-that a load whose address depends on another load creates a chain the CPU cannot
-prefetch away.
+The concrete cases are linked lists, tree-shaped maps or sets, and systems that
+connect objects through many pointers. The lesson is not that every lookup is
+bad; it is that a long chain of "read this to find the next thing" gives the
+machine little room to get ahead.
 
-Take home: Avoid pointer chains in hot loops because each dependent load can
-make the CPU wait for the next address. `zdisamar` hot loops should prefer flat
-arrays, indexes, and saved result positions over walking through object-like
-state.
+Take home: Avoid long chains of pointers in repeated work. Prefer simple lists
+and saved positions when the program needs to visit many related values.
 
 ## Main Lessons
 
@@ -77,16 +75,10 @@ fn integrate(plan: ForwardMissPlan, results: []const ForwardResult, out: []f64) 
 What to notice: the inner loop follows saved indexes into one result array. It
 does not walk a chain of objects or maps to find each radiance value.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-const result_index = plan.sample_indices[i];
-sum += results[result_index].radiance;
-```
-
-Wrong pattern:
+Here is a pattern where a wavelength search must finish before radiance can be
+read.
 
 ```zig
 const wavelength_nm = plan.sample_wavelengths[i];
@@ -94,19 +86,8 @@ const result_index = findResultIndex(results, wavelength_nm);
 sum += results[result_index].radiance;
 ```
 
-Better pattern:
-
-```zig
-const result_index = plan.sample_indices[i];
-sum += results[result_index].radiance;
-```
-
-Why this contrast matters: the wrong version depends on a search before it can
-read the result. The better version keeps one dependent load, but removes the
-search chain from the repeated loop.
-
-Wrong-pattern compiler artifact from
-[`integrateLinearSearch`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the repeated
+search and comparison from the code above visible.
 
 ```asm
 ldr     d1, [x1, x9, lsl #3]   ; load requested wavelength
@@ -115,22 +96,32 @@ fcmp    d2, d1                 ; compare before radiance can be read
 b.eq    LBB11_7                ; branch when the search finds a match
 ```
 
-What goes wrong: the result address depends on a repeated search, not just a
+This shows that the result address depends on a repeated search, not just a
 saved index.
 
-Better-pattern compiler artifact from
-[`integrateIndexed`](codegen/dod_codegen_examples.zig):
+A better approach stores the result index before the repeated read.
+
+```zig
+const result_index = plan.sample_indices[i];
+sum += results[result_index].radiance;
+```
+
+The first version depends on a search before it can read radiance. The better
+version keeps one dependent load, but removes the search chain from the repeated
+loop.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %10 = load i32, ptr %scevgep
 %13 = load double, ptr %12
 ```
 
-What this proves: the loop follows a saved index and then reads the result. The
-search is gone, but the result address still depends on the loaded index.
+The loop follows a saved index and then reads the result. The search is gone,
+but the result address still depends on the loaded index.
 
-Benchmark evidence: prepared indexes were `803.65x` faster than linear search,
-with the same checksum.
+A benchmark for prepared indexes showed they were `803.65x` faster than
+linear search, with the same checksum.
 
 ## zdisamar Reading Notes
 

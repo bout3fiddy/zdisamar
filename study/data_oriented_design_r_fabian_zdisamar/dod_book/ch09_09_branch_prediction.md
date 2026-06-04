@@ -2,18 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Branch prediction"](https://www.dataorienteddesign.com/dodbook/node10.html#SECTION001090000000000000000) (printed-book p172).
 
-Summary: Fabian's branch-prediction lesson is that CPUs do better when branch
-outcomes are predictable in large chunks, but grouping or sorting has a cost and
-may be pointless if the compiler can remove the branch.
+Summary: Fabian's branch-prediction lesson is that changing answers are hard
+for the CPU to guess. If many items take the same path together, the CPU can
+usually do better.
 
-His path to the rule is a small sum-if-data example: random branch directions
-hurt, sorted data can help, but the trivial case may compile into conditional
-execution anyway. The historical lesson is to include compiler behavior in the
-story, not just CPU folklore.
+His path to the rule is a small "sum if this item qualifies" example. Random
+answers hurt, sorted data can help, but the simplest version may compile into
+code without a real branch anyway. The process lesson is to include compiler
+behavior in the story, not just CPU folklore.
 
-Take home: Move unpredictable per-row decisions into preparation so hot loops
-avoid branches the CPU cannot guess well. In `zdisamar`, do this only when
-measurement shows the grouping cost pays for itself.
+Take home: If a branch inside a repeated loop is unpredictable, consider
+grouping the data first. Only do that when the grouping cost is worth it.
 
 ## Main Lessons
 
@@ -26,8 +25,8 @@ measurement shows the grouping cost pays for itself.
   }
   ```
 
-  What to notice: every row asks the same question. If the answer changes
-  unpredictably, the CPU may guess wrong often.
+  What to notice: every row checks `row.needs_scattering`. If that value
+  changes unpredictably, the CPU may guess wrong often.
 
   Zig syntax note: `if (row.needs_scattering) try solveScattering(row);` is a
   one-line `if`. The `try` still means an error from `solveScattering` returns
@@ -68,19 +67,19 @@ fn sumSelected(flags: []const bool, values: []const i32) i32 {
     return sum;
 }
 
-fn processByMode(rows: []const Row) void {
-    const split = partitionByMode(rows);
-    solveModeA(split.mode_a);
-    solveModeB(split.mode_b);
+fn processByScatteringNeed(rows: []const Row) void {
+    const split = partitionByScatteringNeed(rows);
+    solveAbsorptionRows(split.absorption);
+    solveScatteringRows(split.scattering);
 }
 ```
 
-What to notice: `partitionByMode` moves the decision before the repeated solve
-work. Each solver receives rows for one mode.
+What to notice: `partitionByScatteringNeed` moves the decision before the
+repeated solve work. Each solver receives rows for one branch of the physics.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
+Here is a pattern that branches on each row in the repeated loop.
 
 ```zig
 for (rows) |row| {
@@ -88,28 +87,8 @@ for (rows) |row| {
 }
 ```
 
-Wrong pattern:
-
-```zig
-for (rows) |row| {
-    if (row.needs_scattering) try solveScattering(row);
-}
-```
-
-Better pattern:
-
-```zig
-const split = partitionRows(rows, scratch);
-try solveAbsorptionRows(split.absorption);
-try solveScatteringRows(split.scattering);
-```
-
-Why this contrast matters: the wrong version branches inside the repeated loop.
-The better version moves the decision into a grouping step, then each solve loop
-walks one kind of row.
-
-Wrong-pattern compiler artifact from
-[`sumSelected`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the per-row
+`needs_scattering` flag load and branch from the code above visible.
 
 ```asm
 ldrb    w10, [x8], #1  ; load one runtime flag
@@ -118,11 +97,21 @@ ldr     w10, [x11]     ; load value only for selected rows
 add     w0, w10, w0    ; add selected value
 ```
 
-What goes wrong: the hot loop contains a branch whose direction depends on the
-runtime flag pattern.
+The loop contains a branch whose direction depends on the runtime values of
+`row.needs_scattering`.
 
-Better-pattern compiler artifact from
-[`sumGroupedValues`](codegen/dod_codegen_examples.zig):
+A better approach groups rows first, then runs each group.
+
+```zig
+const split = partitionRows(rows, scratch);
+try solveAbsorptionRows(split.absorption);
+try solveScatteringRows(split.scattering);
+```
+
+The first version branches inside the repeated loop. The better version moves
+the decision into a grouping step, then each solve loop walks one kind of row.
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q4, q5, [x8, #-32]  ; load grouped values with no flag load
@@ -131,22 +120,22 @@ add.4s  v0, v4, v0          ; add four i32 lanes
 add.4s  v1, v5, v1          ; add four more i32 lanes
 ```
 
-What this proves: after grouping, the repeated sum loop no longer asks the
-per-row branch question.
+After grouping, the repeated sum loop no longer checks `row.needs_scattering`
+for every row.
 
-Related compiler artifact from the flag-selection example:
+A related flag-selection output shows the branch directly.
 
 ```llvm
 %6 = load i8, ptr %scevgep19
 br i1 %.not, label %Block2, label %Then1
 ```
 
-What this proves: the branch remains in the repeated loop. The compiler can
-unroll, but it cannot know the future flag pattern.
+The branch remains in the repeated loop. The compiler can unroll, but it cannot
+know the future `row.needs_scattering` values.
 
-Benchmark evidence: summing pre-grouped values was `33.56x` faster than
-branching on every flag, with the same checksum. Grouping setup was excluded,
-so measure setup too if grouping changes every call.
+A benchmark for pre-grouped values showed summing them was `33.56x` faster
+than branching on every flag, with the same checksum. Grouping setup was
+excluded, so measure setup too if grouping changes every call.
 
 ## zdisamar Reading Notes
 

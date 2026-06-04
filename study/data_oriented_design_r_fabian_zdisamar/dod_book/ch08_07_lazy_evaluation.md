@@ -2,19 +2,16 @@
 
 Source: [Data-Oriented Design online book, "Lazy evaluation"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00970000000000000000) (printed-book p153).
 
-Summary: Fabian warns that lazy evaluation is not automatically cheaper:
-checking dirty flags can cost more than recomputing cheap values. For expensive
-work, the better shape is to keep a dirty table where membership itself means
-"update this."
+Summary: Fabian warns that delaying work is not automatically faster. Sometimes
+checking whether work is needed costs more than just doing the work.
 
 The context is render-engine and compiler history. Fabian cites the shift from
-dirty-bit scene hierarchy updates toward recomputing matrices every frame, and
-Tony Albrecht's talks where an old manual devirtualization win stopped helping
-as compilers and hardware moved on.
+marking scene data as "dirty" toward simply recomputing cheap matrices every
+frame. He also points to Tony Albrecht's talks, where an old manual optimization
+stopped helping as compilers and hardware improved.
 
-Take home: Delay work only when the saved work is larger than the check, because
-lazy code can add its own cost. `zdisamar` caches should have explicit keys and
-dirty lists, and add laziness only when avoided work exceeds validation cost.
+Take home: Use laziness only when the saved work is larger than the check. For
+expensive work, keep a clear list of the items that really need updating.
 
 ## Main Lessons
 
@@ -78,17 +75,10 @@ fn refreshOnlyDirty(plan: DirtyPlan, cache: *SpectralCache) !void {
 What to notice: `plan.wavelengths` is the list of work to refresh. The function
 does not scan every possible wavelength looking for dirty flags.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-for (dirty_wavelengths) |wavelength_nm| {
-    try refreshSpectralCache(cache, wavelength_nm);
-}
-```
-
-Wrong pattern:
+Here is a pattern that scans every wavelength to check whether its cached value
+needs refresh.
 
 ```zig
 for (all_wavelengths) |wavelength_nm| {
@@ -96,19 +86,8 @@ for (all_wavelengths) |wavelength_nm| {
 }
 ```
 
-Better pattern:
-
-```zig
-for (dirty_wavelengths) |wavelength_nm| {
-    try refreshSpectralCache(cache, wavelength_nm);
-}
-```
-
-Why this contrast matters: the wrong version scans every possible row to find
-the few rows needing work. The better version stores the work list directly.
-
-Wrong-pattern compiler artifact from
-[`refreshScanAllFlags`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the dirty-flag
+load and branch from the code above visible.
 
 ```asm
 ldrb    w12, [x9], #1  ; load one dirty flag
@@ -117,11 +96,21 @@ ldr     d1, [x10]      ; load wavelength only when dirty
 str     d1, [x11]      ; store refreshed output
 ```
 
-What goes wrong: the scan-all version keeps a flag load and branch in the loop
+This shows that the scan-all version keeps a flag load and branch in the loop
 for every possible row.
 
-Better-pattern compiler artifact from
-[`refreshDirty`](codegen/dod_codegen_examples.zig):
+A better approach stores the wavelengths that need refresh as a list.
+
+```zig
+for (dirty_wavelengths) |wavelength_nm| {
+    try refreshSpectralCache(cache, wavelength_nm);
+}
+```
+
+The first loop scans every possible wavelength to find the few cache entries
+needing refresh. The better loop stores that refresh list directly.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %wide.load = load <2 x double>, ptr %scevgep24
@@ -129,9 +118,9 @@ Better-pattern compiler artifact from
 store <2 x double> %10, ptr %scevgep19
 ```
 
-Benchmark evidence: using a dirty index list was `4.18x` faster elapsed time
-than scanning all flags, with the same checksum. The compiler optimized the loop
-it was given; the source code made the loop shorter.
+A benchmark for the refresh list showed it was `4.18x` faster elapsed time than
+scanning all flags, with the same checksum. The compiler optimized the loop it
+was given; the source code made the loop shorter.
 
 ## zdisamar Reading Notes
 

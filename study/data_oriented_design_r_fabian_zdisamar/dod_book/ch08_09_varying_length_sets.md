@@ -2,20 +2,18 @@
 
 Source: [Data-Oriented Design online book, "Varying length sets"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00990000000000000000) (printed-book p155).
 
-Summary: Fabian explains that filters and emissions break the fixed
-one-input-one-output stream shape, so variable-length results need counts,
-starts, reductions, or prefix sums. The reason is to regain contiguous output
-without per-row allocation.
+Summary: Fabian explains what happens when one input does not always make one
+output. Filters can shrink data, emissions can grow it, and both need a plan
+for where the results go.
 
-Fabian comes at this from shader-style fixed buffers, radix/counting-sort
-histograms, and multi-threaded filtering where each thread writes a private
-output vector before a reduce step concatenates them. He then connects the same
-problem to deletion, pools, and thread-bound ownership.
+Fabian comes at this from fixed-size graphics buffers, sorting methods that
+count output sizes first, and multi-worker filtering where each worker writes a
+private output list before the lists are joined. He then connects the same
+problem to deletion, object pools, and worker-owned storage.
 
-Take home: Store variable-length outputs with counts, starts, or ranges so later
-loops can jump straight to each set. `zdisamar` kernel samples and optional
-derivative groups should use side storage plus refs/counts instead of per-row
-allocation.
+Take home: Store variable-size groups with counts, starts, or ranges. That lets
+later code find each group directly without guessing or allocating for every
+item.
 
 ## Main Lessons
 
@@ -98,15 +96,10 @@ list.
 Zig syntax note: `ref.inline_samples[0..ref.inline_count]` returns only the
 filled part of the fixed-size inline array.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-starts[i] = starts[i - 1] + count;
-```
-
-Wrong pattern:
+Here is a pattern that recomputes the start offset for a group whose length can
+change.
 
 ```zig
 var start: u32 = 0;
@@ -116,19 +109,8 @@ for (counts[0..i]) |count| {
 return samples[start..][0..counts[i]];
 ```
 
-Better pattern:
-
-```zig
-const start = starts[i];
-return samples[start..][0..counts[i]];
-```
-
-Why this contrast matters: the wrong version re-adds counts for every query.
-The better version builds `starts` once, then each query reads one saved start
-position.
-
-Wrong-pattern compiler artifact from
-[`startByResummingCounts`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the repeated
+count-summing work from the code above visible.
 
 ```asm
 ldp     q4, q5, [x8, #-32]  ; load counts for this query
@@ -137,23 +119,31 @@ add.4s  v0, v4, v0          ; add counts into a running sum
 add.4s  v1, v5, v1          ; keep summing counts for this query
 ```
 
-What goes wrong: each query spends loop work recomputing the start offset from
+This shows that each query spends loop work recomputing the start offset from
 earlier counts.
 
-Better-pattern compiler artifact from
-[`prefixStarts`](codegen/dod_codegen_examples.zig):
+A better approach builds start positions once and reuses them.
+
+```zig
+const start = starts[i];
+return samples[start..][0..counts[i]];
+```
+
+The first version re-adds counts for every query. The better version builds
+`starts` once, then each query reads one saved start position.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %6 = load i32, ptr %lsr.iv
 store i32 %7, ptr %lsr.iv19
 ```
 
-What this proves: building starts is a real setup pass. It reads counts and
-writes starts.
+Building starts is a real setup pass. It reads counts and writes starts.
 
-Benchmark evidence: querying prepared starts was `2039.62x` faster than
-re-summing counts for every query, with the same checksum. This proves why the
-setup pass is worth it when reused.
+A benchmark for prepared starts showed querying them was `2039.62x` faster than
+re-summing counts for every query, with the same checksum. That is why the setup
+pass is worth it when reused.
 
 ## zdisamar Reading Notes
 

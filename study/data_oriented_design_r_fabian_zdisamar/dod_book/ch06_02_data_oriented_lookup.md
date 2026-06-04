@@ -2,19 +2,17 @@
 
 Source: [Data-Oriented Design online book, "Data-oriented Lookup"](https://www.dataorienteddesign.com/dodbook/node7.html#SECTION00720000000000000000) (printed-book p115).
 
-Summary: Fabian's lookup example separates the search criterion from the
-payload: the hunt needs the time values, not the whole animation key. The reason
-is cache behavior; narrow key arrays fill cache lines with data the search will
-actually compare.
+Summary: Fabian's lookup lesson is to search only the small data needed to make
+the decision. If the search is by time, search the times first; do not drag the
+full record into memory for every comparison.
 
-His concrete example is animation-key lookup, a common pattern in animation
-libraries and hand-rolled sorted structures. He first rewrites a full-key binary
-search, then pushes further because PS3 and Xbox 360 work made poor cache-line
-utilisation a major cost.
+His concrete example is animation-key lookup. He first rewrites a search over
+full animation records, then goes further because console work on the PS3 and
+Xbox 360 made wasted memory loading a visible cost. The search needed the key,
+not every value attached to the key.
 
-Take home: Search narrow key arrays so lookup code does not pull full payload
-rows into the search loop. `zdisamar` should find wavelength/key positions
-first, then fetch larger spectroscopy or RTM payloads after the index is known.
+Take home: Separate keys from larger records when the key is all the search
+needs. Find the position first, then fetch the larger data once.
 
 ## Main Lessons
 
@@ -98,16 +96,10 @@ What to notice: `times` is searched first because it is the small lookup data.
 `payloads` is read only after the index is found. `first_stage` is an extra
 helper that narrows the search range.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-const index = lowerBound(table.times, t);
-return table.payloads[index];
-```
-
-Wrong pattern:
+Here is a pattern that searches full payload rows even though the search key is
+only `payload.time`.
 
 ```zig
 for (table.payloads) |payload| {
@@ -115,19 +107,8 @@ for (table.payloads) |payload| {
 }
 ```
 
-Better pattern:
-
-```zig
-const index = lowerBound(table.times, t);
-return table.payloads[index];
-```
-
-Why this contrast matters: the wrong version reads payload rows while it is only
-trying to answer "which time?". The better version searches the small key array
-first, then reads one payload.
-
-Wrong-pattern compiler artifact from
-[`lookupPayloadLinear`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the full-row
+stride and time-field comparison from the code above visible.
 
 ```asm
 ldur    d0, [x8, #-16]  ; load the time field from a 32-byte payload row
@@ -136,11 +117,21 @@ b.ge    LBB14_5         ; branch when this payload row matches
 add     x8, x8, #32     ; move to the next full payload row
 ```
 
-What goes wrong: the search walks full payload rows even though it only needs
+This shows that the search walks full payload rows even though it only needs
 the key.
 
-Better-pattern compiler artifact from
-[`lowerBound`](codegen/dod_codegen_examples.zig):
+A better approach searches the time keys first, then fetches one payload.
+
+```zig
+const index = lowerBound(table.times, t);
+return table.payloads[index];
+```
+
+The first loop reads payload rows while it is only trying to answer "which
+time?". The better loop searches the small key array first, then reads one
+payload.
+
+The generated output for the better approach is easier to read.
 
 ```llvm
 %7 = load double, ptr %6
@@ -148,12 +139,12 @@ Better-pattern compiler artifact from
 %.17 = select i1 %8, i64 %9, i64 %.068
 ```
 
-What this proves: the search loop loads only the key array. It does not load the
-payload rows while searching.
+The search loop loads only the key array. It does not load the payload rows
+while searching.
 
-Benchmark evidence from the related index test: using prepared indexes was
-`803.65x` faster than repeated linear search. This proves the value of moving
-lookup work out of the repeated path.
+A benchmark for prepared indexes showed they were `803.65x` faster than
+repeated linear search. That is the value of moving lookup work out of the
+repeated path.
 
 ## zdisamar Reading Notes
 

@@ -2,21 +2,20 @@
 
 Source: [Data-Oriented Design online book, "How is data formed?"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00250000000000000000) (printed-book p18).
 
-Summary: Fabian's lesson is that real production data keeps changing: assets,
-formats, platforms, and features do not fit one permanent object taxonomy. The
-stable design move is to form messy external data into the representation the
-current engine actually runs.
+Summary: Fabian's lesson is that real project data keeps changing. New file
+formats, tools, hardware, and features keep breaking old assumptions, so a
+program needs a clear step that turns messy outside material into data it can
+actually use.
 
-He gets there from engine migration history: old texture assumptions broke when
-floating-point textures arrived, vertex-shader texture reads changed skinning
-uploads, shaders and the PlayStation 2 changed what a material meant, open
-worlds changed rendering data, and alignment-sensitive hardware forced more
-layout changes.
+He gets there from game-engine migration history. Old texture assumptions broke
+when new texture formats appeared, graphics-program changes altered how
+animation data was sent to the machine, open worlds changed rendering data, and
+some hardware forced data to be laid out more carefully. The lasting lesson is
+that the input world keeps moving.
 
-Take home: Turn messy input files into clean prepared arrays so repeated model
-work does not parse or rebuild setup data. In `zdisamar`, this means parsing
-control files and reference assets into prepared optical data before repeated
-solves begin.
+Take home: Do setup once before repeated work starts. Turn files, settings, and
+assets into clean data that later code can use without rereading or
+reinterpreting them.
 
 ## Main Lessons
 
@@ -74,20 +73,9 @@ repeat file-loading or asset-shaping work.
 Zig syntax note: `return .{ ... };` builds the return struct without repeating
 the struct type name. The `.optical = ...` lines set fields by name.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-pub fn prepareInput(scene: SceneInput, assets: ReferenceAssets) !PreparedInput {
-    return .{
-        .optical = try buildOpticalState(scene, assets),
-        .rtm_config = scene.rtm_config,
-    };
-}
-```
-
-Wrong pattern:
+Here is a pattern that rebuilds prepared input for every product.
 
 ```zig
 for (products) |_| {
@@ -96,21 +84,8 @@ for (products) |_| {
 }
 ```
 
-Better pattern:
-
-```zig
-const prepared = try prepareInput(scene, assets);
-for (products) |_| {
-    try runPrepared(prepared, storage);
-}
-```
-
-Why this contrast matters: the wrong version repeats setup for every product.
-The better version forms the data once, then keeps the repeated run focused on
-model work.
-
-Wrong-pattern compiler artifact from
-[`prepareEveryProduct`](codegen/dod_codegen_examples.zig):
+The compiler output below is generated machine code. It makes the repeated calls
+from the code above visible.
 
 ```asm
 bl      _dod_codegen_examples.prepareInputForCodegen  ; prepare inside the product loop
@@ -119,12 +94,24 @@ subs    x19, x19, #1                                  ; count down remaining pro
 b.ne    LBB2_2                                        ; repeat both calls
 ```
 
-What goes wrong: preparation stays inside the repeated product loop. The
+This shows that preparation stays inside the repeated product loop. The
 compiler output shows both the prepare call and the run call on the repeated
 path.
 
-Better-pattern compiler artifact from
-[`runAlreadyPreparedProducts`](codegen/dod_codegen_examples.zig):
+A better approach is to prepare once, then run each product from that prepared
+data.
+
+```zig
+const prepared = try prepareInput(scene, assets);
+for (products) |_| {
+    try runPrepared(prepared, storage);
+}
+```
+
+The first loop repeats setup for every product. The better loop forms the data
+once, then keeps each repeated run focused on model work.
+
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     d0, d1, [x0]                                  ; load prepared values once
@@ -133,10 +120,10 @@ fadd    d1, d0, d1                                    ; repeated loop only accum
 b.ne    LBB5_5                                        ; repeat the cheap loop body
 ```
 
-What this proves: once the input is already prepared, the repeated loop no
-longer includes the prepare call.
+Once the input is already prepared, the repeated loop no longer includes the
+prepare call.
 
-Related compiler artifact from the repeated transform example:
+A related compiler output from a repeated transform shows the same boundary.
 
 ```llvm
 define dso_local void @fillLayerSource(
@@ -146,13 +133,14 @@ define dso_local void @fillLayerSource(
 )
 ```
 
-What this proves: after data has been formed, the repeated function can receive
-read-only prepared input and a write-only output buffer. The loader/parser is
-not part of that compiled symbol.
+After data has been formed, the repeated function can receive read-only
+prepared input and a write-only output buffer. The loader/parser is not part of
+that compiled symbol.
 
-Benchmark evidence: caller-owned reflectance output was `1.50x` faster than
-allocating output on every run, with the same checksum. This supports the
-chapter lesson: do setup and shape-building before the repeated run.
+A benchmark for caller-owned reflectance output showed it was `1.50x`
+faster than allocating output on every run, with the same checksum. This
+supports the chapter lesson: do setup and shape-building before the repeated
+run.
 
 ## zdisamar Reading Notes
 

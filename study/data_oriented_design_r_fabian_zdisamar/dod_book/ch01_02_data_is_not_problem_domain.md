@@ -2,19 +2,19 @@
 
 Source: [Data-Oriented Design online book, "Data is not the problem domain"](https://www.dataorienteddesign.com/dodbook/node2.html#SECTION00220000000000000000) (printed-book p6).
 
-Summary: Fabian argues that data should not inherit the problem-domain model in
-the code. Meaning is applied by context, but the machine transforms plain facts
-rather than human concepts.
+Summary: Fabian's lesson is that a program should not be shaped only around the
+names people use for a problem. Those names help humans explain the work, but
+the computer still runs on plain values arranged in memory.
 
-Fabian grounds this in shipping-game failures where grid-like worlds were kept
-as object collections instead of grid data. The result was extra neighbor links,
-full-list scans, and auxiliary spatial maps just to recover the locality that
-the original data layout had hidden.
+He gets there from shipping-game failures where grid-like worlds were stored as
+large collections of objects. The team then had to add neighbor links, scan
+long lists, and build extra maps just to answer simple questions such as
+"what is nearby?" The story of the world was clear, but the data had hidden the
+shape the program needed.
 
-Take home: Prepare science input into small runtime data so solver loops do not
-drag parser or domain state through hot math. This follows directly from
-Fabian's warning: O2 A and DISAMAR vocabulary belongs at input and validation
-boundaries, while RTM loops should receive only the values the math reads.
+Take home: Keep the human story separate from the small pieces of data the
+program repeatedly uses. Use domain names when reading or explaining input, then
+let repeated work run on simple, direct values.
 
 ## Main Lessons
 
@@ -91,17 +91,10 @@ What to notice: the code that calls `radiativeTransfer` passes `layers`,
 `config`, and workspace memory. It does not pass a parser result or a full
 science case object into the RTM math.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-for (input.layers) |layer| {
-    optical_depth_sum += layer.optical_depth;
-}
-```
-
-Wrong pattern:
+Here is a pattern that stores each layer as a larger science row, then reads
+only one number from each row inside the repeated sum.
 
 ```zig
 for (case.layers) |layer| {
@@ -109,7 +102,22 @@ for (case.layers) |layer| {
 }
 ```
 
-Better pattern:
+The compiler output below is generated machine code. It makes the pointer loads
+and field loads from the code above visible.
+
+```asm
+ldur    x11, [x9, #-64]  ; load a physics pointer from a layer row
+ldur    x12, [x9, #-32]  ; load the next physics pointer from another row
+ldr     d1, [x11]        ; follow the pointer and load optical_depth
+ldr     d2, [x12]        ; follow another pointer and load optical_depth
+add     x9, x9, #128     ; advance by four 32-byte ScienceLayer rows
+```
+
+The loop first loads pointers from the layer rows, then follows those pointers
+to load `optical_depth`. That is extra memory work before the actual add.
+
+A better approach is to form the numeric column first and let the loop walk
+that column.
 
 ```zig
 for (optical_depths) |tau| {
@@ -117,26 +125,10 @@ for (optical_depths) |tau| {
 }
 ```
 
-Why this contrast matters: the wrong version makes the hot loop walk through a
-larger science-shaped row to read one number. The better version gives the loop
-only the numbers it uses.
+The first loop walks through a larger row to read one number. The better loop
+receives only the numbers it uses.
 
-Wrong-pattern compiler artifact from
-[`sumOpticalDepthScienceLayer`](codegen/dod_codegen_examples.zig):
-
-```asm
-ldur    x11, [x9, #-64]  ; load a physics pointer from a science-shaped row
-ldur    x12, [x9, #-32]  ; load the next physics pointer from another row
-ldr     d1, [x11]        ; follow the pointer and load optical_depth
-ldr     d2, [x12]        ; follow another pointer and load optical_depth
-add     x9, x9, #128     ; advance by four 32-byte ScienceLayer rows
-```
-
-What goes wrong: the loop first loads pointers from the science-shaped rows,
-then follows those pointers to load the number. That is extra memory work before
-the actual add.
-
-Better-pattern compiler artifact from [`sum`](codegen/dod_codegen_examples.zig):
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp     q1, q2, [x9, #-32]  ; load four adjacent f64 values
@@ -145,14 +137,13 @@ fadd    d0, d0, d1          ; add one loaded lane into the running total
 fadd    d0, d0, d3          ; add another loaded lane into the running total
 ```
 
-What this proves: the better loop walks one numeric column. It does not first
-load a science row or follow a pointer to find the number.
+The better loop walks one numeric column. It does not first load a layer row or
+follow a pointer to find the number.
 
-Benchmark evidence from [`benchmark_results.md`](codegen/benchmark_results.md):
-reading a plain `[]f64` optical-depth column was `1.49x` faster than reading the
-same field out of full layer rows, with the same checksum. So the chapter
-lesson is not just style: smaller runtime data can produce simpler and faster
-memory access.
+A benchmark for the numeric-column layout showed a plain `[]f64` optical-depth column was
+`1.49x` faster than reading the same field out of full layer rows, with the
+same checksum. So the chapter lesson is not just style: smaller runtime data
+can produce simpler and faster memory access.
 
 ## zdisamar Reading Notes
 

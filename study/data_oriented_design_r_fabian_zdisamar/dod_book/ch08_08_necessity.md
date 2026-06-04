@@ -2,18 +2,16 @@
 
 Source: [Data-Oriented Design online book, "Necessity"](https://www.dataorienteddesign.com/dodbook/node9.html#SECTION00980000000000000000) (printed-book p154).
 
-Summary: Fabian's necessity lesson is that object layouts often force unrelated
-fields into the same cache lines, so a function loads data it never asked for.
-The fix is to carry only the fields a transaction needs.
+Summary: Fabian's "necessity" lesson is to avoid carrying data that a task did
+not ask for. Large objects often make code load many fields when it only needed
+one or two.
 
-The source of the lesson is C++ object practice: classes gather multiple roles,
-inheritance adds baggage, and virtual dispatch first loads the cache line with
-the vtable pointer before the CPU even knows which data the function will need.
+The source of the lesson is C++ object practice. Classes can gather multiple
+roles, inheritance can add baggage, and a method call can force the machine to
+load extra object data before it even knows which data the method will need.
 
-Take home: Carry only needed data into a loop so unused fields and optional work
-do not take time or memory. In `zdisamar`, hot rows and workspaces should
-exclude unused layer fields and allocate optional physics or Jacobian buffers
-only when a later step will read them.
+Take home: Give a repeated step only the fields it will use. Optional data
+should exist only when a later step will actually read it.
 
 ## Main Lessons
 
@@ -75,17 +73,9 @@ fn ensureJacobianStorage(storage: *ProductStorage, states: JacobianMask) !void {
 What to notice: the function releases Jacobian storage when no states are
 active, and only allocates it when the state mask says it will be used.
 
-## Compiler Note
+## Practical Example
 
-Chapter example tied to this note:
-
-```zig
-if (!config.has_scattering) {
-    return solveAbsorptionOnly(input, workspace);
-}
-```
-
-Wrong pattern:
+Here is a pattern that checks `config.has_scattering` once per layer.
 
 ```zig
 for (layers) |layer| {
@@ -93,7 +83,22 @@ for (layers) |layer| {
 }
 ```
 
-Better pattern:
+The compiler output below is generated machine code. It makes the per-row flag
+load and branch from the code above visible.
+
+```asm
+ldrb    w12, [x9], #1  ; load one per-row flag
+cbz     w12, LBB16_5   ; branch around work when the flag says no
+ldr     d1, [x10]      ; load data only after the branch passes
+str     d1, [x11]      ; write output for the active row
+```
+
+The loop repeats the same scattering check for every layer. If
+`config.has_scattering` is false, none of the layers can enter
+`solveScattering`, so the check belongs before the loop.
+
+A better approach checks `config.has_scattering` once, then runs the loop that
+is actually needed.
 
 ```zig
 if (!config.has_scattering) {
@@ -104,25 +109,11 @@ for (scattering_layers) |layer| {
 }
 ```
 
-Why this contrast matters: the wrong version asks the same "is scattering on?"
-question for every layer. The better version answers it once, then runs the
-needed loop only when there is real work.
+The first loop asks "is scattering on?" for every layer. The better version
+answers that once, then runs the scattering loop only when scattering work can
+happen.
 
-Wrong-pattern compiler artifact from
-[`refreshScanAllFlags`](codegen/dod_codegen_examples.zig):
-
-```asm
-ldrb    w12, [x9], #1  ; load one per-row flag
-cbz     w12, LBB16_5   ; branch around work when the flag says no
-ldr     d1, [x10]      ; load data only after the branch passes
-str     d1, [x11]      ; write output for the active row
-```
-
-What goes wrong: the loop carries optional-work checks row by row. If the whole
-mode is off, that question should be answered before the loop starts.
-
-Better-pattern compiler artifact from
-[`refreshDirty`](codegen/dod_codegen_examples.zig):
+The generated output for the better approach is easier to read.
 
 ```asm
 ldp       q1, q2, [x10, #-32]  ; load dirty-row input values into vector registers
@@ -131,21 +122,22 @@ fadd.2d   v1, v1, v1           ; double two f64 lanes for the refreshed value
 stp       q1, q2, [x9, #-32]   ; store refreshed output values
 ```
 
-What this proves: the better loop only receives rows that need work. It does
-not ask each row whether optional work exists.
+The better loop only receives rows that need work. It does not ask each row
+whether scattering work exists.
 
-Related compiler artifact from the optional-storage shape:
+A related compiler output for optional storage shows the same zero-work check in
+a smaller form.
 
 ```asm
 cmp     x0, #0          ; check whether the requested work count is zero
 csel    x0, xzr, x8, eq ; return 0 for no work, otherwise return the chosen size
 ```
 
-What this proves: deciding "none requested" can be cheap. The bigger win is
-skipping the data and loops that would have followed.
+Deciding "none requested" can be cheap. The bigger win is skipping the data and
+loops that would have followed.
 
-Benchmark evidence from the dirty-work example: processing only requested rows
-was `4.18x` faster elapsed time than scanning all rows with flags.
+A benchmark for requested-row lists showed processing only requested rows was
+`4.18x` faster elapsed time than scanning all rows with flags.
 
 ## zdisamar Reading Notes
 
