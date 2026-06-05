@@ -62,6 +62,27 @@ const default_intervals = [_]AtmosphereModel.VerticalInterval{
     },
 };
 
+const benchmark_jacobian_intervals = [_]AtmosphereModel.VerticalInterval{
+    .{
+        .index_1based = 1,
+        .top_pressure_hpa = 0.3,
+        .bottom_pressure_hpa = 875.0,
+        .altitude_divisions = 16,
+    },
+    .{
+        .index_1based = 2,
+        .top_pressure_hpa = 875.0,
+        .bottom_pressure_hpa = 925.0,
+        .altitude_divisions = 4,
+    },
+    .{
+        .index_1based = 3,
+        .top_pressure_hpa = 925.0,
+        .bottom_pressure_hpa = 1013.25,
+        .altitude_divisions = 6,
+    },
+};
+
 const default_isotopes = [_]u8{ 1, 2, 3 };
 
 pub fn defaultInput() O2AInput {
@@ -185,6 +206,39 @@ pub fn defaultInput() O2AInput {
             .require_resolved_stage_references = true,
         },
     };
+}
+
+pub fn benchmarkJacobianInput() O2AInput {
+    var input = defaultInput();
+    input.metadata = .{
+        .id = "disamar_reference_o2a_jacobian_validation",
+        .storage = "disamar-reference-o2a-jacobian-validation",
+        .description = "Hardcoded DISAMAR O2 A Jacobian validation case.",
+    };
+    input.inputs.raw_solar_reference = asset(
+        "raw_solar_reference",
+        "data/reference_data/solar/o2a_solar_reference_chance_kurucz_2010_753_778.csv",
+        "solar_reference_csv",
+    );
+    input.scene_id = "o2a_disamar_reference_jacobian_validation";
+    input.spectral_grid = .{
+        .start_nm = 758.0,
+        .end_nm = 770.0,
+        .sample_count = 301,
+    };
+    input.intervals = benchmark_jacobian_intervals[0..];
+    input.geometry.viewing_zenith_deg = 0.0;
+    input.geometry.relative_azimuth_deg = 0.0;
+    input.aerosol.placement.top_pressure_hpa = 875.0;
+    input.aerosol.placement.bottom_pressure_hpa = 925.0;
+    input.observation.instrument_name = "disamar-o2a-jacobian-validation";
+    input.observation.instrument_line_fwhm_nm = 0.12;
+    input.observation.high_resolution_half_span_nm = 0.36;
+    input.observation.adaptive_reference_grid.points_per_fwhm = 30;
+    input.observation.adaptive_reference_grid.strong_line_min_divisions = 6;
+    input.observation.adaptive_reference_grid.strong_line_max_divisions = 30;
+    input.rtm_controls.performance_thresholds.phase_function_truncation_threshold = 1.0e-6;
+    return input;
 }
 
 pub fn parseInputJson(allocator: Allocator, json: []const u8) !std.json.Parsed(O2AInput) {

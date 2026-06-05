@@ -6,6 +6,7 @@ const common = @import("../root.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
 const Perturbation = @import("../../instrumentation/sensitivity.zig");
 const Trace = @import("../../instrumentation/trace.zig");
+const phase_timing = @import("phase_timing.zig");
 
 // layers.zig -------------------------------------------------------------------------------------------------|
 // LABOS layer matrix builder. Layer optical properties and phase coefficients become RT_fc R/T matrices.      |
@@ -426,6 +427,7 @@ fn doDouble(
     i_fourier: usize,
     layer_index: usize,
     phase_max_index: usize,
+    trace_phase_timing: ?phase_timing.Active,
 ) void {
     // doDouble -----------------------------------------------------------------------------------------------|
     // Dynamic-shape LABOS layer doubling for one layer and Fourier term. Steps:                               |
@@ -461,7 +463,7 @@ fn doDouble(
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == basis.max_nmutot and n_gauss == basis.max_gauss) {
-        doDouble12x10(ndouble, thresholds, R, T, E, i_fourier, layer_index, phase_max_index);
+        doDouble12x10(ndouble, thresholds, R, T, E, i_fourier, layer_index, phase_max_index, trace_phase_timing);
         return;
     }
 
@@ -804,6 +806,7 @@ fn doDouble12x10(
     i_fourier: usize,
     layer_index: usize,
     phase_max_index: usize,
+    trace_phase_timing: ?phase_timing.Active,
 ) void {
     // doDouble12x10 ------------------------------------------------------------------------------------------|
     // Fixed 12x10 layer doubling for the O2 A LABOS rtm_config. Steps:                                        |
@@ -838,6 +841,7 @@ fn doDouble12x10(
         // captures: fixed 12x10 layer-doubling iterations                                                     |
         // why: count matrix squaring work in the specialized hot path.                                        |
         Trace.plotU("doubling_steps", 1);
+        phase_timing.count(trace_phase_timing, "fixed_doubling_steps", 1);
         // end instrumentation: trace counter: fixed doubling steps -------------------------------------------|
 
         doDouble12x10Step(
@@ -851,6 +855,7 @@ fn doDouble12x10(
             layer_index,
             phase_max_index,
             doubling_step_index,
+            trace_phase_timing,
         );
 
         const previous_r = current_r;
@@ -887,6 +892,7 @@ inline fn doDouble12x10Step(
     layer_index: usize,
     phase_max_index: usize,
     doubling_step_index: usize,
+    trace_phase_timing: ?phase_timing.Active,
 ) void {
     // doDouble12x10Step --------------------------------------------------------------------------------------|
     // One fixed 12x10 doubling step.                                                                          |
@@ -959,6 +965,7 @@ inline fn doDouble12x10Step(
             // captures: fixed-size q-series products skipped by threshold                                     |
             // why: quantify savings from q-zero specialization.                                               |
             Trace.plotU("doubling_qseries_skipped", 1);
+            phase_timing.count(trace_phase_timing, "fixed_qseries_skipped", 1);
             // end instrumentation: trace counter: fixed q-series skipped -------------------------------------|
 
             break :choose_fixed_doubling_d current_t;
@@ -971,10 +978,25 @@ inline fn doDouble12x10Step(
         Trace.plotU("matrix_qseries", 1);
         Trace.plotU("matrix_smul_q_product", 1);
         Trace.plotU("matrix_smul_add_semul3", 1);
+        phase_timing.count(trace_phase_timing, "fixed_qseries_retained", 1);
         // end instrumentation: trace counters: fixed q-series retained ---------------------------------------|
 
         var Q: basis.Mat = undefined;
-        basis.qseriesKnownNonzeroProductInto(&Q, basis.max_nmutot, basis.max_gauss, current_r, current_r);
+
+        // instrumentation: trace phase clock: fixed q-series work --------------------------------------------|
+        // captures: retained Q solve and D construction in fixed layer doubling                               |
+        // why: separate q-series work from downstream R/T update kernels.                                     |
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_qseries_work");
+        // end instrumentation: trace phase clock: fixed q-series work ----------------------------------------|
+
+        basis.qseriesKnownNonzeroProductInto(
+            &Q,
+            basis.max_nmutot,
+            basis.max_gauss,
+            current_r,
+            current_r,
+        );
         basis.smulAddSemul3KnownRightTraceInto(
             &d_storage,
             basis.max_nmutot,
@@ -1023,34 +1045,53 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed R-D product gate --------------------------------------------------|
     // captures: fixed R-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this hot-path product.                                       |
+    const rd_gate_enabled = if (q_is_zero) !thresholds.qzero_rd_product_suppression else true;
     const rd_nonzero = Perturbation.decision(
         .qseries_rd_product,
         downstream_coord,
-        !(q_is_zero and thresholds.qzero_rd_product_suppression) and
-            @abs(trace_r * trace_d) > threshold_mul,
+        rd_gate_enabled and @abs(trace_r * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed R-D product gate ----------------------------------------------|
 
     var U: basis.Mat = undefined;
-    if (rd_nonzero) {
+    {
 
-        // instrumentation: trace counters: fixed R-D retained ------------------------------------------------|
-        // captures: retained fixed-size R-D product and semul-add work                                        |
-        // why: measure matrix products not skipped by downstream gates.                                       |
-        Trace.plotU("matrix_smul_rd_nonzero", 1);
-        Trace.plotU("matrix_semul_add", 1);
-        // end instrumentation: trace counters: fixed R-D retained --------------------------------------------|
+        // instrumentation: trace phase clock: fixed R-D update -----------------------------------------------|
+        // captures: fixed U construction after the R-D gate                                                   |
+        // why: split downstream update work from retained q-series cost.                                      |
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_rd_update");
+        // end instrumentation: trace phase clock: fixed R-D update -------------------------------------------|
 
-        basis.semulAddProductKnownNonzeroInto(&U, basis.max_nmutot, basis.max_gauss, current_r, E, D);
-    } else {
+        if (rd_nonzero) {
 
-        // instrumentation: trace counter: fixed R-D skipped --------------------------------------------------|
-        // captures: simplified fixed-size semul path                                                          |
-        // why: count cheaper fallback operations when R-D is negligible.                                      |
-        Trace.plotU("matrix_semul", 1);
-        // end instrumentation: trace counter: fixed R-D skipped ----------------------------------------------|
+            // instrumentation: trace counters: fixed R-D retained --------------------------------------------|
+            // captures: retained fixed-size R-D product and semul-add work                                    |
+            // why: measure matrix products not skipped by downstream gates.                                   |
+            Trace.plotU("matrix_smul_rd_nonzero", 1);
+            Trace.plotU("matrix_semul_add", 1);
+            phase_timing.count(trace_phase_timing, "fixed_rd_retained", 1);
+            // end instrumentation: trace counters: fixed R-D retained ----------------------------------------|
 
-        basis.semulInto(&U, basis.max_nmutot, current_r, E);
+            basis.semulAddProductKnownNonzeroInto(
+                &U,
+                basis.max_nmutot,
+                basis.max_gauss,
+                current_r,
+                E,
+                D,
+            );
+        } else {
+
+            // instrumentation: trace counter: fixed R-D skipped ----------------------------------------------|
+            // captures: simplified fixed-size semul path                                                      |
+            // why: count cheaper fallback operations when R-D is negligible.                                  |
+            Trace.plotU("matrix_semul", 1);
+            phase_timing.count(trace_phase_timing, "fixed_rd_skipped", 1);
+            // end instrumentation: trace counter: fixed R-D skipped ------------------------------------------|
+
+            basis.semulInto(&U, basis.max_nmutot, current_r, E);
+        }
     }
     // end tradeoff: fixed R-D product cutoff -----------------------------------------------------------------|
 
@@ -1077,41 +1118,53 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-U product gate --------------------------------------------------|
     // captures: fixed T-U product retention decision                                                          |
     // why: test whether q-zero branches can skip this reflectance update product.                             |
+    const tu_gate_enabled = if (q_is_zero) !thresholds.qzero_tu_product_suppression else true;
     const tu_nonzero = Perturbation.decision(
         .qseries_tu_product,
         downstream_coord,
-        !(q_is_zero and thresholds.qzero_tu_product_suppression) and
-            @abs(trace_t * trace_u) > threshold_mul,
+        tu_gate_enabled and @abs(trace_t * trace_u) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-U product gate ----------------------------------------------|
 
-    if (tu_nonzero) {
+    {
 
-        // instrumentation: trace counters: fixed T-U retained ------------------------------------------------|
-        // captures: retained fixed-size T-U product and R update work                                         |
-        // why: measure when reflectance doubling needs the expensive update.                                  |
-        Trace.plotU("matrix_smul_tu_nonzero", 1);
-        Trace.plotU("matrix_mat_add_esmul3", 1);
-        // end instrumentation: trace counters: fixed T-U retained --------------------------------------------|
+        // instrumentation: trace phase clock: fixed T-U update -----------------------------------------------|
+        // captures: fixed R update after the T-U gate                                                         |
+        // why: split reflected-field update cost from q-series and R-D work.                                  |
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_tu_update");
+        // end instrumentation: trace phase clock: fixed T-U update -------------------------------------------|
 
-        basis.matAddEsmul3ProductKnownNonzeroInto(
-            next_r,
-            basis.max_nmutot,
-            basis.max_gauss,
-            current_r,
-            E,
-            &U,
-            current_t,
-        );
-    } else {
+        if (tu_nonzero) {
 
-        // instrumentation: trace counter: fixed T-U skipped --------------------------------------------------|
-        // captures: simplified fixed-size R update path                                                       |
-        // why: count cheaper reflectance updates when T-U is negligible.                                      |
-        Trace.plotU("matrix_mat_add_esmul", 1);
-        // end instrumentation: trace counter: fixed T-U skipped ----------------------------------------------|
+            // instrumentation: trace counters: fixed T-U retained --------------------------------------------|
+            // captures: retained fixed-size T-U product and R update work                                     |
+            // why: measure when reflectance doubling needs the expensive update.                              |
+            Trace.plotU("matrix_smul_tu_nonzero", 1);
+            Trace.plotU("matrix_mat_add_esmul3", 1);
+            phase_timing.count(trace_phase_timing, "fixed_tu_retained", 1);
+            // end instrumentation: trace counters: fixed T-U retained ----------------------------------------|
 
-        basis.matAddEsmulInto(next_r, basis.max_nmutot, current_r, E, &U);
+            basis.matAddEsmul3ProductKnownNonzeroInto(
+                next_r,
+                basis.max_nmutot,
+                basis.max_gauss,
+                current_r,
+                E,
+                &U,
+                current_t,
+            );
+        } else {
+
+            // instrumentation: trace counter: fixed T-U skipped ----------------------------------------------|
+            // captures: simplified fixed-size R update path                                                   |
+            // why: count cheaper reflectance updates when T-U is negligible.                                  |
+            Trace.plotU("matrix_mat_add_esmul", 1);
+            phase_timing.count(trace_phase_timing, "fixed_tu_skipped", 1);
+            // end instrumentation: trace counter: fixed T-U skipped ------------------------------------------|
+
+            basis.matAddEsmulInto(next_r, basis.max_nmutot, current_r, E, &U);
+        }
     }
     // end tradeoff: fixed T-U product cutoff -----------------------------------------------------------------|
 
@@ -1136,11 +1189,11 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-D product gate --------------------------------------------------|
     // captures: fixed T-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this transmission update product.                            |
+    const td_gate_enabled = if (q_is_zero) !thresholds.qzero_td_product_suppression else true;
     const td_nonzero = Perturbation.decision(
         .qseries_td_product,
         downstream_coord,
-        !(q_is_zero and thresholds.qzero_td_product_suppression) and
-            @abs(trace_t * trace_d) > threshold_mul,
+        td_gate_enabled and @abs(trace_t * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-D product gate ----------------------------------------------|
 
@@ -1164,47 +1217,74 @@ inline fn doDouble12x10Step(
     );
     // end instrumentation: calculation telemetry: fixed downstream gates -------------------------------------|
 
-    if (q_is_zero) {
-        if (td_nonzero) {
+    {
 
-            // instrumentation: trace counters: fixed self transmission retained ------------------------------|
-            // captures: retained fixed-size self transmission update under q-zero                             |
-            // why: measure remaining matrix work when Q itself was skipped.                                   |
-            Trace.plotU("matrix_smul_td_nonzero", 1);
-            Trace.plotU("matrix_esmul_semul_add", 1);
-            // end instrumentation: trace counters: fixed self transmission retained --------------------------|
+        // instrumentation: trace phase clock: fixed T-D update -----------------------------------------------|
+        // captures: fixed T update after the T-D gate                                                         |
+        // why: split transmission update cost from q-series and reflected-field work.                         |
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_td_update");
+        // end instrumentation: trace phase clock: fixed T-D update -------------------------------------------|
 
-            basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, current_t);
+        if (q_is_zero) {
+            if (td_nonzero) {
+
+                // instrumentation: trace counters: fixed self transmission retained --------------------------|
+                // captures: retained fixed-size self transmission update under q-zero                         |
+                // why: measure remaining matrix work when Q itself was skipped.                               |
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
+                phase_timing.count(trace_phase_timing, "fixed_td_retained", 1);
+                // end instrumentation: trace counters: fixed self transmission retained ----------------------|
+
+                basis.esmulSemulSelfAddProductKnownNonzeroInto(
+                    next_t,
+                    basis.max_nmutot,
+                    basis.max_gauss,
+                    E,
+                    current_t,
+                );
+            } else {
+
+                // instrumentation: trace counter: fixed self transmission skipped ----------------------------|
+                // captures: simplified fixed-size self transmission update under q-zero                       |
+                // why: count cheaper transmission updates when T-D is negligible.                             |
+                Trace.plotU("matrix_esmul_semul", 1);
+                phase_timing.count(trace_phase_timing, "fixed_td_skipped", 1);
+                // end instrumentation: trace counter: fixed self transmission skipped ------------------------|
+
+                basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
+            }
         } else {
+            if (td_nonzero) {
 
-            // instrumentation: trace counter: fixed self transmission skipped --------------------------------|
-            // captures: simplified fixed-size self transmission update under q-zero                           |
-            // why: count cheaper transmission updates when T-D is negligible.                                 |
-            Trace.plotU("matrix_esmul_semul", 1);
-            // end instrumentation: trace counter: fixed self transmission skipped ----------------------------|
+                // instrumentation: trace counters: fixed transmission retained -------------------------------|
+                // captures: retained fixed-size transmission update with D product                            |
+                // why: measure matrix work when both Q and T-D are nonzero.                                   |
+                Trace.plotU("matrix_smul_td_nonzero", 1);
+                Trace.plotU("matrix_esmul_semul_add", 1);
+                phase_timing.count(trace_phase_timing, "fixed_td_retained", 1);
+                // end instrumentation: trace counters: fixed transmission retained ---------------------------|
 
-            basis.esmulSemulSelfInto(next_t, basis.max_nmutot, E, current_t);
-        }
-    } else {
-        if (td_nonzero) {
+                basis.esmulSemulAddProductKnownNonzeroInto(
+                    next_t,
+                    basis.max_nmutot,
+                    basis.max_gauss,
+                    E,
+                    D,
+                    current_t,
+                );
+            } else {
 
-            // instrumentation: trace counters: fixed transmission retained -----------------------------------|
-            // captures: retained fixed-size transmission update with D product                                |
-            // why: measure matrix work when both Q and T-D are nonzero.                                       |
-            Trace.plotU("matrix_smul_td_nonzero", 1);
-            Trace.plotU("matrix_esmul_semul_add", 1);
-            // end instrumentation: trace counters: fixed transmission retained -------------------------------|
+                // instrumentation: trace counter: fixed transmission skipped ---------------------------------|
+                // captures: simplified fixed-size transmission update with D                                  |
+                // why: count cheaper updates when the final product is negligible.                            |
+                Trace.plotU("matrix_esmul_semul", 1);
+                phase_timing.count(trace_phase_timing, "fixed_td_skipped", 1);
+                // end instrumentation: trace counter: fixed transmission skipped -----------------------------|
 
-            basis.esmulSemulAddProductKnownNonzeroInto(next_t, basis.max_nmutot, basis.max_gauss, E, D, current_t);
-        } else {
-
-            // instrumentation: trace counter: fixed transmission skipped -------------------------------------|
-            // captures: simplified fixed-size transmission update with D                                      |
-            // why: count cheaper updates when the final product is negligible.                                |
-            Trace.plotU("matrix_esmul_semul", 1);
-            // end instrumentation: trace counter: fixed transmission skipped ---------------------------------|
-
-            basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
+                basis.esmulSemulInto(next_t, basis.max_nmutot, E, D, current_t);
+            }
         }
     }
     // end tradeoff: fixed T-D product cutoff -----------------------------------------------------------------|
@@ -1375,6 +1455,42 @@ pub fn calcRTlayersIntoWithBasis(
     rt_active: ?[]bool,
 ) void {
     // calcRTlayersIntoWithBasis ------------------------------------------------------------------------------|
+    // Public layer-builder entry point. Trace harnesses use the timed variant below.                          |
+    // --------------------------------------------------------------------------------------------------------|
+
+    calcRTlayersIntoWithBasisTimed(
+        rt,
+        layers,
+        i_fourier,
+        geo,
+        controls,
+        plm_basis,
+        layer_phase_max_indices,
+        layer_effective_scattering_suffixes,
+        layer_effective_scattering_suffix_stride,
+        phase_row_cache,
+        phase_row_valid,
+        rt_active,
+        null,
+    );
+}
+
+pub fn calcRTlayersIntoWithBasisTimed(
+    rt: []LayerRT,
+    layers: []const common.LayerInput,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    controls: common.RadiativeTransferControls,
+    plm_basis: *const basis.FourierPlmBasis,
+    layer_phase_max_indices: ?[]const usize,
+    layer_effective_scattering_suffixes: ?[]const f64,
+    layer_effective_scattering_suffix_stride: usize,
+    phase_row_cache: ?[]basis.PhaseKernelRow,
+    phase_row_valid: ?[]bool,
+    rt_active: ?[]bool,
+    trace_phase_timing: ?phase_timing.Active,
+) void {
+    // calcRTlayersIntoWithBasisTimed -------------------------------------------------------------------------|
     // Build LABOS RT_fc layer matrices for one Fourier term. Steps:                                           |
     //                                                                                                         |
     //   1. skip layers that cannot contribute to this Fourier term                                            |
@@ -1496,6 +1612,8 @@ pub fn calcRTlayersIntoWithBasis(
             // why: isolate PLM/phase-kernel work before layer scattering decisions.                           |
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_matrix");
             defer zone.end();
+            const trace_start = phase_timing.start(trace_phase_timing);
+            defer phase_timing.finish(trace_phase_timing, trace_start, "rt_layer_phase_matrix");
             const built_phase_matrix = basis.fillZplusZminFromWeightedPhaseLimited(
                 i_fourier,
                 phase.aerosol_weight,
@@ -1686,6 +1804,8 @@ pub fn calcRTlayersIntoWithBasis(
                 // why: isolate repeated matrix squaring from base single scatter setup.                       |
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
+                const trace_start = phase_timing.start(trace_phase_timing);
+                defer phase_timing.finish(trace_phase_timing, trace_start, "rt_layer_doubling");
                 doDouble(
                     doubling_decision.doubling_count,
                     geo.nmutot,
@@ -1697,6 +1817,7 @@ pub fn calcRTlayersIntoWithBasis(
                     i_fourier,
                     layer_idx,
                     max_phase_index,
+                    trace_phase_timing,
                 );
                 // end instrumentation: trace zone: layer doubling --------------------------------------------|
 

@@ -18,6 +18,9 @@ __pycache__/
 python/zdisamar/bindings/libzdisamar_c.*
 python/zdisamar/reference_data/assets/
 
+# Package Directories
+zig-pkg/
+
 # Regenerable scaffolding output
 scaffolding/experiments/primitive-codegen/outputs/*.asm
 scaffolding/instrumentation/trace/evidence/captures/*.tracy
@@ -67,6 +70,7 @@ validation/release/
 # Scratch / experiments
 /tmp
 
-# Study notes are tracked; book PDFs should stay local.
+# Study notes and selected pair-programming references are tracked.
 study/**/*.pdf
 study/**/*.o
+study/zig_pair_practice

@@ -72,6 +72,44 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
+inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
+
+    // instrumentation: trace phase clock ---------------------------------------------------------------------|
+    // captures: coarse per-product phase durations for opt-in trace harness summaries                         |
+    // why: preserves JSON attribution for first-use and cached runs when ztracy timeline exports are too large.
+    if (comptime Storage.trace_phase_timing_enabled) {
+        _ = phase_timing orelse return null;
+
+        return std.time.nanoTimestamp();
+    } else {
+        return null;
+    }
+}
+
+inline fn tracePhaseFinish(
+    phase_timing: ?*Storage.TracePhaseTiming,
+    start_timestamp: ?i128,
+    comptime field_name: []const u8,
+) void {
+
+    // instrumentation: trace phase clock ---------------------------------------------------------------------|
+    // captures: elapsed phase duration accumulated into the requested timing field                            |
+    // why: keeps opt-in JSON attribution next to the ztracy phase boundary it summarizes.
+    if (comptime Storage.trace_phase_timing_enabled) {
+        const timing = phase_timing orelse return;
+        const started = start_timestamp orelse return;
+
+        const finished = std.time.nanoTimestamp();
+        if (finished <= started) return;
+        const elapsed_ns = finished - started;
+        if (elapsed_ns <= 0) return;
+
+        @field(timing.*, field_name) += std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64);
+    } else {
+        return;
+    }
+}
+
 // Active Jacobian states resolved once per simulation from the rtm_config/storage mask.
 // layout(64-bit):
 //   size: 16 B, align: 8 B
@@ -310,8 +348,9 @@ fn buildProfileSpectroscopyCaches(
         return caches;
     }
 
-    const workers = try allocator.alloc(ProfileCacheBuildWorker, worker_count);
-    defer allocator.free(workers);
+    std.debug.assert(worker_count <= work_partition.max_workers);
+    var worker_storage: [work_partition.max_workers]ProfileCacheBuildWorker = undefined;
+    const workers = worker_storage[0..worker_count];
     for (0..worker_count) |worker_index| {
         const range = work_partition.staticRange(forward_misses.len, worker_count, worker_index);
         workers[worker_index] = .{
@@ -334,8 +373,8 @@ fn buildProfileSpectroscopyCaches(
         return caches;
     }
 
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
+    var thread_storage: [work_partition.max_workers - 1]std.Thread = undefined;
+    const threads = thread_storage[0 .. worker_count - 1];
     var started_thread_count: usize = 0;
     for (0..worker_count - 1) |worker_index| {
         threads[started_thread_count] = std.Thread.spawn(
@@ -375,6 +414,9 @@ pub fn simulateInternal(
     const simulate_zone = Trace.staticZone(@src(), "simulate.product");
     defer simulate_zone.end();
 
+    const trace_phase_timing = if (wavelength_plan_storage) |storage| storage.activeTracePhaseTiming() else null;
+    if (trace_phase_timing) |timing| timing.reset();
+
     const setup = try buildSimulationSetup(scene, rtm_config, prepared, buffers);
     var simulation_plan = try resolveSimulationPlan(
         allocator,
@@ -382,6 +424,7 @@ pub fn simulateInternal(
         prepared,
         setup,
         wavelength_plan_storage,
+        trace_phase_timing,
     );
     defer simulation_plan.deinit(allocator);
     try prefetchSimulationPlan(
@@ -391,6 +434,7 @@ pub fn simulateInternal(
         prepared,
         &simulation_plan,
         wavelength_plan_storage,
+        trace_phase_timing,
     );
 
     var summary = RunningSummary.init();
@@ -402,6 +446,7 @@ pub fn simulateInternal(
         simulation_plan.forward_miss_plan,
         simulation_plan.forward_results,
         buffers,
+        trace_phase_timing,
     );
     try fillIrradianceSamples(
         scene,
@@ -410,13 +455,15 @@ pub fn simulateInternal(
         simulation_plan.wavelength_sampling,
         buffers,
         evaluation_cache,
+        trace_phase_timing,
     );
-    assembleReflectance(scene, setup.sample_count, buffers, &summary);
+    assembleReflectance(scene, setup.sample_count, buffers, &summary, trace_phase_timing);
     const mean_jacobian = try processJacobianSamples(
         rtm_config.derivative_state_mask,
         setup,
         buffers,
         &summary,
+        trace_phase_timing,
     );
     return summary.toInstrumentGridSummary(
         setup.sample_count,
@@ -485,6 +532,7 @@ fn resolveSimulationPlan(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     setup: SimulationSetup,
     wavelength_plan_storage: ?*Storage.ProductStorage,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!ResolvedSimulationPlan {
 
     // hot path:
@@ -501,6 +549,8 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone
         // captures: wavelength sampling plan resolution wall time
         // why: distinguish cache hits, plan rebuilds, and owned one-shot sampling setup.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "wavelength_sampling_ns");
         const zone = Trace.staticZone(@src(), "simulate.wavelength_sampling");
         defer zone.end();
 
@@ -536,6 +586,8 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone
         // captures: forward-cache miss collection wall time
         // why: measure the unique high-resolution wavelength expansion before LABOS prefetch.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "forward_miss_collection_ns");
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
         defer zone.end();
 
@@ -560,6 +612,8 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone
         // captures: profile spectroscopy cache lookup/build wall time
         // why: isolate profile-node spectroscopy setup from transport execution.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "profile_spectroscopy_cache_ns");
         const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
         defer zone.end();
 
@@ -583,12 +637,15 @@ fn prefetchSimulationPlan(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     simulation_plan: *ResolvedSimulationPlan,
     wavelength_plan_storage: ?*Storage.ProductStorage,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!void {
     {
 
         // instrumentation: trace zone
         // captures: forward prefetch wall time and miss count
         // why: track the batched high-resolution LABOS work hidden behind nominal samples.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "forward_prefetch_ns");
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
         zone.value(@intCast(simulation_plan.forward_miss_plan.misses.len));
         defer zone.end();
@@ -619,6 +676,7 @@ fn prefetchSimulationPlan(
             simulation_plan.profile_spectroscopy_caches,
             results,
             thread_pool,
+            trace_phase_timing,
         );
 
         simulation_plan.forward_results = results;
@@ -665,6 +723,7 @@ fn fillRadianceSamples(
     forward_miss_plan: Plan.ForwardMissPlan,
     forward_results: []const SpectralEval.ForwardIntegratedSample,
     buffers: Storage.Buffers,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!void {
 
     // hot path:
@@ -684,6 +743,8 @@ fn fillRadianceSamples(
         // instrumentation: trace zone
         // captures: radiance cache integration wall time
         // why: isolate nominal-wavelength gather work from later convolution and calibration.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_cache_integration_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
         for (wavelength_sampling.rows, 0..) |plan, index| {
@@ -722,6 +783,8 @@ fn fillRadianceSamples(
         // instrumentation: trace zone
         // captures: radiance slit convolution wall time
         // why: separate instrument-kernel cost from RTM cache integration.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_convolution_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_convolution");
         defer zone.end();
         try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.radiance);
@@ -731,6 +794,8 @@ fn fillRadianceSamples(
         // instrumentation: trace zone
         // captures: radiance channel postprocess wall time
         // why: keep calibration/postprocess cost visible after convolution.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_postprocess_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
         try calibration.applySignal(
@@ -748,6 +813,7 @@ fn fillIrradianceSamples(
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!void {
 
     // hot path:
@@ -762,6 +828,8 @@ fn fillIrradianceSamples(
         // instrumentation: trace zone
         // captures: irradiance sampling wall time
         // why: distinguish solar irradiance interpolation/integration from radiance transport.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_sampling_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
         try evaluation_cache.reserveIrradiance(irradianceCacheCapacity(wavelength_sampling));
@@ -784,6 +852,8 @@ fn fillIrradianceSamples(
         // instrumentation: trace zone
         // captures: irradiance slit convolution wall time
         // why: separate solar-channel instrument-kernel cost from sampling.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_convolution_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_convolution");
         defer zone.end();
         try convolution.apply(buffers.scratch, setup.irradiance_slit_kernel[0..], buffers.irradiance);
@@ -793,6 +863,8 @@ fn fillIrradianceSamples(
         // instrumentation: trace zone
         // captures: irradiance channel postprocess wall time
         // why: keep solar calibration cost visible before reflectance assembly.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_postprocess_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
         try calibration.applySignal(
@@ -816,6 +888,7 @@ fn assembleReflectance(
     sample_count: usize,
     buffers: Storage.Buffers,
     summary: *RunningSummary,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) void {
 
     // hot path:
@@ -830,6 +903,8 @@ fn assembleReflectance(
         // instrumentation: trace zone
         // captures: reflectance assembly wall time
         // why: isolate final radiance/irradiance-to-reflectance conversion.
+        const trace_start_ns = tracePhaseStart(trace_phase_timing);
+        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "reflectance_assembly_ns");
         const zone = Trace.staticZone(@src(), "simulate.reflectance_assembly");
         defer zone.end();
         const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
@@ -875,6 +950,7 @@ fn processJacobianSamples(
     setup: SimulationSetup,
     buffers: Storage.Buffers,
     summary: *RunningSummary,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!?jacobian.Vector {
 
     // hot path:
@@ -889,6 +965,8 @@ fn processJacobianSamples(
             // instrumentation: trace zone
             // captures: Jacobian convolution, calibration, and reduction wall time
             // why: separate derivative-column postprocessing from RTM evaluation.
+            const trace_start_ns = tracePhaseStart(trace_phase_timing);
+            defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "jacobian_processing_ns");
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
             const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);

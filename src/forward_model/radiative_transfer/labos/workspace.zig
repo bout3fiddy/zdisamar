@@ -3,6 +3,7 @@ const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
 const orders_mod = @import("orders.zig");
+const phase_timing = @import("phase_timing.zig");
 
 const Allocator = std.mem.Allocator;
 const layer_phase_signature_seed: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -39,6 +40,7 @@ const layer_phase_signature_index_shift: u6 = 56;
 // orders cache                               : 104 B                                                         |
 // cached_geometry                            : 2832 B                                                        |
 // cached_geometry_valid + padding            : 8 B                                                           |
+// trace_phase                                 : zero-size unless the trace executable opts into phase timing |
 //                                                                                                            |
 // pointed-to buffers are separate heap storage and are not included in the 3168 B struct size.               |
 // unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
@@ -62,6 +64,7 @@ pub const Workspace = struct {
     previous_layer_phase_signature_valid: []bool = &.{},
     cached_geometry: basis.Geometry = undefined,
     cached_geometry_valid: bool = false,
+    trace_phase: phase_timing.WorkspaceState = .{},
 
     pub fn init(allocator: Allocator) Workspace {
         // Workspace.init ------------------------------------------------------------------------------------|
@@ -93,6 +96,33 @@ pub const Workspace = struct {
         self.allocator.free(self.previous_layer_phase_signature_valid);
 
         self.* = undefined;
+    }
+
+    pub fn setTracePhaseTiming(
+        self: *Workspace,
+        timing: *phase_timing.Timing,
+    ) void {
+        // Workspace.setTracePhaseTiming ---------------------------------------------------------------------|
+        // Attach one trace-harness timing sink to this worker-local workspace.                               |
+        // ---------------------------------------------------------------------------------------------------|
+
+        phase_timing.setWorkspaceState(&self.trace_phase, timing);
+    }
+
+    pub fn clearTracePhaseTiming(self: *Workspace) void {
+        // Workspace.clearTracePhaseTiming -------------------------------------------------------------------|
+        // Detach the trace-harness timing sink before the workspace returns to normal reuse.                 |
+        // ---------------------------------------------------------------------------------------------------|
+
+        phase_timing.clearWorkspaceState(&self.trace_phase);
+    }
+
+    pub fn activeTracePhaseTiming(self: *Workspace) ?phase_timing.Active {
+        // Workspace.activeTracePhaseTiming ------------------------------------------------------------------|
+        // Return the timing sink active for this worker, or null in normal product/test builds.              |
+        // ---------------------------------------------------------------------------------------------------|
+
+        return phase_timing.activeWorkspaceState(&self.trace_phase);
     }
 
     pub fn attenuation(

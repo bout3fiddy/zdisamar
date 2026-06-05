@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const core_errors = @import("../../../common/errors.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const InstrumentIntegration = @import("../../implementations/instrument/integration.zig");
@@ -13,6 +14,27 @@ const convolution = @import("../spectral_math/convolution.zig");
 const Types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
+
+// migration note: Zig 0.15.2 runtime boundary ---------------------------------------------------------------|
+// Product storage keeps the existing std.Thread.Pool route while the project is pinned to Zig 0.15.2.        |
+// The failed 0.16 migration briefly moved this path to std.Io.Threaded; do not reintroduce that API here.    |
+// end migration note: Zig 0.15.2 runtime boundary -----------------------------------------------------------|
+
+pub const trace_phase_timing_enabled: bool = enabled_by_build: {
+    if (!@hasDecl(build_options, "enable_trace_phase_timing")) break :enabled_by_build false;
+    break :enabled_by_build build_options.enable_trace_phase_timing;
+};
+
+const TracePhaseTimingRoute = if (trace_phase_timing_enabled) struct {
+    const Slot = ?*TracePhaseTiming;
+    const empty: Slot = null;
+} else struct {
+    const Slot = void;
+    const empty: Slot = {};
+};
+
+const TracePhaseTimingSlot = TracePhaseTimingRoute.Slot;
+const trace_phase_timing_slot_default = TracePhaseTimingRoute.empty;
 
 pub const Error =
     core_errors.Error ||
@@ -54,6 +76,38 @@ pub const Buffers = struct {
     jacobian_state_mask: jacobian.StateMask = 0,
 };
 
+// instrumentation: trace phase timing -----------------------------------------------------------------------|
+// captures: coarse product-simulation phase timings for trace-harness JSON summaries                         |
+// why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones. |
+const EnabledTracePhaseTiming = struct {
+    wavelength_sampling_ns: u64 = 0,
+    forward_miss_collection_ns: u64 = 0,
+    profile_spectroscopy_cache_ns: u64 = 0,
+    forward_prefetch_ns: u64 = 0,
+    radiance_cache_integration_ns: u64 = 0,
+    radiance_convolution_ns: u64 = 0,
+    radiance_postprocess_ns: u64 = 0,
+    irradiance_sampling_ns: u64 = 0,
+    irradiance_convolution_ns: u64 = 0,
+    irradiance_postprocess_ns: u64 = 0,
+    reflectance_assembly_ns: u64 = 0,
+    jacobian_processing_ns: u64 = 0,
+    labos: common.labos.PhaseTiming = .{},
+
+    pub fn reset(self: *@This()) void {
+        self.* = .{};
+    }
+};
+
+const DisabledTracePhaseTiming = struct {
+    pub inline fn reset(self: *@This()) void {
+        _ = self;
+    }
+};
+
+pub const TracePhaseTiming = if (trace_phase_timing_enabled) EnabledTracePhaseTiming else DisabledTracePhaseTiming;
+// end instrumentation: trace phase timing -------------------------------------------------------------------|
+
 pub fn configMayUseSourceInterfaces(scene: *const Scene, rtm_config: common.SolveConfig) bool {
     if (!rtm_config.rtm_controls.integrate_source_function) return false;
     return scene.atmosphere.interval_grid.semantics == .none;
@@ -69,17 +123,18 @@ pub fn configUsesPseudoSphericalGrid(rtm_config: common.SolveConfig) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 560 B, align: 8 B
+//   size: 560 B normally; 568 B when trace phase timing is enabled, align: 8 B
 //   field storage:
-//     540 B across 26 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
+//     540 B across 26 normal fields; trace builds add trace_phase_timing=8 B
+//     largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
 //     wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
-//   unused bits: 160 padding + 28 bool-storage slack = 188 bits
+//   unused bits: 160 padding + 28 bool-storage slack = 188 bits in trace builds
 //   out-of-line:
 //     product/cache/result slices carry backing storage
 //     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are rtm_config-gated
 //   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 560 B (0.547 KiB); total also includes referenced storage above
+//   footprint: per instance = 560 B (0.547 KiB) normally; 568 B (0.555 KiB) in trace builds
 pub const ProductStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -108,6 +163,7 @@ pub const ProductStorage = struct {
     forward_prefetch_pool: std.Thread.Pool = undefined,
     forward_prefetch_pool_worker_threads: usize = 0,
     forward_prefetch_pool_valid: bool = false,
+    trace_phase_timing: TracePhaseTimingSlot = trace_phase_timing_slot_default,
 
     pub fn deinit(self: *ProductStorage, allocator: Allocator) void {
         if (self.forward_prefetch_pool_valid) {
@@ -132,6 +188,26 @@ pub const ProductStorage = struct {
         self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
+    }
+
+    pub fn setTracePhaseTiming(self: *ProductStorage, timing: *TracePhaseTiming) void {
+        if (comptime trace_phase_timing_enabled) {
+            self.trace_phase_timing = timing;
+        }
+    }
+
+    pub fn clearTracePhaseTiming(self: *ProductStorage) void {
+        if (comptime trace_phase_timing_enabled) {
+            self.trace_phase_timing = null;
+        }
+    }
+
+    pub fn activeTracePhaseTiming(self: *ProductStorage) ?*TracePhaseTiming {
+        if (comptime trace_phase_timing_enabled) {
+            return self.trace_phase_timing;
+        } else {
+            return null;
+        }
     }
 
     pub fn forwardPrefetchPool(

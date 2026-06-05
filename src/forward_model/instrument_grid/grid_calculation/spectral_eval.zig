@@ -134,6 +134,7 @@ pub fn prefetchForwardSamples(
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
     thread_pool: ?*std.Thread.Pool,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
 
     // hot path:
@@ -155,6 +156,7 @@ pub fn prefetchForwardSamples(
         profile_spectroscopy_caches,
         results,
         thread_pool,
+        trace_phase_timing,
     );
 }
 
