@@ -16,8 +16,6 @@
 - Data assets: [data/AGENTS.md](data/AGENTS.md).
 - Scaffolding: [scaffolding/AGENTS.md](scaffolding/AGENTS.md).
 - Scripts: [scripts/AGENTS.md](scripts/AGENTS.md).
-- Study mode: [study/zig_pair_practice/AGENTS.md](study/zig_pair_practice/AGENTS.md).
-  Use its gitignored `work/` area for guided Zig exercises.
 
 ## Commands
 
