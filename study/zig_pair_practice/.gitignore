@@ -1,2 +1,3 @@
-# Practice code and notes are intentionally local.
-work/
+# OS/editor noise in the retained practice workspace.
+.DS_Store
+.ipynb_checkpoints/

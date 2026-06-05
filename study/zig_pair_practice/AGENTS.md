@@ -7,8 +7,8 @@ code and should not be used as a refactor staging area.
 ## Layout
 
 - `AGENTS.md` - this file: session rules, review criteria, and workspace map.
-- `.gitignore` - ignores the local practice area.
-- `work/` - gitignored scratch space where the user writes exercises.
+- `.gitignore` - ignores local OS/editor noise.
+- `work/` - retained scratch space where the user writes exercises.
 - `work/current/` - scratch folder for exercises that need files.
 - `work/<lesson-slug>/` - optional folders for keeping old attempts around.
 

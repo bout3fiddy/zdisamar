@@ -67,9 +67,8 @@ validation/release/
 # Scratch / experiments
 /tmp
 
-# Study notes are tracked; book PDFs should stay local.
+# Study notes and selected pair-programming references are tracked.
 study/**/*.pdf
+!study/data_oriented_design_r_fabian_zdisamar/richard_fabian_data_oriented_design_official.pdf
 study/**/*.o
-
-# Local pair-programming practice scratch space.
-study/zig_pair_practice/work/
+!study/data_oriented_design_r_fabian_zdisamar/dod_book/codegen/dod_codegen_examples.o
