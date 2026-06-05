@@ -120,6 +120,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
     build_options.addOption(bool, "enable_ztracy", false);
+    build_options.addOption(bool, "enable_trace_phase_timing", false);
     build_options.addOption(bool, "enable_calculation_telemetry", false);
     build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const build_options_module = build_options.createModule();
@@ -128,6 +129,7 @@ pub fn build(b: *std.Build) void {
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
+    trace_build_options.addOption(bool, "enable_trace_phase_timing", true);
     trace_build_options.addOption(bool, "enable_calculation_telemetry", false);
     trace_build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const trace_build_options_module = trace_build_options.createModule();
@@ -135,6 +137,7 @@ pub fn build(b: *std.Build) void {
     const calculation_telemetry_build_options = b.addOptions();
     calculation_telemetry_build_options.addOption(bool, "enable_test_support", false);
     calculation_telemetry_build_options.addOption(bool, "enable_ztracy", false);
+    calculation_telemetry_build_options.addOption(bool, "enable_trace_phase_timing", false);
     calculation_telemetry_build_options.addOption(bool, "enable_calculation_telemetry", true);
     calculation_telemetry_build_options.addOption(bool, "enable_perturbation_sensitivity", false);
     const calculation_telemetry_build_options_module = calculation_telemetry_build_options.createModule();
@@ -142,6 +145,7 @@ pub fn build(b: *std.Build) void {
     const perturbation_sensitivity_build_options = b.addOptions();
     perturbation_sensitivity_build_options.addOption(bool, "enable_test_support", false);
     perturbation_sensitivity_build_options.addOption(bool, "enable_ztracy", false);
+    perturbation_sensitivity_build_options.addOption(bool, "enable_trace_phase_timing", false);
     perturbation_sensitivity_build_options.addOption(bool, "enable_calculation_telemetry", false);
     perturbation_sensitivity_build_options.addOption(bool, "enable_perturbation_sensitivity", true);
     const perturbation_sensitivity_build_options_module = perturbation_sensitivity_build_options.createModule();

@@ -232,9 +232,11 @@ const expressions = [_]ExpressionMeta{
         .expr_name = "sampling_kernel_shape",
         .row_table = "reduction_expression_rows",
         .subsystem = "instrument_grid",
-        .equation = "integrated_rows = count(enabled radiance/irradiance kernels); side_samples = count(non-inline integration samples)",
+        .equation = "integrated_rows = count(enabled radiance/irradiance kernels); " ++
+            "side_samples = count(non-inline integration samples)",
         .result_name = "side_sample_count",
-        .inputs = "row_count,radiance_integrated_rows,irradiance_integrated_rows,radiance_sample_count,irradiance_sample_count",
+        .inputs = "row_count,radiance_integrated_rows,irradiance_integrated_rows," ++
+            "radiance_sample_count,irradiance_sample_count",
         .units = "count",
         .source_file = "src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig",
         .function = "recordWavelengthSamplingPlan",
@@ -429,24 +431,26 @@ const expressions = [_]ExpressionMeta{
 // why: own file I/O and locks only inside the validation harness.
 const Collector = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     scalar_table: Parquet.TableWriter,
     reduction_table: Parquet.TableWriter,
     decision_table: Parquet.TableWriter,
-    scalar_mutex: std.Thread.Mutex = .{},
-    reduction_mutex: std.Thread.Mutex = .{},
-    decision_mutex: std.Thread.Mutex = .{},
-    error_mutex: std.Thread.Mutex = .{},
+    scalar_mutex: std.Io.Mutex = .init,
+    reduction_mutex: std.Io.Mutex = .init,
+    decision_mutex: std.Io.Mutex = .init,
+    error_mutex: std.Io.Mutex = .init,
     next_event_index: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     scalar_rows: usize = 0,
     reduction_rows: usize = 0,
     decision_rows: usize = 0,
     first_error: ?anyerror = null,
 
-    pub fn init(allocator: std.mem.Allocator, output_dir: []const u8) !Collector {
-        try std.fs.cwd().makePath(output_dir);
-        try writeExpressionCatalog(allocator, output_dir);
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8) !Collector {
+        try std.Io.Dir.cwd().createDirPath(io, output_dir);
+        try writeExpressionCatalog(io, allocator, output_dir);
 
         var scalar_table = try createTable(
+            io,
             allocator,
             output_dir,
             "scalar_expression_rows.parquet",
@@ -454,6 +458,7 @@ const Collector = struct {
         );
         errdefer scalar_table.deinit();
         var reduction_table = try createTable(
+            io,
             allocator,
             output_dir,
             "reduction_expression_rows.parquet",
@@ -461,6 +466,7 @@ const Collector = struct {
         );
         errdefer reduction_table.deinit();
         var decision_table = try createTable(
+            io,
             allocator,
             output_dir,
             "decision_rows.parquet",
@@ -470,6 +476,7 @@ const Collector = struct {
 
         return Collector{
             .allocator = allocator,
+            .io = io,
             .scalar_table = scalar_table,
             .reduction_table = reduction_table,
             .decision_table = decision_table,
@@ -580,14 +587,14 @@ const Collector = struct {
     }
 
     fn setFirstError(self: *Collector, err: anyerror) void {
-        self.error_mutex.lock();
-        defer self.error_mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.error_mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.error_mutex);
         if (self.first_error == null) self.first_error = err;
     }
 
     fn raiseFirstError(self: *Collector) !void {
-        self.error_mutex.lock();
-        defer self.error_mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.error_mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.error_mutex);
         if (self.first_error) |err| return err;
     }
 };
@@ -947,8 +954,8 @@ pub fn labosResult(raw_reflectance: f64, clamped_reflectance: f64, jacobian_norm
 
 fn recordScalar(expr: Expr, coord: Coordinates, values: ScalarValues) void {
     const collector = activeCollector() orelse return;
-    collector.scalar_mutex.lock();
-    defer collector.scalar_mutex.unlock();
+    std.Io.Threaded.mutexLock(&collector.scalar_mutex);
+    defer std.Io.Threaded.mutexUnlock(&collector.scalar_mutex);
     collector.writeScalar(expr, coord, values) catch |err| {
         collector.setFirstError(err);
     };
@@ -956,8 +963,8 @@ fn recordScalar(expr: Expr, coord: Coordinates, values: ScalarValues) void {
 
 fn recordReduction(expr: Expr, coord: Coordinates, values: ReductionValues) void {
     const collector = activeCollector() orelse return;
-    collector.reduction_mutex.lock();
-    defer collector.reduction_mutex.unlock();
+    std.Io.Threaded.mutexLock(&collector.reduction_mutex);
+    defer std.Io.Threaded.mutexUnlock(&collector.reduction_mutex);
     collector.writeReduction(expr, coord, values) catch |err| {
         collector.setFirstError(err);
     };
@@ -965,8 +972,8 @@ fn recordReduction(expr: Expr, coord: Coordinates, values: ReductionValues) void
 
 fn recordDecision(expr: Expr, coord: Coordinates, values: DecisionValues) void {
     const collector = activeCollector() orelse return;
-    collector.decision_mutex.lock();
-    defer collector.decision_mutex.unlock();
+    std.Io.Threaded.mutexLock(&collector.decision_mutex);
+    defer std.Io.Threaded.mutexUnlock(&collector.decision_mutex);
     collector.writeDecision(expr, coord, values) catch |err| {
         collector.setFirstError(err);
     };
@@ -979,18 +986,19 @@ fn activeCollector() ?*Collector {
 }
 
 fn createTable(
+    io: std.Io,
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     name: []const u8,
     columns: []const Parquet.ColumnDef,
 ) !Parquet.TableWriter {
-    const file = try createOutputFile(allocator, output_dir, name);
-    errdefer file.close();
-    return Parquet.TableWriter.init(allocator, file, columns, .{});
+    const file = try createOutputFile(io, allocator, output_dir, name);
+    return Parquet.TableWriter.init(allocator, io, file, columns, .{});
 }
 
-fn writeExpressionCatalog(allocator: std.mem.Allocator, output_dir: []const u8) !void {
+fn writeExpressionCatalog(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8) !void {
     var table = try createTable(
+        io,
         allocator,
         output_dir,
         "expression_catalog.parquet",
@@ -1015,10 +1023,10 @@ fn writeExpressionCatalog(allocator: std.mem.Allocator, output_dir: []const u8) 
     try table.close();
 }
 
-fn createOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
+fn createOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().createFile(path, .{ .truncate = true });
+    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }
 
 fn exprId(expr: Expr) i32 {

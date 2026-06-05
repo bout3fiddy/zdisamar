@@ -6,16 +6,20 @@ const meanVectorInRange = o2a.meanVectorInRange;
 const minVectorInRange = o2a.minVectorInRange;
 
 test "tracked O2A DISAMAR reflectance jacobian fixture exposes the requested state columns" {
-    const simulation_reflectance = try readFixture("validation/reference_data/spectra/o2a_jacobian_simulation_instrument_reflectance.csv");
+    const fixture_path = "validation/reference_data/spectra/o2a_jacobian_simulation_instrument_reflectance.csv";
+    const simulation_reflectance = try readFixture(fixture_path);
     defer std.testing.allocator.free(simulation_reflectance);
 
     try expectJacobianFixtureShape(simulation_reflectance, 301);
 }
 
 fn readFixture(path: []const u8) ![]u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    return try file.readToEndAlloc(std.testing.allocator, 512 * 1024);
+    return try std.Io.Dir.cwd().readFileAlloc(
+        std.testing.io,
+        path,
+        std.testing.allocator,
+        .limited(512 * 1024),
+    );
 }
 
 test "o2a forward reflectance tracks vendor reference morphology" {

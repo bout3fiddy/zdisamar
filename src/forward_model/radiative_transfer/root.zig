@@ -23,6 +23,7 @@ pub const labos = struct {
     const execute_mod = @import("labos/execute.zig");
     const layers_mod = @import("labos/layers.zig");
     const orders_mod = @import("labos/orders.zig");
+    const phase_timing_mod = @import("labos/phase_timing.zig");
     const reflectance_mod = @import("labos/reflectance.zig");
     const workspace_mod = @import("labos/workspace.zig");
 
@@ -69,6 +70,7 @@ pub const labos = struct {
     pub const PhaseKernel = basis.PhaseKernel;
     pub const PhaseKernelRow = basis.PhaseKernelRow;
     pub const FourierPlmBasis = basis.FourierPlmBasis;
+    pub const PhaseTiming = phase_timing_mod.Timing;
     pub const DynamicAttenArray = attenuation.DynamicAttenArray;
     pub const Workspace = workspace_mod.Workspace;
 

@@ -86,13 +86,13 @@ pub const Range = struct {
 };
 
 // layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: mutex=16 B, next_index=8 B, item_count=8 B, chunk_size=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
+//   size: 32 B, align: 8 B
+//   field storage: mutex=4 B, next_index=8 B, item_count=8 B, chunk_size=8 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
 pub const ChunkQueue = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     next_index: usize = 0,
     item_count: usize,
     chunk_size: usize,
@@ -112,8 +112,8 @@ pub const ChunkQueue = struct {
     //   math: start = next_index; end = min(start + chunk_size, item_count)
     //   follow: wavelengthSamplingWorkerMain and profile/support-row worker loops
     pub fn next(self: *ChunkQueue) ?Range {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.mutex);
         if (self.next_index >= self.item_count) return null;
 
         const start = self.next_index;
@@ -195,12 +195,10 @@ pub fn preferredWorkerCountForCpuCount(
 }
 
 fn configuredWorkerLimit() ?usize {
-    const limit = std.process.parseEnvVarInt(worker_limit_env, usize, 10) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => @panic(worker_limit_env ++ " must be a positive integer"),
-    };
-    if (limit) |value| {
-        if (value == 0) @panic(worker_limit_env ++ " must be a positive integer");
-    }
+    const raw = std.c.getenv(worker_limit_env) orelse return null;
+    const text = std.mem.sliceTo(raw, 0);
+    const limit = std.fmt.parseInt(usize, text, 10) catch
+        @panic(worker_limit_env ++ " must be a positive integer");
+    if (limit == 0) @panic(worker_limit_env ++ " must be a positive integer");
     return limit;
 }

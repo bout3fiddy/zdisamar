@@ -57,12 +57,13 @@ const ForwardSampleScratch = struct {
     support_carrier_cache: CarrierEval.SupportRowScalarCache,
     labos_workspace: labos.Workspace,
 
-    fn init(
+    fn initInto(
+        self: *ForwardSampleScratch,
         allocator: Allocator,
         scene: *const Scene,
         rtm_config: common.SolveConfig,
         prepared: *const OpticsPreparation.PreparedOpticalState,
-    ) !ForwardSampleScratch {
+    ) !void {
         const layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
         const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
@@ -108,7 +109,7 @@ const ForwardSampleScratch = struct {
         var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(allocator, support_cache_count);
         errdefer support_carrier_cache.deinit(allocator);
 
-        return .{
+        self.* = .{
             .layer_inputs = layer_inputs,
             .source_interfaces = source_interfaces,
             .rtm_quadrature_levels = rtm_quadrature_levels,
@@ -141,12 +142,12 @@ const ForwardSampleScratch = struct {
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ForwardPrefetchErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     err: ?Error = null,
 
     fn store(self: *ForwardPrefetchErrorState, err: Error) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.mutex);
         if (self.err == null) self.err = err;
     }
 };
@@ -179,6 +180,8 @@ const ForwardPrefetchWorker = struct {
     queue: ?*work_partition.ChunkQueue = null,
     worker_index: usize = 0,
     telemetry_context: Telemetry.Context,
+    trace_phase_io: ?std.Io = null,
+    labos_phase_timing: ?*labos.PhaseTiming = null,
 };
 
 fn radianceScaleFromForward(
@@ -327,7 +330,8 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var scratch = ForwardSampleScratch.init(
+    var scratch: ForwardSampleScratch = undefined;
+    scratch.initInto(
         allocator,
         worker.scene,
         worker.rtm_config,
@@ -336,6 +340,12 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
+    if (worker.trace_phase_io) |io| {
+        if (worker.labos_phase_timing) |timing| {
+            scratch.labos_workspace.setTracePhaseTiming(io, timing);
+        }
+    }
+    defer scratch.labos_workspace.clearTracePhaseTiming();
     defer scratch.deinit(allocator);
 
     while (nextForwardPrefetchChunk(worker)) |chunk| {
@@ -408,12 +418,13 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
-    thread_pool: ?*std.Thread.Pool,
+    prefetch_io: ?std.Io,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
 
     // hot path:
     //   when: once per forward miss batch before nominal wavelength integration
-    //   work: schedules miss chunks across one worker, spawned threads, or a thread pool
+    //   work: schedules miss chunks across one worker, spawned threads, or a reusable I/O runtime
     //   reads: miss array, profile cache array, result array, worker descriptors
     //   follow: preferredForwardWorkerCount and ForwardSampleScratch allocation boundaries
 
@@ -432,9 +443,16 @@ pub fn prefetchForwardSamples(
     Trace.plotU("high_resolution_misses", @intCast(misses.len));
 
     const telemetry_context = Telemetry.currentContext();
+    const trace_phase_io = if (trace_phase_timing) |timing| timing.io else null;
 
     if (worker_count == 1) {
-        var scratch = try ForwardSampleScratch.init(allocator, scene, rtm_config, prepared);
+        var labos_phase_timing: labos.PhaseTiming = .{};
+        var scratch: ForwardSampleScratch = undefined;
+        try scratch.initInto(allocator, scene, rtm_config, prepared);
+        if (trace_phase_io) |io| {
+            scratch.labos_workspace.setTracePhaseTiming(io, &labos_phase_timing);
+        }
+        defer scratch.labos_workspace.clearTracePhaseTiming();
         defer scratch.deinit(allocator);
         for (misses, results, 0..) |miss, *result, miss_index| {
             const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
@@ -468,12 +486,18 @@ pub fn prefetchForwardSamples(
                 );
             };
         }
+        mergeLabosPhaseTiming(trace_phase_timing, &.{labos_phase_timing});
         return;
     }
 
+    std.debug.assert(worker_count <= work_partition.max_workers);
     var error_state = ForwardPrefetchErrorState{};
-    const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
-    defer allocator.free(workers);
+    var labos_phase_timing_storage: [work_partition.max_workers]labos.PhaseTiming = undefined;
+    if (trace_phase_timing != null) {
+        for (labos_phase_timing_storage[0..worker_count]) |*timing| timing.* = .{};
+    }
+    var worker_storage: [work_partition.max_workers]ForwardPrefetchWorker = undefined;
+    const workers = worker_storage[0..worker_count];
 
     for (0..worker_count) |worker_index| {
         const range = work_partition.staticRange(misses.len, worker_count, worker_index);
@@ -489,26 +513,34 @@ pub fn prefetchForwardSamples(
             .end_index = range.end,
             .worker_index = worker_index,
             .telemetry_context = telemetry_context,
+            .trace_phase_io = trace_phase_io,
+            .labos_phase_timing = if (trace_phase_timing != null)
+                &labos_phase_timing_storage[worker_index]
+            else
+                null,
         };
     }
 
-    if (thread_pool) |pool| {
+    if (prefetch_io) |io| {
         var queue = work_partition.ChunkQueue.init(misses.len, forward_prefetch_pooled_chunk_size);
         for (workers) |*worker| worker.queue = &queue;
-        var wait_group = std.Thread.WaitGroup{};
+        var group: std.Io.Group = .init;
 
         for (0..worker_count - 1) |worker_index| {
-            pool.spawnWg(&wait_group, prefetchForwardWorkerMain, .{&workers[worker_index]});
+            group.async(io, prefetchForwardWorkerMain, .{&workers[worker_index]});
         }
         prefetchForwardWorkerMain(&workers[worker_count - 1]);
 
-        wait_group.wait();
+        group.await(io) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
+        mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
         if (error_state.err) |err| return err;
         return;
     }
 
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
+    var thread_storage: [work_partition.max_workers - 1]std.Thread = undefined;
+    const threads = thread_storage[0 .. worker_count - 1];
     var started_thread_count: usize = 0;
     for (0..worker_count - 1) |worker_index| {
         threads[started_thread_count] = std.Thread.spawn(
@@ -525,7 +557,16 @@ pub fn prefetchForwardSamples(
     }
     prefetchForwardWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
+    mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
     if (error_state.err) |err| return err;
+}
+
+fn mergeLabosPhaseTiming(
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    worker_timings: []const labos.PhaseTiming,
+) void {
+    const timing = trace_phase_timing orelse return;
+    for (worker_timings) |worker_timing| timing.labos.merge(worker_timing);
 }
 
 pub fn preferredForwardWorkerCount(miss_count: usize) usize {

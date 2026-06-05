@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
+const timing = internal.common.runtime_io;
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
 const OptimalEstimation = internal.optimal_estimation;
@@ -151,7 +152,7 @@ const CountingAllocator = struct {
     freed_bytes: AtomicUsize = AtomicUsize.init(0),
     live_bytes: AtomicUsize = AtomicUsize.init(0),
     phase_peak_live_bytes: AtomicUsize = AtomicUsize.init(0),
-    site_mutex: std.Thread.Mutex = .{},
+    site_mutex: std.Io.Mutex = .init,
     allocation_sites: [max_allocation_site_count]AllocationSite = [_]AllocationSite{.{}} ** max_allocation_site_count,
     allocation_site_count: usize = 0,
     untracked_site_alloc_count: usize = 0,
@@ -276,8 +277,8 @@ const CountingAllocator = struct {
     }
 
     fn resetAllocationSites(self: *CountingAllocator) void {
-        self.site_mutex.lock();
-        defer self.site_mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.site_mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.site_mutex);
         self.allocation_site_count = 0;
         self.untracked_site_alloc_count = 0;
         self.untracked_site_allocated_bytes = 0;
@@ -289,8 +290,8 @@ const CountingAllocator = struct {
         allocated_bytes: usize,
         kind: AllocationSiteKind,
     ) void {
-        self.site_mutex.lock();
-        defer self.site_mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.site_mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.site_mutex);
 
         for (self.allocation_sites[0..self.allocation_site_count]) |*site| {
             if (site.return_address != return_address) continue;
@@ -321,8 +322,8 @@ const CountingAllocator = struct {
     }
 
     fn allocationSiteReport(self: *CountingAllocator) AllocationSiteReport {
-        self.site_mutex.lock();
-        defer self.site_mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.site_mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.site_mutex);
 
         var report: AllocationSiteReport = .{
             .untracked_alloc_count = self.untracked_site_alloc_count,
@@ -335,14 +336,14 @@ const CountingAllocator = struct {
     }
 };
 
-pub fn main() !void {
-    return mainInner() catch |err| {
+pub fn main(init: std.process.Init) !void {
+    return mainInner(init) catch |err| {
         std.debug.print("optimal-estimation-trace failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner() !void {
+fn mainInner(init: std.process.Init) !void {
 
     // instrumentation: OE trace frame
     // captures: retrieval run boundary, zones, and allocation deltas
@@ -363,17 +364,16 @@ fn mainInner() !void {
     var counting_allocator = CountingAllocator.init(debug_allocator.allocator());
     const allocator = counting_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const config = try parseArgs(args);
-    try std.fs.cwd().makePath(config.output_dir);
+    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
     const input = o2a_reference.defaultInput();
 
     // instrumentation: OE allocation trace
     // captures: reference preparation allocations
     // why: separate one-time setup memory from retrieval memory.
-    var reference_timer = try std.time.Timer.start();
+    var reference_timer = timing.Timer.start(init.io);
     const reference_alloc_start = counting_allocator.resetPhasePeak();
     var prepared_case = try o2a_reference.prepareResolvedVendorO2ACase(allocator, &input);
     const reference_prepare_ns = reference_timer.read();
@@ -439,7 +439,7 @@ fn mainInner() !void {
     // instrumentation: OE allocation trace
     // captures: session workspace warmup
     // why: measure reusable setup before retrieval iterations.
-    var warm_timer = try std.time.Timer.start();
+    var warm_timer = timing.Timer.start(init.io);
     const warm_alloc_start = counting_allocator.resetPhasePeak();
     try InstrumentGrid.warmProductWorkspace(
         allocator,
@@ -455,7 +455,7 @@ fn mainInner() !void {
     // instrumentation: OE allocation trace
     // captures: retrieval wall time and allocation sites
     // why: find repeated memory cost inside the OE boundary.
-    var retrieval_timer = try std.time.Timer.start();
+    var retrieval_timer = timing.Timer.start(init.io);
     const retrieval_alloc_start = counting_allocator.resetPhasePeak();
     var result = try OptimalEstimation.runO2A(
         allocator,
@@ -478,6 +478,7 @@ fn mainInner() !void {
     defer result.deinit(allocator);
 
     try writeSummary(
+        init.io,
         config.output_dir,
         reference_prepare_ns,
         session_warm_ns,
@@ -512,7 +513,7 @@ fn derivativeStateMask(state_specs: []const OptimalEstimation.StateSpec) u8 {
     return mask;
 }
 
-fn parseArgs(args: []const []const u8) !Config {
+fn parseArgs(args: []const [:0]const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -535,6 +536,7 @@ fn parseArgs(args: []const []const u8) !Config {
 }
 
 fn writeSummary(
+    io: std.Io,
     output_dir: []const u8,
     reference_prepare_ns: u64,
     session_warm_ns: u64,
@@ -552,13 +554,14 @@ fn writeSummary(
     retrieval_allocation_sites: AllocationSiteReport,
     wavelength_plan_stats: WavelengthPlanStats,
 ) !void {
-    var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
-    defer file.close();
+    var file = try openOutputFile(io, std.heap.page_allocator, output_dir, "summary.json");
+    defer file.close(io);
 
     const retrieved_aod = result.state[0];
     const retrieved_mid_pressure_hpa = result.state[1];
     const reference_aod = input.aerosol.optical_depth;
-    var writer = file.writer(&.{});
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &buffer);
     try writer.interface.print(
         \\{{
         \\  "trace_enabled": {},
@@ -783,8 +786,8 @@ fn executableVmaddrSlide() usize {
         0;
 }
 
-fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
+fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().createFile(path, .{ .truncate = true });
+    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }

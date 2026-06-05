@@ -70,3 +70,6 @@ validation/release/
 # Study notes are tracked; book PDFs should stay local.
 study/**/*.pdf
 study/**/*.o
+
+# Local pair-programming practice scratch space.
+study/zig_pair_practice/work/

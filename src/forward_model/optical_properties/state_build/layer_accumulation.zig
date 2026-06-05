@@ -206,12 +206,12 @@ const CollisionComplexProfileCache = struct {
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ParitySupportRowErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     err: ?anyerror = null,
 
     fn store(self: *ParitySupportRowErrorState, err: anyerror) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.mutex);
         if (self.err == null) self.err = err;
     }
 };

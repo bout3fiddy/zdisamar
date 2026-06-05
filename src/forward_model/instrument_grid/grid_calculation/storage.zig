@@ -54,6 +54,32 @@ pub const Buffers = struct {
     jacobian_state_mask: jacobian.StateMask = 0,
 };
 
+// instrumentation: trace phase timing ------------------------------------------------------------------------|
+// captures: coarse product-simulation phase timings for trace-harness JSON summaries                          |
+// why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones.  |
+pub const TracePhaseTiming = struct {
+    io: ?std.Io = null,
+    wavelength_sampling_ns: u64 = 0,
+    forward_miss_collection_ns: u64 = 0,
+    profile_spectroscopy_cache_ns: u64 = 0,
+    forward_prefetch_ns: u64 = 0,
+    radiance_cache_integration_ns: u64 = 0,
+    radiance_convolution_ns: u64 = 0,
+    radiance_postprocess_ns: u64 = 0,
+    irradiance_sampling_ns: u64 = 0,
+    irradiance_convolution_ns: u64 = 0,
+    irradiance_postprocess_ns: u64 = 0,
+    reflectance_assembly_ns: u64 = 0,
+    jacobian_processing_ns: u64 = 0,
+    labos: common.labos.PhaseTiming = .{},
+
+    pub fn reset(self: *TracePhaseTiming) void {
+        const io = self.io;
+        self.* = .{ .io = io };
+    }
+};
+// end instrumentation: trace phase timing --------------------------------------------------------------------|
+
 pub fn configMayUseSourceInterfaces(scene: *const Scene, rtm_config: common.SolveConfig) bool {
     if (!rtm_config.rtm_controls.integrate_source_function) return false;
     return scene.atmosphere.interval_grid.semantics == .none;
@@ -69,9 +95,9 @@ pub fn configUsesPseudoSphericalGrid(rtm_config: common.SolveConfig) bool {
 
 // Reusable instrument grid storage that owns the backing storage.
 // layout(64-bit):
-//   size: 560 B, align: 8 B
+//   size: 568 B, align: 8 B
 //   field storage:
-//     540 B across 26 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
+//     548 B across 27 fields; largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
 //     wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
 //   unused bits: 160 padding + 28 bool-storage slack = 188 bits
 //   out-of-line:
@@ -79,7 +105,7 @@ pub fn configUsesPseudoSphericalGrid(rtm_config: common.SolveConfig) bool {
 //     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are rtm_config-gated
 //   cache span: 9 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 560 B (0.547 KiB); total also includes referenced storage above
+//   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
 pub const ProductStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -104,14 +130,15 @@ pub const ProductStorage = struct {
     forward_miss_plan_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
-    shared_forward_prefetch_pool: ?*std.Thread.Pool = null,
-    forward_prefetch_pool: std.Thread.Pool = undefined,
-    forward_prefetch_pool_worker_threads: usize = 0,
-    forward_prefetch_pool_valid: bool = false,
+    shared_forward_prefetch_io: ?*std.Io.Threaded = null,
+    forward_prefetch_io: std.Io.Threaded = undefined,
+    forward_prefetch_io_worker_threads: usize = 0,
+    forward_prefetch_io_valid: bool = false,
+    trace_phase_timing: ?*TracePhaseTiming = null,
 
     pub fn deinit(self: *ProductStorage, allocator: Allocator) void {
-        if (self.forward_prefetch_pool_valid) {
-            self.forward_prefetch_pool.deinit();
+        if (self.forward_prefetch_io_valid) {
+            self.forward_prefetch_io.deinit();
         }
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
@@ -134,34 +161,45 @@ pub const ProductStorage = struct {
         self.* = .{};
     }
 
-    pub fn forwardPrefetchPool(
+    pub fn setTracePhaseTiming(self: *ProductStorage, timing: *TracePhaseTiming) void {
+        self.trace_phase_timing = timing;
+    }
+
+    pub fn clearTracePhaseTiming(self: *ProductStorage) void {
+        self.trace_phase_timing = null;
+    }
+
+    pub fn activeTracePhaseTiming(self: *ProductStorage) ?*TracePhaseTiming {
+        return self.trace_phase_timing;
+    }
+
+    pub fn forwardPrefetchIo(
         self: *ProductStorage,
         allocator: Allocator,
         worker_count: usize,
-    ) ?*std.Thread.Pool {
+    ) ?std.Io {
         if (worker_count <= 1) return null;
-        if (self.shared_forward_prefetch_pool) |pool| return pool;
+        if (self.shared_forward_prefetch_io) |runtime| return runtime.io();
 
         const worker_thread_count = worker_count - 1;
-        if (self.forward_prefetch_pool_valid and
-            self.forward_prefetch_pool_worker_threads == worker_thread_count)
+        if (self.forward_prefetch_io_valid and
+            self.forward_prefetch_io_worker_threads == worker_thread_count)
         {
-            return &self.forward_prefetch_pool;
+            return self.forward_prefetch_io.io();
         }
 
-        if (self.forward_prefetch_pool_valid) {
-            self.forward_prefetch_pool.deinit();
-            self.forward_prefetch_pool_valid = false;
-            self.forward_prefetch_pool_worker_threads = 0;
+        if (self.forward_prefetch_io_valid) {
+            self.forward_prefetch_io.deinit();
+            self.forward_prefetch_io_valid = false;
+            self.forward_prefetch_io_worker_threads = 0;
         }
 
-        self.forward_prefetch_pool.init(.{
-            .allocator = allocator,
-            .n_jobs = worker_thread_count,
-        }) catch return null;
-        self.forward_prefetch_pool_worker_threads = worker_thread_count;
-        self.forward_prefetch_pool_valid = true;
-        return &self.forward_prefetch_pool;
+        self.forward_prefetch_io = std.Io.Threaded.init(allocator, .{
+            .async_limit = .limited(worker_thread_count),
+        });
+        self.forward_prefetch_io_worker_threads = worker_thread_count;
+        self.forward_prefetch_io_valid = true;
+        return self.forward_prefetch_io.io();
     }
 
     pub fn invalidateWavelengthPlan(self: *ProductStorage, allocator: Allocator) void {

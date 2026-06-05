@@ -6,6 +6,7 @@ const attenuation_mod = @import("attenuation.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
 const Perturbation = @import("../../instrumentation/sensitivity.zig");
 const Trace = @import("../../instrumentation/trace.zig");
+const phase_timing = @import("phase_timing.zig");
 
 // orders.zig -------------------------------------------------------------------------------------------------|
 // LABOS scattering-order transport. RT_fc plus attenuation becomes U/D fields for reflectance.                |
@@ -131,6 +132,7 @@ pub const OrdersWorkspace = struct {
     ud_orde: []basis.UDLocal,
     ud_local: []basis.UDLocal,
     rt_active: []bool,
+    trace_phase: phase_timing.WorkspaceState = .{},
 
     pub fn init(
         allocator: Allocator,
@@ -182,6 +184,22 @@ pub const OrdersWorkspace = struct {
         const ud_sum_local = try self.allocator.alloc(basis.UDLocal, nlevel);
         self.allocator.free(self.ud_sum_local);
         self.ud_sum_local = ud_sum_local;
+    }
+
+    pub fn setTracePhaseTiming(self: *OrdersWorkspace, active: ?phase_timing.Active) void {
+        // OrdersWorkspace.setTracePhaseTiming ---------------------------------------------------------------|
+        // Attach the worker-local LABOS phase sink used by the trace harness.                                |
+        // ---------------------------------------------------------------------------------------------------|
+
+        phase_timing.setActiveWorkspaceState(&self.trace_phase, active);
+    }
+
+    pub fn activeTracePhaseTiming(self: *OrdersWorkspace) ?phase_timing.Active {
+        // OrdersWorkspace.activeTracePhaseTiming ------------------------------------------------------------|
+        // Return the active trace-harness sink for order child phases.                                       |
+        // ---------------------------------------------------------------------------------------------------|
+
+        return phase_timing.activeWorkspaceState(&self.trace_phase);
     }
 
     pub fn deinit(self: *OrdersWorkspace) void {
@@ -911,6 +929,7 @@ fn ordersScatInternal(
     rt: []const basis.LayerRT,
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
+    trace_phase_timing: ?phase_timing.Active,
 ) OrdersResultView {
     // ordersScatInternal -------------------------------------------------------------------------------------|
     // Core scattering-order solver.                                                                           |
@@ -989,6 +1008,8 @@ fn ordersScatInternal(
         // why: separate first-order source setup from later inter-level transport.                            |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_sources");
         defer zone.end();
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "orders_initial_sources");
         for (start_level..end_level + 1) |ilevel| {
             const e_data = &ud_view[ilevel].E.data;
 
@@ -1063,6 +1084,8 @@ fn ordersScatInternal(
         // why: isolate first scattering transport before convergence tests.                                   |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_transport");
         defer zone.end();
+        const trace_start = phase_timing.start(trace_phase_timing);
+        defer phase_timing.finish(trace_phase_timing, trace_start, "orders_initial_transport");
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
         // end instrumentation: trace zone: initial transport -------------------------------------------------|
 
@@ -1146,6 +1169,8 @@ fn ordersScatInternal(
             // why: isolate downward matrix-vector work inside each order.                                     |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_down");
             defer zone.end();
+            const trace_start = phase_timing.start(trace_phase_timing);
+            defer phase_timing.finish(trace_phase_timing, trace_start, "orders_local_down");
             for (start_level..end_level) |ilevel| {
                 const local_d0 = &ud_local_view[ilevel].D.col[0].data;
                 const local_d1 = &ud_local_view[ilevel].D.col[1].data;
@@ -1194,6 +1219,8 @@ fn ordersScatInternal(
             // why: isolate upward matrix-vector work inside each order.                                       |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_up");
             defer zone.end();
+            const trace_start = phase_timing.start(trace_phase_timing);
+            defer phase_timing.finish(trace_phase_timing, trace_start, "orders_local_up");
             const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
             const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
             const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
@@ -1264,6 +1291,8 @@ fn ordersScatInternal(
             // why: separate propagation from local source computation.                                        |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.transport");
             defer zone.end();
+            const trace_start = phase_timing.start(trace_phase_timing);
+            defer phase_timing.finish(trace_phase_timing, trace_start, "orders_transport");
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
             // end instrumentation: trace zone: order transport -----------------------------------------------|
 
@@ -1327,6 +1356,8 @@ fn ordersScatInternal(
             // why: separate retained-order summation from convergence testing.                                |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.accumulate");
             defer zone.end();
+            const trace_start = phase_timing.start(trace_phase_timing);
+            defer phase_timing.finish(trace_phase_timing, trace_start, "orders_accumulate");
             accumulateOrderContribution(
                 track_sum_local,
                 ud_view,
@@ -1384,6 +1415,7 @@ pub fn ordersScatInto(
         rt,
         controls,
         num_orders_max,
+        storage.activeTracePhaseTiming(),
     );
     return .{
         .ud = result.ud,
@@ -1425,6 +1457,7 @@ pub fn ordersScatIntoWithLocalSum(
         rt,
         controls,
         num_orders_max,
+        storage.activeTracePhaseTiming(),
     );
     return .{
         .ud = result.ud,
@@ -1468,6 +1501,7 @@ pub fn ordersScatIntoWithActive(
         rt,
         controls,
         num_orders_max,
+        storage.activeTracePhaseTiming(),
     );
     return .{
         .ud = result.ud,
@@ -1510,6 +1544,7 @@ pub fn ordersScatIntoWithActiveLocalSum(
         rt,
         controls,
         num_orders_max,
+        storage.activeTracePhaseTiming(),
     );
     return .{
         .ud = result.ud,
@@ -1550,6 +1585,7 @@ pub fn ordersScatTransportInto(
         rt,
         controls,
         num_orders_max,
+        storage.activeTracePhaseTiming(),
     );
     return .{
         .ud = result.ud,
@@ -1614,6 +1650,7 @@ pub fn ordersScat(
         rt,
         controls,
         num_orders_max,
+        null,
     );
     return result;
 }

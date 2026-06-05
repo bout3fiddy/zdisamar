@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime_io = @import("../../../common/runtime_io.zig");
 const formats = @import("reference_assets_formats.zig");
 const loaded_asset = @import("reference_assets_loaded_asset.zig");
 const types = @import("reference_assets_types.zig");
@@ -112,7 +113,15 @@ pub fn loadBundleAsset(
     bundle_manifest_path: []const u8,
     asset_id: []const u8,
 ) !LoadedAsset {
-    const manifest_bytes = try std.fs.cwd().readFileAlloc(allocator, bundle_manifest_path, 1024 * 1024);
+    var runtime = runtime_io.RuntimeIo.init(std.heap.smp_allocator);
+    defer runtime.deinit();
+    const io = runtime.io();
+    const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        bundle_manifest_path,
+        allocator,
+        .limited(1024 * 1024),
+    );
     defer allocator.free(manifest_bytes);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -124,7 +133,12 @@ pub fn loadBundleAsset(
 
     const bundle_asset = manifest.findAsset(bundle.assets, asset_id) orelse return error.AssetNotFound;
 
-    const asset_bytes = try std.fs.cwd().readFileAlloc(allocator, bundle_asset.path, 1024 * 1024);
+    const asset_bytes = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        bundle_asset.path,
+        allocator,
+        .limited(1024 * 1024),
+    );
     defer allocator.free(asset_bytes);
 
     return initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
@@ -146,7 +160,14 @@ pub fn loadExternalAsset(
     asset_path: []const u8,
     asset_format: []const u8,
 ) !LoadedAsset {
-    const asset_bytes = try std.fs.cwd().readFileAlloc(allocator, asset_path, 16 * 1024 * 1024);
+    var runtime = runtime_io.RuntimeIo.init(std.heap.smp_allocator);
+    defer runtime.deinit();
+    const asset_bytes = try std.Io.Dir.cwd().readFileAlloc(
+        runtime.io(),
+        asset_path,
+        allocator,
+        .limited(16 * 1024 * 1024),
+    );
     defer allocator.free(asset_bytes);
 
     const dataset_hash = try renderSha256(allocator, asset_bytes);

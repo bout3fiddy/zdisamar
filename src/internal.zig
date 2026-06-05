@@ -45,6 +45,7 @@ pub const common = struct {
     pub const errors = @import("common/errors.zig");
     pub const units = @import("common/units.zig");
     pub const lut_controls = @import("common/lut_controls.zig");
+    pub const runtime_io = @import("common/runtime_io.zig");
 
     // layout(64-bit):
     //   size: 0 B, align: 1 B

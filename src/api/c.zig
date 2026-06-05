@@ -953,9 +953,9 @@ fn optimalEstimationStateSpecsFromRaw(
 
     const raw_states = state_specs_ptr[0..state_count];
     for (raw_states, 0..) |raw, index| {
-        const state = std.meta.intToEnum(zdisamar.RadiativeTransferJacobian.State, raw.state_id) catch |err| {
-            resolved.setError(@errorName(err));
-            return err;
+        const state = std.enums.fromInt(zdisamar.RadiativeTransferJacobian.State, raw.state_id) orelse {
+            resolved.setError(@errorName(error.InvalidEnumTag));
+            return error.InvalidEnumTag;
         };
 
         if (state == .aerosol_layer_mid_pressure_hpa) {

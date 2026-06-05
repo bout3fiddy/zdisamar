@@ -65,7 +65,8 @@ const encoding_rle = 3;
 // why: keep capture output columnar and bounded by flush size.
 pub const TableWriter = struct {
     allocator: std.mem.Allocator,
-    file: std.fs.File,
+    io: std.Io,
+    file: std.Io.File,
     columns: []const ColumnDef,
     buffers: []ColumnBuffer,
     row_groups: std.ArrayList(RowGroupMeta) = .empty,
@@ -81,14 +82,17 @@ pub const TableWriter = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        file: std.fs.File,
+        io: std.Io,
+        file: std.Io.File,
         columns: []const ColumnDef,
         options: Options,
     ) !TableWriter {
         if (columns.len == 0) return error.EmptySchema;
         if (options.row_group_rows == 0) return error.InvalidRowGroupSize;
 
-        try file.writeAll(parquet_magic);
+        var file_open = true;
+        errdefer if (file_open) file.close(io);
+
         const buffers = try allocator.alloc(ColumnBuffer, columns.len);
         errdefer allocator.free(buffers);
 
@@ -100,13 +104,18 @@ pub const TableWriter = struct {
             }
         }
 
-        return .{
+        var table = TableWriter{
             .allocator = allocator,
+            .io = io,
             .file = file,
             .columns = columns,
             .buffers = buffers,
             .options = options,
         };
+        file_open = false;
+        errdefer table.deinit();
+        try table.writeAll(parquet_magic);
+        return table;
     }
 
     pub fn deinit(self: *TableWriter) void {
@@ -119,7 +128,7 @@ pub const TableWriter = struct {
         self.footer_buffer.deinit(self.allocator);
         self.page_header_buffer.deinit(self.allocator);
         self.compressed_buffer.deinit(self.allocator);
-        self.file.close();
+        self.file.close(self.io);
         self.* = undefined;
     }
 
@@ -243,7 +252,10 @@ pub const TableWriter = struct {
     }
 
     fn writeAll(self: *TableWriter, bytes: []const u8) !void {
-        try self.file.writeAll(bytes);
+        var buffer: [4096]u8 = undefined;
+        var writer = self.file.writer(self.io, &buffer);
+        try writer.interface.writeAll(bytes);
+        try writer.interface.flush();
         self.current_offset += bytes.len;
     }
 

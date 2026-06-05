@@ -29,10 +29,11 @@ const LoadedBaselineAnchor = struct {
 };
 
 fn loadBaselineAnchor(allocator: std.mem.Allocator) !LoadedBaselineAnchor {
-    const raw = try std.fs.cwd().readFileAlloc(
-        allocator,
+    const raw = try std.Io.Dir.cwd().readFileAlloc(
+        std.testing.io,
         "validation/reference_data/spectra/o2a_vendor_forward_reflectance_baseline.json",
-        64 * 1024,
+        allocator,
+        .limited(64 * 1024),
     );
     errdefer allocator.free(raw);
 
@@ -63,6 +64,11 @@ fn emitAssessment(
     current: o2a.ComparisonMetrics,
     outcome: o2a.AssessmentOutcome,
 ) !void {
+    const root_mean_square_difference_delta =
+        current.root_mean_square_difference - anchor.baseline.root_mean_square_difference;
+    const trough_wavelength_difference_nm_delta =
+        current.trough_wavelength_difference_nm - anchor.baseline.trough_wavelength_difference_nm;
+
     const assessment = .{
         .scenario = anchor.scenario,
         .upstream_config = anchor.upstream_config,
@@ -74,11 +80,11 @@ fn emitAssessment(
         .delta_from_baseline = .{
             .mean_signed_difference = current.mean_signed_difference - anchor.baseline.mean_signed_difference,
             .mean_abs_difference = current.mean_abs_difference - anchor.baseline.mean_abs_difference,
-            .root_mean_square_difference = current.root_mean_square_difference - anchor.baseline.root_mean_square_difference,
+            .root_mean_square_difference = root_mean_square_difference_delta,
             .max_abs_difference = current.max_abs_difference - anchor.baseline.max_abs_difference,
             .correlation = current.correlation - anchor.baseline.correlation,
             .blue_wing_mean_difference = current.blue_wing_mean_difference - anchor.baseline.blue_wing_mean_difference,
-            .trough_wavelength_difference_nm = current.trough_wavelength_difference_nm - anchor.baseline.trough_wavelength_difference_nm,
+            .trough_wavelength_difference_nm = trough_wavelength_difference_nm_delta,
             .trough_value_difference = current.trough_value_difference - anchor.baseline.trough_value_difference,
             .rebound_peak_difference = current.rebound_peak_difference - anchor.baseline.rebound_peak_difference,
             .mid_band_mean_difference = current.mid_band_mean_difference - anchor.baseline.mid_band_mean_difference,
@@ -230,7 +236,7 @@ test "typed baseline vendor trend assessment reports bounded drift against the s
     try std.testing.expectEqual(@as(u32, 1), anchor.parsed.value.version);
     try std.testing.expect(anchor.parsed.value.guidance.allowed_to_fail);
     try std.testing.expect(anchor.parsed.value.upstream_config.len != 0);
-    try std.fs.cwd().access(anchor.parsed.value.reference_path, .{});
+    try std.Io.Dir.cwd().access(std.testing.io, anchor.parsed.value.reference_path, .{});
 
     const input = zdisamar.defaultO2AInput();
     var disamar_case = try o2a.runResolvedVendorO2AReflectanceCase(

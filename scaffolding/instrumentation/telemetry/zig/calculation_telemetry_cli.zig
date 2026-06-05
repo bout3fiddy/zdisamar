@@ -1,5 +1,6 @@
 const std = @import("std");
 const internal = @import("internal");
+const timing = internal.common.runtime_io;
 const TelemetrySink = @import("calculation_telemetry_sink");
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
@@ -40,32 +41,31 @@ const Config = struct {
     multiple_scattering: bool = false,
 };
 
-pub fn main() !void {
-    return mainInner() catch |err| {
+pub fn main(init: std.process.Init) !void {
+    return mainInner(init) catch |err| {
         std.debug.print("calculation-telemetry failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner() !void {
+fn mainInner(init: std.process.Init) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const config = try parseArgs(args);
-    try std.fs.cwd().makePath(config.output_dir);
+    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
     // instrumentation: calculation telemetry activation
     // captures: all enabled facade hooks
     // why: rtm_config model events into Parquet tables for this process.
-    var collector = try TelemetrySink.CollectorHandle.init(allocator, config.output_dir);
+    var collector = try TelemetrySink.CollectorHandle.init(init.io, allocator, config.output_dir);
     defer collector.deinit();
     TelemetrySink.setCollector(&collector);
     defer TelemetrySink.clearCollector();
 
-    var prepare_timer = try std.time.Timer.start();
+    var prepare_timer = timing.Timer.start(init.io);
     var input = o2a_reference.defaultInput();
     if (config.scene_id) |scene_id| input.scene_id = scene_id;
     input.spectral_grid.start_nm = config.start_nm;
@@ -109,7 +109,7 @@ fn mainInner() !void {
     var storage: InstrumentGrid.ProductStorage = .{};
     defer storage.deinit(allocator);
 
-    var forward_timer = try std.time.Timer.start();
+    var forward_timer = timing.Timer.start(init.io);
     const product = try InstrumentGrid.simulateProductWithWorkspace(
         allocator,
         &storage,
@@ -120,7 +120,7 @@ fn mainInner() !void {
     const forward_ns = forward_timer.read();
 
     try collector.finish();
-    try writeSummary(config, input, prepare_ns, forward_ns, product.summary, collector.counts());
+    try writeSummary(init.io, config, input, prepare_ns, forward_ns, product.summary, collector.counts());
 
     std.debug.print(
         "wrote calculation telemetry parquet rows to {s} (scalar={}, reduction={}, decision={})\n",
@@ -156,7 +156,7 @@ fn telemetrySolveConfig(
     return resolved;
 }
 
-fn parseArgs(args: []const []const u8) !Config {
+fn parseArgs(args: []const [:0]const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -276,6 +276,7 @@ fn updateFitIntervals(input: anytype, intervals: anytype) void {
 }
 
 fn writeSummary(
+    io: std.Io,
     config: Config,
     input: anytype,
     prepare_ns: u64,
@@ -283,10 +284,11 @@ fn writeSummary(
     summary: InstrumentGrid.InstrumentGridSummary,
     counts: TelemetrySink.RowCounts,
 ) !void {
-    var file = try openOutputFile(std.heap.page_allocator, config.output_dir, "run_summary.json");
-    defer file.close();
+    var file = try openOutputFile(io, std.heap.page_allocator, config.output_dir, "run_summary.json");
+    defer file.close(io);
 
-    var writer = file.writer(&.{});
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &buffer);
     try writer.interface.print(
         \\{{
         \\  "calculation_telemetry_requested": {},
@@ -366,8 +368,8 @@ fn writeSummary(
     try writer.interface.flush();
 }
 
-fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
+fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().createFile(path, .{ .truncate = true });
+    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }

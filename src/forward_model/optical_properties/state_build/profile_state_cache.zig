@@ -18,7 +18,7 @@ const Entry = struct {
     }
 };
 
-var mutex = std.Thread.Mutex{};
+var mutex = std.Io.Mutex.init;
 var cached_entry: ?Entry = null;
 
 pub fn load(
@@ -32,8 +32,8 @@ pub fn load(
     if (!compatibleShape(temperatures_k, pressures_hpa, weak_out, strong_out)) return false;
 
     const key = computeKey(line_list, temperatures_k, pressures_hpa);
-    mutex.lock();
-    defer mutex.unlock();
+    std.Io.Threaded.mutexLock(&mutex);
+    defer std.Io.Threaded.mutexUnlock(&mutex);
 
     const entry = cached_entry orelse return false;
     if (entry.key != key or
@@ -105,8 +105,8 @@ pub fn store(
         weak_count += 1;
     }
 
-    mutex.lock();
-    defer mutex.unlock();
+    std.Io.Threaded.mutexLock(&mutex);
+    defer std.Io.Threaded.mutexUnlock(&mutex);
     if (cached_entry) |*old| old.deinit(allocator);
     cached_entry = entry;
 }

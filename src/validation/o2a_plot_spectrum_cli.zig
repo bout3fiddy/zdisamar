@@ -14,16 +14,14 @@ const Config = struct {
     output_dir: []const u8 = "out/analysis/o2a/plot_bundle_tmp",
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const config = try parseArgs(args);
-    try std.fs.cwd().makePath(config.output_dir);
+    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
     const input = zdisamar.defaultO2AInput();
     var reflectance_case = try zdisamar.o2a.runResolvedVendorO2AReflectanceCase(allocator, &input);
@@ -35,7 +33,7 @@ pub fn main() !void {
     std.debug.print("wrote {s}\n", .{spectrum_path});
 }
 
-fn parseArgs(args: []const []const u8) !Config {
+fn parseArgs(args: []const [:0]const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {

@@ -35,12 +35,12 @@ const initial_side_storage_sample_cap: usize = 1 << 20;
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const WavelengthSamplingErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     err: ?Error = null,
 
     fn store(self: *WavelengthSamplingErrorState, err: Error) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.mutex);
         if (self.err == null) self.err = err;
     }
 };
@@ -82,7 +82,7 @@ const WavelengthSamplingWorker = struct {
 //   count: one per wavelength sampling build
 //   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
 const KernelStorageBuilder = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     offsets_nm: std.ArrayList(f64) = .empty,
     weights: std.ArrayList(f64) = .empty,
     expected_kernel_ref_count: usize = 0,
@@ -94,8 +94,8 @@ const KernelStorageBuilder = struct {
 
     fn append(self: *KernelStorageBuilder, allocator: Allocator, kernel: *const IntegrationKernel) Error!u32 {
         const count = kernel.sample_count;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        std.Io.Threaded.mutexLock(&self.mutex);
+        defer std.Io.Threaded.mutexUnlock(&self.mutex);
 
         if (self.offsets_nm.items.len > std.math.maxInt(u32) or
             count > std.math.maxInt(u32) - self.offsets_nm.items.len)

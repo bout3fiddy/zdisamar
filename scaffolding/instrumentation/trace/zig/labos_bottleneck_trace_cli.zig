@@ -1,5 +1,6 @@
 const std = @import("std");
 const internal = @import("internal");
+const timing = internal.common.runtime_io;
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
 const o2a_reference = internal.o2a_reference;
@@ -8,21 +9,27 @@ const Trace = internal.forward_model.performance_trace;
 
 const default_labos_trace_output_dir = "scaffolding/instrumentation/trace/evidence/labos-bottleneck";
 const default_jacobian_trace_output_dir = "scaffolding/instrumentation/trace/evidence/o2a-jacobian-trace";
+const default_cached_repeats: usize = 3;
 
 // instrumentation: LABOS trace harness
-// captures: prepare/forward wall time and optional ztracy zones
-// why: inspect forward-model phase shape.
+// captures: prepare/forward/copy wall time and optional ztracy zones
+// why: inspect forward-model phase shape at the retained session boundary.
 // layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: output_dir=16 B, output_dir_set=1 B, derivative_sweep=1 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
+//   size: 32 B, align: 8 B
+//   field storage:
+//     output_dir=16 B, cached_repeats=8 B, output_dir_set=1 B, derivative_sweep=1 B, jacobian=1 B,
+//     phase_timing=1 B; padding: 4 B (32 bits)
+//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
 //   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 const Config = struct {
     output_dir: []const u8 = default_labos_trace_output_dir,
+    cached_repeats: usize = default_cached_repeats,
     output_dir_set: bool = false,
     derivative_sweep: bool = false,
+    jacobian: bool = false,
+    phase_timing: bool = true,
 };
 
 // layout(64-bit):
@@ -60,14 +67,31 @@ const derivative_variants = [_]TraceVariant{
     },
 };
 
-pub fn main() !void {
-    return mainInner() catch |err| {
+const benchmark_jacobian_variant = TraceVariant{
+    .name = "benchmark_jacobian",
+    .state_label = "aerosol_optical_depth+aerosol_layer_mid_pressure_hpa",
+    .states = &.{ .aerosol_optical_depth, .aerosol_layer_mid_pressure_hpa },
+};
+
+const ProductRunSummary = struct {
+    forward_ns: u64,
+    result_copy_ns: u64,
+    summary: InstrumentGrid.InstrumentGridSummary,
+    phase_timing: InstrumentGrid.storage.TracePhaseTiming,
+
+    fn totalWithCopyNs(self: ProductRunSummary) u64 {
+        return self.forward_ns + self.result_copy_ns;
+    }
+};
+
+pub fn main(init: std.process.Init) !void {
+    return mainInner(init) catch |err| {
         std.debug.print("labos-bottleneck-trace failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner() !void {
+fn mainInner(init: std.process.Init) !void {
 
     // instrumentation: trace frame
     // captures: one harness run boundary
@@ -87,15 +111,14 @@ fn mainInner() !void {
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     var config = try parseArgs(args);
     if (config.derivative_sweep and !config.output_dir_set) {
         config.output_dir = default_jacobian_trace_output_dir;
     }
-    try std.fs.cwd().makePath(config.output_dir);
+    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
-    var prepare_timer = try std.time.Timer.start();
+    var prepare_timer = timing.Timer.start(init.io);
     const input = o2a_reference.defaultInput();
     var prepared_case = prepared_case: {
 
@@ -113,59 +136,157 @@ fn mainInner() !void {
     defer prepared_case.deinit(allocator);
 
     if (config.derivative_sweep) {
-        try runDerivativeSweep(allocator, config.output_dir, prepare_ns, &prepared_case);
+        try runDerivativeSweep(init.io, allocator, config.output_dir, prepare_ns, &prepared_case);
         return;
     }
 
-    try runSingleTrace(allocator, config.output_dir, prepare_ns, &prepared_case);
+    try runSingleTrace(
+        init.io,
+        allocator,
+        config.output_dir,
+        prepare_ns,
+        &prepared_case,
+        config.jacobian,
+        config.cached_repeats,
+        config.phase_timing,
+    );
 }
 
 fn runSingleTrace(
+    io: std.Io,
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
     prepared_case: anytype,
+    include_jacobian: bool,
+    cached_repeats: usize,
+    phase_timing_enabled: bool,
 ) !void {
 
     // instrumentation: trace zone
-    // captures: single forward product run
-    // why: measure the retained LABOS bottleneck boundary.
+    // captures: first-use and repeated cached forward product runs
+    // why: measure the retained LABOS bottleneck boundary and the session-cache boundary.
     const zone = Trace.staticZone(@src(), "trace_cli.single_trace");
     defer zone.end();
 
     var storage: InstrumentGrid.ProductStorage = .{};
     defer storage.deinit(allocator);
 
-    var forward_timer = try std.time.Timer.start();
-    const product = product: {
+    var rtm_config = prepared_case.rtm_config;
+    var derivative_states: []const u8 = "none";
+    if (include_jacobian) {
+        rtm_config = derivativeSolveConfig(prepared_case.rtm_config, benchmark_jacobian_variant);
+        derivative_states = benchmark_jacobian_variant.state_label;
+    }
+    const output_states = if (include_jacobian) benchmark_jacobian_variant.states else &.{};
 
-        // instrumentation: trace zone
-        // captures: instrument-grid product simulation
-        // why: isolate forward RTM work inside the harness.
-        const simulate_zone = Trace.staticZone(@src(), "trace_cli.simulate_product");
-        defer simulate_zone.end();
-        break :product try InstrumentGrid.simulateProductWithWorkspace(
+    const first_run = try runProductTrace(
+        "trace_cli.simulate_product",
+        io,
+        allocator,
+        &storage,
+        &prepared_case.scene,
+        rtm_config,
+        &prepared_case.prepared,
+        output_states,
+        phase_timing_enabled,
+    );
+
+    const cached_runs = try allocator.alloc(ProductRunSummary, cached_repeats);
+    defer allocator.free(cached_runs);
+    for (cached_runs) |*cached_run| {
+        cached_run.* = try runProductTrace(
+            "trace_cli.simulate_product.cached",
+            io,
             allocator,
             &storage,
             &prepared_case.scene,
-            prepared_case.rtm_config,
+            rtm_config,
             &prepared_case.prepared,
+            output_states,
+            phase_timing_enabled,
         );
-    };
-    const forward_ns = forward_timer.read();
+    }
 
-    try writeSummary(output_dir, prepare_ns, forward_ns, product.summary);
+    try writeSummary(
+        io,
+        output_dir,
+        prepare_ns,
+        first_run,
+        cached_runs,
+        derivative_states,
+        phase_timing_enabled,
+    );
 
     std.debug.print(
-        "wrote LABOS bottleneck trace summary to {s} (forward_s={d:.6})\n",
+        "wrote LABOS bottleneck trace summary to {s} (first_s={d:.6}, cached_s={d:.6}, repeats={})\n",
         .{
             output_dir,
-            @as(f64, @floatFromInt(forward_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(first_run.forward_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(cached_runs[0].forward_ns)) / 1.0e9,
+            cached_runs.len,
         },
     );
 }
 
+fn runProductTrace(
+    comptime zone_name: [*:0]const u8,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    storage: *InstrumentGrid.ProductStorage,
+    scene: anytype,
+    rtm_config: RadiativeTransfer.SolveConfig,
+    prepared: anytype,
+    output_states: []const RadiativeTransfer.Jacobian.State,
+    phase_timing_enabled: bool,
+) !ProductRunSummary {
+
+    // instrumentation: trace phase clock
+    // captures: simulation phases plus owned-result copy for one product run
+    // why: match the session benchmark boundary while keeping the phase clock opt-in.
+    var phase_timing: InstrumentGrid.storage.TracePhaseTiming = .{ .io = io };
+    if (phase_timing_enabled) {
+        storage.setTracePhaseTiming(&phase_timing);
+    }
+    defer storage.clearTracePhaseTiming();
+
+    var forward_timer = timing.Timer.start(io);
+    const product = product: {
+
+        // instrumentation: trace zone
+        // captures: one instrument-grid product simulation
+        // why: isolate RTM work from owned-output copy at the session boundary.
+        const simulate_zone = Trace.staticZone(@src(), zone_name);
+        defer simulate_zone.end();
+        break :product try InstrumentGrid.simulateProductWithWorkspace(
+            allocator,
+            storage,
+            scene,
+            rtm_config,
+            prepared,
+        );
+    };
+    const forward_ns = forward_timer.read();
+
+    var copy_timer = timing.Timer.start(io);
+    var owned_product = if (output_states.len == 0)
+        try product.toOwned(allocator)
+    else
+        try product.toOwnedWithJacobianStates(allocator, output_states);
+    const result_copy_ns = copy_timer.read();
+    defer owned_product.deinit(allocator);
+    phase_timing.io = null;
+
+    return .{
+        .forward_ns = forward_ns,
+        .result_copy_ns = result_copy_ns,
+        .summary = product.summary,
+        .phase_timing = phase_timing,
+    };
+}
+
 fn runDerivativeSweep(
+    io: std.Io,
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
@@ -175,9 +296,10 @@ fn runDerivativeSweep(
     // instrumentation: trace sweep
     // captures: forward and Jacobian rtm_config variants
     // why: compare derivative-state cost at the same scene boundary.
-    var summary_file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
-    defer summary_file.close();
-    var summary_writer = summary_file.writer(&.{});
+    var summary_file = try openOutputFile(io, std.heap.page_allocator, output_dir, "summary.json");
+    defer summary_file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var summary_writer = summary_file.writer(io, &buffer);
 
     try summary_writer.interface.print(
         \\{{
@@ -199,7 +321,7 @@ fn runDerivativeSweep(
         var storage: InstrumentGrid.ProductStorage = .{};
         defer storage.deinit(allocator);
 
-        var forward_timer = try std.time.Timer.start();
+        var forward_timer = timing.Timer.start(io);
         const product = try InstrumentGrid.simulateProductWithWorkspace(
             allocator,
             &storage,
@@ -209,7 +331,7 @@ fn runDerivativeSweep(
         );
         const forward_ns = forward_timer.read();
 
-        var copy_timer = try std.time.Timer.start();
+        var copy_timer = timing.Timer.start(io);
         var owned_product = try product.toOwned(allocator);
         const result_copy_ns = copy_timer.read();
         defer owned_product.deinit(allocator);
@@ -255,22 +377,46 @@ fn derivativeSolveConfig(
     return resolved;
 }
 
-fn parseArgs(args: []const []const u8) !Config {
+fn parseArgs(args: []const [:0]const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
+
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
-
             if (index >= args.len) return error.MissingOutputDir;
+
             config.output_dir = args[index];
             config.output_dir_set = true;
-        } else if (std.mem.eql(u8, arg, "--derivative-sweep")) {
-            config.derivative_sweep = true;
-        } else {
-            return error.UnsupportedArgument;
+            continue;
         }
+
+        if (std.mem.eql(u8, arg, "--derivative-sweep")) {
+            config.derivative_sweep = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--jacobian")) {
+            config.jacobian = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--no-phase-timing")) {
+            config.phase_timing = false;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--cached-repeats")) {
+            index += 1;
+            if (index >= args.len) return error.MissingCachedRepeats;
+
+            config.cached_repeats = try std.fmt.parseUnsigned(usize, args[index], 10);
+            if (config.cached_repeats == 0) return error.InvalidCachedRepeats;
+            continue;
+        }
+
+        return error.UnsupportedArgument;
     }
 
     return config;
@@ -323,51 +469,347 @@ fn writeVariantSummary(
     );
 }
 
-fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
+fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().createFile(path, .{ .truncate = true });
+    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }
 
 fn writeSummary(
+    io: std.Io,
     output_dir: []const u8,
     prepare_ns: u64,
-    forward_ns: u64,
-    summary: InstrumentGrid.InstrumentGridSummary,
+    first_run: ProductRunSummary,
+    cached_runs: []const ProductRunSummary,
+    derivative_states: []const u8,
+    phase_timing_enabled: bool,
 ) !void {
-    var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
-    defer file.close();
+    var file = try openOutputFile(io, std.heap.page_allocator, output_dir, "summary.json");
+    defer file.close(io);
 
-    var writer = file.writer(&.{});
+    const cached_run = cached_runs[0];
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &buffer);
     try writer.interface.print(
         \\{{
         \\  "trace_enabled": {},
+        \\  "phase_timing_enabled": {},
+        \\  "derivative_states": "{s}",
         \\  "prepare_ns": {},
         \\  "forward_wall_ns": {},
+        \\  "cached_forward_wall_ns": {},
+        \\  "forward_result_copy_ns": {},
+        \\  "cached_result_copy_ns": {},
+        \\  "forward_total_with_copy_ns": {},
+        \\  "cached_total_with_copy_ns": {},
+        \\  "cached_repeat_count": {},
         \\  "prepare_s": {d:.9},
         \\  "forward_wall_s": {d:.9},
+        \\  "cached_forward_wall_s": {d:.9},
+        \\  "forward_result_copy_s": {d:.9},
+        \\  "cached_result_copy_s": {d:.9},
+        \\  "forward_total_with_copy_s": {d:.9},
+        \\  "cached_total_with_copy_s": {d:.9},
         \\  "sample_count": {},
         \\  "wavelength_start_nm": {d:.8},
         \\  "wavelength_end_nm": {d:.8},
         \\  "mean_radiance": {e:.17},
         \\  "mean_irradiance": {e:.17},
-        \\  "mean_reflectance": {e:.17}
-        \\}}
+        \\  "mean_reflectance": {e:.17},
         \\
     ,
         .{
             Trace.enabled,
+            phase_timing_enabled,
+            derivative_states,
             prepare_ns,
-            forward_ns,
+            first_run.forward_ns,
+            cached_run.forward_ns,
+            first_run.result_copy_ns,
+            cached_run.result_copy_ns,
+            first_run.totalWithCopyNs(),
+            cached_run.totalWithCopyNs(),
+            cached_runs.len,
             @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,
-            @as(f64, @floatFromInt(forward_ns)) / 1.0e9,
-            summary.sample_count,
-            summary.wavelength_start_nm,
-            summary.wavelength_end_nm,
-            summary.mean_radiance,
-            summary.mean_irradiance,
-            summary.mean_reflectance,
+            @as(f64, @floatFromInt(first_run.forward_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(cached_run.forward_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(first_run.result_copy_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(cached_run.result_copy_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(first_run.totalWithCopyNs())) / 1.0e9,
+            @as(f64, @floatFromInt(cached_run.totalWithCopyNs())) / 1.0e9,
+            first_run.summary.sample_count,
+            first_run.summary.wavelength_start_nm,
+            first_run.summary.wavelength_end_nm,
+            first_run.summary.mean_radiance,
+            first_run.summary.mean_irradiance,
+            first_run.summary.mean_reflectance,
         },
     );
+    try writeProductRunSummary(
+        &writer.interface,
+        "first_run",
+        first_run,
+        true,
+    );
+    try writeProductRunSummary(
+        &writer.interface,
+        "cached_run",
+        cached_run,
+        false,
+    );
+    try writeCachedRuns(&writer.interface, cached_runs);
+    try writer.interface.writeAll(
+        \\}
+        \\
+    );
     try writer.interface.flush();
+}
+
+fn writeProductRunSummary(
+    writer: *std.Io.Writer,
+    name: []const u8,
+    run: ProductRunSummary,
+    needs_comma: bool,
+) !void {
+    try writer.print(
+        \\  "{s}": {{
+        \\    "forward_wall_ns": {},
+        \\    "forward_wall_s": {d:.9},
+        \\    "result_copy_ns": {},
+        \\    "result_copy_s": {d:.9},
+        \\    "total_with_copy_ns": {},
+        \\    "total_with_copy_s": {d:.9},
+        \\    "sample_count": {},
+        \\    "wavelength_start_nm": {d:.8},
+        \\    "wavelength_end_nm": {d:.8},
+        \\    "mean_radiance": {e:.17},
+        \\    "mean_irradiance": {e:.17},
+        \\    "mean_reflectance": {e:.17},
+        \\    "phase_timing_ns": {{
+        \\
+    ,
+        .{
+            name,
+            run.forward_ns,
+            @as(f64, @floatFromInt(run.forward_ns)) / 1.0e9,
+            run.result_copy_ns,
+            @as(f64, @floatFromInt(run.result_copy_ns)) / 1.0e9,
+            run.totalWithCopyNs(),
+            @as(f64, @floatFromInt(run.totalWithCopyNs())) / 1.0e9,
+            run.summary.sample_count,
+            run.summary.wavelength_start_nm,
+            run.summary.wavelength_end_nm,
+            run.summary.mean_radiance,
+            run.summary.mean_irradiance,
+            run.summary.mean_reflectance,
+        },
+    );
+    try writePhaseTiming(writer, run.phase_timing);
+    try writer.writeAll(
+        \\    },
+        \\    "labos_phase_timing": {
+        \\
+    );
+    try writeLabosPhaseTiming(writer, run.phase_timing.labos);
+    try writer.writeAll(
+        \\    },
+        \\    "labos_phase_counts": {
+        \\
+    );
+    try writeLabosPhaseCounts(writer, run.phase_timing.labos);
+    try writer.print(
+        \\    }}
+        \\  }}{s}
+        \\
+    ,
+        .{if (needs_comma) "," else ""},
+    );
+}
+
+fn writeCachedRuns(
+    writer: *std.Io.Writer,
+    cached_runs: []const ProductRunSummary,
+) !void {
+    try writer.writeAll(
+        \\,
+        \\  "cached_runs": [
+        \\
+    );
+    for (cached_runs, 0..) |run, index| {
+        if (index != 0) try writer.writeAll(",\n");
+        try writer.print(
+            \\    {{
+            \\      "repeat": {},
+            \\      "forward_wall_ns": {},
+            \\      "forward_wall_s": {d:.9},
+            \\      "result_copy_ns": {},
+            \\      "result_copy_s": {d:.9},
+            \\      "total_with_copy_ns": {},
+            \\      "total_with_copy_s": {d:.9},
+            \\      "phase_timing_ns": {{
+            \\
+        ,
+            .{
+                index + 1,
+                run.forward_ns,
+                @as(f64, @floatFromInt(run.forward_ns)) / 1.0e9,
+                run.result_copy_ns,
+                @as(f64, @floatFromInt(run.result_copy_ns)) / 1.0e9,
+                run.totalWithCopyNs(),
+                @as(f64, @floatFromInt(run.totalWithCopyNs())) / 1.0e9,
+            },
+        );
+        try writePhaseTiming(writer, run.phase_timing);
+        try writer.writeAll(
+            \\      },
+            \\      "labos_phase_timing": {
+            \\
+        );
+        try writeLabosPhaseTiming(writer, run.phase_timing.labos);
+        try writer.writeAll(
+            \\      },
+            \\      "labos_phase_counts": {
+            \\
+        );
+        try writeLabosPhaseCounts(writer, run.phase_timing.labos);
+        try writer.writeAll(
+            \\      }
+            \\    }
+        );
+    }
+    try writer.writeAll(
+        \\
+        \\  ]
+        \\
+    );
+}
+
+fn writeLabosPhaseTiming(
+    writer: *std.Io.Writer,
+    labos_timing: RadiativeTransfer.labos.PhaseTiming,
+) !void {
+    try writeLabosPhaseCounter(writer, "execute", labos_timing.execute, true);
+    try writeLabosPhaseCounter(writer, "attenuation_fill", labos_timing.attenuation_fill, true);
+    try writeLabosPhaseCounter(writer, "fourier_loop", labos_timing.fourier_loop, true);
+    try writeLabosPhaseCounter(writer, "plm_basis", labos_timing.plm_basis, true);
+    try writeLabosPhaseCounter(writer, "rt_layer_build", labos_timing.rt_layer_build, true);
+    try writeLabosPhaseCounter(writer, "rt_layer_phase_matrix", labos_timing.rt_layer_phase_matrix, true);
+    try writeLabosPhaseCounter(writer, "rt_layer_doubling", labos_timing.rt_layer_doubling, true);
+    try writeLabosPhaseCounter(writer, "fixed_qseries_work", labos_timing.fixed_qseries_work, true);
+    try writeLabosPhaseCounter(writer, "fixed_rd_update", labos_timing.fixed_rd_update, true);
+    try writeLabosPhaseCounter(writer, "fixed_tu_update", labos_timing.fixed_tu_update, true);
+    try writeLabosPhaseCounter(writer, "fixed_td_update", labos_timing.fixed_td_update, true);
+    try writeLabosPhaseCounter(writer, "orders_total", labos_timing.orders_total, true);
+    try writeLabosPhaseCounter(writer, "orders_initial_sources", labos_timing.orders_initial_sources, true);
+    try writeLabosPhaseCounter(writer, "orders_initial_transport", labos_timing.orders_initial_transport, true);
+    try writeLabosPhaseCounter(writer, "orders_local_down", labos_timing.orders_local_down, true);
+    try writeLabosPhaseCounter(writer, "orders_local_up", labos_timing.orders_local_up, true);
+    try writeLabosPhaseCounter(writer, "orders_transport", labos_timing.orders_transport, true);
+    try writeLabosPhaseCounter(writer, "orders_accumulate", labos_timing.orders_accumulate, true);
+    try writeLabosPhaseCounter(writer, "reflectance_integral", labos_timing.reflectance_integral, false);
+}
+
+fn writeLabosPhaseCounts(
+    writer: *std.Io.Writer,
+    labos_timing: RadiativeTransfer.labos.PhaseTiming,
+) !void {
+    try writeLabosPhaseCount(writer, "fixed_doubling_steps", labos_timing.fixed_doubling_steps, true);
+    try writeLabosPhaseCount(writer, "fixed_qseries_skipped", labos_timing.fixed_qseries_skipped, true);
+    try writeLabosPhaseCount(writer, "fixed_qseries_retained", labos_timing.fixed_qseries_retained, true);
+    try writeLabosPhaseCount(writer, "fixed_rd_skipped", labos_timing.fixed_rd_skipped, true);
+    try writeLabosPhaseCount(writer, "fixed_rd_retained", labos_timing.fixed_rd_retained, true);
+    try writeLabosPhaseCount(writer, "fixed_tu_skipped", labos_timing.fixed_tu_skipped, true);
+    try writeLabosPhaseCount(writer, "fixed_tu_retained", labos_timing.fixed_tu_retained, true);
+    try writeLabosPhaseCount(writer, "fixed_td_skipped", labos_timing.fixed_td_skipped, true);
+    try writeLabosPhaseCount(writer, "fixed_td_retained", labos_timing.fixed_td_retained, false);
+}
+
+fn writeLabosPhaseCount(
+    writer: *std.Io.Writer,
+    name: []const u8,
+    counter: anytype,
+    needs_comma: bool,
+) !void {
+    try writer.print(
+        \\      "{s}": {}{s}
+        \\
+    ,
+        .{
+            name,
+            counter.count,
+            if (needs_comma) "," else "",
+        },
+    );
+}
+
+fn writeLabosPhaseCounter(
+    writer: *std.Io.Writer,
+    name: []const u8,
+    counter: anytype,
+    needs_comma: bool,
+) !void {
+    const mean_ns = if (counter.count == 0)
+        0.0
+    else
+        @as(f64, @floatFromInt(counter.ns)) / @as(f64, @floatFromInt(counter.count));
+    try writer.print(
+        \\      "{s}": {{"ns": {}, "count": {}, "mean_ns": {d:.3}}}{s}
+        \\
+    ,
+        .{
+            name,
+            counter.ns,
+            counter.count,
+            mean_ns,
+            if (needs_comma) "," else "",
+        },
+    );
+}
+
+fn writePhaseTiming(
+    writer: *std.Io.Writer,
+    phase_timing: InstrumentGrid.storage.TracePhaseTiming,
+) !void {
+    const radiance_fill_ns =
+        phase_timing.radiance_cache_integration_ns +
+        phase_timing.radiance_convolution_ns +
+        phase_timing.radiance_postprocess_ns;
+    const irradiance_fill_ns =
+        phase_timing.irradiance_sampling_ns +
+        phase_timing.irradiance_convolution_ns +
+        phase_timing.irradiance_postprocess_ns;
+    try writer.print(
+        \\      "wavelength_sampling": {},
+        \\      "forward_miss_collection": {},
+        \\      "profile_spectroscopy_cache": {},
+        \\      "forward_prefetch": {},
+        \\      "radiance_cache_integration": {},
+        \\      "radiance_convolution": {},
+        \\      "radiance_postprocess": {},
+        \\      "radiance_fill": {},
+        \\      "irradiance_sampling": {},
+        \\      "irradiance_convolution": {},
+        \\      "irradiance_postprocess": {},
+        \\      "irradiance_fill": {},
+        \\      "reflectance_assembly": {},
+        \\      "jacobian_processing": {}
+        \\
+    ,
+        .{
+            phase_timing.wavelength_sampling_ns,
+            phase_timing.forward_miss_collection_ns,
+            phase_timing.profile_spectroscopy_cache_ns,
+            phase_timing.forward_prefetch_ns,
+            phase_timing.radiance_cache_integration_ns,
+            phase_timing.radiance_convolution_ns,
+            phase_timing.radiance_postprocess_ns,
+            radiance_fill_ns,
+            phase_timing.irradiance_sampling_ns,
+            phase_timing.irradiance_convolution_ns,
+            phase_timing.irradiance_postprocess_ns,
+            irradiance_fill_ns,
+            phase_timing.reflectance_assembly_ns,
+            phase_timing.jacobian_processing_ns,
+        },
+    );
 }

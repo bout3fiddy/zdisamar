@@ -1,5 +1,6 @@
 const std = @import("std");
 const internal = @import("internal");
+const timing = internal.common.runtime_io;
 const Sink = @import("perturbation_sensitivity_sink");
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
@@ -184,14 +185,14 @@ const experiments = [_]ExperimentSpec{
     },
 };
 
-pub fn main() !void {
-    return mainInner() catch |err| {
+pub fn main(init: std.process.Init) !void {
+    return mainInner(init) catch |err| {
         std.debug.print("perturbation-sensitivity failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner() !void {
+fn mainInner(init: std.process.Init) !void {
 
     // instrumentation: perturbation harness gate
     // captures: compile-time enablement of perturbation channels
@@ -202,10 +203,9 @@ fn mainInner() !void {
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const config = try parseArgs(args);
-    try std.fs.cwd().makePath(config.output_dir);
+    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
     var input = o2a_reference.defaultInput();
     input.spectral_grid.start_nm = config.start_nm;
@@ -226,7 +226,7 @@ fn mainInner() !void {
     Sink.resetCounters();
     var baseline_storage: InstrumentGrid.ProductStorage = .{};
     defer baseline_storage.deinit(allocator);
-    var baseline_forward_timer = try std.time.Timer.start();
+    var baseline_forward_timer = timing.Timer.start(init.io);
     const baseline_product = try InstrumentGrid.simulateProductWithWorkspace(
         allocator,
         &baseline_storage,
@@ -288,6 +288,7 @@ fn mainInner() !void {
     Sink.clearPlan();
     Sink.resetCounters();
     const baseline_retrieval = try runRetrieval(
+        init.io,
         allocator,
         &input,
         baseline_wavelengths,
@@ -297,9 +298,10 @@ fn mainInner() !void {
         config.max_iterations,
     );
 
-    var output_file = try openOutputFile(allocator, config.output_dir, "summary.json");
-    defer output_file.close();
-    var writer = output_file.writer(&.{});
+    var output_file = try openOutputFile(init.io, allocator, config.output_dir, "summary.json");
+    defer output_file.close(init.io);
+    var buffer: [4096]u8 = undefined;
+    var writer = output_file.writer(init.io, &buffer);
     try writeHeader(
         &writer.interface,
         config,
@@ -329,7 +331,7 @@ fn mainInner() !void {
         {
             var storage: InstrumentGrid.ProductStorage = .{};
             defer storage.deinit(allocator);
-            var forward_timer = try std.time.Timer.start();
+            var forward_timer = timing.Timer.start(init.io);
             const product = try InstrumentGrid.simulateProductWithWorkspace(
                 allocator,
                 &storage,
@@ -348,6 +350,7 @@ fn mainInner() !void {
         }
 
         const retrieval = try runRetrieval(
+            init.io,
             allocator,
             &input,
             baseline_wavelengths,
@@ -387,6 +390,7 @@ fn mainInner() !void {
 }
 
 fn runRetrieval(
+    io: std.Io,
     allocator: std.mem.Allocator,
     input: *const o2a_reference.O2AInput,
     measurement_wavelength_nm: []const f64,
@@ -398,7 +402,7 @@ fn runRetrieval(
     var product_storage: InstrumentGrid.ProductStorage = .{};
     defer product_storage.deinit(allocator);
 
-    var timer = try std.time.Timer.start();
+    var timer = timing.Timer.start(io);
     var result = try OptimalEstimation.runO2A(
         allocator,
         input,
@@ -654,7 +658,7 @@ fn modeName(mode: Sink.Mode) []const u8 {
     };
 }
 
-fn parseArgs(args: []const []const u8) !Config {
+fn parseArgs(args: []const [:0]const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -691,8 +695,8 @@ fn parseArgs(args: []const []const u8) !Config {
     return config;
 }
 
-fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
+fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().createFile(path, .{ .truncate = true });
+    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }

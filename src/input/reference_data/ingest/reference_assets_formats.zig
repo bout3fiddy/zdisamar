@@ -44,7 +44,7 @@ const helpers = struct {
     }
 
     pub fn trimLineEnding(value: []const u8) []const u8 {
-        return std.mem.trimRight(u8, value, "\r");
+        return std.mem.trimEnd(u8, value, "\r");
     }
 
     pub fn wavenumberToWavelengthNm(wavenumber_cm1: f64) f64 {

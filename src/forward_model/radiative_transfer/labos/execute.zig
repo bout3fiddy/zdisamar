@@ -5,6 +5,7 @@ const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
+const phase_timing = @import("phase_timing.zig");
 const reflectance_mod = @import("reflectance.zig");
 const workspace_mod = @import("workspace.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
@@ -63,7 +64,6 @@ const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGri
 const fillAttenuationTangentDynamic = attenuation.fillAttenuationTangentDynamic;
 const fillSurface = layers_mod.fillSurface;
 const calcRTlayers = layers_mod.calcRTlayers;
-const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 const calcRTlayersTangentIntoWithBasis = layers_mod.calcRTlayersTangentIntoWithBasis;
 const fillLayerEffectiveScatteringSuffixes = layers_mod.fillLayerEffectiveScatteringSuffixes;
 const fillLayerPhaseMaxIndices = layers_mod.fillLayerPhaseMaxIndices;
@@ -387,6 +387,14 @@ fn layerResolvedLabosWithWorkspace(
 
     const nlayer = input.layers.len;
     if (nlayer == 0) return .{ .reflectance = 0.0 };
+    const labos_trace_timing = if (workspace) |scratch| scratch.activeTracePhaseTiming() else null;
+
+    // instrumentation: trace phase clock: LABOS execute ------------------------------------------------------|
+    // captures: layer-resolved LABOS solve wall time in the trace JSON summary                                |
+    // why: provide low-overhead attribution when full ztracy zones are too expensive.                         |
+    const execute_trace_start = phase_timing.start(labos_trace_timing);
+    defer phase_timing.finish(labos_trace_timing, execute_trace_start, "execute");
+    // end instrumentation: trace phase clock: LABOS execute --------------------------------------------------|
 
     // Integrated-source reflectance needs source values at every level.
     // It can use explicit source_interfaces or the RTM quadrature grid.
@@ -420,30 +428,40 @@ fn layerResolvedLabosWithWorkspace(
     // and any pair of levels, so it keeps the full table.
     var runtime_atten: ?attenuation.RuntimeAttenArray = null;
     var dynamic_atten: ?attenuation.DynamicAttenArray = null;
-    if (workspace) |scratch| {
-        if (use_integrated_source) {
-            runtime_atten = try scratch.runtimeAttenuation(
-                input.layers,
-                input.pseudo_spherical_grid,
-                geo,
-                controls.use_spherical_correction,
-            );
+    {
+
+        // instrumentation: trace phase clock: attenuation fill -----------------------------------------------|
+        // captures: direct-beam attenuation buffer fill before Fourier RTM work                               |
+        // why: isolate setup that feeds layer transport from RT layer and scattering-order costs.             |
+        const trace_start = phase_timing.start(labos_trace_timing);
+        defer phase_timing.finish(labos_trace_timing, trace_start, "attenuation_fill");
+        // end instrumentation: trace phase clock: attenuation fill -------------------------------------------|
+
+        if (workspace) |scratch| {
+            if (use_integrated_source) {
+                runtime_atten = try scratch.runtimeAttenuation(
+                    input.layers,
+                    input.pseudo_spherical_grid,
+                    geo,
+                    controls.use_spherical_correction,
+                );
+            } else {
+                dynamic_atten = try scratch.attenuation(
+                    input.layers,
+                    input.pseudo_spherical_grid,
+                    geo,
+                    controls.use_spherical_correction,
+                );
+            }
         } else {
-            dynamic_atten = try scratch.attenuation(
+            dynamic_atten = try fillAttenuationDynamicWithGrid(
+                allocator,
                 input.layers,
                 input.pseudo_spherical_grid,
                 geo,
                 controls.use_spherical_correction,
             );
         }
-    } else {
-        dynamic_atten = try fillAttenuationDynamicWithGrid(
-            allocator,
-            input.layers,
-            input.pseudo_spherical_grid,
-            geo,
-            controls.use_spherical_correction,
-        );
     }
     defer if (workspace == null) if (dynamic_atten) |*atten| atten.deinit();
 
@@ -500,6 +518,7 @@ fn layerResolvedLabosWithWorkspace(
         );
         orders_workspace = &(owned_orders_workspace.?);
     }
+    orders_workspace.setTracePhaseTiming(labos_trace_timing);
 
     // calcRTlayersIntoWithBasis saves the phase row for each RT layer while it
     // builds RT_fc. Integrated-source reflectance can reuse that row for a
@@ -573,6 +592,8 @@ fn layerResolvedLabosWithWorkspace(
             const fourier_zone = Trace.deepStaticZone(@src(), "labos.fourier_loop");
             fourier_zone.value(@intCast(i_fourier));
             defer fourier_zone.end();
+            const fourier_trace_start = phase_timing.start(labos_trace_timing);
+            defer phase_timing.finish(labos_trace_timing, fourier_trace_start, "fourier_loop");
 
             // instrumentation: trace counter -----------------------------------------------------------------|
             // captures: evaluated Fourier term count                                                          |
@@ -590,6 +611,8 @@ fn layerResolvedLabosWithWorkspace(
                 // why: separate Fourier basis setup from RT layer and order propagation.                      |
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
+                const trace_start = phase_timing.start(labos_trace_timing);
+                defer phase_timing.finish(labos_trace_timing, trace_start, "plm_basis");
                 break :plm_basis if (workspace) |scratch| choose_workspace_plm: {
                     break :choose_workspace_plm try scratch.fourierPlmBasis(
                         i_fourier,
@@ -615,7 +638,9 @@ fn layerResolvedLabosWithWorkspace(
                 // why: isolate phase matrix/layer doubling cost before order propagation.                     |
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer_build");
                 defer zone.end();
-                calcRTlayersIntoWithBasis(
+                const trace_start = phase_timing.start(labos_trace_timing);
+                defer phase_timing.finish(labos_trace_timing, trace_start, "rt_layer_build");
+                layers_mod.calcRTlayersIntoWithBasisTimed(
                     rt,
                     input.layers,
                     i_fourier,
@@ -628,6 +653,7 @@ fn layerResolvedLabosWithWorkspace(
                     layer_phase_rows,
                     layer_phase_row_valid,
                     if (workspace != null) orders_workspace.rt_active else null,
+                    labos_trace_timing,
                 );
                 // end instrumentation: trace zone: RT layer build --------------------------------------------|
 
@@ -647,6 +673,8 @@ fn layerResolvedLabosWithWorkspace(
                 // why: keep multiple-scattering transport separate from layer setup.                          |
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
+                const trace_start = phase_timing.start(labos_trace_timing);
+                defer phase_timing.finish(labos_trace_timing, trace_start, "orders_total");
                 break :orders_result if (use_integrated_source) choose_integrated_orders: {
                     if (runtime_atten) |*atten| {
 
@@ -740,6 +768,8 @@ fn layerResolvedLabosWithWorkspace(
                 // why: separate order-field integration from Fourier loop setup.                              |
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
                 defer zone.end();
+                const trace_start = phase_timing.start(labos_trace_timing);
+                defer phase_timing.finish(labos_trace_timing, trace_start, "reflectance_integral");
                 break :refl_fc if (use_integrated_source)
                     calcIntegratedReflectanceWithBasis(
                         input.layers,
