@@ -11,6 +11,18 @@ const default_labos_trace_output_dir = "scaffolding/instrumentation/trace/eviden
 const default_jacobian_trace_output_dir = "scaffolding/instrumentation/trace/evidence/o2a-jacobian-trace";
 const default_cached_repeats: usize = 3;
 
+const TraceCase = enum {
+    default,
+    benchmark_jacobian,
+
+    fn label(self: TraceCase) []const u8 {
+        return switch (self) {
+            .default => "default",
+            .benchmark_jacobian => "benchmark_jacobian",
+        };
+    }
+};
+
 // instrumentation: LABOS trace harness
 // captures: prepare/forward/copy wall time and optional ztracy zones
 // why: inspect forward-model phase shape at the retained session boundary.
@@ -18,8 +30,8 @@ const default_cached_repeats: usize = 3;
 //   size: 32 B, align: 8 B
 //   field storage:
 //     output_dir=16 B, cached_repeats=8 B, output_dir_set=1 B, derivative_sweep=1 B, jacobian=1 B,
-//     phase_timing=1 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 28 bool-storage slack = 60 bits
+//     phase_timing=1 B, trace_case=1 B; padding: 3 B (24 bits)
+//   unused bits: 24 padding + 28 bool-storage slack = 52 bits
 //   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
@@ -30,6 +42,7 @@ const Config = struct {
     derivative_sweep: bool = false,
     jacobian: bool = false,
     phase_timing: bool = true,
+    trace_case: TraceCase = .default,
 };
 
 // layout(64-bit):
@@ -119,7 +132,10 @@ fn mainInner(init: std.process.Init) !void {
     try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
 
     var prepare_timer = timing.Timer.start(init.io);
-    const input = o2a_reference.defaultInput();
+    const input = switch (config.trace_case) {
+        .default => o2a_reference.defaultInput(),
+        .benchmark_jacobian => o2a_reference.benchmarkJacobianInput(),
+    };
     var prepared_case = prepared_case: {
 
         // instrumentation: trace zone
@@ -146,6 +162,7 @@ fn mainInner(init: std.process.Init) !void {
         config.output_dir,
         prepare_ns,
         &prepared_case,
+        config.trace_case.label(),
         config.jacobian,
         config.cached_repeats,
         config.phase_timing,
@@ -158,6 +175,7 @@ fn runSingleTrace(
     output_dir: []const u8,
     prepare_ns: u64,
     prepared_case: anytype,
+    case_label: []const u8,
     include_jacobian: bool,
     cached_repeats: usize,
     phase_timing_enabled: bool,
@@ -214,6 +232,7 @@ fn runSingleTrace(
         prepare_ns,
         first_run,
         cached_runs,
+        case_label,
         derivative_states,
         phase_timing_enabled,
     );
@@ -407,6 +426,23 @@ fn parseArgs(args: []const [:0]const u8) !Config {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--case")) {
+            index += 1;
+            if (index >= args.len) return error.MissingTraceCase;
+
+            if (std.mem.eql(u8, args[index], "default")) {
+                config.trace_case = .default;
+                continue;
+            }
+
+            if (std.mem.eql(u8, args[index], "benchmark-jacobian")) {
+                config.trace_case = .benchmark_jacobian;
+                continue;
+            }
+
+            return error.UnsupportedTraceCase;
+        }
+
         if (std.mem.eql(u8, arg, "--cached-repeats")) {
             index += 1;
             if (index >= args.len) return error.MissingCachedRepeats;
@@ -481,6 +517,7 @@ fn writeSummary(
     prepare_ns: u64,
     first_run: ProductRunSummary,
     cached_runs: []const ProductRunSummary,
+    case_label: []const u8,
     derivative_states: []const u8,
     phase_timing_enabled: bool,
 ) !void {
@@ -494,6 +531,7 @@ fn writeSummary(
         \\{{
         \\  "trace_enabled": {},
         \\  "phase_timing_enabled": {},
+        \\  "case": "{s}",
         \\  "derivative_states": "{s}",
         \\  "prepare_ns": {},
         \\  "forward_wall_ns": {},
@@ -521,6 +559,7 @@ fn writeSummary(
         .{
             Trace.enabled,
             phase_timing_enabled,
+            case_label,
             derivative_states,
             prepare_ns,
             first_run.forward_ns,
