@@ -225,10 +225,12 @@ inline fn initializeTraceLabosTimingStorage(
 }
 
 inline fn attachSingleTraceLabosTiming(
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
     scratch: *ForwardSampleScratch,
     timing: *TraceSingleLabosTiming,
 ) void {
     if (comptime Storage.trace_phase_timing_enabled) {
+        _ = trace_phase_timing orelse return;
         scratch.labos_workspace.setTracePhaseTiming(timing);
     }
 }
@@ -518,7 +520,7 @@ pub fn prefetchForwardSamples(
         var scratch: ForwardSampleScratch = undefined;
         try scratch.initInto(allocator, scene, rtm_config, prepared);
 
-        attachSingleTraceLabosTiming(&scratch, &labos_phase_timing);
+        attachSingleTraceLabosTiming(trace_phase_timing, &scratch, &labos_phase_timing);
         defer clearTraceLabosTiming(&scratch);
         defer scratch.deinit(allocator);
 
