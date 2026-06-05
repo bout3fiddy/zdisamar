@@ -40,7 +40,7 @@ const layer_phase_signature_index_shift: u6 = 56;
 // orders cache                               : 104 B                                                         |
 // cached_geometry                            : 2832 B                                                        |
 // cached_geometry_valid + padding            : 8 B                                                           |
-// trace_phase                                 : zero-size unless the trace executable opts into phase timing  |
+// trace_phase                                 : zero-size unless the trace executable opts into phase timing |
 //                                                                                                            |
 // pointed-to buffers are separate heap storage and are not included in the 3168 B struct size.               |
 // unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
@@ -100,14 +100,13 @@ pub const Workspace = struct {
 
     pub fn setTracePhaseTiming(
         self: *Workspace,
-        io: std.Io,
         timing: *phase_timing.Timing,
     ) void {
         // Workspace.setTracePhaseTiming ---------------------------------------------------------------------|
         // Attach one trace-harness timing sink to this worker-local workspace.                               |
         // ---------------------------------------------------------------------------------------------------|
 
-        phase_timing.setWorkspaceState(&self.trace_phase, io, timing);
+        phase_timing.setWorkspaceState(&self.trace_phase, timing);
     }
 
     pub fn clearTracePhaseTiming(self: *Workspace) void {

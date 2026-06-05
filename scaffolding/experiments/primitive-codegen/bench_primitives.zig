@@ -64,7 +64,7 @@ var vector_u1: Vec = undefined;
 var matrix_out: Mat = undefined;
 var pair_out: DotPair = undefined;
 
-pub fn main(init: std.process.Init) !void {
+pub fn main() !void {
     seedInputs();
 
     std.debug.print(
@@ -78,12 +78,11 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("operation,iterations,elapsed_ns,ns_per_call,checksum\n", .{});
 
     for (bench_names, bench_iterations, kernels, checksums) |name, iterations, kernel, checksum| {
-        try runBench(init.io, name, iterations, kernel, checksum);
+        try runBench(name, iterations, kernel, checksum);
     }
 }
 
 fn runBench(
-    io: std.Io,
     name: []const u8,
     iterations: usize,
     kernel: Kernel,
@@ -96,17 +95,13 @@ fn runBench(
     }
     std.mem.doNotOptimizeAway(warm_sum);
 
-    const start = std.Io.Clock.boot.now(io);
+    var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
         kernel();
         sum += checksum();
     }
-    const elapsed_raw_ns = start.durationTo(std.Io.Clock.boot.now(io)).toNanoseconds();
-    const elapsed_ns = if (elapsed_raw_ns <= 0)
-        0
-    else
-        std.math.cast(u64, elapsed_raw_ns) orelse std.math.maxInt(u64);
+    const elapsed_ns = timer.read();
     std.mem.doNotOptimizeAway(sum);
 
     const ns_per_call =

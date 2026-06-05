@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime_io = @import("../../common/runtime_io.zig");
 const AbsorberModel = @import("../../input/Absorber.zig");
 const AerosolModel = @import("../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
@@ -131,9 +130,10 @@ pub const WeakCutoffGridCache = struct {
 };
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
-    var runtime = runtime_io.RuntimeIo.init(std.heap.smp_allocator);
-    defer runtime.deinit();
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(runtime.io(), path, allocator, .limited(1 << 20));
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const bytes = try file.readToEndAlloc(allocator, 1 << 20);
     defer allocator.free(bytes);
 
     var samples = std.ArrayList(ReferenceSample).empty;
@@ -167,9 +167,10 @@ pub fn loadSolarSpectrumSamples(
 ) ![]SolarSpectrumSample {
     if (!std.mem.eql(u8, asset.format, "solar_reference_csv")) return error.UnsupportedSolarReferenceAssetFormat;
 
-    var runtime = runtime_io.RuntimeIo.init(std.heap.smp_allocator);
-    defer runtime.deinit();
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(runtime.io(), asset.path, allocator, .limited(1 << 20));
+    const file = try std.fs.cwd().openFile(asset.path, .{});
+    defer file.close();
+
+    const bytes = try file.readToEndAlloc(allocator, 1 << 20);
     defer allocator.free(bytes);
 
     var samples = std.ArrayList(SolarSpectrumSample).empty;

@@ -30,6 +30,35 @@ const forward_prefetch_chunk_size: usize = 8;
 // more queue traffic for less tail imbalance across thousands of LABOS misses.
 const forward_prefetch_pooled_chunk_size: usize = 8;
 
+// migration note: Zig 0.15.2 prefetch runtime ---------------------------------------------------------------|
+// Forward prefetch uses std.Thread.Pool while product builds remain pinned to Zig 0.15.2.                    |
+// The abandoned 0.16 migration used std.Io.Threaded/Group here; keep retained timing independent of that.    |
+// end migration note: Zig 0.15.2 prefetch runtime -----------------------------------------------------------|
+
+const TracePrefetchRoute = if (Storage.trace_phase_timing_enabled) struct {
+    const WorkerLabosTiming = ?*labos.PhaseTiming;
+    const SingleLabosTiming = labos.PhaseTiming;
+    const LabosTimingStorage = [work_partition.max_workers]labos.PhaseTiming;
+
+    const worker_labos_timing_empty: WorkerLabosTiming = null;
+    const single_labos_timing_empty: SingleLabosTiming = .{};
+} else struct {
+    const WorkerLabosTiming = void;
+    const SingleLabosTiming = void;
+    const LabosTimingStorage = void;
+
+    const worker_labos_timing_empty: WorkerLabosTiming = {};
+    const single_labos_timing_empty: SingleLabosTiming = {};
+};
+
+const TraceWorkerLabosTiming = TracePrefetchRoute.WorkerLabosTiming;
+const TraceSingleLabosTiming = TracePrefetchRoute.SingleLabosTiming;
+const TraceLabosTimingStorage = TracePrefetchRoute.LabosTimingStorage;
+
+const trace_worker_labos_timing_default = TracePrefetchRoute.worker_labos_timing_empty;
+const trace_single_labos_timing_default = TracePrefetchRoute.single_labos_timing_empty;
+const trace_labos_timing_storage_default: TraceLabosTimingStorage = undefined;
+
 // hot path:
 //   when: allocated once per forward prefetch worker
 //   work: owns reusable layer, source, quadrature, carrier, pseudo-spherical, and LABOS buffers
@@ -142,12 +171,12 @@ const ForwardSampleScratch = struct {
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
 const ForwardPrefetchErrorState = struct {
-    mutex: std.Io.Mutex = .init,
+    mutex: std.Thread.Mutex = .{},
     err: ?Error = null,
 
     fn store(self: *ForwardPrefetchErrorState, err: Error) void {
-        std.Io.Threaded.mutexLock(&self.mutex);
-        defer std.Io.Threaded.mutexUnlock(&self.mutex);
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.err == null) self.err = err;
     }
 };
@@ -180,9 +209,49 @@ const ForwardPrefetchWorker = struct {
     queue: ?*work_partition.ChunkQueue = null,
     worker_index: usize = 0,
     telemetry_context: Telemetry.Context,
-    trace_phase_io: ?std.Io = null,
-    labos_phase_timing: ?*labos.PhaseTiming = null,
+    labos_phase_timing: TraceWorkerLabosTiming = trace_worker_labos_timing_default,
 };
+
+inline fn initializeTraceLabosTimingStorage(
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    worker_count: usize,
+    storage: *TraceLabosTimingStorage,
+) void {
+    if (comptime Storage.trace_phase_timing_enabled) {
+        if (trace_phase_timing != null) {
+            for (storage[0..worker_count]) |*timing| timing.* = .{};
+        }
+    }
+}
+
+inline fn attachSingleTraceLabosTiming(
+    scratch: *ForwardSampleScratch,
+    timing: *TraceSingleLabosTiming,
+) void {
+    if (comptime Storage.trace_phase_timing_enabled) {
+        scratch.labos_workspace.setTracePhaseTiming(timing);
+    }
+}
+
+inline fn clearTraceLabosTiming(scratch: *ForwardSampleScratch) void {
+    if (comptime Storage.trace_phase_timing_enabled) {
+        scratch.labos_workspace.clearTracePhaseTiming();
+    }
+}
+
+inline fn traceWorkerLabosTiming(
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    storage: *TraceLabosTimingStorage,
+    worker_index: usize,
+) TraceWorkerLabosTiming {
+    if (comptime Storage.trace_phase_timing_enabled) {
+        if (trace_phase_timing != null) return &storage[worker_index];
+
+        return null;
+    } else {
+        return {};
+    }
+}
 
 fn radianceScaleFromForward(
     scene: *const Scene,
@@ -340,12 +409,12 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
-    if (worker.trace_phase_io) |io| {
+    if (comptime Storage.trace_phase_timing_enabled) {
         if (worker.labos_phase_timing) |timing| {
-            scratch.labos_workspace.setTracePhaseTiming(io, timing);
+            scratch.labos_workspace.setTracePhaseTiming(timing);
         }
     }
-    defer scratch.labos_workspace.clearTracePhaseTiming();
+    defer clearTraceLabosTiming(&scratch);
     defer scratch.deinit(allocator);
 
     while (nextForwardPrefetchChunk(worker)) |chunk| {
@@ -418,13 +487,13 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
-    prefetch_io: ?std.Io,
+    thread_pool: ?*std.Thread.Pool,
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
 
     // hot path:
     //   when: once per forward miss batch before nominal wavelength integration
-    //   work: schedules miss chunks across one worker, spawned threads, or a reusable I/O runtime
+    //   work: schedules miss chunks across one worker, spawned threads, or a reusable thread pool
     //   reads: miss array, profile cache array, result array, worker descriptors
     //   follow: preferredForwardWorkerCount and ForwardSampleScratch allocation boundaries
 
@@ -443,17 +512,16 @@ pub fn prefetchForwardSamples(
     Trace.plotU("high_resolution_misses", @intCast(misses.len));
 
     const telemetry_context = Telemetry.currentContext();
-    const trace_phase_io = if (trace_phase_timing) |timing| timing.io else null;
 
     if (worker_count == 1) {
-        var labos_phase_timing: labos.PhaseTiming = .{};
+        var labos_phase_timing: TraceSingleLabosTiming = trace_single_labos_timing_default;
         var scratch: ForwardSampleScratch = undefined;
         try scratch.initInto(allocator, scene, rtm_config, prepared);
-        if (trace_phase_io) |io| {
-            scratch.labos_workspace.setTracePhaseTiming(io, &labos_phase_timing);
-        }
-        defer scratch.labos_workspace.clearTracePhaseTiming();
+
+        attachSingleTraceLabosTiming(&scratch, &labos_phase_timing);
+        defer clearTraceLabosTiming(&scratch);
         defer scratch.deinit(allocator);
+
         for (misses, results, 0..) |miss, *result, miss_index| {
             const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
                 &profile_spectroscopy_caches[miss_index]
@@ -486,16 +554,17 @@ pub fn prefetchForwardSamples(
                 );
             };
         }
-        mergeLabosPhaseTiming(trace_phase_timing, &.{labos_phase_timing});
+        if (comptime Storage.trace_phase_timing_enabled) {
+            mergeLabosPhaseTiming(trace_phase_timing, &.{labos_phase_timing});
+        }
         return;
     }
 
     std.debug.assert(worker_count <= work_partition.max_workers);
     var error_state = ForwardPrefetchErrorState{};
-    var labos_phase_timing_storage: [work_partition.max_workers]labos.PhaseTiming = undefined;
-    if (trace_phase_timing != null) {
-        for (labos_phase_timing_storage[0..worker_count]) |*timing| timing.* = .{};
-    }
+    var labos_phase_timing_storage: TraceLabosTimingStorage = trace_labos_timing_storage_default;
+    initializeTraceLabosTimingStorage(trace_phase_timing, worker_count, &labos_phase_timing_storage);
+
     var worker_storage: [work_partition.max_workers]ForwardPrefetchWorker = undefined;
     const workers = worker_storage[0..worker_count];
 
@@ -513,28 +582,28 @@ pub fn prefetchForwardSamples(
             .end_index = range.end,
             .worker_index = worker_index,
             .telemetry_context = telemetry_context,
-            .trace_phase_io = trace_phase_io,
-            .labos_phase_timing = if (trace_phase_timing != null)
-                &labos_phase_timing_storage[worker_index]
-            else
-                null,
+            .labos_phase_timing = traceWorkerLabosTiming(
+                trace_phase_timing,
+                &labos_phase_timing_storage,
+                worker_index,
+            ),
         };
     }
 
-    if (prefetch_io) |io| {
+    if (thread_pool) |pool| {
         var queue = work_partition.ChunkQueue.init(misses.len, forward_prefetch_pooled_chunk_size);
         for (workers) |*worker| worker.queue = &queue;
-        var group: std.Io.Group = .init;
+        var wait_group = std.Thread.WaitGroup{};
 
         for (0..worker_count - 1) |worker_index| {
-            group.async(io, prefetchForwardWorkerMain, .{&workers[worker_index]});
+            pool.spawnWg(&wait_group, prefetchForwardWorkerMain, .{&workers[worker_index]});
         }
         prefetchForwardWorkerMain(&workers[worker_count - 1]);
 
-        group.await(io) catch |err| switch (err) {
-            error.Canceled => unreachable,
-        };
-        mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+        wait_group.wait();
+        if (comptime Storage.trace_phase_timing_enabled) {
+            mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+        }
         if (error_state.err) |err| return err;
         return;
     }
@@ -557,7 +626,9 @@ pub fn prefetchForwardSamples(
     }
     prefetchForwardWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
-    mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+    if (comptime Storage.trace_phase_timing_enabled) {
+        mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+    }
     if (error_state.err) |err| return err;
 }
 
@@ -565,8 +636,12 @@ fn mergeLabosPhaseTiming(
     trace_phase_timing: ?*Storage.TracePhaseTiming,
     worker_timings: []const labos.PhaseTiming,
 ) void {
-    const timing = trace_phase_timing orelse return;
-    for (worker_timings) |worker_timing| timing.labos.merge(worker_timing);
+    if (comptime Storage.trace_phase_timing_enabled) {
+        const timing = trace_phase_timing orelse return;
+        for (worker_timings) |worker_timing| timing.labos.merge(worker_timing);
+    } else {
+        return;
+    }
 }
 
 pub fn preferredForwardWorkerCount(miss_count: usize) usize {

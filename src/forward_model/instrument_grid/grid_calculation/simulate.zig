@@ -72,34 +72,42 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
-fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?std.Io.Timestamp {
+inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
 
     // instrumentation: trace phase clock ---------------------------------------------------------------------|
     // captures: coarse per-product phase durations for opt-in trace harness summaries                         |
     // why: preserves JSON attribution for first-use and cached runs when ztracy timeline exports are too large.
-    const timing = phase_timing orelse return null;
-    const io = timing.io orelse return null;
+    if (comptime Storage.trace_phase_timing_enabled) {
+        _ = phase_timing orelse return null;
 
-    return std.Io.Clock.boot.now(io);
+        return std.time.nanoTimestamp();
+    } else {
+        return null;
+    }
 }
 
-fn tracePhaseFinish(
+inline fn tracePhaseFinish(
     phase_timing: ?*Storage.TracePhaseTiming,
-    start_timestamp: ?std.Io.Timestamp,
+    start_timestamp: ?i128,
     comptime field_name: []const u8,
 ) void {
 
     // instrumentation: trace phase clock ---------------------------------------------------------------------|
     // captures: elapsed phase duration accumulated into the requested timing field                            |
     // why: keeps opt-in JSON attribution next to the ztracy phase boundary it summarizes.
-    const timing = phase_timing orelse return;
-    const started = start_timestamp orelse return;
-    const io = timing.io orelse return;
+    if (comptime Storage.trace_phase_timing_enabled) {
+        const timing = phase_timing orelse return;
+        const started = start_timestamp orelse return;
 
-    const elapsed_ns = started.durationTo(std.Io.Clock.boot.now(io)).toNanoseconds();
-    if (elapsed_ns <= 0) return;
+        const finished = std.time.nanoTimestamp();
+        if (finished <= started) return;
+        const elapsed_ns = finished - started;
+        if (elapsed_ns <= 0) return;
 
-    @field(timing.*, field_name) += std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64);
+        @field(timing.*, field_name) += std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64);
+    } else {
+        return;
+    }
 }
 
 // Active Jacobian states resolved once per simulation from the rtm_config/storage mask.
@@ -303,12 +311,12 @@ fn ensureProfileSpectroscopyCaches(
     storage.profile_spectroscopy_cache_valid = false;
 
     const worker_count = SpectralEval.preferredForwardWorkerCount(forward_misses.len);
-    const prefetch_io = storage.forwardPrefetchIo(allocator, worker_count);
+    const thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
     storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
         allocator,
         prepared,
         forward_misses,
-        prefetch_io,
+        thread_pool,
     );
     storage.profile_spectroscopy_cache_key = cache_key;
     storage.profile_spectroscopy_cache_valid = true;
@@ -319,7 +327,7 @@ fn buildProfileSpectroscopyCaches(
     allocator: Allocator,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
-    prefetch_io: ?std.Io,
+    thread_pool: ?*std.Thread.Pool,
 ) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
 
     // instrumentation: trace zone
@@ -355,15 +363,13 @@ fn buildProfileSpectroscopyCaches(
         };
     }
 
-    if (prefetch_io) |io| {
-        var group: std.Io.Group = .init;
+    if (thread_pool) |pool| {
+        var wait_group = std.Thread.WaitGroup{};
         for (0..worker_count - 1) |worker_index| {
-            group.async(io, profileCacheBuildWorkerMain, .{&workers[worker_index]});
+            pool.spawnWg(&wait_group, profileCacheBuildWorkerMain, .{&workers[worker_index]});
         }
         profileCacheBuildWorkerMain(&workers[worker_count - 1]);
-        group.await(io) catch |err| switch (err) {
-            error.Canceled => unreachable,
-        };
+        wait_group.wait();
         return caches;
     }
 
@@ -645,10 +651,10 @@ fn prefetchSimulationPlan(
         defer zone.end();
         const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_miss_plan.misses.len);
 
-        var prefetch_io: ?std.Io = null;
+        var thread_pool: ?*std.Thread.Pool = null;
         var results: []SpectralEval.ForwardIntegratedSample = undefined;
         if (wavelength_plan_storage) |storage| {
-            prefetch_io = storage.forwardPrefetchIo(allocator, worker_count);
+            thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
             results = try storage.forwardResultBuffer(
                 allocator,
                 simulation_plan.forward_miss_plan.misses.len,
@@ -669,7 +675,7 @@ fn prefetchSimulationPlan(
             simulation_plan.forward_miss_plan.misses,
             simulation_plan.profile_spectroscopy_caches,
             results,
-            prefetch_io,
+            thread_pool,
             trace_phase_timing,
         );
 

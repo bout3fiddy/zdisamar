@@ -1,6 +1,5 @@
 const std = @import("std");
 const internal = @import("internal");
-const timing = internal.common.runtime_io;
 const TelemetrySink = @import("calculation_telemetry_sink");
 
 const CalculationTelemetry = internal.forward_model.calculation_telemetry;
@@ -31,33 +30,34 @@ const RequestPayload = struct {
     correction_measurement: MeasurementPayload,
 };
 
-pub fn main(init: std.process.Init) !void {
-    return mainInner(init) catch |err| {
+pub fn main() !void {
+    return mainInner() catch |err| {
         std.debug.print("fastmode-diagnosis-telemetry failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner(init: std.process.Init) !void {
+fn mainInner() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
     const config = try parseArgs(args);
-    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
+    try std.fs.cwd().makePath(config.output_dir);
 
-    const fast_case_json = try readInputFile(init.io, allocator, config.input_dir, "fast_case.json");
+    const fast_case_json = try readInputFile(allocator, config.input_dir, "fast_case.json");
     defer allocator.free(fast_case_json);
     var fast_case = try o2a_reference.parseInputJson(allocator, fast_case_json);
     defer fast_case.deinit();
 
-    const correction_case_json = try readInputFile(init.io, allocator, config.input_dir, "correction_case.json");
+    const correction_case_json = try readInputFile(allocator, config.input_dir, "correction_case.json");
     defer allocator.free(correction_case_json);
     var correction_case = try o2a_reference.parseInputJson(allocator, correction_case_json);
     defer correction_case.deinit();
 
-    const request_json = try readInputFile(init.io, allocator, config.input_dir, "request.json");
+    const request_json = try readInputFile(allocator, config.input_dir, "request.json");
     defer allocator.free(request_json);
     var parsed_request = try std.json.parseFromSlice(RequestPayload, allocator, request_json, .{
         .ignore_unknown_fields = true,
@@ -66,7 +66,7 @@ fn mainInner(init: std.process.Init) !void {
     const request = parsed_request.value;
     try validateRequest(request);
 
-    var collector = try TelemetrySink.CollectorHandle.init(init.io, allocator, config.output_dir);
+    var collector = try TelemetrySink.CollectorHandle.init(allocator, config.output_dir);
     defer collector.deinit();
     TelemetrySink.setCollector(&collector);
     defer TelemetrySink.clearCollector();
@@ -121,7 +121,7 @@ fn mainInner(init: std.process.Init) !void {
     var correction_storage: InstrumentGrid.ProductStorage = .{};
     defer correction_storage.deinit(allocator);
 
-    var timer = timing.Timer.start(init.io);
+    var timer = try std.time.Timer.start();
     var result = try OptimalEstimation.runO2AFastmodeBatch(
         allocator,
         &fast_case.value,
@@ -156,7 +156,7 @@ fn mainInner(init: std.process.Init) !void {
 
     try collector.finish();
     const counts = collector.counts();
-    try writeSummary(init.io, config, request, retrieval_ns, counts, &result);
+    try writeSummary(config, request, retrieval_ns, counts, &result);
 
     std.debug.print(
         "wrote fastmode diagnosis telemetry to {s} (scalar={}, reduction={}, decision={})\n",
@@ -193,7 +193,7 @@ fn flattenStarts(allocator: std.mem.Allocator, starts: [][2]f64) ![]f64 {
     return values;
 }
 
-fn parseArgs(args: []const [:0]const u8) !Config {
+fn parseArgs(args: []const []const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -218,25 +218,23 @@ fn parseArgs(args: []const [:0]const u8) !Config {
     return config;
 }
 
-fn readInputFile(io: std.Io, allocator: std.mem.Allocator, input_dir: []const u8, name: []const u8) ![]u8 {
+fn readInputFile(allocator: std.mem.Allocator, input_dir: []const u8, name: []const u8) ![]u8 {
     const path = try std.fs.path.join(allocator, &.{ input_dir, name });
     defer allocator.free(path);
-    return std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024));
+    return std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024);
 }
 
 fn writeSummary(
-    io: std.Io,
     config: Config,
     request: RequestPayload,
     retrieval_ns: u64,
     counts: TelemetrySink.RowCounts,
     result: *const OptimalEstimation.FastmodeBatchResult,
 ) !void {
-    var file = try openOutputFile(io, std.heap.page_allocator, config.output_dir, "run_summary.json");
-    defer file.close(io);
+    var file = try openOutputFile(std.heap.page_allocator, config.output_dir, "run_summary.json");
+    defer file.close();
 
-    var buffer: [4096]u8 = undefined;
-    var writer = file.writer(io, &buffer);
+    var writer = file.writer(&.{});
     try writer.interface.print(
         \\{{
         \\  "calculation_telemetry_requested": {},
@@ -272,12 +270,9 @@ fn writeSummary(
     for (0..result.run_count) |run_index| {
         const state_offset = run_index * result.state_count;
         try writer.interface.print(
-            "    {{\"start_index\": {}, \"start_aod\": {e:.17}, " ++
-                "\"start_alh_hpa\": {e:.17}, \"retrieved_aod\": {e:.17}, " ++
-                "\"retrieved_alh_hpa\": {e:.17}, \"iterations\": {}, " ++
-                "\"converged\": {}, \"fast_stage_iterations\": {}, " ++
-                "\"fast_stage_converged\": {}, \"full_correction_iterations\": {}, " ++
-                "\"full_correction_converged\": {}}}{s}\n",
+            \\    {{"start_index": {}, "start_aod": {e:.17}, "start_alh_hpa": {e:.17}, "retrieved_aod": {e:.17}, "retrieved_alh_hpa": {e:.17}, "iterations": {}, "converged": {}, "fast_stage_iterations": {}, "fast_stage_converged": {}, "full_correction_iterations": {}, "full_correction_converged": {}}}{s}
+            \\
+        ,
             .{
                 run_index + 1,
                 request.starts[run_index][0],
@@ -302,8 +297,8 @@ fn writeSummary(
     try writer.interface.flush();
 }
 
-fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
+fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    return std.fs.cwd().createFile(path, .{ .truncate = true });
 }

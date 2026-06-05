@@ -1,6 +1,11 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
+// migration note: Zig 0.15.2 phase clock --------------------------------------------------------------------|
+// This retained trace harness uses std.time.nanoTimestamp while product builds stay on Zig 0.15.2.           |
+// The abandoned 0.16 migration used std.Io.Clock/Timestamp here; that API must not return in this branch.    |
+// end migration note: Zig 0.15.2 phase clock ----------------------------------------------------------------|
+
 // phase_timing.zig ------------------------------------------------------------------------------------------|
 // Low-overhead LABOS phase clock used by trace research harnesses.                                           |
 //                                                                                                            |
@@ -108,18 +113,15 @@ pub const Timing = struct {
 };
 
 pub const Active = struct {
-    io: std.Io,
     timing: *Timing,
 };
 
 pub const WorkspaceState = if (enabled) struct {
-    io: ?std.Io = null,
     timing: ?*Timing = null,
 } else struct {};
 
 pub inline fn setWorkspaceState(
     state: *WorkspaceState,
-    io: std.Io,
     timing: *Timing,
 ) void {
     if (comptime !enabled) {
@@ -127,7 +129,6 @@ pub inline fn setWorkspaceState(
     }
 
     state.* = .{
-        .io = io,
         .timing = timing,
     };
 }
@@ -150,7 +151,6 @@ pub inline fn setActiveWorkspaceState(state: *WorkspaceState, active: ?Active) v
         return;
     };
     state.* = .{
-        .io = resolved.io,
         .timing = resolved.timing,
     };
 }
@@ -161,25 +161,23 @@ pub inline fn activeWorkspaceState(state: *WorkspaceState) ?Active {
     }
 
     const timing = state.timing orelse return null;
-    const io = state.io orelse return null;
     return .{
-        .io = io,
         .timing = timing,
     };
 }
 
-pub inline fn start(active: ?Active) ?std.Io.Timestamp {
+pub inline fn start(active: ?Active) ?i128 {
     if (comptime !enabled) {
         return null;
     }
 
-    const resolved = active orelse return null;
-    return std.Io.Clock.boot.now(resolved.io);
+    _ = active orelse return null;
+    return std.time.nanoTimestamp();
 }
 
 pub inline fn finish(
     active: ?Active,
-    start_timestamp: ?std.Io.Timestamp,
+    start_timestamp: ?i128,
     comptime field_name: []const u8,
 ) void {
     if (comptime !enabled) {
@@ -188,7 +186,9 @@ pub inline fn finish(
 
     const resolved = active orelse return;
     const started = start_timestamp orelse return;
-    const elapsed_ns = started.durationTo(std.Io.Clock.boot.now(resolved.io)).toNanoseconds();
+    const finished = std.time.nanoTimestamp();
+    if (finished <= started) return;
+    const elapsed_ns = finished - started;
     if (elapsed_ns <= 0) return;
     @field(resolved.timing, field_name).add(std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64));
 }

@@ -133,7 +133,7 @@ pub fn prefetchForwardSamples(
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
-    prefetch_io: ?std.Io,
+    thread_pool: ?*std.Thread.Pool,
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
 
@@ -155,7 +155,7 @@ pub fn prefetchForwardSamples(
         misses,
         profile_spectroscopy_caches,
         results,
-        prefetch_io,
+        thread_pool,
         trace_phase_timing,
     );
 }

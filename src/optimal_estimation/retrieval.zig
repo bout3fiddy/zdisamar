@@ -1108,7 +1108,7 @@ const BatchWorker = struct {
     controls: Controls,
     batch: *BatchOutput,
     queue: *work_partition.ChunkQueue,
-    shared_forward_prefetch_io: ?*std.Io.Threaded,
+    shared_forward_prefetch_pool: ?*std.Thread.Pool,
     telemetry_context: Telemetry.Context,
     err: ?anyerror = null,
 };
@@ -1126,24 +1126,23 @@ fn runO2ABatchParallel(
     batch: *BatchOutput,
     worker_count: usize,
 ) !void {
-    std.debug.assert(worker_count <= work_partition.max_workers);
-    var worker_storage: [work_partition.max_workers]BatchWorker = undefined;
-    const workers = worker_storage[0..worker_count];
-    var thread_storage: [work_partition.max_workers - 1]std.Thread = undefined;
-    const threads = thread_storage[0 .. worker_count - 1];
-    var shared_forward_prefetch_io_storage: std.Io.Threaded = undefined;
-    var shared_forward_prefetch_io_valid = false;
-    const shared_forward_prefetch_io = choose_shared_forward_prefetch_io: {
-        break :choose_shared_forward_prefetch_io if (worker_count > 1)
-            initSharedForwardPrefetchIo(
+    const workers = try allocator.alloc(BatchWorker, worker_count);
+    defer allocator.free(workers);
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
+    var shared_forward_prefetch_pool_storage: std.Thread.Pool = undefined;
+    var shared_forward_prefetch_pool_valid = false;
+    const shared_forward_prefetch_pool = choose_shared_forward_prefetch_pool: {
+        break :choose_shared_forward_prefetch_pool if (worker_count > 1)
+            initSharedForwardPrefetchPool(
                 allocator,
-                &shared_forward_prefetch_io_storage,
-                &shared_forward_prefetch_io_valid,
+                &shared_forward_prefetch_pool_storage,
+                &shared_forward_prefetch_pool_valid,
             )
         else
             null;
     };
-    defer if (shared_forward_prefetch_io_valid) shared_forward_prefetch_io_storage.deinit();
+    defer if (shared_forward_prefetch_pool_valid) shared_forward_prefetch_pool_storage.deinit();
 
     // One-iteration correction batches are uniform enough that wider queue
     // chunks reduce scheduling traffic; multi-iteration basin sweeps keep
@@ -1165,7 +1164,7 @@ fn runO2ABatchParallel(
             .controls = controls,
             .batch = batch,
             .queue = &queue,
-            .shared_forward_prefetch_io = shared_forward_prefetch_io,
+            .shared_forward_prefetch_pool = shared_forward_prefetch_pool,
             .telemetry_context = telemetry_context,
         };
 
@@ -1201,7 +1200,7 @@ fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
     defer Telemetry.setContext(previous_context);
 
     var forward_storage: InstrumentGrid.ProductStorage = .{};
-    forward_storage.shared_forward_prefetch_io = worker.shared_forward_prefetch_io;
+    forward_storage.shared_forward_prefetch_pool = worker.shared_forward_prefetch_pool;
     defer forward_storage.deinit(worker.allocator);
     var prepared_case = try RetrievalPreparedCase.init(
         worker.allocator,
@@ -1231,18 +1230,19 @@ fn runO2ABatchWorkerFallible(worker: *BatchWorker) !void {
     }
 }
 
-fn initSharedForwardPrefetchIo(
+fn initSharedForwardPrefetchPool(
     allocator: Allocator,
-    runtime: *std.Io.Threaded,
+    pool: *std.Thread.Pool,
     valid: *bool,
-) ?*std.Io.Threaded {
+) ?*std.Thread.Pool {
     const worker_count = work_partition.preferredWorkerCount(std.math.maxInt(usize), 1);
     if (worker_count <= 1) return null;
-    runtime.* = std.Io.Threaded.init(allocator, .{
-        .async_limit = .limited(worker_count - 1),
-    });
+    pool.init(.{
+        .allocator = allocator,
+        .n_jobs = worker_count - 1,
+    }) catch return null;
     valid.* = true;
-    return runtime;
+    return pool;
 }
 
 fn runPreparedO2A(

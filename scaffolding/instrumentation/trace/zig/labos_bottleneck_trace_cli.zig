@@ -1,12 +1,15 @@
 const std = @import("std");
 const internal = @import("internal");
-const timing = internal.common.runtime_io;
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
 const o2a_reference = internal.o2a_reference;
 const RadiativeTransfer = internal.forward_model.radiative_transfer;
 const Trace = internal.forward_model.performance_trace;
 
+// migration note: Zig 0.15.2 trace CLI -----------------------------------------------------------|
+// This retained trace harness intentionally uses the Zig 0.15.2 process, timer, and file APIs.    |
+// The abandoned 0.16 migration routed it through std.process.Init and std.Io runtime plumbing.    |
+// end migration note: Zig 0.15.2 trace CLI -------------------------------------------------------|
 const default_labos_trace_output_dir = "scaffolding/instrumentation/trace/evidence/labos-bottleneck";
 const default_jacobian_trace_output_dir = "scaffolding/instrumentation/trace/evidence/o2a-jacobian-trace";
 const default_cached_repeats: usize = 3;
@@ -97,14 +100,14 @@ const ProductRunSummary = struct {
     }
 };
 
-pub fn main(init: std.process.Init) !void {
-    return mainInner(init) catch |err| {
+pub fn main() !void {
+    return mainInner() catch |err| {
         std.debug.print("labos-bottleneck-trace failed: {}\n", .{err});
         return err;
     };
 }
 
-fn mainInner(init: std.process.Init) !void {
+fn mainInner() !void {
 
     // instrumentation: trace frame
     // captures: one harness run boundary
@@ -124,14 +127,15 @@ fn mainInner(init: std.process.Init) !void {
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
     var config = try parseArgs(args);
     if (config.derivative_sweep and !config.output_dir_set) {
         config.output_dir = default_jacobian_trace_output_dir;
     }
-    try std.Io.Dir.cwd().createDirPath(init.io, config.output_dir);
+    try std.fs.cwd().makePath(config.output_dir);
 
-    var prepare_timer = timing.Timer.start(init.io);
+    var prepare_timer = try std.time.Timer.start();
     const input = switch (config.trace_case) {
         .default => o2a_reference.defaultInput(),
         .benchmark_jacobian => o2a_reference.benchmarkJacobianInput(),
@@ -152,12 +156,11 @@ fn mainInner(init: std.process.Init) !void {
     defer prepared_case.deinit(allocator);
 
     if (config.derivative_sweep) {
-        try runDerivativeSweep(init.io, allocator, config.output_dir, prepare_ns, &prepared_case);
+        try runDerivativeSweep(allocator, config.output_dir, prepare_ns, &prepared_case);
         return;
     }
 
     try runSingleTrace(
-        init.io,
         allocator,
         config.output_dir,
         prepare_ns,
@@ -170,7 +173,6 @@ fn mainInner(init: std.process.Init) !void {
 }
 
 fn runSingleTrace(
-    io: std.Io,
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
@@ -200,7 +202,6 @@ fn runSingleTrace(
 
     const first_run = try runProductTrace(
         "trace_cli.simulate_product",
-        io,
         allocator,
         &storage,
         &prepared_case.scene,
@@ -215,7 +216,6 @@ fn runSingleTrace(
     for (cached_runs) |*cached_run| {
         cached_run.* = try runProductTrace(
             "trace_cli.simulate_product.cached",
-            io,
             allocator,
             &storage,
             &prepared_case.scene,
@@ -227,7 +227,6 @@ fn runSingleTrace(
     }
 
     try writeSummary(
-        io,
         output_dir,
         prepare_ns,
         first_run,
@@ -250,7 +249,6 @@ fn runSingleTrace(
 
 fn runProductTrace(
     comptime zone_name: [*:0]const u8,
-    io: std.Io,
     allocator: std.mem.Allocator,
     storage: *InstrumentGrid.ProductStorage,
     scene: anytype,
@@ -263,13 +261,13 @@ fn runProductTrace(
     // instrumentation: trace phase clock
     // captures: simulation phases plus owned-result copy for one product run
     // why: match the session benchmark boundary while keeping the phase clock opt-in.
-    var phase_timing: InstrumentGrid.storage.TracePhaseTiming = .{ .io = io };
+    var phase_timing: InstrumentGrid.storage.TracePhaseTiming = .{};
     if (phase_timing_enabled) {
         storage.setTracePhaseTiming(&phase_timing);
     }
     defer storage.clearTracePhaseTiming();
 
-    var forward_timer = timing.Timer.start(io);
+    var forward_timer = try std.time.Timer.start();
     const product = product: {
 
         // instrumentation: trace zone
@@ -287,14 +285,13 @@ fn runProductTrace(
     };
     const forward_ns = forward_timer.read();
 
-    var copy_timer = timing.Timer.start(io);
+    var copy_timer = try std.time.Timer.start();
     var owned_product = if (output_states.len == 0)
         try product.toOwned(allocator)
     else
         try product.toOwnedWithJacobianStates(allocator, output_states);
     const result_copy_ns = copy_timer.read();
     defer owned_product.deinit(allocator);
-    phase_timing.io = null;
 
     return .{
         .forward_ns = forward_ns,
@@ -305,7 +302,6 @@ fn runProductTrace(
 }
 
 fn runDerivativeSweep(
-    io: std.Io,
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
@@ -315,10 +311,9 @@ fn runDerivativeSweep(
     // instrumentation: trace sweep
     // captures: forward and Jacobian rtm_config variants
     // why: compare derivative-state cost at the same scene boundary.
-    var summary_file = try openOutputFile(io, std.heap.page_allocator, output_dir, "summary.json");
-    defer summary_file.close(io);
-    var buffer: [4096]u8 = undefined;
-    var summary_writer = summary_file.writer(io, &buffer);
+    var summary_file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
+    defer summary_file.close();
+    var summary_writer = summary_file.writer(&.{});
 
     try summary_writer.interface.print(
         \\{{
@@ -340,7 +335,7 @@ fn runDerivativeSweep(
         var storage: InstrumentGrid.ProductStorage = .{};
         defer storage.deinit(allocator);
 
-        var forward_timer = timing.Timer.start(io);
+        var forward_timer = try std.time.Timer.start();
         const product = try InstrumentGrid.simulateProductWithWorkspace(
             allocator,
             &storage,
@@ -350,7 +345,7 @@ fn runDerivativeSweep(
         );
         const forward_ns = forward_timer.read();
 
-        var copy_timer = timing.Timer.start(io);
+        var copy_timer = try std.time.Timer.start();
         var owned_product = try product.toOwned(allocator);
         const result_copy_ns = copy_timer.read();
         defer owned_product.deinit(allocator);
@@ -396,7 +391,7 @@ fn derivativeSolveConfig(
     return resolved;
 }
 
-fn parseArgs(args: []const [:0]const u8) !Config {
+fn parseArgs(args: []const []const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -505,14 +500,13 @@ fn writeVariantSummary(
     );
 }
 
-fn openOutputFile(io: std.Io, allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.Io.File {
+fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []const u8) !std.fs.File {
     const path = try std.fs.path.join(allocator, &.{ output_dir, name });
     defer allocator.free(path);
-    return std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    return std.fs.cwd().createFile(path, .{ .truncate = true });
 }
 
 fn writeSummary(
-    io: std.Io,
     output_dir: []const u8,
     prepare_ns: u64,
     first_run: ProductRunSummary,
@@ -521,12 +515,11 @@ fn writeSummary(
     derivative_states: []const u8,
     phase_timing_enabled: bool,
 ) !void {
-    var file = try openOutputFile(io, std.heap.page_allocator, output_dir, "summary.json");
-    defer file.close(io);
+    var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
+    defer file.close();
 
     const cached_run = cached_runs[0];
-    var buffer: [4096]u8 = undefined;
-    var writer = file.writer(io, &buffer);
+    var writer = file.writer(&.{});
     try writer.interface.print(
         \\{{
         \\  "trace_enabled": {},

@@ -187,17 +187,17 @@ pub const OrdersWorkspace = struct {
     }
 
     pub fn setTracePhaseTiming(self: *OrdersWorkspace, active: ?phase_timing.Active) void {
-        // OrdersWorkspace.setTracePhaseTiming ---------------------------------------------------------------|
-        // Attach the worker-local LABOS phase sink used by the trace harness.                                |
-        // ---------------------------------------------------------------------------------------------------|
+        // OrdersWorkspace.setTracePhaseTiming ----------------------------------------------------------------|
+        // Attach the worker-local LABOS phase sink used by the trace harness.                                 |
+        // ----------------------------------------------------------------------------------------------------|
 
         phase_timing.setActiveWorkspaceState(&self.trace_phase, active);
     }
 
     pub fn activeTracePhaseTiming(self: *OrdersWorkspace) ?phase_timing.Active {
-        // OrdersWorkspace.activeTracePhaseTiming ------------------------------------------------------------|
-        // Return the active trace-harness sink for order child phases.                                       |
-        // ---------------------------------------------------------------------------------------------------|
+        // OrdersWorkspace.activeTracePhaseTiming -------------------------------------------------------------|
+        // Return the active trace-harness sink for order child phases.                                        |
+        // ----------------------------------------------------------------------------------------------------|
 
         return phase_timing.activeWorkspaceState(&self.trace_phase);
     }

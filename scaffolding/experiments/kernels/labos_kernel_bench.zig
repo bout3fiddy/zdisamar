@@ -1,6 +1,5 @@
 const std = @import("std");
 const internal = @import("internal");
-const timing = internal.common.runtime_io;
 
 const labos = internal.forward_model.radiative_transfer.labos_basis;
 
@@ -8,16 +7,16 @@ const n = 12;
 const n_gauss = 10;
 const threshold_mul = 1.0e-12;
 const phase_scan_max = 15;
-const beta_reciprocal = build_beta_reciprocal: {
+const beta_reciprocal = blk: {
     var values: [labos.max_phase_coef]f64 = undefined;
     for (&values, 0..) |*value, idx| {
         const idx_f: f64 = @floatFromInt(idx);
         value.* = 1.0 / (2.0 * idx_f + 1.0);
     }
-    break :build_beta_reciprocal values;
+    break :blk values;
 };
 
-pub fn main(init: std.process.Init) !void {
+pub fn main() !void {
     var r = matrixSeed(0.008, 0.0003);
     var t = matrixSeed(0.41, 0.0008);
     var c = matrixSeed(0.19, 0.0005);
@@ -27,21 +26,21 @@ pub fn main(init: std.process.Init) !void {
     const phase_max_index = phase_scan_max;
     const plm_basis = labos.FourierPlmBasis.init(0, phase_max_index, &geo);
 
-    try runMatBench(init.io, "qseries_12x10", 200_000, &r, &t, &c, &e, benchQseries);
-    try runMatBench(init.io, "qseries_nonzero_12x10", 200_000, &r, &t, &c, &e, benchQseriesNonzero);
-    try runMatBench(init.io, "smul_12x10", 800_000, &r, &t, &c, &e, benchSmul);
-    try runMatBench(init.io, "smulAddSemul3_12", 800_000, &r, &t, &c, &e, benchSmulAddSemul3);
-    try runKnownRightTraceBench(init.io, "smulAddSemul3KnownRightTrace_12", 800_000, &r, &t, &e);
-    try runMatBench(init.io, "matAddSemul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddSemul3);
-    try runMatBench(init.io, "matAddEsmul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul3);
-    try runMatBench(init.io, "matAddEsmul_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul);
-    try runMatBench(init.io, "semul_12", 3_000_000, &r, &t, &c, &e, benchSemul);
-    try runMatBench(init.io, "semulAdd_12", 3_000_000, &r, &t, &c, &e, benchSemulAdd);
-    try runMatBench(init.io, "esmulSemul_12", 3_000_000, &r, &t, &c, &e, benchEsmulSemul);
-    try runMatBench(init.io, "esmulSemulAdd_12", 3_000_000, &r, &t, &c, &e, benchEsmulSemulAdd);
-    try runPhaseBench(init.io, "phase_fill_12x16", 300_000, &phase_coefs, &geo, &plm_basis, benchPhaseFill);
-    try runBetaBench(init.io, "phase_beta_scan_div_16", 5_000_000, &phase_coefs, benchBetaScanDiv);
-    try runBetaBench(init.io, "phase_beta_scan_recip_16", 5_000_000, &phase_coefs, benchBetaScanRecip);
+    try runMatBench("qseries_12x10", 200_000, &r, &t, &c, &e, benchQseries);
+    try runMatBench("qseries_nonzero_12x10", 200_000, &r, &t, &c, &e, benchQseriesNonzero);
+    try runMatBench("smul_12x10", 800_000, &r, &t, &c, &e, benchSmul);
+    try runMatBench("smulAddSemul3_12", 800_000, &r, &t, &c, &e, benchSmulAddSemul3);
+    try runKnownRightTraceBench("smulAddSemul3KnownRightTrace_12", 800_000, &r, &t, &e);
+    try runMatBench("matAddSemul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddSemul3);
+    try runMatBench("matAddEsmul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul3);
+    try runMatBench("matAddEsmul_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul);
+    try runMatBench("semul_12", 3_000_000, &r, &t, &c, &e, benchSemul);
+    try runMatBench("semulAdd_12", 3_000_000, &r, &t, &c, &e, benchSemulAdd);
+    try runMatBench("esmulSemul_12", 3_000_000, &r, &t, &c, &e, benchEsmulSemul);
+    try runMatBench("esmulSemulAdd_12", 3_000_000, &r, &t, &c, &e, benchEsmulSemulAdd);
+    try runPhaseBench("phase_fill_12x16", 300_000, &phase_coefs, &geo, &plm_basis, benchPhaseFill);
+    try runBetaBench("phase_beta_scan_div_16", 5_000_000, &phase_coefs, benchBetaScanDiv);
+    try runBetaBench("phase_beta_scan_recip_16", 5_000_000, &phase_coefs, benchBetaScanRecip);
 }
 
 const Kernel = *const fn (*const labos.Mat, *const labos.Mat, *const labos.Mat, *const labos.Vec) labos.Mat;
@@ -53,7 +52,6 @@ const PhaseKernel = *const fn (
 const BetaKernel = *const fn (*const [labos.max_phase_coef]f64) f64;
 
 fn runMatBench(
-    io: std.Io,
     comptime name: []const u8,
     iterations: usize,
     r: *labos.Mat,
@@ -69,7 +67,7 @@ fn runMatBench(
     }
     std.mem.doNotOptimizeAway(warm_checksum);
 
-    var timer = timing.Timer.start(io);
+    var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
         const result = kernel(r, t, c, e);
@@ -88,7 +86,6 @@ fn runMatBench(
 }
 
 fn runKnownRightTraceBench(
-    io: std.Io,
     comptime name: []const u8,
     iterations: usize,
     r: *labos.Mat,
@@ -103,7 +100,7 @@ fn runKnownRightTraceBench(
     }
     std.mem.doNotOptimizeAway(warm_checksum);
 
-    var timer = timing.Timer.start(io);
+    var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
         const result = benchSmulAddSemul3KnownRightTrace(r, e, t, trace_t);
@@ -122,7 +119,6 @@ fn runKnownRightTraceBench(
 }
 
 fn runPhaseBench(
-    io: std.Io,
     comptime name: []const u8,
     iterations: usize,
     phase_coefs: *const [labos.max_phase_coef]f64,
@@ -137,7 +133,7 @@ fn runPhaseBench(
     }
     std.mem.doNotOptimizeAway(warm_checksum);
 
-    var timer = timing.Timer.start(io);
+    var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
         const result = kernel(phase_coefs, geo, plm_basis);
@@ -156,7 +152,6 @@ fn runPhaseBench(
 }
 
 fn runBetaBench(
-    io: std.Io,
     comptime name: []const u8,
     iterations: usize,
     phase_coefs: *const [labos.max_phase_coef]f64,
@@ -170,7 +165,7 @@ fn runBetaBench(
     }
     std.mem.doNotOptimizeAway(warm_checksum);
 
-    var timer = timing.Timer.start(io);
+    var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
         std.mem.doNotOptimizeAway(&live_coefs);
@@ -204,12 +199,7 @@ fn benchSmulAddSemul3(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.
     return labos.smulAddSemul3(n, n_gauss, threshold_mul, r, e, t);
 }
 
-fn benchSmulAddSemul3KnownRightTrace(
-    r: *const labos.Mat,
-    e: *const labos.Vec,
-    t: *const labos.Mat,
-    trace_t: f64,
-) labos.Mat {
+fn benchSmulAddSemul3KnownRightTrace(r: *const labos.Mat, e: *const labos.Vec, t: *const labos.Mat, trace_t: f64) labos.Mat {
     return labos.smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, r, e, t, trace_t);
 }
 
