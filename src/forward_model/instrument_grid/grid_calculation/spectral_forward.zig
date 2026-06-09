@@ -19,20 +19,28 @@ const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
 // spectral_forward.zig --------------------------------------------------------------------------------------------------|
-// Computes high-resolution forward misses. Each miss is one wavelength that must run through optical input               |
-// preparation, LABOS transport, and radiance scaling before nominal instrument rows can gather the result.               |
+// Computes the dense high-resolution forward-result array used by nominal radiance rows.                                 |
 //                                                                                                                        |
 // called by                                                                                                              |
 //   spectral_eval.zig after wavelength_sampling.zig has deduplicated radiance integration wavelengths                    |
 //                                                                                                                        |
 // main paths                                                                                                             |
-//   prefetchForwardSamples                    -> schedule all misses                                                     |
-//   prefetchForwardWorkerMain                 -> worker loop with reusable scratch                                       |
-//   computeForwardSampleAtWavelengthWithScratch -> one wavelength through ForwardInput + LABOS                           |
+//   prefetchForwardSamples -> choose single-worker, spawned workers, or reusable thread-pool workers                     |
+//   prefetchForwardWorkerMain -> worker-local ForwardSampleScratch loop over miss chunks                                 |
+//   computeForwardSampleAtWavelengthWithScratch -> ForwardInput -> LABOS -> radiance-scaled result row                   |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   Each miss is one high-resolution wavelength. Workers reuse layer, source-interface, RTM-quadrature,                  |
+//   pseudo-spherical, carrier-cache, and LABOS workspace storage across many misses, then write results[index]           |
+//   for misses[index]. Later gather loops read this dense array by integer index instead of hashing.                     |
+//                                                                                                                        |
+// math                                                                                                                   |
+//   LABOS returns a top-of-atmosphere reflectance factor. radianceScaleFromForward multiplies by                         |
+//   mu0 * solar_irradiance(lambda) / pi, and active Jacobians get the same fixed scale.                                  |
 //                                                                                                                        |
 // memory                                                                                                                 |
-//   Each worker owns ForwardSampleScratch so layer/source/quadrature/pseudo-spherical/LABOS buffers can be               |
-//   reused across many misses without sharing mutable transport state.                                                   |
+//   ForwardSampleScratch is worker-local mutable state. The caller owns the result slice; this file fills it and         |
+//   records the first worker error without sharing transport buffers between workers.                                    |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // Re-exported through src/internal.zig so the worker-count threshold stays covered by unit tests.

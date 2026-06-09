@@ -9,34 +9,31 @@ const InstrumentModel = @import("../../../input/Instrument.zig").Instrument;
 const Scene = @import("../../../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 
-// adaptive_plan.zig -----------------------------------------------------------------------------------------   |
-// Builds line-aware high-resolution instrument kernels from interval plans and Gauss samples.                   |
+// adaptive_plan.zig ------------------------------------------------------------------------------------------- |
+// Builds line-aware high-resolution instrument kernels from strong-line intervals and Gauss samples.            |
 //                                                                                                               |
 // called by                                                                                                     |
 //   integration.zig for adaptive and DISAMAR-style instrument integration kernels                               |
 //   wavelength_sampling.zig through integration.zig when a retained product plan can reuse an interval cache    |
-//   input/o2a_reference/run.zig when validation output needs the realized adaptive support wavelengths          |
+//   input/o2a_reference/run.zig when validation output needs realized adaptive support wavelengths              |
 //                                                                                                               |
 // main paths                                                                                                    |
-//   buildAdaptiveIntegrationKernel                                                                              |
-//     -> choose the response support window around one nominal wavelength                                       |
-//     -> buildAdaptiveIntervalPlan                                                                              |
-//     -> appendAdaptiveSamplesFromPlan                                                                          |
-//     -> finalizeAdaptiveKernel                                                                                 |
+//   buildAdaptiveIntegrationKernel -> support window -> interval plan -> samples -> normalized kernel           |
+//   prepareAdaptiveKernelCache in integration.zig can retain that interval plan for all nominal wavelengths     |
+//   buildDisamarRealizedKernel uses the same sample/finalize path but a regular DISAMAR-style interval grid     |
+//   buildAdaptiveSupportWavelengths emits the realized support lattice for validation/reporting only            |
 //                                                                                                               |
-//   buildAdaptiveIntervalPlan                                                                                   |
-//     -> collect strong O2 line centers from prepared spectroscopy                                              |
-//     -> split the global wavelength support at FWHM steps and strong-line boundaries                           |
-//     -> assign more Gauss divisions to narrow strong-line intervals                                            |
+// interval model                                                                                                |
+//   global_start_nm/global_end_nm is the scene grid expanded by response support. interval_end_nm stores only   |
+//   each end boundary; the start is global_start_nm or the previous end. Strong O2 line centers can split the   |
+//   FWHM-sized intervals, and narrow intervals receive more Gauss divisions.                                    |
+//   Strong-line collection scans wide SpectroscopyLine rows during setup. It reads only strength and center;    |
+//   the result is the compact boundary list reused by cached plans and per-wavelength sample emission.          |
 //                                                                                                               |
-//   buildDisamarRealizedKernel                                                                                  |
-//     -> uses the same sample finalization path but a regular DISAMAR-style interval grid                       |
-//                                                                                                               |
-// reference names                                                                                               |
-//   global_start_nm/global_end_nm : scene spectral grid expanded by response support                            |
-//   window_start_nm/window_end_nm : support span for one nominal wavelength                                     |
-//   interval_end_nm              : encoded interval boundary; start derives from the previous interval          |
-//   division_counts              : Gauss order for each interval                                                |
+// hot path                                                                                                      |
+//   Wavelength sampling reuses a caller-owned IntegrationKernel and, when possible, a cached 20 KiB             |
+//   AdaptiveIntervalPlan. Per nominal wavelength this file only emits candidate wavelengths, evaluates scalar   |
+//   response weights, sorts/merges nearby samples, and normalizes the active prefix.                            |
 //                                                                                                               |
 // math                                                                                                          |
 //   lambda_j = interval_start + interval_width * Gauss node                                                     |
@@ -44,10 +41,9 @@ const Allocator = std.mem.Allocator;
 //   delta_j  = lambda_j - lambda_i                                                                              |
 //                                                                                                               |
 // memory                                                                                                        |
-//   AdaptiveIntervalPlan keeps fixed arrays sized to max_integration_sample_count. Per-wavelength kernel        |
-//   emission uses caller-owned IntegrationKernel scratch; only buildAdaptiveSupportWavelengths returns an       |
-//   owned slice for validation/reference support reporting.                                                     |
-// ------------------------------------------------------------------------------------------------------------  |
+//   AdaptiveIntervalPlan is fixed-capacity stack/caller storage sized to max_integration_sample_count. The      |
+//   only owned allocation here is buildAdaptiveSupportWavelengths, which returns validation support rows.       |
+// ------------------------------------------------------------------------------------------------------------- |
 
 // AdaptiveKernelSupportWindow -------------------------------------------------------------------------------   |
 // Global and local wavelength support bounds for adaptive integration.                                          |

@@ -4,25 +4,21 @@ const InstrumentModel = @import("../../../input/Instrument.zig").Instrument;
 const BuiltinLineShapeKind = @import("../../../input/Instrument.zig").BuiltinLineShapeKind;
 
 // response.zig ----------------------------------------------------------------------------------------------- |
-// Scalar instrument-response formulas used while building integration kernels.                                 |
+// Scalar instrument-response formulas used while building integration kernels and legacy slit kernels.         |
 //                                                                                                              |
 // called by                                                                                                    |
-//   integration.zig for explicit-grid and default fallback kernel weights                                      |
-//   adaptive_plan.zig for every candidate Gauss node before kernel normalization                               |
+//   integration.zig weights explicit-grid, adaptive, DISAMAR, default, and five-tap fallback samples           |
+//   adaptive_plan.zig weights every candidate Gauss node before duplicate merge and normalization              |
 //                                                                                                              |
 // main paths                                                                                                   |
-//   defaultKernelHalfSpanNm                                                                                    |
-//     -> fallback support window when a response has no explicit high-resolution half span                     |
-//                                                                                                              |
-//   writeIdentityKernel                                                                                        |
-//     -> direct one-sample row used when integration is disabled or intentionally bypassed                     |
-//                                                                                                              |
-//   spectralResponseWeight                                                                                     |
-//     -> resolved response branch for Gaussian modulation, flat-top N4, triple flat-top N4, or builtin shape   |
+//   defaultKernelHalfSpanNm gives a bounded support span when the response does not provide one                |
+//   writeIdentityKernel writes the one-sample direct row used by disabled or bypassed integration              |
+//   spectralResponseWeight selects Gaussian modulation, flat-top N4, triple flat-top N4, or builtin shape      |
 //                                                                                                              |
 // hot path                                                                                                     |
-//   adaptive_plan.zig can call spectralResponseWeight for thousands of candidate offsets around strong O2      |
-//   lines. This file does no allocation and reads only the resolved SpectralResponse row plus offset_nm.       |
+//   Adaptive planning may call spectralResponseWeight thousands of times around strong O2 lines. These         |
+//   helpers allocate nothing, keep state in the resolved SpectralResponse value, and return one non-negative   |
+//   scalar weight for the caller to normalize with neighboring samples.                                        |
 //                                                                                                              |
 // math names                                                                                                   |
 //   delta = offset_nm                                                                                          |

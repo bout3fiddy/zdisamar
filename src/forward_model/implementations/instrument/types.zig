@@ -1,22 +1,27 @@
 const InstrumentModel = @import("../../../input/Instrument.zig");
 
 // types.zig ------------------------------------------------------------------------------------------------- |
-// Fixed instrument-integration storage shared by response, adaptive planning, and wavelength-plan code.       |
+// Fixed scratch storage for instrument-response integration before wavelength plans compact it.               |
 //                                                                                                             |
 // used by                                                                                                     |
-//   integration.zig writes one IntegrationKernel for each nominal wavelength and channel                      |
-//   adaptive_plan.zig fills the same row from Gauss samples and normalized response weights                   |
-//   wavelength_plan.zig compacts small rows inline and stores larger rows in side arrays                      |
+//   integration.zig writes one temporary IntegrationKernel for one nominal wavelength and channel             |
+//   adaptive_plan.zig fills the same row from Gauss support samples and raw response weights                  |
+//   wavelength_sampling.zig compacts the active prefix into inline rows or shared side arrays                 |
 //                                                                                                             |
 // data shape                                                                                                  |
-//   default_integration_sample_count is the legacy five-tap fallback. max_integration_sample_count follows    |
-//   input/Instrument.zig so explicit line-shape tables and generated adaptive kernels share one hard limit.   |
+//   default_integration_sample_count is the legacy five-tap fallback. max_integration_sample_count mirrors    |
+//   input/Instrument.zig so explicit measured line-shape tables and generated adaptive kernels share one      |
+//   hard limit and one caller-visible truncation boundary.                                                    |
+//                                                                                                             |
+// layout                                                                                                      |
+//   IntegrationKernel is a builder row, not retained storage. offsets_nm and weights are parallel arrays;     |
+//   sample_count names the active prefix. enabled tells the later measurement loop whether to integrate or    |
+//   read one direct sample. Large rows are copied into side arrays after this builder step.                   |
 //                                                                                                             |
 // memory                                                                                                      |
-//   IntegrationKernel is deliberately large fixed scratch: offsets and weights are parallel arrays so callers |
-//   can fill, normalize, and later compact the active prefix without per-row heap allocation. Pass it by      |
-//   pointer; do not copy it through hot paths.                                                                |
-// ------------------------------------------------------------------------------------------------------------|
+//   The row is deliberately 32 KiB and caller-owned to avoid per-wavelength heap allocation. Pass it by       |
+//   pointer and reuse it inside workers; copying it through hot paths would move hundreds of cache lines.     |
+// ----------------------------------------------------------------------------------------------------------- |
 
 pub const default_integration_sample_count: usize = 5;
 pub const max_integration_sample_count: usize = InstrumentModel.max_line_shape_samples;
