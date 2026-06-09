@@ -12,19 +12,26 @@ pub const ResolvedVendorO2ACase = runtime.ResolvedVendorO2ACase;
 pub const LineGasSpec = runtime.LineGasSpec;
 
 // metrics.zig ----------------------------------------------------------------------------------------------- |
-// O2 A reference-vs-product comparison metrics and trend assessment helpers.                                  |
+// O2 A reference-vs-product comparison layer.                                                                 |
 //                                                                                                             |
-// used by                                                                                                     |
-//   validation and benchmark paths compare simulated instrument-grid reflectance against retained reference   |
-//   rows.                                                                                                     |
+// called by                                                                                                   |
+//   o2a_reference/root.zig, validation tests, and benchmark/reporting paths that need retained reference      |
+//   reflectance metrics after run.zig has built the runtime case or product.                                  |
+//                                                                                                             |
+// main path                                                                                                   |
+//   prepared runtime case -> optional instrument-grid product -> ComparisonMetrics                            |
+//   current metrics + baseline metrics + tolerances -> AssessmentOutcome                                      |
+//   helper scans keep the same window definitions for validation and report code.                             |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Metric calculation streams the reference samples once, interpolating the generated product at each        |
-//   reference wavelength. Range helpers scan wavelength windows used by the O2 A morphology checks.           |
+//   computeComparisonMetrics streams reference rows for residual sums and again for covariance. Each sample   |
+//   interpolates the generated product at the reference wavelength. Morphology checks scan fixed O2 A windows:|
+//   blue wing 755.0..758.5 nm, trough 760.2..761.1 nm, rebound 761.8..762.4 nm, mid band 763.8..765.5 nm,     |
+//   and red wing 769.5..771.0 nm.                                                                             |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Metric structs are compact value rows. VendorO2A*Case structs are large owner/view headers over scene,    |
-//   prepared optical state, product, and reference storage.                                                   |
+//   Metric structs are compact value rows. VendorO2A*Case structs wrap the larger runtime owners from run.zig |
+//   and keep deinit order explicit: product first, then prepared optical state, then scene/reference storage. |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // RangeExtremum --------------------------------------------------------------------------------------------- |
