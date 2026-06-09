@@ -4,6 +4,33 @@ const SpectroscopyTypes = @import("../../../input/reference/spectroscopy/types.z
 
 const Allocator = std.mem.Allocator;
 
+// profile_state_cache.zig ------------------------------------------------------------------------------------|
+// Single-entry cache for expensive HITRAN profile line-state preparation.                                     |
+//                                                                                                             |
+// called by                                                                                                   |
+//   absorbers.zig tries load() before preparing strong/weak profile states, then store() after a miss         |
+//   preparation contexts may also bypass this cache with borrowed profile states from a caller                |
+//                                                                                                             |
+// cached payload                                                                                              |
+//   key           : hash of line-list content, strong-line sidecars, relaxation matrix, runtime controls,     |
+//                   profile temperatures, and profile pressures                                               |
+//   weak_states   : cloned WeakLinePreparedState rows for each profile level                                  |
+//   strong_states : cloned StrongLinePreparedState rows for each profile level                                |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   load() clones the retained entry into caller-owned output arrays; store() clones caller-owned states into |
+//   smp_allocator-backed retained storage. The cache never lends its slices directly to PreparedOpticalState, |
+//   so each prepared state keeps its normal deinit ownership.                                                 |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is preparation-time only. The per-wavelength spectroscopy path reads prepared states owned by the    |
+//   optical state; it does not lock this mutex or touch the cache entry.                                      |
+//                                                                                                             |
+// memory                                                                                                      |
+//   One process-wide Entry is protected by mutex. Replacing it deinitializes the old cloned strong/weak state |
+//   arrays. Shapes must match temperatures, pressures, weak outputs, and strong outputs before cloning.       |
+// ------------------------------------------------------------------------------------------------------------|
+
 const Entry = struct {
     key: u64,
     strong_states: []ReferenceData.StrongLinePreparedState,

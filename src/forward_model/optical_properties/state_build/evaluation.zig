@@ -1,6 +1,27 @@
 const transport_common = @import("../../radiative_transfer/root.zig");
 const State = @import("state.zig");
 
+// evaluation.zig ---------------------------------------------------------------------------------------------|
+// Small conversion helpers between prepared optical-state evaluations and RTM transport rows.                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   state_optical_depth.zig builds EvaluatedLayer values from sublayer gas, Rayleigh, CIA, and aerosol terms  |
+//   forward_layers.zig converts evaluated rows into radiative_transfer.LayerInput for LABOS                   |
+//   diagnostics use the same breakdown accumulation when reporting layer or spectrum totals                   |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   accumulateBreakdown      adds one evaluated optical-depth component row into a running total              |
+//   layerInputFromEvaluated copies an EvaluatedLayer into the public RTM LayerInput shape                     |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file does not evaluate spectroscopy, aerosols, geometry, or phase functions. It only preserves the   |
+//   field mapping from prepared optical-state names into the transport names consumed by LABOS.               |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Helpers return or mutate fixed-size values. Jacobian lanes are initialized to zero here; layer builders   |
+//   attach aerosol derivative lanes later when a derivative route requests them.                              |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn accumulateBreakdown(
     totals: *State.OpticalDepthBreakdown,
     breakdown: State.OpticalDepthBreakdown,
