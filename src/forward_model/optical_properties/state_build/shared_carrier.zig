@@ -54,6 +54,80 @@ pub const SharedRtmSubgrid = struct {
     weights_km: []const f64 = &.{},
 };
 
+// ReducedLayerInputSpectroscopyRequest ----------------------------------------------------------------------|
+// Borrowed inputs for filling one reduced transport layer without a wavelength carrier cache.                |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 120 B (0.117 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] prepared           : *const PreparedOpticalState                                                |
+// [  8.. 15] scene              : *const Scene                                                               |
+// [ 16.. 23] wavelength_nm      : f64                                                                        |
+// [ 24.. 39] support_sublayers  : []const PreparedSublayer                                                   |
+// [ 40.. 55] strong_line_states : ?[]const StrongLinePreparedState                                           |
+// [ 56.. 95] layer_geometry     : SharedRtmLayerGeometry                                                     |
+// [ 96..103] profile_cache      : ?*const ProfileNodeSpectroscopyCache                                       |
+// [104..111] layer_input        : *LayerInput                                                                |
+// [112..112] compute_jacobian   : bool                                                                       |
+// [113..119] padding            : 7 B                                                                        |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, support rows, strong-line rows, profile cache, and output layer are borrowed.           |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per layer fill = 120 B plus borrowed support/cache/output storage                               |
+pub const ReducedLayerInputSpectroscopyRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    layer_input: *transport_common.LayerInput,
+    compute_jacobian: bool,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// ReducedLayerInputCarrierRequest ---------------------------------------------------------------------------|
+// Borrowed inputs for filling one reduced transport layer with a wavelength carrier cache.                   |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 120 B (0.117 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] prepared           : *const PreparedOpticalState                                                |
+// [  8.. 15] scene              : *const Scene                                                               |
+// [ 16.. 23] wavelength_nm      : f64                                                                        |
+// [ 24.. 39] support_sublayers  : []const PreparedSublayer                                                   |
+// [ 40.. 55] strong_line_states : ?[]const StrongLinePreparedState                                           |
+// [ 56.. 95] layer_geometry     : SharedRtmLayerGeometry                                                     |
+// [ 96..103] wavelength_cache   : *WavelengthCarrierCache                                                    |
+// [104..111] layer_input        : *LayerInput                                                                |
+// [112..112] compute_jacobian   : bool                                                                       |
+// [113..119] padding            : 7 B                                                                        |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, support rows, strong-line rows, carrier cache, and output layer are borrowed.           |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per layer fill = 120 B plus borrowed support/cache/output storage                               |
+pub const ReducedLayerInputCarrierRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    layer_input: *transport_common.LayerInput,
+    compute_jacobian: bool,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 fn strongLineStateAt(
     states: ?[]const ReferenceData.StrongLinePreparedState,
     local_index: usize,
@@ -273,43 +347,35 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
 }
 
 pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    layer_input: *transport_common.LayerInput,
-    compute_jacobian: bool,
+    request: *const ReducedLayerInputSpectroscopyRequest,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
-    if (support_sublayers.len >= 2) {
-        for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+    if (request.support_sublayers.len >= 2) {
+        for (request.support_sublayers[1 .. request.support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
 
-            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+            const strong_line_state = strongLineStateAt(request.strong_line_states, local_index);
             const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
-                self,
-                wavelength_nm,
+                request.prepared,
+                request.wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
-                profile_cache,
+                request.profile_cache,
             );
             accumulateSharedCarrier(&breakdown, &carrier, weight_km);
         }
     }
 
     fillLayerInputFromSharedCarrier(
-        scene,
-        wavelength_nm,
-        layer_geometry.midpoint_altitude_km,
+        request.scene,
+        request.wavelength_nm,
+        request.layer_geometry.midpoint_altitude_km,
         breakdown,
-        &self.aerosol_phase_coefficients,
-        layer_input,
-        compute_jacobian,
+        &request.prepared.aerosol_phase_coefficients,
+        request.layer_input,
+        request.compute_jacobian,
     );
     return breakdown;
 }
@@ -373,27 +439,19 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
 }
 
 pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
-    layer_input: *transport_common.LayerInput,
-    compute_jacobian: bool,
+    request: *const ReducedLayerInputCarrierRequest,
 ) OpticalDepthBreakdown {
     var breakdown: OpticalDepthBreakdown = .{};
-    if (support_sublayers.len >= 2) {
-        for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+    if (request.support_sublayers.len >= 2) {
+        for (request.support_sublayers[1 .. request.support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
 
-            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+            const strong_line_state = strongLineStateAt(request.strong_line_states, local_index);
             var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
-            const scalars = wavelength_cache.cachedSupportRowScalarsRef(
-                self,
-                wavelength_nm,
+            const scalars = request.wavelength_cache.cachedSupportRowScalarsRef(
+                request.prepared,
+                request.wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
@@ -408,13 +466,13 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
     }
 
     fillLayerInputFromSharedCarrier(
-        scene,
-        wavelength_nm,
-        layer_geometry.midpoint_altitude_km,
+        request.scene,
+        request.wavelength_nm,
+        request.layer_geometry.midpoint_altitude_km,
         breakdown,
-        &self.aerosol_phase_coefficients,
-        layer_input,
-        compute_jacobian,
+        &request.prepared.aerosol_phase_coefficients,
+        request.layer_input,
+        request.compute_jacobian,
     );
     return breakdown;
 }

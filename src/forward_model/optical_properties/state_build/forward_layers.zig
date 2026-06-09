@@ -204,17 +204,19 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     // DISAMAR forms radiative-transfer layer optical thickness from the already prepared RTM
                     // support rows and their RTMweightSub values. Re-integrating a new Gauss subgrid here
                     // changes line-shoulder absorption even when the support grid itself matches.
-                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
-                        self,
-                        scene,
-                        wavelength_nm,
-                        support.sublayers,
-                        support.strong_line_states,
-                        layer_geometry,
-                        profile_cache,
-                        layer_input,
-                        compute_jacobian,
-                    );
+                    const request = shared_carrier.ReducedLayerInputSpectroscopyRequest{
+                        .prepared = self,
+                        .scene = scene,
+                        .wavelength_nm = wavelength_nm,
+                        .support_sublayers = support.sublayers,
+                        .strong_line_states = support.strong_line_states,
+                        .layer_geometry = layer_geometry,
+                        .profile_cache = profile_cache,
+                        .layer_input = layer_input,
+                        .compute_jacobian = compute_jacobian,
+                    };
+                    const breakdown =
+                        shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(&request);
                     if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
                     Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
@@ -228,13 +230,13 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
                 const support = shared_geometry.sharedSupportSlices(self, sublayers, start_index, count);
-                const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
-                    self,
-                    scene,
-                    wavelength_nm,
-                    support.sublayers,
-                    support.strong_line_states,
-                    .{
+                const request = shared_carrier.ReducedLayerInputSpectroscopyRequest{
+                    .prepared = self,
+                    .scene = scene,
+                    .wavelength_nm = wavelength_nm,
+                    .support_sublayers = support.sublayers,
+                    .strong_line_states = support.strong_line_states,
+                    .layer_geometry = .{
                         .lower_altitude_km = layer.bottom_altitude_km,
                         .upper_altitude_km = layer.top_altitude_km,
                         .midpoint_altitude_km = layer.altitude_km,
@@ -242,10 +244,12 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         .support_start_index = layer.sublayer_start_index,
                         .support_count = layer.sublayer_count,
                     },
-                    profile_cache,
-                    layer_input,
-                    compute_jacobian,
-                );
+                    .profile_cache = profile_cache,
+                    .layer_input = layer_input,
+                    .compute_jacobian = compute_jacobian,
+                };
+                const breakdown =
+                    shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(&request);
                 if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
                 Evaluation.accumulateBreakdown(&totals, breakdown);
             }
@@ -419,17 +423,19 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         support_start_index,
                         support_count,
                     );
-                    const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache(
-                        self,
-                        scene,
-                        wavelength_nm,
-                        support.sublayers,
-                        support.strong_line_states,
-                        layer_geometry,
-                        wavelength_cache,
-                        layer_input,
-                        compute_jacobian,
-                    );
+                    const request = shared_carrier.ReducedLayerInputCarrierRequest{
+                        .prepared = self,
+                        .scene = scene,
+                        .wavelength_nm = wavelength_nm,
+                        .support_sublayers = support.sublayers,
+                        .strong_line_states = support.strong_line_states,
+                        .layer_geometry = layer_geometry,
+                        .wavelength_cache = wavelength_cache,
+                        .layer_input = layer_input,
+                        .compute_jacobian = compute_jacobian,
+                    };
+                    const breakdown =
+                        shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache(&request);
                     if (compute_jacobian) attachAerosolOpticalDepthJacobian(scene, layer_input);
                     Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
