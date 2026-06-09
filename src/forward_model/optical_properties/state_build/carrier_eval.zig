@@ -364,6 +364,36 @@ const SupportRowWavelengthConstants = struct {
 };
 // ------------------------------------------------------------------------------------------------------------ |
 
+// SharedAltitudeCarrierRequest ------------------------------------------------------------------------------- |
+// Borrowed inputs for one arbitrary-altitude carrier evaluation.                                               |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 64 B (0.062 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] prepared              : *const PreparedOpticalState                                                 |
+// [ 8..23] support_sublayers     : []const PreparedSublayer                                                    |
+// [24..39] strong_line_states    : ?[]const StrongLinePreparedState                                            |
+// [40..47] profile_cache         : ?*const ProfileNodeSpectroscopyCache                                        |
+// [48..55] wavelength_nm         : f64                                                                         |
+// [56..63] altitude_km           : f64                                                                         |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   prepared, support_sublayers, strong_line_states, and profile_cache are borrowed for one carrier fill.      |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 64 B plus borrowed prepared-state and support-row storage                          |
+pub const SharedAltitudeCarrierRequest = struct {
+    prepared: *const State.PreparedOpticalState,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    wavelength_nm: f64,
+    altitude_km: f64,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
 // CiaWavelengthCoefficients ---------------------------------------------------------------------------------- |
 // Interpolated O2-O2 CIA polynomial coefficients for one wavelength.                                           |
 //                                                                                                              |
@@ -1458,14 +1488,15 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     altitude_km: f64,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) PreparedQuadratureCarrier {
-    const carrier = sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        altitude_km,
-        profile_cache,
-    );
+    const request = SharedAltitudeCarrierRequest{
+        .prepared = self,
+        .support_sublayers = sublayers,
+        .strong_line_states = strong_line_states,
+        .profile_cache = profile_cache,
+        .wavelength_nm = wavelength_nm,
+        .altitude_km = altitude_km,
+    };
+    const carrier = sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(&request);
     return .{
         .ksca = carrier.totalScatteringOpticalDepthPerKm(),
         .gas_scattering_optical_depth_per_km = carrier.gas_scattering_optical_depth_per_km,
@@ -1814,85 +1845,75 @@ pub fn sharedOpticalCarrierAtAltitude(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
 ) SharedOpticalCarrier {
-    return sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        altitude_km,
-        null,
-    );
+    const request = SharedAltitudeCarrierRequest{
+        .prepared = self,
+        .support_sublayers = sublayers,
+        .strong_line_states = strong_line_states,
+        .profile_cache = null,
+        .wavelength_nm = wavelength_nm,
+        .altitude_km = altitude_km,
+    };
+    return sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(&request);
 }
 
 fn spectroscopySigmaAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
+    request: *const SharedAltitudeCarrierRequest,
     state: InterpolatedQuadratureState,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
     prepared_state: ?*const ReferenceData.StrongLinePreparedState,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) f64 {
-    if (self.line_absorbers.len != 0) {
-        return self.weightedSpectroscopyEvaluationAtAltitude(
-            wavelength_nm,
+    if (request.prepared.line_absorbers.len != 0) {
+        return request.prepared.weightedSpectroscopyEvaluationAtAltitude(
+            request.wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
-            sublayers,
-            altitude_km,
+            request.support_sublayers,
+            request.altitude_km,
             state.oxygen_number_density_cm3,
         ).total_sigma_cm2_per_molecule;
     }
 
-    return self.spectroscopySigmaAtAltitudeWithCache(
-        wavelength_nm,
+    return request.prepared.spectroscopySigmaAtAltitudeWithCache(
+        request.wavelength_nm,
         state.temperature_k,
         state.pressure_hpa,
-        altitude_km,
+        request.altitude_km,
         prepared_state,
-        profile_cache,
+        request.profile_cache,
     );
 }
 
 fn continuumDensityAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
+    request: *const SharedAltitudeCarrierRequest,
     state: InterpolatedQuadratureState,
 ) f64 {
-    if (self.cross_section_absorbers.len != 0) return 0.0;
+    if (request.prepared.cross_section_absorbers.len != 0) return 0.0;
 
-    return self.continuumCarrierDensityAtAltitude(
-        sublayers,
-        altitude_km,
+    return request.prepared.continuumCarrierDensityAtAltitude(
+        request.support_sublayers,
+        request.altitude_km,
         state.absorber_number_density_cm3,
         state.oxygen_number_density_cm3,
     );
 }
 
 fn aerosolReferenceWavelengthAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
+    request: *const SharedAltitudeCarrierRequest,
     state: InterpolatedQuadratureState,
 ) f64 {
-    if (self.has_aerosol_profile_properties) return state.aerosol_reference_wavelength_nm;
-    return self.aerosol_reference_wavelength_nm;
+    if (request.prepared.has_aerosol_profile_properties) return state.aerosol_reference_wavelength_nm;
+    return request.prepared.aerosol_reference_wavelength_nm;
 }
 
 fn aerosolAngstromExponentAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
+    request: *const SharedAltitudeCarrierRequest,
     state: InterpolatedQuadratureState,
 ) f64 {
-    if (self.has_aerosol_profile_properties) return state.aerosol_angstrom_exponent;
-    return self.aerosol_angstrom_exponent;
+    if (request.prepared.has_aerosol_profile_properties) return state.aerosol_angstrom_exponent;
+    return request.prepared.aerosol_angstrom_exponent;
 }
 
 pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    altitude_km: f64,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    request: *const SharedAltitudeCarrierRequest,
 ) SharedOpticalCarrier {
     // sharedOpticalCarrierAtAltitudeWithSpectroscopyCache ---------------------------------------------------  |
     // Evaluates one carrier at an arbitrary altitude by interpolating prepared support rows.                   |
@@ -1903,52 +1924,49 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     //   support-row carriers.                                                                                  |
     // -------------------------------------------------------------------------------------------------------  |
 
-    const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
-    const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
+    const state = interpolateQuadratureStateAtAltitude(
+        request.support_sublayers,
+        request.altitude_km,
+    ) orelse return .{};
+    const continuum_sigma = continuumSigmaAtWavelength(request.prepared, request.wavelength_nm);
     const prepared_state = State.PreparedOpticalState.preparedStrongLineStateAtAltitude(
-        sublayers,
-        strong_line_states,
-        altitude_km,
+        request.support_sublayers,
+        request.strong_line_states,
+        request.altitude_km,
     );
     const spectroscopy_sigma = spectroscopySigmaAtCarrierAltitude(
-        self,
-        wavelength_nm,
+        request,
         state,
-        sublayers,
-        altitude_km,
         prepared_state,
-        profile_cache,
     );
 
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
-    for (self.cross_section_absorbers) |cross_section_absorber| {
+    for (request.prepared.cross_section_absorbers) |cross_section_absorber| {
         const absorber_density_cm3 = State.PreparedOpticalState.interpolatePreparedScalarAtAltitude(
-            sublayers,
+            request.support_sublayers,
             cross_section_absorber.number_densities_cm3,
-            altitude_km,
+            request.altitude_km,
         );
         if (absorber_density_cm3 <= 0.0) continue;
 
         cross_section_density_cm3 += absorber_density_cm3;
         cross_section_absorption_optical_depth_per_km +=
             cross_section_absorber.sigmaAt(
-                wavelength_nm,
+                request.wavelength_nm,
                 state.temperature_k,
                 state.pressure_hpa,
             ) *
             absorber_density_cm3 *
             centimeters_per_kilometer;
     }
-    const line_absorber_density_cm3 = self.lineSpectroscopyCarrierDensity(
+    const line_absorber_density_cm3 = request.prepared.lineSpectroscopyCarrierDensity(
         state.absorber_number_density_cm3,
         state.oxygen_number_density_cm3,
         cross_section_density_cm3,
     );
     const continuum_density_cm3 = continuumDensityAtCarrierAltitude(
-        self,
-        sublayers,
-        altitude_km,
+        request,
         state,
     );
     const gas_absorption_optical_depth_per_km =
@@ -1960,12 +1978,12 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
             line_absorber_density_cm3 *
             centimeters_per_kilometer;
     const gas_scattering_optical_depth_per_km =
-        Rayleigh.crossSectionCm2(wavelength_nm) *
+        Rayleigh.crossSectionCm2(request.wavelength_nm) *
         state.number_density_cm3 *
         centimeters_per_kilometer;
     const cia_optical_depth_per_km =
-        self.ciaSigmaAtWavelength(
-            wavelength_nm,
+        request.prepared.ciaSigmaAtWavelength(
+            request.wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
         ) *
@@ -1973,9 +1991,9 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         state.aerosol_optical_depth_per_km,
-        aerosolReferenceWavelengthAtCarrierAltitude(self, state),
-        aerosolAngstromExponentAtCarrierAltitude(self, state),
-        wavelength_nm,
+        aerosolReferenceWavelengthAtCarrierAltitude(request, state),
+        aerosolAngstromExponentAtCarrierAltitude(request, state),
+        request.wavelength_nm,
     );
     const aerosol_scattering_optical_depth_per_km =
         aerosol_optical_depth_per_km * state.aerosol_single_scatter_albedo;

@@ -293,14 +293,18 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                 interval.lower_altitude_km + 0.5 * altitude_span_km
             else
                 interval.lower_altitude_km;
-            const optical_depth = carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-                self,
-                wavelength_nm,
-                interval.support_sublayers,
-                interval.strong_line_states,
-                sample_altitude_km,
-                profile_cache,
-            ).totalOpticalDepthPerKm() * altitude_span_km;
+            const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
+                .prepared = self,
+                .support_sublayers = interval.support_sublayers,
+                .strong_line_states = interval.strong_line_states,
+                .profile_cache = profile_cache,
+                .wavelength_nm = wavelength_nm,
+                .altitude_km = sample_altitude_km,
+            };
+            const optical_depth =
+                carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+                    &altitude_request,
+                ).totalOpticalDepthPerKm() * altitude_span_km;
             attenuation_samples[sample_index] = .{
                 .altitude_km = sample_altitude_km,
                 .thickness_km = altitude_span_km,
@@ -334,14 +338,18 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
             const node_altitude_km = interval.lower_altitude_km + normalized_position * altitude_span_km;
             const weight_km = 0.5 * rule.weights[node_index] * altitude_span_km;
-            const optical_depth = carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-                self,
-                wavelength_nm,
-                interval.support_sublayers,
-                interval.strong_line_states,
-                node_altitude_km,
-                profile_cache,
-            ).totalOpticalDepthPerKm() * weight_km;
+            const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
+                .prepared = self,
+                .support_sublayers = interval.support_sublayers,
+                .strong_line_states = interval.strong_line_states,
+                .profile_cache = profile_cache,
+                .wavelength_nm = wavelength_nm,
+                .altitude_km = node_altitude_km,
+            };
+            const optical_depth =
+                carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+                    &altitude_request,
+                ).totalOpticalDepthPerKm() * weight_km;
             attenuation_samples[sample_index] = .{
                 .altitude_km = node_altitude_km,
                 .thickness_km = weight_km,

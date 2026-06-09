@@ -680,13 +680,16 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         if (weight_km <= 0.0) continue;
+        const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
+            .prepared = request.prepared,
+            .support_sublayers = request.support_sublayers,
+            .strong_line_states = request.strong_line_states,
+            .profile_cache = request.profile_cache,
+            .wavelength_nm = request.wavelength_nm,
+            .altitude_km = subgrid.altitudes_km[node_index],
+        };
         const carrier = carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-            request.prepared,
-            request.wavelength_nm,
-            request.support_sublayers,
-            request.strong_line_states,
-            subgrid.altitudes_km[node_index],
-            request.profile_cache,
+            &altitude_request,
         );
         accumulateSharedCarrier(
             &breakdown,
@@ -745,14 +748,18 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
         const optical_depth = choose_optical_depth: {
             if (weight_km <= 0.0) break :choose_optical_depth 0.0;
 
-            break :choose_optical_depth weight_km * carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-                request.prepared,
-                request.wavelength_nm,
-                request.support_sublayers,
-                request.strong_line_states,
-                subgrid.altitudes_km[node_index],
-                request.profile_cache,
-            ).totalOpticalDepthPerKm();
+            const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
+                .prepared = request.prepared,
+                .support_sublayers = request.support_sublayers,
+                .strong_line_states = request.strong_line_states,
+                .profile_cache = request.profile_cache,
+                .wavelength_nm = request.wavelength_nm,
+                .altitude_km = subgrid.altitudes_km[node_index],
+            };
+            break :choose_optical_depth weight_km *
+                carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+                    &altitude_request,
+                ).totalOpticalDepthPerKm();
         };
 
         request.attenuation_samples[sample_index] = .{
