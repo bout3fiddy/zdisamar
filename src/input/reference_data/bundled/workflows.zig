@@ -11,6 +11,28 @@ const selection = @import("selection.zig");
 
 const Allocator = std.mem.Allocator;
 
+// workflows.zig ----------------------------------------------------------------------------------------------|
+// Applies reference-data LUT workflow controls to a working scene before optical preparation.                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   load.zig after bundled reference assets are loaded and before OpticsPrepare.prepare()                     |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   reflectance/correction workflows record direct or generated LUT execution labels                          |
+//   O2 line-by-line controls can consume an operational O2 LUT or generate one from filtered HITRAN lines     |
+//   O2-O2 CIA controls can consume or generate an operational CIA LUT                                         |
+//   generic cross-section absorbers can consume a resolved LUT or generate one from a resolved xsec table     |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   The source scene remains borrowed. When generation needs mutation, this file clones the absorber set or   |
+//   operational band support into owned working-scene storage, replaces only the requested LUT payload, and   |
+//   records generated asset metadata for the prepared optical state.                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Generated LUTs are first owned by temporary outputs from load.zig, then cloned into the working scene or  |
+//   generated asset list. Execution labels and GeneratedLutAsset strings are owned by the caller allocator.   |
+// ------------------------------------------------------------------------------------------------------------|
+
 const PrimaryOperationalBandSupportLut = enum {
     o2,
     o2o2,

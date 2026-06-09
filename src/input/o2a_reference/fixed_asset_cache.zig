@@ -12,6 +12,30 @@ const ClimatologyProfile = ReferenceData.ClimatologyProfile;
 const CollisionInducedAbsorptionTable = ReferenceData.CollisionInducedAbsorptionTable;
 const AirmassFactorLut = ReferenceData.AirmassFactorLut;
 
+// fixed_asset_cache.zig --------------------------------------------------------------------------------------|
+// Process-wide single-entry caches for resolved O2 A reference assets.                                        |
+//                                                                                                             |
+// called by                                                                                                   |
+//   run.zig loaders for atmosphere profiles, CIA tables, airmass LUTs, reference spectra, solar spectra,      |
+//   and O2 HITRAN line-list bundles                                                                           |
+//                                                                                                             |
+// cache keys                                                                                                  |
+//   ExternalAsset entries hash id, path, and format. LineGasSpec also hashes line-mixing, strong-line,        |
+//   isotope, threshold, cutoff, and line-mixing-factor controls because those change the prepared line list.  |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   Stores clone caller-owned loaded assets into smp_allocator-backed retained entries. Loads clone retained  |
+//   entries back into the caller allocator. The cache never lends retained slices directly to prepared cases, |
+//   so caller deinit ownership stays normal.                                                                  |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is input/reference loading only. Forward-model and RTM loops never lock this mutex or read these     |
+//   retained entries directly.                                                                                |
+//                                                                                                             |
+// memory                                                                                                      |
+//   One mutex protects one optional entry per asset family. Replacing an entry deinitializes the old clone.   |
+// ------------------------------------------------------------------------------------------------------------|
+
 const LineListEntry = struct {
     key: u64,
     line_list: ReferenceData.SpectroscopyLineList,

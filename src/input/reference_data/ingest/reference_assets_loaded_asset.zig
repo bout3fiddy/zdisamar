@@ -2,6 +2,29 @@ const std = @import("std");
 const ReferenceData = @import("../../ReferenceData.zig");
 const types = @import("reference_assets_types.zig");
 
+// reference_assets_loaded_asset.zig --------------------------------------------------------------------------|
+// Converts one parsed reference-asset table into typed reference-data owners.                                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   reference_assets.zig returns LoadedAsset after manifest lookup and CSV parsing                            |
+//   bundled/assets.zig converts bundled LoadedAsset values into climatology, spectroscopy, CIA, and LUT data  |
+//   o2a_reference/run.zig converts external O2 A assets through the same typed methods                        |
+//   tests exercise spectroscopy column variants and owned deinit behavior                                     |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   toClimatologyProfile / toCrossSectionTable / toCollisionInducedAbsorptionTable                            |
+//   toSpectroscopyLineList / toSpectroscopyStrongLineSet / toSpectroscopyRelaxationMatrix                     |
+//   toAirmassFactorLut                                                                                        |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   LoadedAsset stores generic column names and f64 table values. Conversion methods check the requested      |
+//   AssetKind and exact column schema before allocating typed ReferenceData rows.                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   LoadedAsset owns duplicated manifest metadata, column-name strings, and row-major f64 values. Converted   |
+//   ReferenceData owners allocate their own typed rows; deinit must be called on both sides by their owners.  |
+// ------------------------------------------------------------------------------------------------------------|
+
 const spectroscopy_vendor_source_columns = [_][]const u8{
     "gas_index",
     "isotope_number",

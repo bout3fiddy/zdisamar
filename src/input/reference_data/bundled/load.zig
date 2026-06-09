@@ -12,6 +12,28 @@ const workflows = @import("workflows.zig");
 
 const Allocator = std.mem.Allocator;
 
+// load.zig ---------------------------------------------------------------------------------------------------|
+// Bundled reference-data loader and optical-state handoff for public prepare() calls.                         |
+//                                                                                                             |
+// called by                                                                                                   |
+//   src/root.zig prepare() loads bundled assets, builds a working scene, then prepares optical properties     |
+//   prepareForScene() gives tests and internal callers a one-shot bundled-data-to-optics path                 |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   load        reads bundled climatology, continuum, CIA, spectroscopy, and airmass LUT assets               |
+//               then applies generated/consumed LUT workflows to a working scene copy                         |
+//   buildOptics prepares the forward-model optical state from Data and transfers generated LUT metadata       |
+//   prepareForScene wraps load + buildOptics for callers that do not need retained Data                       |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This module belongs to input/reference-data preparation. It may load bundled assets and adjust a working  |
+//   input scene, but it does not run the RTM or write reports. Forward-model code receives prepared values.   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Data owns loaded asset tables, the working scene copy, generated LUT descriptors, and execution labels.   |
+//   buildOptics transfers generated LUT ownership into PreparedOpticalState and clears Data's slices.         |
+// ------------------------------------------------------------------------------------------------------------|
+
 // Data -------------------------------------------------------------------------------------------------------|
 // Owner for bundled reference assets and the scene copy prepared from them.                                   |
 //                                                                                                             |
