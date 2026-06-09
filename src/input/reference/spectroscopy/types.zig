@@ -1,6 +1,16 @@
-// Shared spectroscopy carrier types and constants.
-
 const std = @import("std");
+
+// types.zig ------------------------------------------------------------------------------------------------- |
+// Shared spectroscopy constants, line rows, runtime controls, and prepared line-state layouts.                |
+//                                                                                                             |
+// used by                                                                                                     |
+//   reference loaders, line-list evaluation, absorber prep, and forward-model carrier                         |
+//   evaluation.                                                                                               |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Line rows are inline records copied into owned lists. Prepared states use compact headers                 |
+//   over out-of-line per-line arrays allocated during setup and reused across wavelength-time evaluation.     |
+// ----------------------------------------------------------------------------------------------------------- |
 
 pub const Allocator = std.mem.Allocator;
 pub const max_strong_line_sidecars: usize = 128;
@@ -10,28 +20,52 @@ pub const hitran_reference_temperature_k = 296.0;
 pub const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 pub const hitran_hc_over_kb_cm_k = 1.4387770;
-// PARITY:
-//   DISAMAR's HITRAN module uses `pi = 3.1415926536D0`, not the full
-//   language/library constant. The truncated literal is visible in O2 A
-//   cross-section parity because it sits inside the Voigt normalization.
+
+// hitran_pi ------------------------------------------------------------------------------------------------- |
+// DISAMAR's HITRAN module uses pi = 3.1415926536D0, not the full language/library constant. The truncated     |
+// literal is visible in O2 A cross-section parity because it sits inside the Voigt normalization.             |
+// ----------------------------------------------------------------------------------------------------------- |
 pub const hitran_pi = 3.1415926536;
-// PARITY:
-//   DISAMAR keeps the module-wide `hc_kB = 1.4387770D0` for ordinary HITRAN
-//   absorption but `HITRANModule::ConvTP` uses a local `A = 1.43877696D0`
-//   when temperature-scaling O2 line-mixing populations. Keep both constants
-//   literal because the difference is visible at O2 A parity precision.
+
+// hitran_o2_line_mixing_hc_over_kb_cm_k --------------------------------------------------------------------- |
+// DISAMAR keeps hc_kB = 1.4387770D0 for ordinary HITRAN absorption, but HITRANModule::ConvTP uses a local     |
+// A = 1.43877696D0 when temperature-scaling O2 line-mixing populations. Keep both literals because the        |
+// difference is visible at O2 A parity precision.                                                             |
+// ----------------------------------------------------------------------------------------------------------- |
 pub const hitran_o2_line_mixing_hc_over_kb_cm_k = 1.43877696;
 pub const hitran_gas_constant_j_per_mol_k = 8.3144621;
 pub const hitran_speed_of_light_m_per_s = 2.99792458e8;
 pub const min_spectroscopy_pressure_atm = 1.0e-12;
 
-// layout(64-bit):
-//   size: 104 B, align: 8 B
-//   field storage: 98 B across 17 fields; largest: abundance_fraction=8 B, center_wavelength_nm=8 B, center_wavenumber_cm1=8 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 7 bool-storage slack = 55 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 104 B (0.102 KiB); total = per instance * live instance count
+// SpectroscopyLine ------------------------------------------------------------------------------------------ |
+// Parsed HITRAN/O2 A line row after unit normalization and optional vendor metadata retention.                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 104 B (0.102 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] abundance_fraction                  : f64                                                        |
+// [  8.. 15] center_wavelength_nm                : f64                                                        |
+// [ 16.. 23] center_wavenumber_cm1               : f64                                                        |
+// [ 24.. 31] line_strength_cm2_per_molecule      : f64                                                        |
+// [ 32.. 39] air_half_width_nm                   : f64                                                        |
+// [ 40.. 47] air_half_width_cm1                  : f64                                                        |
+// [ 48.. 55] temperature_exponent                : f64                                                        |
+// [ 56.. 63] lower_state_energy_cm1              : f64                                                        |
+// [ 64.. 71] pressure_shift_nm                   : f64                                                        |
+// [ 72.. 79] pressure_shift_cm1                  : f64                                                        |
+// [ 80.. 87] line_mixing_coefficient             : f64                                                        |
+// [ 88.. 89] gas_index                           : u16                                                        |
+// [ 90.. 90] isotope_number                      : u8                                                         |
+// [ 91.. 91] vendor_filter_metadata_from_source  : bool                                                       |
+// [ 92.. 93] branch_ic1                          : ?u8                                                        |
+// [ 94.. 95] branch_ic2                          : ?u8                                                        |
+// [ 96.. 97] rotational_nf                       : ?u8                                                        |
+// [ 98..103] trailing padding                    : 6 B                                                        |
+//                                                                                                             |
+// unused bits: 48 padding + 7 bool-storage slack = 55 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 104 B; total = per instance * line count                                          |
 pub const SpectroscopyLine = struct {
     gas_index: u16 = 0,
     isotope_number: u8 = 1,
@@ -52,13 +86,30 @@ pub const SpectroscopyLine = struct {
     rotational_nf: ?u8 = null,
 };
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 92 B across 12 fields; largest: center_wavenumber_cm1=8 B, center_wavelength_nm=8 B, population_t0=8 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
+// SpectroscopyStrongLine ------------------------------------------------------------------------------------ |
+// Strong-line sidecar row used by DISAMAR-style O2 line-mixing evaluation.                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] center_wavenumber_cm1 : f64                                                                        |
+// [ 8..15] center_wavelength_nm  : f64                                                                        |
+// [16..23] population_t0         : f64                                                                        |
+// [24..31] dipole_ratio          : f64                                                                        |
+// [32..39] dipole_t0             : f64                                                                        |
+// [40..47] lower_state_energy_cm1: f64                                                                        |
+// [48..55] air_half_width_cm1    : f64                                                                        |
+// [56..63] air_half_width_nm     : f64                                                                        |
+// [64..71] temperature_exponent  : f64                                                                        |
+// [72..79] pressure_shift_cm1    : f64                                                                        |
+// [80..87] pressure_shift_nm     : f64                                                                        |
+// [88..91] rotational_index_m1   : i32                                                                        |
+// [92..95] trailing padding      : 4 B                                                                        |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B; total = per instance * strong-line count                                    |
 pub const SpectroscopyStrongLine = struct {
     center_wavenumber_cm1: f64,
     center_wavelength_nm: f64,
@@ -74,13 +125,20 @@ pub const SpectroscopyStrongLine = struct {
     rotational_index_m1: i32,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: lines=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// SpectroscopyStrongLineSet --------------------------------------------------------------------------------- |
+// Owned strong-line sidecar slice.                                                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] lines : []SpectroscopyStrongLine                                                                   |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   lines owns SpectroscopyStrongLine rows; referenced storage is not included in this header size.           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B plus owned line storage                                                      |
 pub const SpectroscopyStrongLineSet = struct {
     lines: []SpectroscopyStrongLine,
 
@@ -90,13 +148,22 @@ pub const SpectroscopyStrongLineSet = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: line_count=8 B, wt0=16 B, bw=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wt0, bw carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// RelaxationMatrix ------------------------------------------------------------------------------------------ |
+// Strong-line relaxation matrices stored as row-major dense f64 arrays.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_count : usize                                                                                 |
+// [ 8..23] wt0        : []f64                                                                                 |
+// [24..39] bw         : []f64                                                                                 |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   wt0 and bw own line_count * line_count f64 values; referenced storage is not included in this header.     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B plus 2 dense f64 matrices                                                    |
 pub const RelaxationMatrix = struct {
     line_count: usize,
     wt0: []f64,
@@ -127,12 +194,22 @@ pub const RelaxationMatrix = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: 48 B across 6 fields; largest: weak_line_sigma_cm2_per_molecule=8 B, strong_line_sigma_cm2_per_molecule=8 B, line_sigma_cm2_per_molecule=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
+// SpectroscopyEvaluation ------------------------------------------------------------------------------------ |
+// Accumulated spectroscopy result for one wavelength, temperature, and pressure.                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] weak_line_sigma_cm2_per_molecule           : f64                                                   |
+// [ 8..15] strong_line_sigma_cm2_per_molecule         : f64                                                   |
+// [16..23] line_sigma_cm2_per_molecule                : f64                                                   |
+// [24..31] line_mixing_sigma_cm2_per_molecule         : f64                                                   |
+// [32..39] total_sigma_cm2_per_molecule               : f64                                                   |
+// [40..47] d_sigma_d_temperature_cm2_per_molecule_per_k : f64                                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 48 B; usually stack returned                                                      |
 pub const SpectroscopyEvaluation = struct {
     weak_line_sigma_cm2_per_molecule: f64 = 0.0,
     strong_line_sigma_cm2_per_molecule: f64 = 0.0,
@@ -142,14 +219,28 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 92 B across 7 fields; largest: active_isotopes=16 B, threshold_line_scale=16 B, cutoff_cm1=16 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   out-of-line: active_isotopes, cutoff_grid_wavelengths_nm, cutoff_grid_wavenumbers_cm1 carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
+// SpectroscopyRuntimeControls ------------------------------------------------------------------------------- |
+// Line-list filter and cutoff controls applied before spectroscopy evaluation.                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] active_isotopes            : []const u8                                                            |
+// [16..31] threshold_line_scale       : ?f64                                                                  |
+// [32..47] cutoff_cm1                 : ?f64                                                                  |
+// [48..63] cutoff_grid_wavelengths_nm : []const f64                                                           |
+// [64..79] cutoff_grid_wavenumbers_cm1: []const f64                                                           |
+// [80..87] line_mixing_factor         : f64                                                                   |
+// [88..91] gas_index                  : ?u16                                                                  |
+// [92..95] trailing padding           : 4 B                                                                   |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   active_isotopes and cutoff grids may borrow input storage or own cloned slices, depending on caller.      |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B plus referenced control slices                                               |
 pub const SpectroscopyRuntimeControls = struct {
     gas_index: ?u16 = null,
     active_isotopes: []const u8 = &.{},
@@ -203,19 +294,33 @@ pub const SpectroscopyRuntimeControls = struct {
 // endpoints, then includes both endpoints.
 pub const vendor_cutoff_boundary_margin_cm1: f64 = 0.115;
 
-// PARITY:
-//   The sorted prewindow has to be wider than the fallback scalar cutoff
-//   because the exact decision is made later against the adaptive HR grid.
+// vendor_cutoff_prewindow_margin_cm1 ------------------------------------------------------------------------ |
+// The sorted prewindow has to be wider than the fallback scalar cutoff because the exact decision is made     |
+// later against the adaptive high-resolution grid.                                                            |
+// ----------------------------------------------------------------------------------------------------------- |
 pub const vendor_cutoff_prewindow_margin_cm1: f64 = 0.25;
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 96 B across 7 fields; largest: population_t=16 B, dipole_t=16 B, mod_sig_cm1=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: population_t, dipole_t, mod_sig_cm1, half_width_cm1_at_t, line_mixing_coefficients carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced storage above
+// StrongLinePreparedState ----------------------------------------------------------------------------------- |
+// Temperature/pressure-prepared strong-line arrays reused by O2 line-mixing evaluation.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_count               : usize                                                                   |
+// [ 8..15] sig_moy_cm1              : f64                                                                     |
+// [16..31] population_t             : []f64                                                                   |
+// [32..47] dipole_t                 : []f64                                                                   |
+// [48..63] mod_sig_cm1              : []f64                                                                   |
+// [64..79] half_width_cm1_at_t      : []f64                                                                   |
+// [80..95] line_mixing_coefficients : []f64                                                                   |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   five owned f64 arrays each have line_count elements; referenced storage is not included in this header.   |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B plus 5 * line_count f64 values                                               |
 pub const StrongLinePreparedState = struct {
     line_count: usize,
     sig_moy_cm1: f64,
@@ -235,12 +340,20 @@ pub const StrongLinePreparedState = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: 32 B across 4 fields; largest: shifted_center_wavenumber_cm1=8 B, cte=8 B, line_shape_y=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
+// WeakLinePreparedLineState --------------------------------------------------------------------------------- |
+// Per-line weak-lane constants prepared for one temperature and pressure.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] shifted_center_wavenumber_cm1 : f64                                                                |
+// [ 8..15] cte                            : f64                                                               |
+// [16..23] line_shape_y                   : f64                                                               |
+// [24..31] prefactor_base                 : f64                                                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B; total = per instance * weak-line count                                      |
 pub const WeakLinePreparedLineState = struct {
     shifted_center_wavenumber_cm1: f64,
     cte: f64,
@@ -248,13 +361,23 @@ pub const WeakLinePreparedLineState = struct {
     prefactor_base: f64,
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 40 B across 4 fields; largest: lines=16 B, line_count=8 B, safe_temperature=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// WeakLinePreparedState ------------------------------------------------------------------------------------- |
+// Header over weak-line constants prepared for one temperature and pressure.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_count       : usize                                                                           |
+// [ 8..15] safe_temperature : f64                                                                             |
+// [16..23] safe_pressure    : f64                                                                             |
+// [24..39] lines            : []WeakLinePreparedLineState                                                     |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   lines owns line_count prepared weak-line rows; referenced storage is not included in this header.         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B plus 32 B * line_count                                                       |
 pub const WeakLinePreparedState = struct {
     line_count: usize,
     safe_temperature: f64 = 0.0,

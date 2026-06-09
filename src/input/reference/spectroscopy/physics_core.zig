@@ -1,47 +1,82 @@
-// Weak-line spectroscopy helpers and shared line-shape math.
-
 const std = @import("std");
 const Types = @import("types.zig");
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: wr=8 B, wi=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// physics_core.zig ------------------------------------------------------------------------------------------ |
+// Weak-line spectroscopy helpers and shared line-shape math.                                                  |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Prepared weak-line evaluation calls complexProbabilityFunction for each relevant line and wavelength.     |
+//   Setup paths prepare temperature/pressure-dependent line constants so repeated evaluation reads compact    |
+//   WeakLinePreparedLineState rows.                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   The small structs below are stack values. Prepared weak-line arrays are owned by WeakLinePreparedState in |
+//   types.zig and reused by line-list and forward-model carrier loops.                                        |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// ComplexProbability ---------------------------------------------------------------------------------------- |
+// Complex probability function result used by Voigt and line-mixing formulas.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wr : f64                                                                                           |
+// [ 8..15] wi : f64                                                                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B; usually stack returned                                                      |
 pub const ComplexProbability = struct {
     wr: f64,
     wi: f64,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: real=8 B, imag=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// VoigtProfile ---------------------------------------------------------------------------------------------- |
+// Real and imaginary Voigt profile terms for the scalar weak-line path.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] real : f64                                                                                         |
+// [ 8..15] imag : f64                                                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B; usually stack returned                                                      |
 pub const VoigtProfile = struct {
     real: f64,
     imag: f64,
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: prefactor=8 B, cpf=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// WeakLineVoigtState ---------------------------------------------------------------------------------------- |
+// Scalar weak-line Voigt state before conversion into the compact prepared-row form.                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] prefactor : f64                                                                                    |
+// [ 8..23] cpf       : ComplexProbability                                                                     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B; usually stack returned                                                      |
 pub const WeakLineVoigtState = struct {
     prefactor: f64,
     cpf: ComplexProbability,
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: evaluation_wavenumber_cm1=8 B, cutoff_grid_index=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// WeakLineWavelengthState ----------------------------------------------------------------------------------- |
+// Wavelength-local state shared across prepared weak-line cutoff and sigma evaluation.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] evaluation_wavenumber_cm1 : f64                                                                    |
+// [ 8..23] cutoff_grid_index        : ?usize                                                                  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B; one per evaluated wavelength                                                |
 pub const WeakLineWavelengthState = struct {
     evaluation_wavenumber_cm1: f64,
     cutoff_grid_index: ?usize,
@@ -122,12 +157,16 @@ pub fn upperBoundLineIndex(lines: []const Types.SpectroscopyLine, wavelength_nm:
     return low;
 }
 
-// hot path:
-//   when: weak-line Voigt or strong-line line-mixing contribution evaluates CPF terms
-//   work: computes the complex probability function approximation
-//   data: x/y line-shape parameters and fixed approximation coefficients
-//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn complexProbabilityFunction(x: f64, y: f64) ComplexProbability {
+    // complexProbabilityFunction ---------------------------------------------------------------------------- |
+    // Computes the complex probability function approximation used by weak-line Voigt and strong-line         |
+    // line-mixing terms.                                                                                      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Called for each relevant prepared weak line and each active strong line at wavelength time. Fixed     |
+    //   coefficient arrays stay inline and no heap state is touched.                                          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const t = [_]f64{ 0.314240376, 0.947788391, 1.59768264, 2.27950708, 3.02063703, 3.8897249 };
     const u = [_]f64{ 1.01172805, -0.75197147, 1.2557727e-2, 1.00220082e-2, -2.42068135e-4, 5.00848061e-7 };
     const s = [_]f64{ 1.393237, 0.231152406, -0.155351466, 6.21836624e-3, 9.19082986e-5, -6.27525958e-7 };
@@ -194,11 +233,6 @@ pub fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight
         wavenumber_cm1;
 }
 
-// hot path:
-//   when: weak-line state is prepared for a thermodynamic profile node
-//   work: computes pressure/temperature-dependent Voigt state for one line
-//   data: line coefficients, temperature, pressure scale, partition-function ratio
-//   follow: prepareWeakLinePreparedLineState and prepared weak-line arrays
 pub fn prepareWeakLineVoigtState(
     wavelength_nm: f64,
     line: Types.SpectroscopyLine,
@@ -206,6 +240,14 @@ pub fn prepareWeakLineVoigtState(
     pressure_atm: f64,
     reference_temperature_k: f64,
 ) WeakLineVoigtState {
+    // prepareWeakLineVoigtState ----------------------------------------------------------------------------- |
+    // Computes pressure/temperature-dependent Voigt state for one weak line.                                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs while weak-line state is prepared for a thermodynamic profile node. The prepared-row path below  |
+    //   stores the reusable pieces and avoids rebuilding them for every wavelength.                           |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const Strong = @import("strong_lines.zig");
 
     const safe_temperature = @max(temperature_k, 150.0);
@@ -271,17 +313,19 @@ pub fn prepareWeakLineVoigtState(
     };
 }
 
-// hot path:
-//   when: weak-line prepared state is filled during absorber/profile setup
-//   work: stores compact line-shape and strength terms for repeated wavelength evaluation
-//   data: spectroscopy line, gas/isotope mass, thermodynamic state, prepared-line output
-//   follow: preparedWeakLineInsideVendorCutoff and weakLineSigmaPreparedWithStimulatedEmissionScale
 pub fn prepareWeakLinePreparedLineState(
     line: Types.SpectroscopyLine,
     temperature_k: f64,
     pressure_atm: f64,
     reference_temperature_k: f64,
 ) Types.WeakLinePreparedLineState {
+    // prepareWeakLinePreparedLineState ---------------------------------------------------------------------- |
+    // Stores compact line-shape and strength terms for repeated wavelength evaluation.                        |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs during absorber/profile setup. The row is streamed by prepared weak-line sigma.                  |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
     return prepareWeakLinePreparedLineStateFromSafe(
@@ -395,15 +439,31 @@ pub fn prepareWeakLineWavelengthState(
     runtime_controls: Types.SpectroscopyRuntimeControls,
 ) WeakLineWavelengthState {
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+    const has_precomputed_wavenumber_grid =
+        runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
+        runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2;
+    const has_wavelength_grid = runtime_controls.cutoff_grid_wavelengths_nm.len >= 2;
+    const cutoff_grid_index = choose_cutoff_grid_index: {
+        if (has_precomputed_wavenumber_grid) {
+            break :choose_cutoff_grid_index nearestWavenumberGridIndexFromWavenumbers(
+                runtime_controls.cutoff_grid_wavenumbers_cm1,
+                evaluation_wavenumber_cm1,
+            );
+        }
+
+        if (has_wavelength_grid) {
+            break :choose_cutoff_grid_index nearestWavenumberGridIndex(
+                runtime_controls.cutoff_grid_wavelengths_nm,
+                evaluation_wavenumber_cm1,
+            );
+        }
+
+        break :choose_cutoff_grid_index null;
+    };
+
     return .{
         .evaluation_wavenumber_cm1 = evaluation_wavenumber_cm1,
-        .cutoff_grid_index = if (runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
-            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2)
-            nearestWavenumberGridIndexFromWavenumbers(runtime_controls.cutoff_grid_wavenumbers_cm1, evaluation_wavenumber_cm1)
-        else if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2)
-            nearestWavenumberGridIndex(runtime_controls.cutoff_grid_wavelengths_nm, evaluation_wavenumber_cm1)
-        else
-            null,
+        .cutoff_grid_index = cutoff_grid_index,
     };
 }
 
@@ -499,11 +559,6 @@ pub fn weakLinePreparedThermodynamicScale(safe_temperature: f64, safe_pressure: 
         1013.25;
 }
 
-// hot path:
-//   when: each prepared weak line in the relevant window contributes to sigma
-//   work: evaluates cutoff, line-shape, and stimulated-emission-scaled sigma
-//   data: prepared weak-line state, wavelength state, thermodynamic scale
-//   follow: complexProbabilityFunction and relevant weak-line window ordering
 pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     wavelength_state: WeakLineWavelengthState,
     prepared_line: Types.WeakLinePreparedLineState,
@@ -511,6 +566,14 @@ pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
     stimulated_emission_scale: f64,
     thermodynamic_scale: f64,
 ) f64 {
+    // weakLineSigmaPreparedWithStimulatedEmissionScale ------------------------------------------------------ |
+    // Evaluates cutoff, line shape, and stimulated-emission-scaled sigma for one prepared weak line.          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Called for each prepared weak line in the relevant wavelength window. The caller precomputes the      |
+    //   wavelength and thermodynamic scale shared by that window.                                             |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) return 0.0;
     const cpf = complexProbabilityFunction(
         (prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1) * prepared_line.cte,
@@ -530,20 +593,24 @@ fn preparedWeakLineInsideVendorCutoff(
     const window_cm1 = runtime_controls.cutoff_cm1 orelse return true;
 
     if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
-        const lower_wavelength_endpoint_index, const upper_wavelength_endpoint_index = if (runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
-            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2)
-            .{
-                nearestWavenumberGridIndexFromWavenumbers(
-                    runtime_controls.cutoff_grid_wavenumbers_cm1,
-                    prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
-                ),
-                nearestWavenumberGridIndexFromWavenumbers(
-                    runtime_controls.cutoff_grid_wavenumbers_cm1,
-                    prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
-                ),
+        const has_precomputed_wavenumber_grid =
+            runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
+            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2;
+        const lower_wavelength_endpoint_index, const upper_wavelength_endpoint_index = choose_endpoint_indices: {
+            if (has_precomputed_wavenumber_grid) {
+                break :choose_endpoint_indices .{
+                    nearestWavenumberGridIndexFromWavenumbers(
+                        runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
+                    ),
+                    nearestWavenumberGridIndexFromWavenumbers(
+                        runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
+                    ),
+                };
             }
-        else
-            .{
+
+            break :choose_endpoint_indices .{
                 nearestWavenumberGridIndex(
                     runtime_controls.cutoff_grid_wavelengths_nm,
                     prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
@@ -553,14 +620,20 @@ fn preparedWeakLineInsideVendorCutoff(
                     prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
                 ),
             };
+        };
         const evaluation_index = wavelength_state.cutoff_grid_index.?;
         const start_index = @min(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
         const end_index = @max(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
+
         return evaluation_index >= start_index and evaluation_index <= end_index;
     }
 
     const fallback_cutoff_cm1 = window_cm1 + Types.vendor_cutoff_boundary_margin_cm1;
-    return @abs(prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1) <= fallback_cutoff_cm1;
+    const center_distance_cm1 = @abs(
+        prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1,
+    );
+
+    return center_distance_cm1 <= fallback_cutoff_cm1;
 }
 
 fn weakLineInsideVendorCutoff(
@@ -574,26 +647,31 @@ fn weakLineInsideVendorCutoff(
     const shifted_center_wavenumber_cm1 = Strong.shiftedLineCenterWavenumberCm1(line, pressure_atm);
 
     if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
+
         // PARITY:
         //   `HITRANModule::CalculatAbsXsec` computes nearest HR-grid indices
         //   for `Lsig +/- cutoff` with `minloc`, then loops inclusively from
         //   the high-wavenumber endpoint to the low-wavenumber endpoint. The
         //   retained O2 A grid is stored as increasing wavelength, so index
         //   order is the opposite of wavenumber order but still monotonic.
-        const lower_wavelength_endpoint_index, const upper_wavelength_endpoint_index = if (runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
-            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2)
-            .{
-                nearestWavenumberGridIndexFromWavenumbers(
-                    runtime_controls.cutoff_grid_wavenumbers_cm1,
-                    shifted_center_wavenumber_cm1 + window_cm1,
-                ),
-                nearestWavenumberGridIndexFromWavenumbers(
-                    runtime_controls.cutoff_grid_wavenumbers_cm1,
-                    shifted_center_wavenumber_cm1 - window_cm1,
-                ),
+        const has_precomputed_wavenumber_grid =
+            runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
+            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2;
+        const lower_wavelength_endpoint_index, const upper_wavelength_endpoint_index = choose_endpoint_indices: {
+            if (has_precomputed_wavenumber_grid) {
+                break :choose_endpoint_indices .{
+                    nearestWavenumberGridIndexFromWavenumbers(
+                        runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        shifted_center_wavenumber_cm1 + window_cm1,
+                    ),
+                    nearestWavenumberGridIndexFromWavenumbers(
+                        runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        shifted_center_wavenumber_cm1 - window_cm1,
+                    ),
+                };
             }
-        else
-            .{
+
+            break :choose_endpoint_indices .{
                 nearestWavenumberGridIndex(
                     runtime_controls.cutoff_grid_wavelengths_nm,
                     shifted_center_wavenumber_cm1 + window_cm1,
@@ -603,14 +681,20 @@ fn weakLineInsideVendorCutoff(
                     shifted_center_wavenumber_cm1 - window_cm1,
                 ),
             };
+        };
         const evaluation_index = wavelength_state.cutoff_grid_index.?;
         const start_index = @min(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
         const end_index = @max(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
+
         return evaluation_index >= start_index and evaluation_index <= end_index;
     }
 
     const fallback_cutoff_cm1 = window_cm1 + Types.vendor_cutoff_boundary_margin_cm1;
-    return @abs(shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1) <= fallback_cutoff_cm1;
+    const center_distance_cm1 = @abs(
+        shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1,
+    );
+
+    return center_distance_cm1 <= fallback_cutoff_cm1;
 }
 
 fn nearestWavenumberGridIndex(wavelengths_nm: []const f64, target_wavenumber_cm1: f64) usize {
@@ -727,6 +811,7 @@ fn nearestOfTwoWavenumberGridIndices(
 ) usize {
     const lower_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[lower_index]) - target_wavenumber_cm1);
     const upper_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[upper_index]) - target_wavenumber_cm1);
+
     // PARITY:
     //   Fortran `minloc` returns the first matching array element on ties.
     return if (upper_delta < lower_delta) upper_index else lower_index;
@@ -740,6 +825,7 @@ fn nearestOfTwoPrecomputedWavenumberGridIndices(
 ) usize {
     const lower_delta = @abs(wavenumbers_cm1[lower_index] - target_wavenumber_cm1);
     const upper_delta = @abs(wavenumbers_cm1[upper_index] - target_wavenumber_cm1);
+
     // PARITY:
     //   Fortran `minloc` returns the first matching array element on ties.
     return if (upper_delta < lower_delta) upper_index else lower_index;

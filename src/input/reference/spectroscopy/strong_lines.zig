@@ -1,18 +1,39 @@
-// Strong-line spectroscopy helpers and isotopologue-specific scaling logic.
-
 const std = @import("std");
 const hitran_partition_tables = @import("../../hitran_partition_tables.zig");
 const Core = @import("physics_core.zig");
 const Types = @import("types.zig");
 
-// layout(64-bit):
-//   size: 5136 B, align: 8 B
-//   field storage: 5136 B across 7 fields; largest: population_t=1024 B, dipole_t=1024 B, mod_sig_cm1=1024 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 5 fields reserve 5120 B inside each instance
-//   cache span: 81 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 5136 B (5.016 KiB); total = per instance * live instance count
+// strong_lines.zig ------------------------------------------------------------------------------------------ |
+// Strong-line spectroscopy helpers and isotopologue-specific scaling logic.                                   |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Strong-line contribution reads prepared temperature/pressure arrays and calls the shared CPF routine for  |
+//   each active sidecar at wavelength time.                                                                   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   StrongLineConvTPState is the fixed-capacity stack form. Types.StrongLinePreparedState is the persistent   |
+//   exactly-sized heap-backed form used by profile caches and support rows.                                   |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// StrongLineConvTPState ------------------------------------------------------------------------------------- |
+// Fixed-capacity strong-line preparation row matching the DISAMAR ConvTP working state.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 5136 B (5.016 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..   7] line_count               : usize                                                               |
+// [   8..  15] sig_moy_cm1              : f64                                                                 |
+// [  16..1039] population_t             : [128]f64                                                            |
+// [1040..2063] dipole_t                 : [128]f64                                                            |
+// [2064..3087] mod_sig_cm1              : [128]f64                                                            |
+// [3088..4111] half_width_cm1_at_t      : [128]f64                                                            |
+// [4112..5135] line_mixing_coefficients : [128]f64                                                            |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// inline arrays: five [128]f64 arrays reserve 5120 B inside each instance                                     |
+// cache span: 81 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 5136 B; use Types.StrongLinePreparedState for retained exactly-sized storage      |
 pub const StrongLineConvTPState = struct {
     line_count: usize = 0,
     sig_moy_cm1: f64 = 0.0,
@@ -69,11 +90,6 @@ pub fn strongLineContribution(
     };
 }
 
-// hot path:
-//   when: each strong-line sidecar contributes to sigma at a wavelength
-//   work: evaluates prepared line-mixing contribution using CPF terms
-//   data: strong-line sidecar, prepared ConvTP state, wavelength, temperature scale
-//   follow: complexProbabilityFunction and relaxation-state layout
 pub fn strongLineContributionPrepared(
     wavelength_nm: f64,
     strong_lines: []const Types.SpectroscopyStrongLine,
@@ -82,6 +98,14 @@ pub fn strongLineContributionPrepared(
     temperature_k: f64,
     pressure_scale: f64,
 ) Types.SpectroscopyEvaluation {
+    // strongLineContributionPrepared ------------------------------------------------------------------------ |
+    // Evaluates prepared O2 line-mixing contribution for one strong-line sidecar.                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Called for each active strong-line sidecar at wavelength time. Reads one slot from each prepared      |
+    //   strong-line array and calls complexProbabilityFunction once.                                          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
@@ -124,17 +148,20 @@ fn o2StrongLineMolecularWeight() f64 {
     return 31.989830;
 }
 
-// hot path:
-//   when: strong-line sidecars are prepared for a thermodynamic state
-//   work: computes ConvTP relaxation terms for all active strong lines
-//   data: strong-line sidecar array, relaxation matrix, pressure scale, temperature
-//   follow: strongLineContributionPrepared and state.line_count ordering
 pub fn prepareStrongLineConvTPState(
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,
     temperature_k: f64,
     pressure_atm: f64,
 ) StrongLineConvTPState {
+    // prepareStrongLineConvTPState -------------------------------------------------------------------------- |
+    // Computes fixed-capacity ConvTP relaxation terms for all active strong lines.                            |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs during strong-line sidecar preparation for one thermodynamic state. This stack form is useful    |
+    //   for one-shot evaluation, while the persistent prepared-state path below avoids carrying 5 KiB rows.   |
+    // ------------------------------------------------------------------------------------------------------- |
+
     var relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 = undefined;
     return prepareStrongLineConvTPStateWithScratch(
         strong_lines,
@@ -154,7 +181,11 @@ pub fn prepareStrongLineConvTPStateWithScratch(
 ) StrongLineConvTPState {
     const safe_temperature = @max(temperature_k, 150.0);
     const temperature_ratio = Types.hitran_reference_temperature_k / safe_temperature;
-    const partition_ratio = hitran_partition_tables.ratioT0OverT(66, safe_temperature, Types.hitran_reference_temperature_k) orelse temperature_ratio;
+    const partition_ratio = hitran_partition_tables.ratioT0OverT(
+        66,
+        safe_temperature,
+        Types.hitran_reference_temperature_k,
+    ) orelse temperature_ratio;
     const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), Types.max_strong_line_sidecars);
     std.debug.assert(line_count == 0 or relaxation_weights.len / line_count >= line_count);
 
@@ -176,11 +207,6 @@ pub fn prepareStrongLineConvTPStateWithScratch(
     return state;
 }
 
-// hot path:
-//   when: preparing persistent strong-line state for profile nodes or support rows
-//   work: fills exactly-sized prepared slices and avoids the 136 KiB max-capacity temporary
-//   data: strong-line sidecars, relaxation-matrix scratch, pressure/temperature inputs, prepared output
-//   follow: prepareStrongLineStateInto and strongLineContributionPrepared
 pub fn prepareStrongLinePreparedStateInto(
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,
@@ -189,9 +215,21 @@ pub fn prepareStrongLinePreparedStateInto(
     relaxation_weights: []f64,
     prepared: *Types.StrongLinePreparedState,
 ) void {
+    // prepareStrongLinePreparedStateInto -------------------------------------------------------------------- |
+    // Fills exactly-sized prepared strong-line slices for profile nodes or support rows.                      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs during persistent strong-line setup and avoids retaining the fixed-capacity 5 KiB ConvTP row.    |
+    //   The prepared output is streamed by strongLineContributionPrepared.                                    |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const safe_temperature = @max(temperature_k, 150.0);
     const temperature_ratio = Types.hitran_reference_temperature_k / safe_temperature;
-    const partition_ratio = hitran_partition_tables.ratioT0OverT(66, safe_temperature, Types.hitran_reference_temperature_k) orelse temperature_ratio;
+    const partition_ratio = hitran_partition_tables.ratioT0OverT(
+        66,
+        safe_temperature,
+        Types.hitran_reference_temperature_k,
+    ) orelse temperature_ratio;
     const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), Types.max_strong_line_sidecars);
     std.debug.assert(prepared.population_t.len >= line_count);
     std.debug.assert(prepared.dipole_t.len >= line_count);
@@ -231,11 +269,17 @@ fn fillStrongLineState(
 ) void {
     for (0..line_count) |row_index| {
         const strong_line = strong_lines[row_index];
+        const inverse_temperature_delta =
+            (1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature);
+        const population_energy_scale = Types.hitran_o2_line_mixing_hc_over_kb_cm_k *
+            strong_line.lower_state_energy_cm1 *
+            inverse_temperature_delta;
         state.population_t[row_index] = strong_line.population_t0 *
             partition_ratio *
-            @exp(Types.hitran_o2_line_mixing_hc_over_kb_cm_k * strong_line.lower_state_energy_cm1 * ((1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature)));
+            @exp(population_energy_scale);
         state.dipole_t[row_index] = strong_line.dipole_t0 * std.math.sqrt(temperature_ratio);
-        state.mod_sig_cm1[row_index] = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1;
+        state.mod_sig_cm1[row_index] =
+            strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1;
         state.half_width_cm1_at_t[row_index] = strong_line.air_half_width_cm1 *
             std.math.pow(f64, temperature_ratio, strong_line.temperature_exponent);
 
@@ -246,14 +290,21 @@ fn fillStrongLineState(
                 row_index,
                 column_index,
                 relaxation_matrix.weightAt(row_index, column_index) *
-                    std.math.pow(f64, temperature_ratio, relaxation_matrix.temperatureExponentAt(row_index, column_index)),
+                    std.math.pow(
+                        f64,
+                        temperature_ratio,
+                        relaxation_matrix.temperatureExponentAt(row_index, column_index),
+                    ),
             );
         }
     }
 
     for (0..line_count) |row_index| {
         for (0..line_count) |column_index| {
-            if (strong_lines[column_index].lower_state_energy_cm1 < strong_lines[row_index].lower_state_energy_cm1) continue;
+            const column_energy_cm1 = strong_lines[column_index].lower_state_energy_cm1;
+            const row_energy_cm1 = strong_lines[row_index].lower_state_energy_cm1;
+            if (column_energy_cm1 < row_energy_cm1) continue;
+
             setRelaxationWeight(
                 relaxation_weights,
                 line_count,
@@ -277,12 +328,14 @@ fn fillStrongLineState(
         weighted_center_sum += state.mod_sig_cm1[line_index] * weight;
         weighted_center_norm += weight;
     }
-    state.sig_moy_cm1 = if (weighted_center_norm > 0.0)
-        weighted_center_sum / weighted_center_norm
-    else if (line_count != 0)
-        state.mod_sig_cm1[0]
-    else
-        0.0;
+
+    if (weighted_center_norm > 0.0) {
+        state.sig_moy_cm1 = weighted_center_sum / weighted_center_norm;
+    } else if (line_count != 0) {
+        state.sig_moy_cm1 = state.mod_sig_cm1[0];
+    } else {
+        state.sig_moy_cm1 = 0.0;
+    }
 
     for (0..line_count) |column_index| {
         var upper_sum: f64 = 0.0;
@@ -323,8 +376,10 @@ fn fillStrongLineState(
         var mixing_sum: f64 = 0.0;
         for (0..line_count) |other_index| {
             if (other_index == line_index) continue;
+
             const delta_sig = state.mod_sig_cm1[line_index] - state.mod_sig_cm1[other_index];
             if (delta_sig == 0.0) continue;
+
             mixing_sum += 2.0 * state.dipole_t[other_index] / state.dipole_t[line_index] *
                 relaxationWeightAt(relaxation_weights, line_count, other_index, line_index) /
                 delta_sig;
@@ -350,6 +405,7 @@ pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm
         line.pressure_shift_cm1
     else
         -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+
     // PARITY:
     //   `HITRANModule::CalculatAbsXsec` applies pressure shift as
     //   `Sig + delt * P` in wavenumber space. The Zig line payload stores the
@@ -389,6 +445,7 @@ pub fn deriveIsotopologueCode(gas_index: u16, isotope_number: u8) i32 {
             6 => 172,
             else => 160 + @as(i32, @intCast(isotope_number)),
         },
+
         7 => switch (isotope_number) {
             1 => 66,
             2 => 68,
@@ -396,6 +453,7 @@ pub fn deriveIsotopologueCode(gas_index: u16, isotope_number: u8) i32 {
             4 => 69,
             else => 70 + @as(i32, @intCast(isotope_number)),
         },
+
         2 => switch (isotope_number) {
             1 => 626,
             2 => 636,
@@ -405,6 +463,7 @@ pub fn deriveIsotopologueCode(gas_index: u16, isotope_number: u8) i32 {
             6 => 637,
             else => 620 + @as(i32, @intCast(isotope_number)),
         },
+
         5 => switch (isotope_number) {
             1 => 26,
             2 => 36,
@@ -414,17 +473,20 @@ pub fn deriveIsotopologueCode(gas_index: u16, isotope_number: u8) i32 {
             6 => 37,
             else => 20 + @as(i32, @intCast(isotope_number)),
         },
+
         6 => switch (isotope_number) {
             1 => 211,
             2 => 311,
             3 => 212,
             else => 210 + @as(i32, @intCast(isotope_number)),
         },
+
         11 => switch (isotope_number) {
             1 => 4111,
             2 => 5111,
             else => 4100 + @as(i32, @intCast(isotope_number)),
         },
+
         else => @as(i32, gas_index) * 100 + @as(i32, isotope_number),
     };
 }
