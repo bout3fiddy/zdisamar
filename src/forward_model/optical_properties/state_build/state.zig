@@ -12,21 +12,25 @@ const Allocator = std.mem.Allocator;
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
 // state.zig --------------------------------------------------------------------------------------------------|
-// Core row types for optical-property preparation and transport setup.                                        |
+// Compiler-measured row definitions for optical-property preparation, RTM setup, and diagnostics.             |
 //                                                                                                             |
-// used by                                                                                                     |
-//   context, absorber preparation, layer accumulation, final assembly, wavelength evaluation, and RTM input   |
-//   builders.                                                                                                 |
+// call path                                                                                                   |
+//   Context owns the mutable preparation arrays.                                                              |
+//   Absorbers build active absorber rows and density columns.                                                 |
+//   layer_accumulation writes PreparedLayer and PreparedSublayer rows.                                        |
+//   finalize moves those rows into PreparedOpticalState, which is defined in prepared_state.zig.              |
+//   forward_layers, rtm_quadrature, shared_carrier, diagnostics, and retrieval read these rows per wavelength.|
 //                                                                                                             |
-// important rows                                                                                              |
-//   Active* rows describe scene absorbers before preparation.                                                 |
-//   Prepared* rows own or borrow density, spectroscopy, layer, sublayer, and LUT data after preparation.      |
-//   OpticalDepthBreakdown and EvaluatedLayer are short-lived wavelength results.                              |
-//   SharedRtm* rows hold cached geometry for reduced shared-RTM layer routes.                                 |
+// row groups                                                                                                  |
+//   Active* rows     : scene absorber controls after input validation, before prepared density columns exist  |
+//   Prepared* rows   : retained line/cross-section, layer, sublayer, and LUT rows after preparation           |
+//   wavelength rows  : OpticalDepthBreakdown and EvaluatedLayer, short-lived results for one wavelength       |
+//   SharedRtm* rows  : cached geometry used only by reduced shared-RTM interval routes                        |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Most top-level rows are headers over out-of-line arrays. Ownership lives on PreparedOpticalState in       |
-//   prepared_state.zig and is transferred by finalize.zig.                                                    |
+//   The boxes below show compiler-measured storage order, not source order. PreparedOpticalState owns the     |
+//   final slice headers and ownership flags; these row types keep the per-row payload shape close to the      |
+//   loops that fill and read them.                                                                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ActiveLineAbsorber -----------------------------------------------------------------------------------------|
@@ -256,6 +260,10 @@ pub const PreparedCrossSectionAbsorber = struct {
 // cache span: 4 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 208 B (0.203 KiB); total = per instance * live instance count                     |
 //                                                                                                             |
+// support-index tail                                                                                          |
+// [192..207] stores {sublayer_start_index, layer_index, interval_index_1based, sublayer_count}. Shape checks  |
+// and reduced shared-RTM routing read this tail even when they do not need the physical f64 fields.           |
+//                                                                                                             |
 // hot path                                                                                                    |
 // Index-only loops read the four u32 support fields at the end of this 208 B row. The row stays whole         |
 // because forward-layer, RTM quadrature, and optical-depth paths consume the same layer array's physical      |
@@ -346,6 +354,11 @@ pub const PreparedSupportRowKind = enum {
 // unused bits: 56 padding + 7 enum-storage slack = 63 bits                                                    |
 // cache span: 4 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 256 B (0.250 KiB); total = per instance * live instance count                     |
+//                                                                                                             |
+// hot path                                                                                                    |
+// Shared-carrier and reduced RTM routes read thermodynamics, optical depths, aerosol fields, and density      |
+// indexes from the same support row. The row is wide, but each pass usually needs several neighboring         |
+// physical fields; splitting only one or two columns would add ownership and stitching costs.                 |
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
