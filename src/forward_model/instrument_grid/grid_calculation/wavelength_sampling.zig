@@ -70,45 +70,101 @@ const WavelengthSamplingErrorState = struct {
     }
 };
 
-// WavelengthSamplingWorker ----------------------------------------------------------------------------------------------|
-// Worker context for filling a static range or queue of wavelength sampling rows.                                        |
+// WavelengthSamplingRequest ---------------------------------------------------------------------------------------------|
+// Read-only inputs shared by every wavelength-sampling row. This value owns no storage; it points at the                 |
+// scene, prepared optical state, resolved output axis, and adaptive cache tables built by the caller.                    |
 //                                                                                                                        |
 // layout(64-bit)                                                                                                         |
-// size: 176 B (0.172 KiB), align: 8 B                                                                                    |
+// size: 112 B (0.109 KiB), align: 8 B                                                                                    |
 //                                                                                                                        |
 // memory                                                                                                                 |
-// [  0.. 15] allocator                  : Allocator                                                                      |
-// [ 16.. 23] scene                      : *const Scene                                                                   |
-// [ 24.. 31] prepared                   : *const OpticsPreparation.PreparedOpticalState                                  |
-// [ 32.. 39] resolved_axis              : *const grid.ResolvedAxis                                                       |
-// [ 40.. 71] radiance_calibration       : calibration.Calibration                                                        |
-// [ 72..103] irradiance_calibration     : calibration.Calibration                                                        |
-// [104..111] radiance_adaptive_cache    : *const instrument_integration.AdaptiveKernelCache                              |
-// [112..119] irradiance_adaptive_cache  : *const instrument_integration.AdaptiveKernelCache                              |
-// [120..127] kernel_storage_builder     : *KernelStorageBuilder                                                          |
-// [128..143] plans                      : []WavelengthSampling                                                           |
-// [144..151] queue                      : *work_partition.ChunkQueue                                                     |
-// [152..159] error_state                : *WavelengthSamplingErrorState                                                  |
-// [160..167] worker_index               : usize                                                                          |
-// [168..168] can_cache_adaptive_plan    : bool                                                                           |
-// [169..175] padding                    : 7 B                                                                            |
+// [  0..  7] scene                     : *const Scene                                                                    |
+// [  8.. 15] prepared                  : *const OpticsPreparation.PreparedOpticalState                                   |
+// [ 16.. 23] resolved_axis             : *const grid.ResolvedAxis                                                        |
+// [ 24.. 55] radiance_calibration      : calibration.Calibration                                                         |
+// [ 56.. 87] irradiance_calibration    : calibration.Calibration                                                         |
+// [ 88.. 95] radiance_adaptive_cache   : *const instrument_integration.AdaptiveKernelCache                               |
+// [ 96..103] irradiance_adaptive_cache : *const instrument_integration.AdaptiveKernelCache                               |
+// [104..104] can_cache_adaptive_plan   : bool                                                                            |
+// [105..111] padding                   : 7 B                                                                             |
 //                                                                                                                        |
-// pointer and slice fields carry referenced storage not included in the 176 B struct size.                               |
+// out-of-line storage: all pointer fields borrow caller-owned setup and cache tables.                                    |
 // unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                               |
-// cache span: 3 cache lines at 64 B per line                                                                             |
-// footprint: per instance = 176 B (0.172 KiB); total also includes referenced storage above                              |
-const WavelengthSamplingWorker = struct {
-    allocator: Allocator,
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 112 B (0.109 KiB); total excludes borrowed scene/prepared/cache storage                      |
+const WavelengthSamplingRequest = struct {
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     resolved_axis: *const grid.ResolvedAxis,
     radiance_calibration: calibration.Calibration,
     irradiance_calibration: calibration.Calibration,
-    can_cache_adaptive_plan: bool,
     radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
     irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
+    can_cache_adaptive_plan: bool,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// WavelengthSamplingOutput ----------------------------------------------------------------------------------------------|
+// Borrowed row table plus the side-array builder used when a row has a large adaptive integration kernel.                |
+// The builder remains the only owner of temporary side storage until buildWavelengthSampling moves it into               |
+// OwnedWavelengthSampling.                                                                                               |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] kernel_storage_builder : *KernelStorageBuilder                                                                |
+// [ 8..23] plans                  : []WavelengthSampling                                                                 |
+//                                                                                                                        |
+// out-of-line storage: plans and builder arrays are borrowed from buildWavelengthSampling.                               |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 24 B (0.023 KiB); total excludes borrowed row and side-array storage                         |
+const WavelengthSamplingOutput = struct {
     kernel_storage_builder: *KernelStorageBuilder,
     plans: []WavelengthSampling,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// WavelengthSamplingRange -----------------------------------------------------------------------------------------------|
+// Contiguous output-row range assigned to one worker chunk.                                                              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 16 B (0.016 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] start : usize                                                                                                 |
+// [ 8..15] end   : usize                                                                                                 |
+//                                                                                                                        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live chunk count                                    |
+const WavelengthSamplingRange = struct {
+    start: usize,
+    end: usize,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// WavelengthSamplingWorker ----------------------------------------------------------------------------------------------|
+// Worker context for filling a queue of wavelength sampling table rows.                                                  |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 72 B (0.070 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] allocator    : Allocator                                                                                      |
+// [16..23] request      : *const WavelengthSamplingRequest                                                               |
+// [24..47] output       : WavelengthSamplingOutput                                                                       |
+// [48..55] queue        : *work_partition.ChunkQueue                                                                     |
+// [56..63] error_state  : *WavelengthSamplingErrorState                                                                  |
+// [64..71] worker_index : usize                                                                                          |
+//                                                                                                                        |
+// pointer and slice fields carry referenced storage not included in the 72 B struct size.                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 72 B (0.070 KiB); total also includes referenced request/output storage                      |
+const WavelengthSamplingWorker = struct {
+    allocator: Allocator,
+    request: *const WavelengthSamplingRequest,
+    output: WavelengthSamplingOutput,
     queue: *work_partition.ChunkQueue,
     error_state: *WavelengthSamplingErrorState,
     worker_index: usize,
@@ -265,19 +321,21 @@ pub fn buildWavelengthSampling(
         defer zone.end();
         // end instrumentation: trace zone: wavelength sampling loop ---------------------------------------------------- |
 
-        try fillWavelengthSamplingPlans(
-            allocator,
-            scene,
-            prepared,
-            resolved_axis,
-            radiance_calibration,
-            irradiance_calibration,
-            can_cache_adaptive_plan,
-            &radiance_adaptive_cache,
-            &irradiance_adaptive_cache,
-            &kernel_storage_builder,
-            plans,
-        );
+        const sampling_request = WavelengthSamplingRequest{
+            .scene = scene,
+            .prepared = prepared,
+            .resolved_axis = resolved_axis,
+            .radiance_calibration = radiance_calibration,
+            .irradiance_calibration = irradiance_calibration,
+            .radiance_adaptive_cache = &radiance_adaptive_cache,
+            .irradiance_adaptive_cache = &irradiance_adaptive_cache,
+            .can_cache_adaptive_plan = can_cache_adaptive_plan,
+        };
+        const sampling_output = WavelengthSamplingOutput{
+            .kernel_storage_builder = &kernel_storage_builder,
+            .plans = plans,
+        };
+        try fillWavelengthSamplingPlans(allocator, &sampling_request, sampling_output);
     }
     const kernel_offsets_nm = try kernel_storage_builder.offsets_nm.toOwnedSlice(allocator);
     errdefer allocator.free(kernel_offsets_nm);
@@ -292,37 +350,23 @@ pub fn buildWavelengthSampling(
 
 fn fillWavelengthSamplingPlans(
     allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    resolved_axis: *const grid.ResolvedAxis,
-    radiance_calibration: calibration.Calibration,
-    irradiance_calibration: calibration.Calibration,
-    can_cache_adaptive_plan: bool,
-    radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
-    irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
-    kernel_storage_builder: *KernelStorageBuilder,
-    plans: []WavelengthSampling,
+    request: *const WavelengthSamplingRequest,
+    output: WavelengthSamplingOutput,
 ) Error!void {
     // fillWavelengthSamplingPlans ---------------------------------------------------------------------------------------|
     // Fill all plan rows either on the current thread or across worker chunks when the output grid is large.             |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const worker_count = preferredWavelengthSamplingWorkerCount(plans.len);
+    const worker_count = preferredWavelengthSamplingWorkerCount(output.plans.len);
     if (worker_count == 1) {
         return fillWavelengthSamplingPlanRange(
             allocator,
-            scene,
-            prepared,
-            resolved_axis,
-            radiance_calibration,
-            irradiance_calibration,
-            can_cache_adaptive_plan,
-            radiance_adaptive_cache,
-            irradiance_adaptive_cache,
-            kernel_storage_builder,
-            plans,
-            0,
-            plans.len,
+            request,
+            output,
+            .{
+                .start = 0,
+                .end = output.plans.len,
+            },
         );
     }
 
@@ -332,21 +376,13 @@ fn fillWavelengthSamplingPlans(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
-    var queue = work_partition.ChunkQueue.init(plans.len, wavelength_sampling_chunk_size);
+    var queue = work_partition.ChunkQueue.init(output.plans.len, wavelength_sampling_chunk_size);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
             .allocator = allocator,
-            .scene = scene,
-            .prepared = prepared,
-            .resolved_axis = resolved_axis,
-            .radiance_calibration = radiance_calibration,
-            .irradiance_calibration = irradiance_calibration,
-            .can_cache_adaptive_plan = can_cache_adaptive_plan,
-            .radiance_adaptive_cache = radiance_adaptive_cache,
-            .irradiance_adaptive_cache = irradiance_adaptive_cache,
-            .kernel_storage_builder = kernel_storage_builder,
-            .plans = plans,
+            .request = request,
+            .output = output,
             .queue = &queue,
             .error_state = &error_state,
             .worker_index = worker_index,
@@ -412,18 +448,12 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
 
             fillWavelengthSamplingPlanRange(
                 worker.allocator,
-                worker.scene,
-                worker.prepared,
-                worker.resolved_axis,
-                worker.radiance_calibration,
-                worker.irradiance_calibration,
-                worker.can_cache_adaptive_plan,
-                worker.radiance_adaptive_cache,
-                worker.irradiance_adaptive_cache,
-                worker.kernel_storage_builder,
-                worker.plans,
-                chunk.start,
-                chunk.end,
+                worker.request,
+                worker.output,
+                .{
+                    .start = chunk.start,
+                    .end = chunk.end,
+                },
             ) catch |err| {
                 worker.error_state.store(err);
                 return;
@@ -434,18 +464,9 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
 
 fn fillWavelengthSamplingPlanRange(
     allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    resolved_axis: *const grid.ResolvedAxis,
-    radiance_calibration: calibration.Calibration,
-    irradiance_calibration: calibration.Calibration,
-    can_cache_adaptive_plan: bool,
-    radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
-    irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
-    kernel_storage_builder: *KernelStorageBuilder,
-    plans: []WavelengthSampling,
-    start: usize,
-    end: usize,
+    request: *const WavelengthSamplingRequest,
+    output: WavelengthSamplingOutput,
+    range: WavelengthSamplingRange,
 ) Error!void {
     // fillWavelengthSamplingPlanRange -----------------------------------------------------------------------------------|
     // Fill one contiguous output-index range. The IntegrationKernel scratch is reused for radiance and                   |
@@ -453,18 +474,11 @@ fn fillWavelengthSamplingPlanRange(
     // -------------------------------------------------------------------------------------------------------------------|
 
     var integration_scratch: IntegrationKernel = undefined;
-    for (start..end) |index| {
-        plans[index] = try buildWavelengthSamplingPlan(
+    for (range.start..range.end) |index| {
+        output.plans[index] = try buildWavelengthSamplingPlan(
             allocator,
-            scene,
-            prepared,
-            resolved_axis,
-            radiance_calibration,
-            irradiance_calibration,
-            can_cache_adaptive_plan,
-            radiance_adaptive_cache,
-            irradiance_adaptive_cache,
-            kernel_storage_builder,
+            request,
+            output.kernel_storage_builder,
             &integration_scratch,
             index,
         );
@@ -473,14 +487,7 @@ fn fillWavelengthSamplingPlanRange(
 
 fn buildWavelengthSamplingPlan(
     allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    resolved_axis: *const grid.ResolvedAxis,
-    radiance_calibration: calibration.Calibration,
-    irradiance_calibration: calibration.Calibration,
-    can_cache_adaptive_plan: bool,
-    radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
-    irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
+    request: *const WavelengthSamplingRequest,
     kernel_storage_builder: *KernelStorageBuilder,
     integration_scratch: *IntegrationKernel,
     index: usize,
@@ -499,39 +506,39 @@ fn buildWavelengthSamplingPlan(
     //   applied to the center wavelength stored in the plan, then offsets are added later when building misses.          |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const nominal_wavelength_nm = resolvedSampleAtAssumeValid(resolved_axis, index);
-    if (can_cache_adaptive_plan) {
+    const nominal_wavelength_nm = resolvedSampleAtAssumeValid(request.resolved_axis, index);
+    if (request.can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
-            scene,
-            prepared,
+            request.scene,
+            request.prepared,
             .radiance,
             nominal_wavelength_nm,
-            radiance_adaptive_cache,
+            request.radiance_adaptive_cache,
             integration_scratch,
         );
     } else {
         try instrument_integration.integrationForWavelengthChecked(
-            scene,
-            prepared,
+            request.scene,
+            request.prepared,
             .radiance,
             nominal_wavelength_nm,
             integration_scratch,
         );
     }
     const radiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, integration_scratch);
-    if (can_cache_adaptive_plan) {
+    if (request.can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
-            scene,
-            prepared,
+            request.scene,
+            request.prepared,
             .irradiance,
             nominal_wavelength_nm,
-            irradiance_adaptive_cache,
+            request.irradiance_adaptive_cache,
             integration_scratch,
         );
     } else {
         try instrument_integration.integrationForWavelengthChecked(
-            scene,
-            prepared,
+            request.scene,
+            request.prepared,
             .irradiance,
             nominal_wavelength_nm,
             integration_scratch,
@@ -541,11 +548,11 @@ fn buildWavelengthSamplingPlan(
     return .{
         .nominal_wavelength_nm = nominal_wavelength_nm,
         .radiance_wavelength_nm = calibration.shiftedWavelength(
-            radiance_calibration,
+            request.radiance_calibration,
             nominal_wavelength_nm,
         ),
         .irradiance_wavelength_nm = calibration.shiftedWavelength(
-            irradiance_calibration,
+            request.irradiance_calibration,
             nominal_wavelength_nm,
         ),
         .radiance_integration = radiance_integration,
