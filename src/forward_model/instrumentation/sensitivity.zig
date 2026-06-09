@@ -2,20 +2,27 @@ const build_options = @import("build_options");
 const sink = @import("perturbation_sensitivity_sink");
 
 // sensitivity.zig ----------------------------------------------------------------------------------------------|
-// Perturbation facade for ablation sweeps. Disabled builds keep baselines and branches.                         |
+// Perturbation-sensitivity facade for ablation sweeps around selected LABOS decisions.                          |
 //                                                                                                               |
-// inserted in                                                                                                   |
-//   LABOS Fourier loop: weighted rho_m and tail-stop decisions                                                  |
-//   LABOS layer doubling: q-series skip and downstream R-D/T-U/T-D product gates                                |
-//   LABOS scattering orders: first-order and multiple-order convergence decisions                               |
-//   aerosol Jacobians: optical-depth and pressure weighting contributions                                       |
+// called from                                                                                                   |
+//   LABOS execute wraps Fourier contribution, Fourier tail-stop, and aerosol tangent contributions.             |
+//   LABOS layers wraps q-series skip plus downstream R-D, T-U, and T-D product gates.                           |
+//   LABOS orders wraps initial and multiple-scattering convergence decisions.                                   |
+//   The active sweep implementation lives in scaffolding/instrumentation/perturbation; normal builds import     |
+//   the disabled sink stub.                                                                                     |
 //                                                                                                               |
-// enabled by                                                                                                    |
-//   enable_perturbation_sensitivity plus the perturbation_sensitivity_sink research module                      |
+// main paths                                                                                                    |
+//   requested reads build_options.enable_perturbation_sensitivity. enabled also requires the selected sink to   |
+//   report available=true.                                                                                      |
+//   Channel stores stable numeric hook ids used by the sweep sink. Coord stores the local hook coordinates;     |
+//   -1 means the coordinate does not apply at that hook.                                                        |
+//   scalar returns the baseline f64 unless an enabled sweep replaces it. decision returns the baseline branch   |
+//   unless an enabled sweep replaces it.                                                                        |
 //                                                                                                               |
-// public hooks                                                                                                  |
-//   scalar   passes a measured scalar to the active sweep plan                                                  |
-//   decision passes a branch decision to the active sweep plan                                                  |
+// runtime shape                                                                                                 |
+//   Disabled builds preserve physics and branch behavior exactly. Enabled perturbation runs are deliberately    |
+//   allowed to change scalar values or branch decisions for ablation evidence, but the sink stays outside this  |
+//   production-facing facade.                                                                                   |
 // --------------------------------------------------------------------------------------------------------------|
 pub const requested: bool = requested_by_build: {
     if (!@hasDecl(build_options, "enable_perturbation_sensitivity")) break :requested_by_build false;

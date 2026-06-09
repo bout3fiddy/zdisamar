@@ -5,17 +5,29 @@ const ztracy = @import("ztracy");
 const SourceLocation = std.builtin.SourceLocation;
 
 // trace.zig ----------------------------------------------------------------------------------------------------|
-// ztracy facade for timeline captures. Disabled builds return zero-size zones and no-op markers/counters.       |
+// ztracy timeline facade used by product code without importing trace writers or CLI scaffolding.               |
 //                                                                                                               |
-// inserted in                                                                                                   |
-//   input preparation: case loading, scene building, optical setup, grids, and RTM config                       |
-//   product simulation: sampling, cache prefetch, convolution, reflectance, and Jacobian processing             |
-//   LABOS: Fourier loop, PLM basis, RT layer build, layer doubling, orders, reflectance, and Jacobians          |
-//   optimal estimation: iteration, RTM/Jacobian call, normal system, update, and correction paths               |
-//   trace CLIs: frame markers, start/end messages, and named capture boundaries                                 |
+// called from                                                                                                   |
+//   input/o2a_reference/run.zig marks case loading, scene build, optical setup, weak-cutoff, solar rewindow,    |
+//   and RTM config preparation.                                                                                 |
+//   instrument-grid calculation marks wavelength sampling, forward misses, prefetch workers, convolution,       |
+//   reflectance assembly, and Jacobian processing.                                                              |
+//   optical_properties/state_build marks absorber/profile setup, vertical support work, and parallel chunks.    |
+//   LABOS marks Fourier terms, PLM basis, layer build/doubling, orders, reflectance, and Jacobian weighting.    |
+//   optimal_estimation/retrieval marks iteration, RTM/Jacobian calls, normal-system solve, updates, and         |
+//   correction paths.                                                                                           |
 //                                                                                                               |
-// enabled by                                                                                                    |
-//   enable_ztracy plus the real ztracy dependency; otherwise this imports the no-op shim                        |
+// main paths                                                                                                    |
+//   enabled is true only when build_options.enable_ztracy is present and true. build.zig supplies either the    |
+//   real ztracy dependency or the no-op stub module.                                                            |
+//   Zone is an EnabledZone with a ztracy context in trace builds and a DisabledZone with no stored state in     |
+//   normal product/test builds.                                                                                 |
+//   static/deep/named zones, thread names, frame marks, messages, and plots all keep call sites in product code |
+//   while compiling to no-op behavior when tracing is disabled.                                                 |
+//                                                                                                               |
+// runtime shape                                                                                                 |
+//   This facade owns no files, buffers, or capture lifecycle. Trace CLIs and retained trace outputs live under  |
+//   scaffolding/instrumentation; product code only sees these inline wrappers.                                  |
 // --------------------------------------------------------------------------------------------------------------|
 pub const enabled: bool = enabled_by_build: {
     if (!@hasDecl(build_options, "enable_ztracy")) break :enabled_by_build false;

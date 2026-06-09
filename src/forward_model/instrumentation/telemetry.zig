@@ -2,17 +2,28 @@ const build_options = @import("build_options");
 const sink = @import("calculation_telemetry_sink");
 
 // telemetry.zig ------------------------------------------------------------------------------------------------|
-// Calculation telemetry facade for research sinks. Disabled builds drop every row.                              |
+// Structured calculation-telemetry facade for research sinks selected by build.zig.                             |
 //                                                                                                               |
-// inserted in                                                                                                   |
-//   wavelength sampling: kernel fan-out, side samples, and forward-cache misses                                 |
-//   product simulation: reflectance denominator clamps and Jacobian column summaries                            |
-//   LABOS layer math: doubling thresholds, q-series gates, and matrix gates                                     |
-//   LABOS solve loop: scattering-order convergence, Fourier contribution, tail stops, and final result checks   |
-//   optimal estimation: scene, stage, iteration, evaluation, and state-vector context                           |
+// called from                                                                                                   |
+//   wavelength_sampling.zig records kernel fan-out, side samples, and forward-cache miss plans.                 |
+//   simulate.zig records reflectance denominator clamps and Jacobian column summaries.                          |
+//   spectral_forward.zig carries per-sample telemetry context into prefetch workers.                            |
+//   LABOS layers/orders/execute record doubling gates, q-series decisions, scattering-order convergence,        |
+//   Fourier contribution, tail stops, and final result checks.                                                  |
+//   optimal_estimation/retrieval carries scene/stage/iteration/evaluation/state-vector context around OE work.  |
+//   telemetry_test.zig verifies disabled builds keep the facade callable and side-effect free.                  |
 //                                                                                                               |
-// enabled by                                                                                                    |
-//   enable_calculation_telemetry plus the calculation_telemetry_sink research module                            |
+// main paths                                                                                                    |
+//   requested reads build_options.enable_calculation_telemetry. enabled also requires the selected sink to      |
+//   report available=true, so normal product/test builds import the stub sink and drop every row.               |
+//   Stage and Context are sink-owned public types; this facade only forwards context set/get/clear and row      |
+//   emission calls.                                                                                             |
+//   Each public hook is inline and returns immediately when enabled is false, preserving the measured product   |
+//   path unless an explicit research sink is compiled in.                                                       |
+//                                                                                                               |
+// runtime shape                                                                                                 |
+//   This file does not open telemetry outputs, allocate row buffers, or choose report formats. Those details    |
+//   belong to scaffolding/instrumentation sinks selected outside the forward-model source tree.                 |
 // --------------------------------------------------------------------------------------------------------------|
 pub const requested: bool = requested_by_build: {
     if (!@hasDecl(build_options, "enable_calculation_telemetry")) break :requested_by_build false;
