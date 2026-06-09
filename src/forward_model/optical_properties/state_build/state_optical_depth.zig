@@ -13,19 +13,24 @@ const OpticalDepthBreakdown = Types.OpticalDepthBreakdown;
 const EvaluatedLayer = Types.EvaluatedLayer;
 
 // state_optical_depth.zig -----------------------------------------------------------------------------------|
-// Evaluates gas, Rayleigh, CIA, aerosol, and scattering optical-depth breakdowns at one wavelength.          |
+// Evaluates scalar and layer optical-depth breakdowns from a prepared optical state at one wavelength.       |
 //                                                                                                            |
 // called by                                                                                                  |
-//   diagnostics and forward-layer builders that need scalar totals or layer-resolved evaluated rows.         |
+//   PreparedOpticalState helpers, forward_layers, diagnostics, atmospheric budgets, and output reports.      |
 //                                                                                                            |
 // main paths                                                                                                 |
-//   sublayer route: evaluate each PreparedLayer span with a ProfileNodeSpectroscopyCache.                    |
-//   mean route    : use prepared scene means when no sublayer table is present.                              |
-//   layer route   : return an EvaluatedLayer for one prepared layer or support interval.                     |
+//   total route   : sum every prepared layer or prepared scene mean into OpticalDepthBreakdown.              |
+//   layer route   : evaluate one layer/support span into EvaluatedLayer.                                     |
+//   cache route   : reuse ProfileNodeSpectroscopyCache while several layers share a wavelength.              |
+//                                                                                                            |
+// row handoff                                                                                                |
+//   PreparedLayer supplies the support span and representative altitude for sublayer evaluation.             |
+//   PreparedSublayer rows carry temperature, pressure, density, path length, aerosol, and support metadata.  |
+//   Totals are scalar summaries; layer builders use EvaluatedLayer when they must also fill transport rows.  |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs per wavelength sample. The profile cache keeps spectroscopy profile work from repeating while the   |
-//   caller walks several layers at the same wavelength.                                                      |
+//   Runs per high-resolution wavelength. Profile caches prevent repeating spectroscopy over pressure nodes.  |
+//   The PreparedLayer loop reads a few index/altitude fields by pointer; it does not copy the 208 B row.     |
 //                                                                                                            |
 // math                                                                                                       |
 //   tau_total(lambda) = gas absorption + Rayleigh scattering + CIA + aerosol extinction.                     |
@@ -40,16 +45,21 @@ pub fn opticalDepthBreakdownAtWavelength(
     // Accumulate gas, CIA, aerosol, and scattering optical depths at one wavelength.                         |
     //                                                                                                        |
     // hot path                                                                                               |
-    // used by diagnostics and layer-free routes that need a scalar optical-depth breakdown.                  |
+    //   Used by diagnostics and layer-free routes that need a scalar optical-depth breakdown.                |
+    //   A profile cache is built once for the wavelength, then reused while the layer loop walks the state.  |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   PreparedLayer supplies sublayer_start_index, sublayer_count, and representative altitude.            |
+    //   The loop slices PreparedSublayer and strong-line state rows, then calls the layer evaluator.         |
+    //   The result is only a scalar total; callers that need transport rows use forward_layers instead.      |
     //                                                                                                        |
     // memory                                                                                                 |
-    // Layered input reads only support indexes from PreparedLayer before evaluating the matching             |
-    // PreparedSublayer span. Keep the wide layer row whole because the evaluation path consumes the same     |
-    // prepared layer model nearby.                                                                           |
+    //   The PreparedLayer loop uses pointer capture; no 208 B row is copied while reading the support span.  |
+    //   A standalone span column would duplicate the slicing contract already carried by PreparedLayer.      |
     //                                                                                                        |
     // math                                                                                                   |
-    // tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                         |
-    // tau_aerosol_sca  = tau_aerosol * omega0_aerosol                                                        |
+    //   tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                       |
+    //   tau_aerosol_sca  = tau_aerosol * omega0_aerosol                                                      |
     // -------------------------------------------------------------------------------------------------------|
 
     var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);

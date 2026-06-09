@@ -17,23 +17,30 @@ const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
 const centimeters_per_kilometer = 1.0e5;
 
 // forward_layers.zig ----------------------------------------------------------------------------------------|
-// Converts PreparedOpticalState into radiative-transfer ForwardInput and LayerInput rows.                    |
+// Turns PreparedOpticalState into the LayerInput rows and scalar ForwardInput that LABOS consumes.           |
 //                                                                                                            |
 // called by                                                                                                  |
-//   transport-facing forward-model code and diagnostics that need layer-resolved optical depths.             |
+//   forward_input.configuredForwardInput for every high-resolution wavelength miss.                          |
+//   diagnostics and scalar report helpers when they need layer-resolved or total optical depths.             |
 //                                                                                                            |
 // main paths                                                                                                 |
-//   scalar route: evaluate an OpticalDepthBreakdown and build a layer-free ForwardInput.                     |
-//   layer route : fill caller-provided LayerInput rows, then build the ForwardInput around those rows.       |
-//   cache route : reuse ProfileNodeSpectroscopyCache across the wavelength loop.                             |
+//   scalar route : evaluate OpticalDepthBreakdown and build a layer-free ForwardInput.                       |
+//   shared route : reduce cached shared RTM support rows into one LayerInput per transport layer.            |
+//   direct route : evaluate prepared layers or sublayers when shared geometry is not active.                 |
+//   cache route  : reuse ProfileNodeSpectroscopyCache or WavelengthCarrierCache across the wavelength work.  |
+//                                                                                                            |
+// row handoff                                                                                                |
+//   LayerInput is the transport row: optical-depth pieces, Jacobian vectors, mu values, and phase mix.       |
+//   PreparedLayer supplies support spans and fallback physical fields; PreparedSublayer holds support rows.  |
+//   The same LayerInput slice is passed on to RTM quadrature, pseudo-spherical grids, and LABOS execution.   |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs per wavelength sample. LayerInput is intentionally the same wide row consumed by LABOS transport,   |
-//   so adjacent setup and solve stages use the same prepared memory shape.                                   |
+//   Runs per high-resolution wavelength. Caller-owned layer_inputs are refreshed without allocation.         |
+//   Index-only PreparedLayer loops use pointer capture and keep spans beside physical layer fields.          |
 //                                                                                                            |
 // math                                                                                                       |
-//   Converts optical-depth breakdowns into tau_ext, omega0, phase coefficients, geometry cosines, and        |
-//   spectral quadrature weight dlambda.                                                                      |
+//   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda).                                    |
+//   omega0 = scattering optical depth / tau_ext, clamped into physical bounds.                               |
 // -----------------------------------------------------------------------------------------------------------|
 
 fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
@@ -169,20 +176,25 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     compute_jacobian: bool,
 ) OpticalDepthBreakdown {
     // fillForwardLayersAtWavelengthWithSpectroscopyCache ----------------------------------------------------|
-    // Fill transport LayerInput rows without a wavelength carrier cache.                                     |
+    // Fill transport LayerInput rows when only the profile spectroscopy cache is available.                  |
     //                                                                                                        |
     // hot path                                                                                               |
-    // called while building forward inputs for each high-resolution wavelength sample.                       |
-    // work: reduce prepared layers or support rows into per-layer optical-depth fields.                      |
-    // data: PreparedLayer rows, optional PreparedSublayer rows, profile spectroscopy cache, LayerInput rows. |
+    //   Called while building forward inputs for each high-resolution wavelength sample.                     |
+    //   Shared geometry reduces support rows; direct branches evaluate PreparedLayer or PreparedSublayer.    |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   Writes the exact LayerInput slice later passed to RTM quadrature, source interfaces, and LABOS.      |
+    //   PreparedLayer provides support spans, representative altitude, and fallback aerosol profile fields.  |
+    //   PreparedSublayer rows carry the fine thermodynamic/support data used for spectroscopy and CIA.       |
     //                                                                                                        |
     // memory                                                                                                 |
-    // Some loops read only PreparedLayer support indexes. The wide row stays whole because nearby branches   |
-    // consume altitude, aerosol, pressure, and optical-depth fields from the same layer array.               |
+    //   The support-span loops read only a few fields from 208 B PreparedLayer rows, but by pointer.         |
+    //   Keeping span indexes beside physical layer fields avoids synchronizing a second layer-shape array.   |
+    //   A column split would need retained benchmark proof at the forward-input boundary before it is safer. |
     //                                                                                                        |
     // math                                                                                                   |
-    // tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda)                                   |
-    // omega0  = tau_sca / tau_ext                                                                            |
+    //   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda)                                 |
+    //   omega0  = tau_sca / tau_ext                                                                          |
     // -------------------------------------------------------------------------------------------------------|
 
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);

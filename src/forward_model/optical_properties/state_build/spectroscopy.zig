@@ -109,6 +109,23 @@ pub fn resolveContinuumOwnerSpecies(
     line_absorbers: []const State.PreparedLineAbsorber,
     operational_o2_lut: OperationalCrossSectionLut,
 ) ?AbsorberModel.AbsorberSpecies {
+    // resolveContinuumOwnerSpecies ------------------------------------------------------------------------   |
+    // Choose which line-absorber species owns continuum density when scene controls did not name one.         |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   absorbers.zig calls this once while assembling PreparedOpticalState, before wavelength evaluation.    |
+    //                                                                                                         |
+    // decision order                                                                                          |
+    //   operational O2 LUT owns continuum when enabled.                                                       |
+    //   explicit active line species wins next.                                                               |
+    //   a single prepared line absorber owns its own continuum.                                               |
+    //   otherwise O2 is preferred if one prepared line absorber is O2.                                        |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   The fallback scan reads only PreparedLineAbsorber.species from wide descriptors by pointer.           |
+    //   This is setup metadata selection, not a per-wavelength loop; a side species column is not justified.  |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (operational_o2_lut.enabled()) return .o2;
 
     if (active_line_species) |species| return species;
