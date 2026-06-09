@@ -11,16 +11,45 @@ const transport_common = @import("../../radiative_transfer/root.zig");
 const PreparedSublayer = State.PreparedSublayer;
 const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 
-const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 7 fields; largest: gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B, cia_optical_depth_per_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+// carrier_eval.zig ------------------------------------------------------------------------------------------- |
+// Evaluates wavelength-local optical carriers from prepared support rows.                                      |
+//                                                                                                              |
+// called by                                                                                                    |
+//   shared_carrier, rtm_quadrature, source_interfaces, pseudo_spherical, and optical-depth builders.           |
+//                                                                                                              |
+// main path                                                                                                    |
+//   support row -> gas absorption/scattering, CIA, aerosol depth, and phase-weighted carrier rows              |
+//   level row   -> boundary or active carriers for shared RTM geometry                                         |
+//   altitude    -> interpolated carriers for routes that do not land on a prepared support row                 |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   WavelengthCarrierCache stores wavelength constants and epoch-tagged scalar rows so repeated boundary,      |
+//   source-interface, and quadrature passes do not re-evaluate the same support row.                           |
+//                                                                                                              |
+// memory                                                                                                       |
+//   SharedOpticalScalars and SharedOpticalCarrier are compact 40 B value rows. SupportRowScalarCache owns      |
+//   the dense epoch/scalar arrays. WavelengthCarrierCache borrows those arrays plus the spectroscopy cache     |
+//   for one high-resolution wavelength.                                                                        |
+// ------------------------------------------------------------------------------------------------------------ |
+
+// SharedOpticalScalars --------------------------------------------------------------------------------------- |
+// Per-kilometer optical-depth scalar row used by support-row caches and scalar-only callers.                   |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 40 B (0.039 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] gas_absorption_optical_depth_per_km        : f64                                                    |
+// [ 8..15] gas_scattering_optical_depth_per_km        : f64                                                    |
+// [16..23] cia_optical_depth_per_km                   : f64                                                    |
+// [24..31] aerosol_optical_depth_per_km               : f64                                                    |
+// [32..39] aerosol_scattering_optical_depth_per_km    : f64                                                    |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 40 B; total = per instance * live row count                                        |
 pub const SharedOpticalScalars = struct {
     gas_absorption_optical_depth_per_km: f64 = 0.0,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
@@ -40,14 +69,24 @@ pub const SharedOpticalScalars = struct {
             self.aerosol_optical_depth_per_km;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 7 fields; largest: gas_absorption_optical_depth_per_km=8 B, gas_scattering_optical_depth_per_km=8 B, cia_optical_depth_per_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+// SharedOpticalCarrier --------------------------------------------------------------------------------------- |
+// Public carrier row for gas, CIA, and aerosol optical-depth terms at one support or altitude sample.          |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 40 B (0.039 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] gas_absorption_optical_depth_per_km        : f64                                                    |
+// [ 8..15] gas_scattering_optical_depth_per_km        : f64                                                    |
+// [16..23] cia_optical_depth_per_km                   : f64                                                    |
+// [24..31] aerosol_optical_depth_per_km               : f64                                                    |
+// [32..39] aerosol_scattering_optical_depth_per_km    : f64                                                    |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 40 B; total = per instance * live row count                                        |
 pub const SharedOpticalCarrier = struct {
     gas_absorption_optical_depth_per_km: f64 = 0.0,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
@@ -73,20 +112,30 @@ pub const SharedOpticalCarrier = struct {
         };
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// hot path:
-//   when: one cache is owned by each forward-prefetch worker scratch
-//   work: tags wavelength-local scalar cache rows without clearing the tag array per wavelength
-//   data: dense u8 epochs parallel to dense scalar rows
-//   follow: WavelengthCarrierCache.init and cachedSupportRowScalarsRef
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: epochs=16 B, scalars=16 B, epoch=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: epochs is one byte per support row; scalars is one SharedOpticalScalars row per support row
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one per forward-prefetch worker scratch
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// SupportRowScalarCache -------------------------------------------------------------------------------------- |
+// Owns dense support-row cache storage for one worker scratch.                                                 |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 40 B (0.039 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0..15] epochs  : []u8                                                                                      |
+// [16..31] scalars : []SharedOpticalScalars                                                                    |
+// [32..32] epoch   : u8                                                                                        |
+// [33..39] padding : 7 B                                                                                       |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   epochs  : owned, one epoch byte per support row                                                            |
+//   scalars : owned, one 40 B scalar row per support row                                                       |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   nextEpoch advances the wavelength tag without clearing the arrays. Only wraparound clears epochs.          |
+//                                                                                                              |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 40 B plus owned row storage                                                        |
 pub const SupportRowScalarCache = struct {
     epochs: []u8,
     scalars: []SharedOpticalScalars,
@@ -120,20 +169,38 @@ pub const SupportRowScalarCache = struct {
         return self.epoch;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// hot path:
-//   when: once per high-resolution wavelength and reused across layer/source passes
-//   work: memoizes support-row optical-depth scalars for the current wavelength
-//   data: epoch-tag slice, scalar carrier slice, prepared state, profile spectroscopy cache
-//   follow: cachedSupportRowScalarsRef; full carriers are rebuilt only for callers that need phase rows
-// layout(64-bit):
-//   size: 128 B, align: 8 B
-//   field storage: 121 B across 9 fields; largest: cia_coefficients=40 B, support_row_epochs=16 B, support_row_scalars=16 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: profile_cache, support_row_epochs, support_row_scalars carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
+// WavelengthCarrierCache ------------------------------------------------------------------------------------- |
+// Wavelength-local constants plus epoch-tagged support-row scalar cache descriptors.                           |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 136 B (0.133 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0..  7] profile_cache                 : *const ProfileNodeSpectroscopyCache                               |
+// [  8.. 23] support_row_epochs            : []u8                                                              |
+// [ 24.. 39] support_row_scalars           : []SharedOpticalScalars                                            |
+// [ 40.. 47] continuum_sigma               : f64                                                               |
+// [ 48.. 87] cia_coefficients              : ?CiaWavelengthCoefficients                                        |
+// [ 88.. 95] rayleigh_cross_section_cm2    : f64                                                               |
+// [ 96..103] rayleigh_phase_coefficient2   : f64                                                               |
+// [104..127] particle_scales               : ParticleWavelengthScales                                          |
+// [128..128] support_row_epoch             : u8                                                                |
+// [129..135] padding                       : 7 B                                                               |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   profile_cache       : borrowed from the wavelength caller                                                  |
+//   support_row_epochs  : borrowed from SupportRowScalarCache                                                  |
+//   support_row_scalars : borrowed from SupportRowScalarCache                                                  |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   cachedSupportRowScalarsRef returns a cached scalar row when the epoch matches. On a miss it fills one      |
+//   scalar row and tags that row for the current wavelength.                                                   |
+//                                                                                                              |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                     |
+// cache span: 3 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 136 B plus borrowed row storage                                                    |
 pub const WavelengthCarrierCache = struct {
     profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     support_row_epochs: []u8,
@@ -152,16 +219,12 @@ pub const WavelengthCarrierCache = struct {
         profile_cache: *const SpectroscopyState.ProfileNodeSpectroscopyCache,
     ) WavelengthCarrierCache {
         const epoch = support_row_cache.nextEpoch();
-        const continuum_table: ReferenceData.CrossSectionTable = .{ .points = prepared.continuum_points };
         return .{
             .profile_cache = profile_cache,
             .support_row_epochs = support_row_cache.epochs,
             .support_row_scalars = support_row_cache.scalars,
             .support_row_epoch = epoch,
-            .continuum_sigma = if (prepared.cross_section_absorbers.len == 0)
-                continuum_table.interpolateSigma(wavelength_nm)
-            else
-                0.0,
+            .continuum_sigma = continuumSigmaAtWavelength(prepared, wavelength_nm),
             .cia_coefficients = CiaWavelengthCoefficients.init(prepared, wavelength_nm),
             .rayleigh_cross_section_cm2 = Rayleigh.crossSectionCm2(wavelength_nm),
             .rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
@@ -230,13 +293,22 @@ pub const WavelengthCarrierCache = struct {
         return &self.support_row_scalars[global_sublayer_index];
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: scale_factor_cm5_per_molecule2=8 B, a0=8 B, a1=8 B, a2=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
+// CiaWavelengthCoefficients ---------------------------------------------------------------------------------- |
+// Interpolated O2-O2 CIA polynomial coefficients for one wavelength.                                           |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 32 B (0.031 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] scale_factor_cm5_per_molecule2 : f64                                                                |
+// [ 8..15] a0                              : f64                                                               |
+// [16..23] a1                              : f64                                                               |
+// [24..31] a2                              : f64                                                               |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// footprint: per instance = 32 B; embedded in WavelengthCarrierCache when CIA is available                     |
 const CiaWavelengthCoefficients = struct {
     scale_factor_cm5_per_molecule2: f64,
     a0: f64,
@@ -260,35 +332,59 @@ const CiaWavelengthCoefficients = struct {
 
     fn sigmaAtTemperature(self: CiaWavelengthCoefficients, temperature_k: f64) f64 {
         const temperature_c = temperature_k - 273.15;
-        // math: sigma_cia(T) = scale * max(a0 + a1*T_C + a2*T_C^2, 0)
         const raw_sigma = self.a0 +
             self.a1 * temperature_c +
             self.a2 * temperature_c * temperature_c;
         return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: ksca=8 B, gas_scattering_optical_depth_per_km=8 B, aerosol_scattering_optical_depth_per_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// PreparedQuadratureCarrier ---------------------------------------------------------------------------------- |
+// Scattering-only carrier row used when RTM quadrature does not need absorption fields.                        |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 24 B (0.023 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] ksca                                      : f64                                                     |
+// [ 8..15] gas_scattering_optical_depth_per_km       : f64                                                     |
+// [16..23] aerosol_scattering_optical_depth_per_km   : f64                                                     |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 24 B; total = per instance * live row count                                        |
 pub const PreparedQuadratureCarrier = struct {
     ksca: f64,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 96 B across 10 fields; largest: phase_above=24 B, gas_scattering_optical_depth_per_km=8 B, particle_scattering_optical_depth_above_per_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase_above stores gas/aerosol phase weights plus shared phase-row references; phase_max_index_above and phase_max_index_below store Fourier bounds
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total also includes referenced phase storage above
+// SharedBoundaryCarrier -------------------------------------------------------------------------------------- |
+// Boundary-level scattering and phase-row carrier for shared RTM interfaces.                                   |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 96 B (0.094 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] gas_scattering_optical_depth_per_km                : f64                                            |
+// [ 8..15] particle_scattering_optical_depth_above_per_km     : f64                                            |
+// [16..23] particle_scattering_optical_depth_below_per_km     : f64                                            |
+// [24..31] aerosol_scattering_optical_depth_above_per_km      : f64                                            |
+// [32..39] aerosol_scattering_optical_depth_below_per_km      : f64                                            |
+// [40..47] ksca_above                                        : f64                                             |
+// [48..55] ksca_below                                        : f64                                             |
+// [56..79] phase_above                                       : PhaseMixture                                    |
+// [80..87] phase_max_index_above                             : usize                                           |
+// [88..95] phase_max_index_below                             : usize                                           |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   phase_above may reference shared aerosol phase coefficient rows; referenced storage is not included.       |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 96 B plus referenced phase storage                                                 |
 pub const SharedBoundaryCarrier = struct {
     gas_scattering_optical_depth_per_km: f64 = 0.0,
     particle_scattering_optical_depth_above_per_km: f64 = 0.0,
@@ -301,14 +397,21 @@ pub const SharedBoundaryCarrier = struct {
     phase_max_index_above: usize = 0,
     phase_max_index_below: usize = 0,
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: aerosol_optical_depth_per_km=8 B, aerosol_scattering_optical_depth_per_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// ParticleBoundaryCarrier ------------------------------------------------------------------------------------ |
+// Aerosol-only boundary carrier used before gas and particle scattering are mixed.                             |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 16 B (0.016 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] aerosol_optical_depth_per_km             : f64                                                      |
+// [ 8..15] aerosol_scattering_optical_depth_per_km  : f64                                                      |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 16 B; total = per instance * live row count                                        |
 const ParticleBoundaryCarrier = struct {
     aerosol_optical_depth_per_km: f64 = 0.0,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
@@ -317,13 +420,23 @@ const ParticleBoundaryCarrier = struct {
         return self.aerosol_scattering_optical_depth_per_km;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 8 B, align: 8 B
-//   field storage: aerosol=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count
+// ParticleWavelengthScales ----------------------------------------------------------------------------------- |
+// Wavelength and aerosol Angstrom-scale controls reused while filling rows for one wavelength.                 |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 24 B (0.023 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] aerosol                     : f64                                                                   |
+// [ 8..15] wavelength_nm               : f64                                                                   |
+// [16..16] profile_sublayer_properties : bool                                                                  |
+// [17..23] padding                     : 7 B                                                                   |
+//                                                                                                              |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 24 B; embedded in WavelengthCarrierCache and stack values                          |
 const ParticleWavelengthScales = struct {
     aerosol: f64,
     wavelength_nm: f64,
@@ -353,14 +466,29 @@ const ParticleWavelengthScales = struct {
         );
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: 80 B across 10 fields; largest: pressure_hpa=8 B, temperature_k=8 B, number_density_cm3=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
+// InterpolatedQuadratureState -------------------------------------------------------------------------------- |
+// Thermodynamic and particle state at an arbitrary altitude between prepared support rows.                     |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 80 B (0.078 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] pressure_hpa                    : f64                                                               |
+// [ 8..15] temperature_k                   : f64                                                               |
+// [16..23] number_density_cm3              : f64                                                               |
+// [24..31] oxygen_number_density_cm3       : f64                                                               |
+// [32..39] cia_pair_density_cm6            : f64                                                               |
+// [40..47] absorber_number_density_cm3     : f64                                                               |
+// [48..55] aerosol_optical_depth_per_km    : f64                                                               |
+// [56..63] aerosol_single_scatter_albedo   : f64                                                               |
+// [64..71] aerosol_reference_wavelength_nm : f64                                                               |
+// [72..79] aerosol_angstrom_exponent       : f64                                                               |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 80 B; stack value during altitude interpolation                                    |
 pub const InterpolatedQuadratureState = struct {
     pressure_hpa: f64,
     temperature_k: f64,
@@ -374,18 +502,35 @@ pub const InterpolatedQuadratureState = struct {
     aerosol_angstrom_exponent: f64 = 0.0,
 
     fn ciaPairDensityCm6(self: InterpolatedQuadratureState) f64 {
-        return if (self.cia_pair_density_cm6 > 0.0)
-            self.cia_pair_density_cm6
-        else
-            // math: fallback O2-O2 pair density = n_O2^2.
-            self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
+        if (self.cia_pair_density_cm6 > 0.0) return self.cia_pair_density_cm6;
+
+        return self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
 fn opticalDepthPerKilometer(optical_depth: f64, path_length_cm: f64) f64 {
     const span_km = @max(path_length_cm / centimeters_per_kilometer, 0.0);
-    // math: k_tau = tau / path_km
     return if (span_km > 0.0) optical_depth / span_km else 0.0;
+}
+
+fn continuumSigmaAtWavelength(
+    prepared: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+) f64 {
+    if (prepared.cross_section_absorbers.len != 0) return 0.0;
+
+    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = prepared.continuum_points };
+    return continuum_table.interpolateSigma(wavelength_nm);
+}
+
+fn strongLineStateAt(
+    states: ?[]const ReferenceData.StrongLinePreparedState,
+    local_index: usize,
+) ?*const ReferenceData.StrongLinePreparedState {
+    const owned_states = states orelse return null;
+    if (local_index >= owned_states.len) return null;
+    return &owned_states[local_index];
 }
 
 fn particleWavelengthScale(
@@ -394,14 +539,23 @@ fn particleWavelengthScale(
     wavelength_nm: f64,
 ) f64 {
     if (angstrom_exponent == 0.0 or reference_wavelength_nm == wavelength_nm) return 1.0;
+
     const safe_wavelength = @max(wavelength_nm, 1.0);
     const safe_reference = @max(reference_wavelength_nm, 1.0);
-    // math: scale(lambda) = (lambda_ref / lambda)^angstrom_exponent
+
     return std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
 fn scaleParticleDepth(optical_depth: f64, scale: f64) f64 {
     return if (optical_depth == 0.0) 0.0 else optical_depth * scale;
+}
+
+fn interpolateValue(left_weight: f64, left_value: f64, right_weight: f64, right_value: f64) f64 {
+    return left_weight * left_value + right_weight * right_value;
+}
+
+fn interpolateNonNegative(left_weight: f64, left_value: f64, right_weight: f64, right_value: f64) f64 {
+    return @max(interpolateValue(left_weight, left_value, right_weight, right_value), 0.0);
 }
 
 fn particleBoundaryCarrierAtSupportRow(
@@ -424,10 +578,12 @@ fn particleBoundaryCarrierAtSupportRowWithScales(
         opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
         aerosol_scale,
     );
-    // math: tau_aer_sca/km = tau_aer/km * omega0_aerosol
+    const aerosol_scattering_optical_depth_per_km =
+        aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo;
+
     return .{
         .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
-        .aerosol_scattering_optical_depth_per_km = aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo,
+        .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
     };
 }
 
@@ -437,8 +593,10 @@ fn particleBoundaryCarrierFromIndexWithScales(
     scales: ParticleWavelengthScales,
 ) ParticleBoundaryCarrier {
     if (support_row_index == @import("shared_geometry.zig").invalid_support_row_index) return .{};
+
     const row_index: usize = @intCast(support_row_index);
     if (row_index >= sublayers.len) return .{};
+
     return particleBoundaryCarrierAtSupportRowWithScales(sublayers[row_index], scales);
 }
 
@@ -449,8 +607,10 @@ fn particleBoundaryCarrierFromIndex(
     support_row_index: u32,
 ) ParticleBoundaryCarrier {
     if (support_row_index == @import("shared_geometry.zig").invalid_support_row_index) return .{};
+
     const row_index: usize = @intCast(support_row_index);
     if (row_index >= sublayers.len) return .{};
+
     return particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[row_index]);
 }
 
@@ -471,12 +631,6 @@ pub fn sharedBoundaryCarrierAtLevel(
     );
 }
 
-// hot path:
-//   when: RTM levels or source interfaces need boundary carriers without a wavelength carrier cache
-//   work: evaluates boundary gas and particle carriers from support-row and level geometry
-//   data: support sublayers, strong-line states, shared RTM level geometry, profile spectroscopy cache
-//   math: k_sca_above/below = k_sca_gas + k_sca_particle; phase rows blend gas and aerosol by scattering depth
-//   follow: source_interfaces and rtm_quadrature spectroscopy-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -485,12 +639,23 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     level_geometry: SharedRtmLevelGeometry,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedBoundaryCarrier {
+    // sharedBoundaryCarrierAtLevelWithSpectroscopyCache ------------------------------------------------------ |
+    // Evaluates one boundary carrier without the wavelength carrier cache.                                     |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Called by RTM level and source-interface routes that have a spectroscopy cache but no scalar row       |
+    //   cache. The boundary gas row is evaluated once, then particle rows above and below the interface are    |
+    //   mixed into scattering and phase fields.                                                                |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   k_sca_above = k_sca_gas + k_sca_particle_above                                                         |
+    //   k_sca_below = k_sca_gas + k_sca_particle_below                                                         |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -539,12 +704,6 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     };
 }
 
-// hot path:
-//   when: RTM levels or source interfaces need boundary carriers for a cached wavelength solve
-//   work: reads gas carrier through WavelengthCarrierCache and composes boundary particle fields
-//   data: support sublayers, strong-line states, shared RTM level geometry, carrier cache
-//   math: cached path preserves k_sca = k_sca_gas + k_sca_particle and reuses precomputed Rayleigh P2(lambda)
-//   follow: source_interfaces and rtm_quadrature carrier-cache paths
 pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -553,12 +712,21 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     level_geometry: SharedRtmLevelGeometry,
     wavelength_cache: *WavelengthCarrierCache,
 ) SharedBoundaryCarrier {
+    // sharedBoundaryCarrierAtLevelWithCarrierCache ----------------------------------------------------------  |
+    // Reads gas fields through WavelengthCarrierCache and composes one boundary carrier.                       |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Reuses cached support-row scalars and precomputed Rayleigh P2(lambda). Only particle boundary rows     |
+    //   are rebuilt here because they depend on above/below interface placement.                               |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   k_sca = k_sca_gas + k_sca_particle                                                                     |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -605,12 +773,6 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     };
 }
 
-// hot path:
-//   when: shared-grid source interfaces are filled for one wavelength solve
-//   work: composes boundary scattering scalars and writes final interface rows
-//   data: support-row gas cache, particle boundary rows, prepared phase rows
-//   math: source k_sca_above = k_sca_gas + k_sca_particle_above; phase_above/below = mix(P_rayleigh, P_aerosol, k_sca)
-//   follow: source_interfaces carrier-cache and spectroscopy-cache shared-grid paths
 pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -621,15 +783,25 @@ pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     source_interface: *transport_common.SourceInterfaceInput,
 ) void {
+    // fillSourceInterfaceAtLevelWithSpectroscopyCache -------------------------------------------------------  |
+    // Writes one shared-grid source interface without a wavelength carrier cache.                              |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Composes support-row gas scattering, particle boundary rows, and prepared phase rows for one RTM       |
+    //   interface. The carrier-cache twin below keeps the same output shape while reusing scalar rows.         |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   k_sca_above = k_sca_gas + k_sca_particle_above                                                         |
+    //   phase_above/below = mix(P_rayleigh, P_aerosol, k_sca)                                                  |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
         source_interface.* = .{ .rtm_weight = rtm_weight };
         return;
     }
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -677,10 +849,7 @@ pub fn fillSourceInterfaceAtLevelWithCarrierCache(
         source_interface.* = .{ .rtm_weight = rtm_weight };
         return;
     }
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -747,12 +916,6 @@ fn fillSourceInterfaceFromBoundaryParts(
     };
 }
 
-// hot path:
-//   when: integrated source-function routes fill RTM quadrature levels
-//   work: composes boundary scattering scalars and writes final quadrature rows
-//   data: support-row gas cache, particle boundary rows, prepared phase rows
-//   math: RTM level source fields use the same k_sca and phase-mixture equations as source interfaces
-//   follow: rtm_quadrature carrier-cache and spectroscopy-cache shared-grid paths
 pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -763,15 +926,21 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
     rtm_level: *transport_common.RtmQuadratureLevel,
     compute_jacobian: bool,
 ) void {
+    // fillRtmQuadratureLevelAtLevelWithSpectroscopyCache ----------------------------------------------------  |
+    // Writes one shared-grid RTM quadrature level without a wavelength carrier cache.                          |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Integrated source-function routes use this when they need source fields on quadrature levels. The      |
+    //   same gas, particle, and phase mixture equations are shared with source interfaces.                     |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
         fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
         return;
     }
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -819,10 +988,7 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
         return;
     }
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -910,12 +1076,6 @@ pub fn sharedActiveCarrierAtLevel(
     );
 }
 
-// hot path:
-//   when: arbitrary RTM or pseudo-spherical levels require interpolated active carriers
-//   work: blends below/above support-row carriers with particle interpolation for one altitude
-//   data: support sublayers, strong-line states, level geometry, profile spectroscopy cache
-//   math: fraction = clamp((z - z_below) / (z_above - z_below), 0, 1); particle carrier is linearly interpolated, gas comes from the boundary row
-//   follow: composeSharedActiveCarrier and altitude-level consumers
 pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -924,13 +1084,21 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     level_geometry: SharedRtmLevelGeometry,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalCarrier {
+    // sharedActiveCarrierAtLevelWithSpectroscopyCache -------------------------------------------------------  |
+    // Blends support-row particle carriers for an arbitrary RTM or pseudo-spherical level.                     |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Gas terms come from the boundary support row. Aerosol terms are copied from a single particle row      |
+    //   when one side is missing, or linearly interpolated between below/above particle rows.                  |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   fraction = clamp((z - z_below) / (z_above - z_below), 0, 1)                                            |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
 
-    const strong_line_state = if (strong_line_states) |states|
-        if (boundary_row_index < states.len) &states[boundary_row_index] else null
-    else
-        null;
+    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -948,12 +1116,15 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     if (below_index_u32 == invalid_index) {
         const above_index: usize = @intCast(above_index_u32);
         if (above_index >= sublayers.len) return gas_carrier;
+
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[above_index]);
         return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
     }
+
     if (above_index_u32 == invalid_index) {
         const below_index: usize = @intCast(below_index_u32);
         if (below_index >= sublayers.len) return gas_carrier;
+
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[below_index]);
         return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
     }
@@ -965,7 +1136,6 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     const below_row = sublayers[below_index];
     const above_row = sublayers[above_index];
     const altitude_span_km = above_row.altitude_km - below_row.altitude_km;
-    // math: particle interpolation fraction f = clamp((z - z_below) / (z_above - z_below), 0, 1).
     const fraction = if (altitude_span_km > 0.0)
         std.math.clamp((level_geometry.altitude_km - below_row.altitude_km) / altitude_span_km, 0.0, 1.0)
     else
@@ -975,18 +1145,19 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     return composeSharedActiveCarrier(gas_carrier, particle_below, particle_above, fraction);
 }
 
-// hot path:
-//   when: shared active carriers interpolate particle state across a support interval
-//   work: blends gas, aerosol, Rayleigh, and phase coefficient fields
-//   data: gas carrier, below/above particle carriers, interpolation fraction, wavelength
-//   math: aerosol_k = (1 - f) * aerosol_k_below + f * aerosol_k_above; gas terms are copied from the boundary carrier
-//   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and phase coefficient layout
 fn composeSharedActiveCarrier(
     gas_carrier: SharedOpticalCarrier,
     particle_below: ParticleBoundaryCarrier,
     particle_above: ParticleBoundaryCarrier,
     fraction: f64,
 ) SharedOpticalCarrier {
+    // composeSharedActiveCarrier ----------------------------------------------------------------------------- |
+    // Copies gas terms and interpolates aerosol fields across one support interval.                            |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   aerosol_k = (1 - f) * aerosol_k_below + f * aerosol_k_above                                            |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
     const left_weight = 1.0 - clamped_fraction;
     const right_weight = clamped_fraction;
@@ -1022,38 +1193,79 @@ fn interpolateQuadratureStateBetweenSublayers(
     const left_aerosol_per_km = opticalDepthPerKilometer(left.aerosol_optical_depth, left.path_length_cm);
     const right_aerosol_per_km = opticalDepthPerKilometer(right.aerosol_optical_depth, right.path_length_cm);
 
-    // math: each thermodynamic/scalar field is linearly interpolated over altitude with weights (1-f, f).
     return .{
-        .pressure_hpa = @max(left_weight * left.pressure_hpa + right_weight * right.pressure_hpa, 0.0),
-        .temperature_k = @max(left_weight * left.temperature_k + right_weight * right.temperature_k, 0.0),
-        .number_density_cm3 = @max(left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3, 0.0),
-        .oxygen_number_density_cm3 = @max(left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3, 0.0),
-        .cia_pair_density_cm6 = @max(left_weight * left.ciaPairDensityCm6() + right_weight * right.ciaPairDensityCm6(), 0.0),
-        .absorber_number_density_cm3 = @max(left_weight * left.absorber_number_density_cm3 + right_weight * right.absorber_number_density_cm3, 0.0),
-        .aerosol_optical_depth_per_km = @max(left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km, 0.0),
+        .pressure_hpa = interpolateNonNegative(left_weight, left.pressure_hpa, right_weight, right.pressure_hpa),
+        .temperature_k = interpolateNonNegative(left_weight, left.temperature_k, right_weight, right.temperature_k),
+        .number_density_cm3 = interpolateNonNegative(
+            left_weight,
+            left.number_density_cm3,
+            right_weight,
+            right.number_density_cm3,
+        ),
+        .oxygen_number_density_cm3 = interpolateNonNegative(
+            left_weight,
+            left.oxygen_number_density_cm3,
+            right_weight,
+            right.oxygen_number_density_cm3,
+        ),
+        .cia_pair_density_cm6 = interpolateNonNegative(
+            left_weight,
+            left.ciaPairDensityCm6(),
+            right_weight,
+            right.ciaPairDensityCm6(),
+        ),
+        .absorber_number_density_cm3 = interpolateNonNegative(
+            left_weight,
+            left.absorber_number_density_cm3,
+            right_weight,
+            right.absorber_number_density_cm3,
+        ),
+        .aerosol_optical_depth_per_km = interpolateNonNegative(
+            left_weight,
+            left_aerosol_per_km,
+            right_weight,
+            right_aerosol_per_km,
+        ),
         .aerosol_single_scatter_albedo = std.math.clamp(
-            left_weight * left.aerosol_single_scatter_albedo + right_weight * right.aerosol_single_scatter_albedo,
+            interpolateValue(
+                left_weight,
+                left.aerosol_single_scatter_albedo,
+                right_weight,
+                right.aerosol_single_scatter_albedo,
+            ),
             0.0,
             1.0,
         ),
         .aerosol_reference_wavelength_nm = @max(
-            left_weight * left.aerosol_reference_wavelength_nm +
-                right_weight * right.aerosol_reference_wavelength_nm,
+            interpolateValue(
+                left_weight,
+                left.aerosol_reference_wavelength_nm,
+                right_weight,
+                right.aerosol_reference_wavelength_nm,
+            ),
             1.0,
         ),
-        .aerosol_angstrom_exponent = left_weight * left.aerosol_angstrom_exponent +
-            right_weight * right.aerosol_angstrom_exponent,
+        .aerosol_angstrom_exponent = interpolateValue(
+            left_weight,
+            left.aerosol_angstrom_exponent,
+            right_weight,
+            right.aerosol_angstrom_exponent,
+        ),
     };
 }
 
-// PUB FOR TEST: kept `pub` so `internal.zig` can re-export this helper for
-// tests. Extracting the body would also require lifting
-// `interpolateQuadratureStateBetweenSublayers` and `opticalDepthPerKilometer`
-// — both consumed elsewhere in this file.
 pub fn interpolateQuadratureStateAtAltitude(
     sublayers: []const PreparedSublayer,
     altitude_km: f64,
 ) ?InterpolatedQuadratureState {
+    // interpolateQuadratureStateAtAltitude ------------------------------------------------------------------- |
+    // Finds the prepared support interval that brackets an arbitrary altitude.                                 |
+    //                                                                                                          |
+    // testing                                                                                                  |
+    //   Kept pub so internal.zig can re-export this helper. Extracting the body would also require lifting     |
+    //   interpolateQuadratureStateBetweenSublayers and opticalDepthPerKilometer, both used only here.          |
+    // -------------------------------------------------------------------------------------------------------- |
+
     if (sublayers.len == 0) return null;
 
     if (sublayers.len == 1) {
@@ -1065,7 +1277,10 @@ pub fn interpolateQuadratureStateAtAltitude(
             .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
             .cia_pair_density_cm6 = sublayer.ciaPairDensityCm6(),
             .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
-            .aerosol_optical_depth_per_km = opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
+            .aerosol_optical_depth_per_km = opticalDepthPerKilometer(
+                sublayer.aerosol_optical_depth,
+                sublayer.path_length_cm,
+            ),
             .aerosol_single_scatter_albedo = sublayer.aerosol_single_scatter_albedo,
             .aerosol_reference_wavelength_nm = sublayer.aerosol_reference_wavelength_nm,
             .aerosol_angstrom_exponent = sublayer.aerosol_angstrom_exponent,
@@ -1074,12 +1289,15 @@ pub fn interpolateQuadratureStateAtAltitude(
 
     const first = sublayers[0];
     const last = sublayers[sublayers.len - 1];
+
     if (altitude_km <= first.altitude_km) {
         return interpolateQuadratureStateBetweenSublayers(first, sublayers[1], altitude_km);
     }
+
     if (altitude_km >= last.altitude_km) {
         return interpolateQuadratureStateBetweenSublayers(sublayers[sublayers.len - 2], last, altitude_km);
     }
+
     for (sublayers[0 .. sublayers.len - 1], sublayers[1..]) |left, right| {
         if (altitude_km > right.altitude_km) continue;
         return interpolateQuadratureStateBetweenSublayers(left, right, altitude_km);
@@ -1128,17 +1346,20 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     };
 }
 
-// hot path:
-//   when: while filling a support-row carrier for an active wavelength
-//   work: evaluates and weights active line absorbers into shared carrier spectroscopy fields
-//   data: line absorber array, density weighting, profile spectroscopy cache, wavelength
-//   follow: layer_spectroscopy.resolveSpectroscopyEvaluation and absorber field layout
 fn weightedSpectroscopyEvaluationAtSupportRow(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
     sublayer: PreparedSublayer,
     global_sublayer_index: usize,
 ) ReferenceData.SpectroscopyEvaluation {
+    // weightedSpectroscopyEvaluationAtSupportRow ------------------------------------------------------------- |
+    // Density-weights active line absorbers into one spectroscopy evaluation for a support row.                |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Runs while filling support-row carriers for one wavelength. Operational O2 is evaluated once, then     |
+    //   non-O2 line absorbers are folded in with their row-local number densities.                             |
+    // -------------------------------------------------------------------------------------------------------- |
+
     var total_weight: f64 = 0.0;
     var weighted: ReferenceData.SpectroscopyEvaluation = .{
         .weak_line_sigma_cm2_per_molecule = 0.0,
@@ -1156,29 +1377,21 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
             sublayer.pressure_hpa,
         );
         total_weight += sublayer.oxygen_number_density_cm3;
-        weighted.weak_line_sigma_cm2_per_molecule +=
-            o2_evaluation.weak_line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
-        weighted.strong_line_sigma_cm2_per_molecule +=
-            o2_evaluation.strong_line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
-        weighted.line_sigma_cm2_per_molecule +=
-            o2_evaluation.line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
-        weighted.line_mixing_sigma_cm2_per_molecule +=
-            o2_evaluation.line_mixing_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
-        weighted.total_sigma_cm2_per_molecule +=
-            o2_evaluation.total_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            o2_evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * sublayer.oxygen_number_density_cm3;
+        addWeightedSpectroscopyEvaluation(
+            &weighted,
+            o2_evaluation,
+            sublayer.oxygen_number_density_cm3,
+        );
     }
 
     for (self.line_absorbers) |line_absorber| {
         if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
         if (global_sublayer_index >= line_absorber.number_densities_cm3.len) continue;
+
         const weight = line_absorber.number_densities_cm3[global_sublayer_index];
         if (weight <= 0.0) continue;
-        const prepared_state = if (line_absorber.strong_line_states) |states|
-            if (global_sublayer_index < states.len) &states[global_sublayer_index] else null
-        else
-            null;
+
+        const prepared_state = strongLineStateAt(line_absorber.strong_line_states, global_sublayer_index);
         const evaluation = line_absorber.line_list.evaluateAtPrepared(
             wavelength_nm,
             sublayer.temperature_k,
@@ -1186,23 +1399,38 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
             prepared_state,
         );
         total_weight += weight;
-        weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
-        weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
-        weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
-        weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
-        weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+        addWeightedSpectroscopyEvaluation(&weighted, evaluation, weight);
     }
 
     if (total_weight <= 0.0) return weighted;
+    normalizeSpectroscopyEvaluation(&weighted, total_weight);
+    return weighted;
+}
+
+fn addWeightedSpectroscopyEvaluation(
+    weighted: *ReferenceData.SpectroscopyEvaluation,
+    evaluation: ReferenceData.SpectroscopyEvaluation,
+    weight: f64,
+) void {
+    weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
+    weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
+    weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
+    weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
+    weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
+    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+}
+
+fn normalizeSpectroscopyEvaluation(
+    weighted: *ReferenceData.SpectroscopyEvaluation,
+    total_weight: f64,
+) void {
     weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
     weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
     weighted.line_sigma_cm2_per_molecule /= total_weight;
     weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
     weighted.total_sigma_cm2_per_molecule /= total_weight;
     weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
-    return weighted;
 }
 
 pub fn sharedOpticalCarrierAtSupportRow(
@@ -1222,11 +1450,6 @@ pub fn sharedOpticalCarrierAtSupportRow(
     );
 }
 
-// hot path:
-//   when: support-row carrier evaluation runs without WavelengthCarrierCache
-//   work: fills one shared optical carrier from sublayer scalar fields and spectroscopy cache
-//   data: support sublayer, strong-line state, wavelength, profile spectroscopy cache
-//   follow: fillSharedOpticalScalarsAtSupportRowWithScalarCache
 pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1235,11 +1458,15 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
     strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalCarrier {
-    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
-        continuum_table.interpolateSigma(wavelength_nm)
-    else
-        0.0;
+    // sharedOpticalCarrierAtSupportRowWithSpectroscopyCache -------------------------------------------------  |
+    // Fills one full support-row carrier without WavelengthCarrierCache.                                       |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Used by routes that have a profile spectroscopy cache but are not reusing scalar support-row rows.     |
+    //   Wavelength constants are prepared here and passed to the scalar filler below.                          |
+    // -------------------------------------------------------------------------------------------------------  |
+
+    const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
     const scalars = sharedOpticalScalarsAtSupportRowWithScalarCache(
         self,
         wavelength_nm,
@@ -1263,11 +1490,7 @@ fn sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
     strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalScalars {
-    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
-        continuum_table.interpolateSigma(wavelength_nm)
-    else
-        0.0;
+    const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
     return sharedOpticalScalarsAtSupportRowWithScalarCache(
         self,
         wavelength_nm,
@@ -1311,12 +1534,64 @@ fn sharedOpticalScalarsAtSupportRowWithScalarCache(
     return scalars;
 }
 
-// hot path:
-//   when: on a support-row carrier cache miss for the current wavelength
-//   work: combines cross-section LUTs, line spectroscopy, CIA/Rayleigh, and particles into scalar depth terms
-//   data: scalar support row, active absorbers, cross-section LUTs, scalar carrier output fields
-//   math: k_abs_gas = sigma_cont*n_cont*1e5 + sigma_xs*n_xs*1e5 + sigma_line*n_line*1e5; k_sca_gas = sigma_R*n_air*1e5; k_cia = sigma_cia*n_pair*1e5
-//   follow: weightedSpectroscopyEvaluationAtSupportRow and layer/source scalar consumers
+fn spectroscopySigmaAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) f64 {
+    if (self.line_absorbers.len != 0) {
+        return weightedSpectroscopyEvaluationAtSupportRow(
+            self,
+            wavelength_nm,
+            sublayer,
+            global_sublayer_index,
+        ).total_sigma_cm2_per_molecule;
+    }
+
+    return self.spectroscopySigmaAtAltitudeWithCache(
+        wavelength_nm,
+        sublayer.temperature_k,
+        sublayer.pressure_hpa,
+        sublayer.altitude_km,
+        strong_line_state,
+        profile_cache,
+    );
+}
+
+fn continuumDensityAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+) f64 {
+    if (self.cross_section_absorbers.len != 0) return 0.0;
+
+    return Scalar.continuumCarrierDensityAtSublayer(
+        self,
+        sublayer,
+        global_sublayer_index,
+    );
+}
+
+fn ciaSigmaAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    cia_coefficients: ?CiaWavelengthCoefficients,
+) f64 {
+    if (cia_coefficients) |coefficients| {
+        return coefficients.sigmaAtTemperature(sublayer.temperature_k);
+    }
+
+    return self.ciaSigmaAtWavelength(
+        wavelength_nm,
+        sublayer.temperature_k,
+        sublayer.pressure_hpa,
+    );
+}
+
 fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     out: *SharedOpticalScalars,
     self: *const State.PreparedOpticalState,
@@ -1330,28 +1605,36 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     rayleigh_cross_section_cm2: f64,
     particle_scales: ParticleWavelengthScales,
 ) void {
-    const spectroscopy_sigma = if (self.line_absorbers.len != 0)
-        weightedSpectroscopyEvaluationAtSupportRow(
-            self,
-            wavelength_nm,
-            sublayer,
-            global_sublayer_index,
-        ).total_sigma_cm2_per_molecule
-    else
-        self.spectroscopySigmaAtAltitudeWithCache(
-            wavelength_nm,
-            sublayer.temperature_k,
-            sublayer.pressure_hpa,
-            sublayer.altitude_km,
-            strong_line_state,
-            profile_cache,
-        );
+    // fillSharedOpticalScalarsAtSupportRowWithScalarCache ---------------------------------------------------  |
+    // Combines gas, CIA, Rayleigh, and aerosol terms into one cached scalar row.                               |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Runs on a support-row cache miss for the current wavelength. The caller passes wavelength constants    |
+    //   so the repeated boundary/source/quadrature paths do not redo those lookups.                            |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   k_abs_gas = sigma_cont*n_cont*1e5 + sigma_xs*n_xs*1e5 + sigma_line*n_line*1e5                          |
+    //   k_sca_gas = sigma_R*n_air*1e5                                                                          |
+    //   k_cia     = sigma_cia*n_pair*1e5                                                                       |
+    // -------------------------------------------------------------------------------------------------------  |
+
+    const spectroscopy_sigma = spectroscopySigmaAtSupportRow(
+        self,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        strong_line_state,
+        profile_cache,
+    );
+
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
     for (self.cross_section_absorbers) |cross_section_absorber| {
         if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
+
         const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[global_sublayer_index];
         if (absorber_density_cm3 <= 0.0) continue;
+
         cross_section_density_cm3 += absorber_density_cm3;
         cross_section_absorption_optical_depth_per_km +=
             cross_section_absorber.sigmaAt(
@@ -1368,14 +1651,11 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
         sublayer,
         global_sublayer_index,
     );
-    const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
-        Scalar.continuumCarrierDensityAtSublayer(
-            self,
-            sublayer,
-            global_sublayer_index,
-        )
-    else
-        0.0;
+    const continuum_density_cm3 = continuumDensityAtSupportRow(
+        self,
+        sublayer,
+        global_sublayer_index,
+    );
     const gas_absorption_optical_depth_per_km =
         continuum_sigma * continuum_density_cm3 * centimeters_per_kilometer +
         cross_section_absorption_optical_depth_per_km +
@@ -1384,14 +1664,12 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
         rayleigh_cross_section_cm2 *
         sublayer.number_density_cm3 *
         centimeters_per_kilometer;
-    const cia_sigma_cm5_per_molecule2 = if (cia_coefficients) |coefficients|
-        coefficients.sigmaAtTemperature(sublayer.temperature_k)
-    else
-        self.ciaSigmaAtWavelength(
-            wavelength_nm,
-            sublayer.temperature_k,
-            sublayer.pressure_hpa,
-        );
+    const cia_sigma_cm5_per_molecule2 = ciaSigmaAtSupportRow(
+        self,
+        wavelength_nm,
+        sublayer,
+        cia_coefficients,
+    );
     const cia_optical_depth_per_km =
         cia_sigma_cm5_per_molecule2 *
         sublayer.ciaPairDensityCm6() *
@@ -1421,11 +1699,6 @@ fn sharedOpticalCarrierFromScalars(scalars: SharedOpticalScalars) SharedOpticalC
     };
 }
 
-// hot path:
-//   when: support-row carrier evaluation runs through WavelengthCarrierCache
-//   work: returns one full shared carrier from the scalar support-row cache
-//   data: support sublayer, global sublayer index, strong-line state, scalar carrier cache
-//   follow: WavelengthCarrierCache.cachedSupportRow and sharedOpticalCarrierFromScalars
 pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1434,6 +1707,13 @@ pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
     strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
     wavelength_cache: *WavelengthCarrierCache,
 ) SharedOpticalCarrier {
+    // sharedOpticalCarrierAtSupportRowWithCarrierCache ------------------------------------------------------  |
+    // Returns one full support-row carrier through WavelengthCarrierCache.                                     |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Reuses the scalar row cache and only rebuilds the public carrier value from cached scalar fields.      |
+    // -------------------------------------------------------------------------------------------------------  |
+
     return wavelength_cache.cachedSupportRow(
         self,
         wavelength_nm,
@@ -1460,12 +1740,68 @@ pub fn sharedOpticalCarrierAtAltitude(
     );
 }
 
-// hot path:
-//   when: source-interface or pseudo-spherical paths request carriers at arbitrary altitude
-//   work: interpolates neighboring support rows and evaluates active absorbers at the target altitude
-//   data: support-row slices, profile spectroscopy cache, active absorber state, interpolation weights
-//   math: arbitrary-altitude carrier uses interpolated n,T,p and computes per-km optical depths with the same sigma*n*1e5 equations as support rows
-//   follow: sharedActiveCarrierAtLevelWithSpectroscopyCache and altitude bracket lookup
+fn spectroscopySigmaAtCarrierAltitude(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    state: InterpolatedQuadratureState,
+    sublayers: []const PreparedSublayer,
+    altitude_km: f64,
+    prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) f64 {
+    if (self.line_absorbers.len != 0) {
+        return self.weightedSpectroscopyEvaluationAtAltitude(
+            wavelength_nm,
+            state.temperature_k,
+            state.pressure_hpa,
+            sublayers,
+            altitude_km,
+            state.oxygen_number_density_cm3,
+        ).total_sigma_cm2_per_molecule;
+    }
+
+    return self.spectroscopySigmaAtAltitudeWithCache(
+        wavelength_nm,
+        state.temperature_k,
+        state.pressure_hpa,
+        altitude_km,
+        prepared_state,
+        profile_cache,
+    );
+}
+
+fn continuumDensityAtCarrierAltitude(
+    self: *const State.PreparedOpticalState,
+    sublayers: []const PreparedSublayer,
+    altitude_km: f64,
+    state: InterpolatedQuadratureState,
+) f64 {
+    if (self.cross_section_absorbers.len != 0) return 0.0;
+
+    return self.continuumCarrierDensityAtAltitude(
+        sublayers,
+        altitude_km,
+        state.absorber_number_density_cm3,
+        state.oxygen_number_density_cm3,
+    );
+}
+
+fn aerosolReferenceWavelengthAtCarrierAltitude(
+    self: *const State.PreparedOpticalState,
+    state: InterpolatedQuadratureState,
+) f64 {
+    if (self.has_aerosol_profile_properties) return state.aerosol_reference_wavelength_nm;
+    return self.aerosol_reference_wavelength_nm;
+}
+
+fn aerosolAngstromExponentAtCarrierAltitude(
+    self: *const State.PreparedOpticalState,
+    state: InterpolatedQuadratureState,
+) f64 {
+    if (self.has_aerosol_profile_properties) return state.aerosol_angstrom_exponent;
+    return self.aerosol_angstrom_exponent;
+}
+
 pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1474,35 +1810,32 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     altitude_km: f64,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalCarrier {
+    // sharedOpticalCarrierAtAltitudeWithSpectroscopyCache ---------------------------------------------------  |
+    // Evaluates one carrier at an arbitrary altitude by interpolating prepared support rows.                   |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Source-interface and pseudo-spherical routes use this when they need a carrier away from the support   |
+    //   grid. It reuses interpolated thermodynamic state and then applies the same sigma*n*1e5 equations as    |
+    //   support-row carriers.                                                                                  |
+    // -------------------------------------------------------------------------------------------------------  |
+
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
-    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
-        continuum_table.interpolateSigma(wavelength_nm)
-    else
-        0.0;
+    const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
     const prepared_state = State.PreparedOpticalState.preparedStrongLineStateAtAltitude(
         sublayers,
         strong_line_states,
         altitude_km,
     );
-    const spectroscopy_sigma = if (self.line_absorbers.len != 0)
-        self.weightedSpectroscopyEvaluationAtAltitude(
-            wavelength_nm,
-            state.temperature_k,
-            state.pressure_hpa,
-            sublayers,
-            altitude_km,
-            state.oxygen_number_density_cm3,
-        ).total_sigma_cm2_per_molecule
-    else
-        self.spectroscopySigmaAtAltitudeWithCache(
-            wavelength_nm,
-            state.temperature_k,
-            state.pressure_hpa,
-            altitude_km,
-            prepared_state,
-            profile_cache,
-        );
+    const spectroscopy_sigma = spectroscopySigmaAtCarrierAltitude(
+        self,
+        wavelength_nm,
+        state,
+        sublayers,
+        altitude_km,
+        prepared_state,
+        profile_cache,
+    );
+
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
     for (self.cross_section_absorbers) |cross_section_absorber| {
@@ -1512,6 +1845,7 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
             altitude_km,
         );
         if (absorber_density_cm3 <= 0.0) continue;
+
         cross_section_density_cm3 += absorber_density_cm3;
         cross_section_absorption_optical_depth_per_km +=
             cross_section_absorber.sigmaAt(
@@ -1527,15 +1861,12 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         state.oxygen_number_density_cm3,
         cross_section_density_cm3,
     );
-    const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
-        self.continuumCarrierDensityAtAltitude(
-            sublayers,
-            altitude_km,
-            state.absorber_number_density_cm3,
-            state.oxygen_number_density_cm3,
-        )
-    else
-        0.0;
+    const continuum_density_cm3 = continuumDensityAtCarrierAltitude(
+        self,
+        sublayers,
+        altitude_km,
+        state,
+    );
     const gas_absorption_optical_depth_per_km =
         continuum_sigma *
         continuum_density_cm3 *
@@ -1558,8 +1889,8 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         state.aerosol_optical_depth_per_km,
-        if (self.has_aerosol_profile_properties) state.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
-        if (self.has_aerosol_profile_properties) state.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
+        aerosolReferenceWavelengthAtCarrierAltitude(self, state),
+        aerosolAngstromExponentAtCarrierAltitude(self, state),
         wavelength_nm,
     );
     const aerosol_scattering_optical_depth_per_km =

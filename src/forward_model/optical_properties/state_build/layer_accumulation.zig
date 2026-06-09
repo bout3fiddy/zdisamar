@@ -29,6 +29,21 @@ const profile_spectral_tolerance: f64 = 1.0e-12;
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
+// layer_accumulation.zig ------------------------------------------------------------------------------------  |
+// Builds layer-integrated optical properties from prepared sublayer rows.                                      |
+//                                                                                                              |
+// main path                                                                                                    |
+//   scene/context + prepared absorber state -> per-sublayer terms -> layer totals and mean properties          |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Parity support-row construction can split work across worker rows. LayerAccumulation keeps the running     |
+//   totals compact so the main accumulation pass streams f64 counters without heap traffic.                    |
+//                                                                                                              |
+// memory                                                                                                       |
+//   CollisionComplexProfileCache keeps two fixed 64-node spline arrays inline. ParitySupportRowWorker          |
+//   borrows context, absorber, cache, queue, and error-state storage while owning only its total row value.    |
+// ------------------------------------------------------------------------------------------------------------ |
+
 const AerosolSublayerProperties = struct {
     optical_depth: f64 = 0.0,
     base_optical_depth: f64 = 0.0,
@@ -93,18 +108,28 @@ const AerosolSublayers = union(enum) {
     }
 };
 
-// layout(64-bit):
-//   size: 1048 B, align: 8 B
-// field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=512 B, log_complex_second=512 B; padding:
-// 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: log_complex_vmr_fraction:[64]f64=512 B, log_complex_second:[64]f64=512 B
-//   out-of-line: altitudes_km carries a slice descriptor; referenced storage is not included in size
-//   cache span: 17 cache line(s) at 64 B per line
-//   count: one per optical-state accumulation request
-//   footprint: per instance = 1048 B (1.023 KiB); precomputes a 512 B spline-second table
-//   sample traffic: pair-density samples avoid 10240 B endpoint-secant spline scratch per call
-//   capacity: enabled collision-complex requests with more than 64 profile nodes are rejected
+// CollisionComplexProfileCache ------------------------------------------------------------------------------  |
+// Fixed-capacity spline cache for collision-complex pair-density sampling.                                     |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 1048 B (1.023 KiB), align: 8 B                                                                         |
+//                                                                                                              |
+// memory                                                                                                       |
+// [   0..   7] node_count               : usize                                                                |
+// [   8..  23] altitudes_km             : []const f64                                                          |
+// [  24.. 535] log_complex_vmr_fraction : [64]f64                                                              |
+// [ 536..1047] log_complex_second       : [64]f64                                                              |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   altitudes_km borrows the spectroscopy-profile altitude rows.                                               |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Pair-density samples reuse the 512 B spline-second table and avoid endpoint-secant scratch per sample.     |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 17 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 1048 B plus borrowed altitude storage                                              |
+// capacity: enabled collision-complex requests with more than 64 profile nodes are rejected                    |
 const CollisionComplexProfileCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
@@ -198,13 +223,21 @@ const CollisionComplexProfileCache = struct {
         return @exp(sampled_log_vmr) * air_number_density_cm3;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// ParitySupportRowErrorState --------------------------------------------------------------------------------  |
+// Shared first-error slot for parity support-row workers.                                                      |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 24 B (0.023 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0..15] mutex   : Thread.Mutex                                                                              |
+// [16..17] err     : ?anyerror                                                                                 |
+// [18..23] padding : 6 B                                                                                       |
+//                                                                                                              |
+// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                     |
+// footprint: per instance = 24 B; shared by workers in one parallel accumulation call                          |
 const ParitySupportRowErrorState = struct {
     mutex: std.Thread.Mutex = .{},
     err: ?anyerror = null,
@@ -215,17 +248,33 @@ const ParitySupportRowErrorState = struct {
         if (self.err == null) self.err = err;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 344 B, align: 8 B
-// field storage: 344 B across 17 fields; largest: totals=160 B, aerosol_sublayers=48 B, allocator=16 B; padding: 0 B (0
-// bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayers, +3 more
-// carry references/descriptors; referenced storage is not included in size
-//   cache span: 6 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 344 B (0.336 KiB); total also includes referenced storage above
+// ParitySupportRowWorker ------------------------------------------------------------------------------------  |
+// Worker row used by parallel parity support-row accumulation.                                                 |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 272 B (0.266 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 15] allocator                  : Allocator                                                            |
+// [ 16.. 23] context                    : *PreparationContext                                                  |
+// [ 24.. 31] absorbers                  : *AbsorberBuildState                                                  |
+// [ 32.. 39] profile_spectroscopy_cache : ?*const ProfileSpectroscopyCache                                     |
+// [ 40.. 47] collision_complex_cache    : *const CollisionComplexProfileCache                                  |
+// [ 48..111] aerosol_sublayers          : AerosolSublayers                                                     |
+// [112..119] queue                      : *ChunkQueue                                                          |
+// [120..127] error_state                : *ParitySupportRowErrorState                                          |
+// [128..135] worker_index               : usize                                                                |
+// [136..271] totals                     : LayerAccumulation                                                    |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   context, absorbers, caches, queue, and error-state storage are borrowed. AerosolSublayers may reference    |
+//   either the scalar distribution slice or profile property rows.                                             |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 5 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 272 B plus borrowed storage                                                        |
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
@@ -238,6 +287,7 @@ const ParitySupportRowWorker = struct {
     worker_index: usize,
     totals: LayerAccumulation = .{},
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
 fn collisionComplexPairDensityCm6(
     collision_complex_cache: *const CollisionComplexProfileCache,
@@ -252,14 +302,34 @@ fn collisionComplexPairDensityCm6(
     );
 }
 
-// layout(64-bit):
-//   size: 136 B, align: 8 B
-// field storage: 136 B across 17 fields; largest: base_single_scatter_albedo=8 B, aerosol_single_scatter_albedo=8 B,
-// total_optical_depth=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
+// LayerAccumulation -----------------------------------------------------------------------------------------  |
+// Running f64 totals for one layer or worker partition.                                                        |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 136 B (0.133 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0..  7] base_single_scatter_albedo          : f64                                                         |
+// [  8.. 15] aerosol_single_scatter_albedo       : f64                                                         |
+// [ 16.. 23] total_optical_depth                 : f64                                                         |
+// [ 24.. 31] total_temperature_weighted          : f64                                                         |
+// [ 32.. 39] total_pressure_weighted             : f64                                                         |
+// [ 40.. 47] total_weight                        : f64                                                         |
+// [ 48.. 55] air_column_density_factor           : f64                                                         |
+// [ 56.. 63] oxygen_column_density_factor        : f64                                                         |
+// [ 64.. 71] column_density_factor               : f64                                                         |
+// [ 72.. 79] cia_pair_path_factor_cm5            : f64                                                         |
+// [ 80.. 87] total_gas_optical_depth             : f64                                                         |
+// [ 88.. 95] total_cia_optical_depth             : f64                                                         |
+// [ 96..103] total_aerosol_optical_depth         : f64                                                         |
+// [104..111] total_aerosol_base_optical_depth    : f64                                                         |
+// [112..119] total_scattering_optical_depth      : f64                                                         |
+// [120..127] total_d_optical_depth_d_temperature : f64                                                         |
+// [128..135] depolarization_weighted             : f64                                                         |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 3 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 136 B; one row per accumulated layer or worker total                               |
 pub const LayerAccumulation = struct {
     base_single_scatter_albedo: f64 = 0.0,
     aerosol_single_scatter_albedo: f64 = 0.0,
@@ -279,15 +349,29 @@ pub const LayerAccumulation = struct {
     total_d_optical_depth_d_temperature: f64 = 0.0,
     depolarization_weighted: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 64 B, align: 8 B
-// field storage: 61 B across 10 fields; largest: top_altitude_km=8 B, bottom_altitude_km=8 B, center_altitude_km=8 B;
-// padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
+// LayerGeometry ---------------------------------------------------------------------------------------------  |
+// Layer altitude, pressure, sublayer span, and thickness used while accumulating one layer.                    |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 64 B (0.062 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] top_altitude_km        : f64                                                                        |
+// [ 8..15] bottom_altitude_km     : f64                                                                        |
+// [16..23] center_altitude_km     : f64                                                                        |
+// [24..31] top_pressure_hpa       : f64                                                                        |
+// [32..39] bottom_pressure_hpa    : f64                                                                        |
+// [40..47] thickness_km           : f64                                                                        |
+// [48..51] sublayer_start_index   : u32                                                                        |
+// [52..55] sublayer_count         : u32                                                                        |
+// [56..59] interval_index_1based  : u32                                                                        |
+// [60..63] padding                : 4 B                                                                        |
+//                                                                                                              |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 64 B; stack value during layer accumulation                                        |
 const LayerGeometry = struct {
     top_altitude_km: f64,
     bottom_altitude_km: f64,
@@ -299,15 +383,34 @@ const LayerGeometry = struct {
     interval_index_1based: u32,
     thickness_km: f64,
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-// field storage: 112 B across 14 fields; largest: density_weight=8 B, density=8 B, temperature_weighted=8 B; padding: 0
-// B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// LayerSums -------------------------------------------------------------------------------------------------  |
+// Per-layer f64 sums before they are normalized into LayerAccumulation fields.                                 |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 120 B (0.117 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0..  7] density_weight                    : f64                                                           |
+// [  8.. 15] density                           : f64                                                           |
+// [ 16.. 23] temperature_weighted              : f64                                                           |
+// [ 24.. 31] pressure_weighted                 : f64                                                           |
+// [ 32.. 39] line_sigma                        : f64                                                           |
+// [ 40.. 47] line_mixing                       : f64                                                           |
+// [ 48.. 55] d_cross_section_d_temperature     : f64                                                           |
+// [ 56.. 63] gas_optical_depth                 : f64                                                           |
+// [ 64.. 71] gas_scattering_optical_depth      : f64                                                           |
+// [ 72.. 79] cia_optical_depth                 : f64                                                           |
+// [ 80.. 87] aerosol_optical_depth             : f64                                                           |
+// [ 88.. 95] aerosol_base_optical_depth        : f64                                                           |
+// [ 96..103] aerosol_scattering_optical_depth  : f64                                                           |
+// [104..111] aerosol_reference_wavelength_sum  : f64                                                           |
+// [112..119] aerosol_angstrom_sum              : f64                                                           |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 120 B; stack value before normalization                                            |
 const LayerSums = struct {
     density_weight: f64 = 0.0,
     density: f64 = 0.0,
@@ -365,14 +468,34 @@ const LayerSums = struct {
         return self.d_cross_section_d_temperature / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 112 B across 14 fields; largest: density=8 B, temperature=8 B, pressure=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// SublayerLayerTerms ----------------------------------------------------------------------------------------  |
+// One sublayer's f64 contribution terms before they are added into LayerSums.                                  |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 120 B (0.117 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0..  7] density                           : f64                                                           |
+// [  8.. 15] temperature                       : f64                                                           |
+// [ 16.. 23] pressure                          : f64                                                           |
+// [ 24.. 31] weight                            : f64                                                           |
+// [ 32.. 39] line_sigma                        : f64                                                           |
+// [ 40.. 47] line_mixing                       : f64                                                           |
+// [ 48.. 55] d_cross_section_d_temperature     : f64                                                           |
+// [ 56.. 63] gas_absorption_optical_depth      : f64                                                           |
+// [ 64.. 71] gas_scattering_optical_depth      : f64                                                           |
+// [ 72.. 79] cia_optical_depth                 : f64                                                           |
+// [ 80.. 87] aerosol_optical_depth             : f64                                                           |
+// [ 88.. 95] aerosol_base_optical_depth        : f64                                                           |
+// [ 96..103] aerosol_scattering_optical_depth  : f64                                                           |
+// [104..111] aerosol_reference_wavelength_nm   : f64                                                           |
+// [112..119] aerosol_angstrom_exponent         : f64                                                           |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 120 B; stack value inside the sublayer loop                                        |
 const SublayerLayerTerms = struct {
     density: f64,
     temperature: f64,

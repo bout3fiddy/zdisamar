@@ -15,16 +15,44 @@ const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
 const max_profile_spectroscopy_cache_nodes: usize = 64;
 
-// layout(64-bit):
-//   size: 304 B, align: 8 B
-// field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B
-// (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced
-// storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
+// absorbers.zig ---------------------------------------------------------------------------------------------  |
+// Builds the active absorber state used by optical-property preparation.                                       |
+//                                                                                                              |
+// main path                                                                                                    |
+//   scene absorbers -> active line/cross-section absorber descriptors -> prepared line/profile state caches    |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Profile line-state preparation can split profile nodes across workers. Worker structs borrow profile       |
+//   arrays and write into caller-owned prepared-state slices.                                                  |
+//                                                                                                              |
+// memory                                                                                                       |
+//   AbsorberBuildState owns prepared absorber arrays and optional spectroscopy line-list storage. Deinit       |
+//   releases only the owned prefixes tracked by the count fields.                                              |
+// ------------------------------------------------------------------------------------------------------------ |
+
+// ProfileLineStateWorker ------------------------------------------------------------------------------------  |
+// Per-thread descriptor for profile line-state preparation.                                                    |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 304 B (0.297 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0..207] line_list                 : SpectroscopyLineList                                                  |
+// [208..223] temperatures_k            : []const f64                                                           |
+// [224..239] pressures_hpa             : []const f64                                                           |
+// [240..255] weak_states               : ?[]WeakLinePreparedState                                              |
+// [256..271] strong_states             : ?[]StrongLinePreparedState                                            |
+// [272..287] strong_relaxation_weights : []f64                                                                 |
+// [288..295] queue                     : *ChunkQueue                                                           |
+// [296..303] worker_index              : usize                                                                 |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   profile arrays, state arrays, relaxation weights, and queue storage are borrowed by the worker.            |
+//   line_list carries descriptors for spectroscopy line storage; ownership stays outside this worker row.      |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 5 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 304 B plus borrowed storage                                                        |
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
@@ -35,17 +63,46 @@ const ProfileLineStateWorker = struct {
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
-// layout(64-bit):
-//   size: 568 B, align: 8 B
-// field storage: 567 B across 22 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B,
-// active_line_absorbers=16 B; padding: 1 B (8 bits)
-//   unused bits: 8 padding + 21 bool-storage slack = 29 bits
-// out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers,
-// owned_line_absorbers carry references/descriptors; referenced storage is not included in size
-//   cache span: 9 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
+// AbsorberBuildState ----------------------------------------------------------------------------------------  |
+// Owns the prepared absorber arrays built from one scene and reference-data context.                           |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 568 B (0.555 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 15] active_line_absorbers              : []ActiveLineAbsorber                                         |
+// [ 16.. 31] active_cross_section_absorbers     : []ActiveCrossSectionAbsorber                                 |
+// [ 32..199] single_active_line_absorber        : ?ActiveLineAbsorber                                          |
+// [200..215] owned_cross_section_absorbers      : []PreparedCrossSectionAbsorber                               |
+// [216..223] owned_cross_section_absorber_count : usize                                                        |
+// [224..239] owned_line_absorbers               : []PreparedLineAbsorber                                       |
+// [240..247] owned_line_absorber_count          : usize                                                        |
+// [248..263] strong_line_states                 : ?[]StrongLinePreparedState                                   |
+// [264..271] strong_line_state_count            : usize                                                        |
+// [272..287] profile_strong_line_states         : ?[]StrongLinePreparedState                                   |
+// [288..295] profile_strong_line_state_count    : usize                                                        |
+// [296..311] profile_weak_line_states           : ?[]WeakLinePreparedState                                     |
+// [312..319] profile_weak_line_state_count      : usize                                                        |
+// [320..535] owned_lines                        : ?SpectroscopyLineList                                        |
+// [536..543] mean_sigma                         : f64                                                          |
+// [544..551] midpoint_continuum_sigma           : f64                                                          |
+// [552..559] air_mass_factor                    : f64                                                          |
+// [560..560] owns_profile_strong_line_states    : bool                                                         |
+// [561..561] owns_profile_weak_line_states      : bool                                                         |
+// [562..563] active_line_species                : ?AbsorberSpecies                                             |
+// [564..565] continuum_owner_species            : ?AbsorberSpecies                                             |
+// [566..566] has_line_absorbers                 : bool                                                         |
+// [567..567] padding                            : 1 B                                                          |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers,                      |
+//   owned_line_absorbers, strong/profile state slices, and owned_lines may own referenced storage.             |
+//                                                                                                              |
+// unused bits: 8 padding + 21 bool-storage slack = 29 bits                                                     |
+// cache span: 9 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 568 B plus owned absorber and spectroscopy storage                                 |
 pub const AbsorberBuildState = struct {
     active_line_absorbers: []State.ActiveLineAbsorber = &.{},
     active_cross_section_absorbers: []State.ActiveCrossSectionAbsorber = &.{},
@@ -114,6 +171,7 @@ pub const AbsorberBuildState = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
 pub fn build(
     allocator: Allocator,
@@ -723,11 +781,16 @@ fn sortLineList(line_list: *ReferenceData.SpectroscopyLineList) void {
         line_list.lines,
         {},
 
-        // layout(64-bit):
-        //   anonymous comparator namespace: size 0 B, align 1 B
-        //   footprint: no runtime field storage; function declaration only
+        // sortLineList comparator --------------------------------------------------------------------------   |
+        // Anonymous namespace only. No runtime field storage is passed to pdq; the function body is the        |
+        // comparator.                                                                                          |
+        // --------------------------------------------------------------------------------------------------   |
         struct {
-            fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
+            fn lessThan(
+                _: void,
+                left: ReferenceData.SpectroscopyLine,
+                right: ReferenceData.SpectroscopyLine,
+            ) bool {
                 return left.center_wavelength_nm < right.center_wavelength_nm;
             }
         }.lessThan,
