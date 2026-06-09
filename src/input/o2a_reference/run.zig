@@ -37,14 +37,40 @@ pub const ResolvedVendorO2ACase = reference_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
 pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
-// layout(64-bit):
-//   size: 3824 B, align: 8 B
-//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
-//   cache span: 60 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
+// run.zig --------------------------------------------------------------------------------------------------- |
+// Loads resolved O2 A reference cases and turns them into runtime Scene and optical-state objects.            |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   resolved case -> reference assets -> Scene -> PreparedOpticalState -> optional instrument-grid product    |
+//   reused inputs -> Scene refresh -> PreparedOpticalState refresh -> retrieval evaluation                    |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Native retrieval paths reuse loaded inputs, weak-line cutoff grids, and one-time solar rewindowing        |
+//   so repeated state evaluations rebuild only the scene and optical state needed for that candidate.         |
+//                                                                                                             |
+// memory                                                                                                      |
+//   PreparedRuntime* structs are owner/view headers over Scene, PreparedOpticalState, and reference slices.   |
+//   deinit order releases nested product/prepared/scene storage before clearing the header.                   |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// PreparedRuntimeCase --------------------------------------------------------------------------------------- |
+// Prepared O2 A case with reference samples, before instrument-grid product simulation.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2904 B (2.836 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..  15] reference  : []ReferenceSample                                                                 |
+// [  16.. 687] scene      : Scene                                                                             |
+// [ 688.. 767] rtm_config : SolveConfig                                                                       |
+// [ 768..2903] prepared   : PreparedOpticalState                                                              |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   reference is owned by the runtime case. scene and prepared are inline headers with nested owned storage.  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 46 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2904 B plus referenced scene/prepared/reference storage                           |
 pub const PreparedRuntimeCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -52,15 +78,23 @@ pub const PreparedRuntimeCase = struct {
     prepared: OpticsPrepare.PreparedOpticalState,
 };
 
-// Runtime-prepared O2 A case for repeated native retrieval evaluations.
-// layout(64-bit):
-//   size: 3808 B, align: 8 B
-//   field storage: scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: scene and prepared carry owned buffers; referenced storage is not included in size
-//   cache span: 60 cache line(s) at 64 B per line
-//   count: one live value per native OE forward evaluation
-//   footprint: per instance = 3808 B (3.719 KiB); total also includes referenced storage above
+// PreparedRuntimeEvaluation --------------------------------------------------------------------------------- |
+// Prepared O2 A case used by native retrieval evaluations after loaded inputs are already available.          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2888 B (2.820 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0.. 671] scene      : Scene                                                                             |
+// [ 672.. 751] rtm_config : SolveConfig                                                                       |
+// [ 752..2887] prepared   : PreparedOpticalState                                                              |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   scene and prepared are inline headers with nested owned storage released by deinit.                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 46 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2888 B plus referenced scene/prepared storage                                     |
 pub const PreparedRuntimeEvaluation = struct {
     scene: Scene,
     rtm_config: SolveConfig,
@@ -73,6 +107,22 @@ pub const PreparedRuntimeEvaluation = struct {
     }
 };
 
+// PreparedRuntimeOptics ------------------------------------------------------------------------------------- |
+// Optics-only prepared case used before solve-config or product simulation is attached.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2808 B (2.742 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0.. 671] scene    : Scene                                                                               |
+// [ 672..2807] prepared : PreparedOpticalState                                                                |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   scene and prepared are inline headers with nested owned storage released by deinit.                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 44 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2808 B plus referenced scene/prepared storage                                     |
 pub const PreparedRuntimeOptics = struct {
     scene: Scene,
     prepared: OpticsPrepare.PreparedOpticalState,
@@ -84,15 +134,22 @@ pub const PreparedRuntimeOptics = struct {
     }
 };
 
-// Retrieval-scoped weak-line cutoff support reused across state evaluations.
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: two slice descriptors at 16 B each; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength and wavenumber grids are owned dense f64 buffers
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one per O2 A retrieval case when vendor weak cutoff is active
-//   footprint: per instance = 32 B (0.031 KiB); total also includes 2 * support_count * 8 B
+// WeakCutoffGridCache --------------------------------------------------------------------------------------- |
+// Retrieval-scoped weak-line cutoff support grid reused across state evaluations.                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm  : []f64                                                                            |
+// [16..31] wavenumbers_cm1 : []f64                                                                            |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   wavelength and wavenumber grids are owned dense f64 buffers.                                              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 1 cache line at 64 B per line                                                                   |
+// footprint: per instance = 32 B plus 16 B per retained support wavelength                                    |
 pub const WeakCutoffGridCache = struct {
     wavelengths_nm: []f64 = &.{},
     wavenumbers_cm1: []f64 = &.{},
@@ -590,9 +647,24 @@ pub fn runResolvedVendorO2AReflectanceCase(
     resolved: *const ResolvedVendorO2ACase,
 ) !struct {
 
-    // layout(64-bit):
-    //   anonymous success payload: size 4144 B, align 8 B; padding is included in payload size
-    //   footprint: per successful return payload = 4144 B (4.047 KiB)
+    // runResolvedVendorO2AReflectanceCase payload ----------------------------------------------------------  |
+    // Anonymous success payload returned after product simulation.                                            |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 3144 B (3.070 KiB), align: 8 B                                                                    |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [   0..  15] reference  : []ReferenceSample                                                             |
+    // [  16.. 687] scene      : Scene                                                                         |
+    // [ 688.. 767] rtm_config : SolveConfig                                                                   |
+    // [ 768..2903] prepared   : PreparedOpticalState                                                          |
+    // [2904..3143] product    : InstrumentGridProduct                                                         |
+    //                                                                                                         |
+    // out-of-line                                                                                             |
+    //   reference is an owned slice. scene, prepared, and product carry nested owned storage.                 |
+    //                                                                                                         |
+    // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                  |
+    // footprint: per successful return payload = 3144 B plus referenced runtime storage                       |
     reference: []ReferenceSample,
     scene: Scene,
     rtm_config: SolveConfig,
@@ -629,22 +701,26 @@ pub fn prepareResolvedVendorO2ACase(
 ) !PreparedRuntimeCase {
     var inputs = inputs: {
 
-        // instrumentation: trace zone
-        // captures: O2 A reference input loading wall time
-        // why: keep file/data preparation separate from model setup in trace runs.
+        // instrumentation: trace zone: prepare.load_inputs -------------------------------------------------- |
+        // captures: O2 A reference input loading wall time                                                    |
+        // why: keep file/data preparation separate from model setup in trace runs.                            |
         const zone = Trace.staticZone(@src(), "prepare.load_inputs");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.load_inputs ---------------------------------------------- |
+
         break :inputs try loadResolvedVendorO2AInputs(allocator, resolved);
     };
     defer inputs.deinit(allocator);
 
     var scene = scene: {
 
-        // instrumentation: trace zone
-        // captures: typed scene construction wall time
-        // why: separate input translation from optical-state preparation.
+        // instrumentation: trace zone: prepare.build_scene -------------------------------------------------- |
+        // captures: typed scene construction wall time                                                        |
+        // why: separate input translation from optical-state preparation.                                     |
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.build_scene ---------------------------------------------- |
+
         break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     };
     errdefer scene.deinitOwned(allocator);
@@ -660,11 +736,13 @@ pub fn prepareResolvedVendorO2ACase(
 
     var prepared = prepared: {
 
-        // instrumentation: trace zone
-        // captures: optical-state preparation wall time
-        // why: expose setup cost before any instrument-grid simulation.
+        // instrumentation: trace zone: prepare.optical ------------------------------------------------------ |
+        // captures: optical-state preparation wall time                                                       |
+        // why: expose setup cost before any instrument-grid simulation.                                       |
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.optical -------------------------------------------------- |
+
         break :prepared try OpticsPrepare.prepare(allocator, &scene, .{
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
@@ -679,31 +757,37 @@ pub fn prepareResolvedVendorO2ACase(
 
     {
 
-        // instrumentation: trace zone
-        // captures: weak-line cutoff support-grid installation
-        // why: isolate retained spectroscopy pruning setup from core optical preparation.
+        // instrumentation: trace zone: prepare.weak_cutoff_grid --------------------------------------------- |
+        // captures: weak-line cutoff support-grid installation                                                |
+        // why: isolate retained spectroscopy pruning setup from core optical preparation.                     |
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.weak_cutoff_grid ----------------------------------------- |
+
         try installVendorWeakCutoffGrid(allocator, &scene, &prepared, null);
     }
 
     {
 
-        // instrumentation: trace zone
-        // captures: solar support rewindowing wall time
-        // why: separate instrument-kernel alignment from RTM setup.
+        // instrumentation: trace zone: prepare.solar_rewindow ----------------------------------------------- |
+        // captures: solar support rewindowing wall time                                                       |
+        // why: separate instrument-kernel alignment from RTM setup.                                           |
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.solar_rewindow ------------------------------------------- |
+
         try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
     }
 
     const rtm_config = rtm_config: {
 
-        // instrumentation: trace zone
-        // captures: RTM rtm_config preparation wall time
-        // why: show control/rtm_config setup independently from optical data construction.
+        // instrumentation: trace zone: prepare.rtm_config --------------------------------------------------- |
+        // captures: RTM solve-config preparation wall time                                                    |
+        // why: show control setup independently from optical data construction.                               |
         const zone = Trace.staticZone(@src(), "prepare.rtm_config");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.rtm_config ----------------------------------------------- |
+
         break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
     };
 
@@ -725,11 +809,13 @@ pub fn prepareResolvedVendorO2AEvaluationWithInputs(
 
     const rtm_config = rtm_config: {
 
-        // instrumentation: trace zone
-        // captures: RTM rtm_config preparation wall time
-        // why: measure rtm_config setup for input-reuse validation and retrieval lanes.
+        // instrumentation: trace zone: prepare.rtm_config --------------------------------------------------- |
+        // captures: RTM solve-config preparation wall time                                                    |
+        // why: measure control setup for input-reuse validation and retrieval lanes.                          |
         const zone = Trace.staticZone(@src(), "prepare.rtm_config");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.rtm_config ----------------------------------------------- |
+
         break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
     };
 
@@ -775,11 +861,13 @@ fn prepareResolvedVendorO2AOpticsWithInputsInternal(
 ) !PreparedRuntimeOptics {
     var scene = scene: {
 
-        // instrumentation: trace zone
-        // captures: typed scene construction wall time
-        // why: separate reused loaded inputs from per-scene reconstruction cost.
+        // instrumentation: trace zone: prepare.build_scene -------------------------------------------------- |
+        // captures: typed scene construction wall time                                                        |
+        // why: separate reused loaded inputs from per-scene reconstruction cost.                              |
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.build_scene ---------------------------------------------- |
+
         break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     };
     errdefer scene.deinitOwned(allocator);
@@ -909,11 +997,13 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
 
     var prepared = prepared: {
 
-        // instrumentation: trace zone
-        // captures: optical-state preparation wall time
-        // why: show setup cost when inputs are reused across retrieval iterations.
+        // instrumentation: trace zone: prepare.optical ------------------------------------------------------ |
+        // captures: optical-state preparation wall time                                                       |
+        // why: show setup cost when inputs are reused across retrieval iterations.                            |
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.optical -------------------------------------------------- |
+
         break :prepared try OpticsPrepare.prepare(allocator, scene, .{
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
@@ -931,21 +1021,25 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
 
     {
 
-        // instrumentation: trace zone
-        // captures: weak-line cutoff support-grid installation
-        // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.
+        // instrumentation: trace zone: prepare.weak_cutoff_grid --------------------------------------------- |
+        // captures: weak-line cutoff support-grid installation                                                |
+        // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.                              |
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.weak_cutoff_grid ----------------------------------------- |
+
         try installVendorWeakCutoffGrid(allocator, scene, &prepared, weak_cutoff_grid);
     }
 
     if (!solar_rewindowed.*) {
 
-        // instrumentation: trace zone
-        // captures: one-time solar support rewindowing wall time
-        // why: verify retrieval sessions reuse this instrument-grid setup.
+        // instrumentation: trace zone: prepare.solar_rewindow ----------------------------------------------- |
+        // captures: one-time solar support rewindowing wall time                                              |
+        // why: verify retrieval sessions reuse this instrument-grid setup.                                    |
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.solar_rewindow ------------------------------------------- |
+
         try rewindowParitySolarSupportToMeasurementKernel(allocator, scene, &prepared);
         solar_rewindowed.* = true;
     }
@@ -1117,9 +1211,18 @@ fn sharedParityMeasurementSupport(
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !?struct { start_nm: f64, end_nm: f64 } {
 
-    // layout(64-bit):
-    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per present payload = 16 B (0.016 KiB)
+    // sharedParityMeasurementSupport payload ---------------------------------------------------------------  |
+    // Optional wavelength support bounds shared by radiance and irradiance kernels.                           |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 16 B (0.016 KiB), align: 8 B                                                                      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [0.. 7] start_nm : f64                                                                                  |
+    // [8..15] end_nm   : f64                                                                                  |
+    //                                                                                                         |
+    // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                  |
+    // footprint: per present optional payload = 16 B                                                          |
     var radiance_start: instrument_types.IntegrationKernel = undefined;
     var radiance_end: instrument_types.IntegrationKernel = undefined;
     var irradiance_start: instrument_types.IntegrationKernel = undefined;
