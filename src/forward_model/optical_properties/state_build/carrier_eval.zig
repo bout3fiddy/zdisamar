@@ -491,6 +491,75 @@ const ParticleBoundaryCarrier = struct {
 };
 // ------------------------------------------------------------------------------------------------------------ |
 
+// SourceInterfaceBoundaryRequest ----------------------------------------------------------------------------- |
+// Borrowed boundary parts used to write one source-interface row.                                              |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 88 B (0.086 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] aerosol_phase_coefficients         : *const [151]f64                                                |
+// [ 8..15] wavelength_nm                      : f64                                                            |
+// [16..23] gas_scattering_optical_depth_per_km: f64                                                            |
+// [24..39] particle_above                     : ParticleBoundaryCarrier                                        |
+// [40..55] particle_below                     : ParticleBoundaryCarrier                                        |
+// [56..63] rtm_weight                         : f64                                                            |
+// [64..79] rayleigh_phase_coefficient2        : ?f64                                                           |
+// [80..87] source_interface                   : *SourceInterfaceInput                                          |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   aerosol_phase_coefficients and source_interface are borrowed from the caller for one row fill.             |
+//                                                                                                              |
+// unused bits: 0 padding + 56 bool-storage slack = 56 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 88 B plus borrowed phase and output storage                                        |
+const SourceInterfaceBoundaryRequest = struct {
+    aerosol_phase_coefficients: *const [PhaseFunctions.phase_coefficient_count]f64,
+    wavelength_nm: f64,
+    gas_scattering_optical_depth_per_km: f64,
+    particle_above: ParticleBoundaryCarrier,
+    particle_below: ParticleBoundaryCarrier,
+    rtm_weight: f64,
+    rayleigh_phase_coefficient2: ?f64,
+    source_interface: *transport_common.SourceInterfaceInput,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
+// RtmQuadratureBoundaryRequest ------------------------------------------------------------------------------- |
+// Borrowed boundary parts used to write one RTM quadrature level.                                              |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 120 B (0.117 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 39] level_geometry                    : SharedRtmLevelGeometry                                        |
+// [ 40.. 47] wavelength_nm                     : f64                                                           |
+// [ 48.. 55] gas_scattering_optical_depth_per_km: f64                                                          |
+// [ 56.. 71] particle_above                    : ParticleBoundaryCarrier                                       |
+// [ 72.. 87] particle_below                    : ParticleBoundaryCarrier                                       |
+// [ 88..103] rayleigh_phase_coefficient2       : ?f64                                                          |
+// [104..111] rtm_level                         : *RtmQuadratureLevel                                           |
+// [112..112] compute_jacobian                  : bool                                                          |
+// [113..119] padding                           : 7 B                                                           |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   rtm_level is borrowed from the caller for one row fill.                                                    |
+//                                                                                                              |
+// unused bits: 56 padding + 56 bool-storage slack = 112 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 120 B plus borrowed output storage                                                 |
+const RtmQuadratureBoundaryRequest = struct {
+    level_geometry: SharedRtmLevelGeometry,
+    wavelength_nm: f64,
+    gas_scattering_optical_depth_per_km: f64,
+    particle_above: ParticleBoundaryCarrier,
+    particle_below: ParticleBoundaryCarrier,
+    rayleigh_phase_coefficient2: ?f64,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+    compute_jacobian: bool,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
 // ParticleWavelengthScales ----------------------------------------------------------------------------------- |
 // Wavelength and aerosol Angstrom-scale controls reused while filling rows for one wavelength.                 |
 //                                                                                                              |
@@ -891,16 +960,17 @@ pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
         sublayers,
         level_geometry.particle_below_support_row_index,
     );
-    fillSourceInterfaceFromBoundaryParts(
-        self,
-        wavelength_nm,
-        gas_carrier.gas_scattering_optical_depth_per_km,
-        particle_above,
-        particle_below,
-        rtm_weight,
-        null,
-        source_interface,
-    );
+    const request = SourceInterfaceBoundaryRequest{
+        .aerosol_phase_coefficients = &self.aerosol_phase_coefficients,
+        .wavelength_nm = wavelength_nm,
+        .gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km,
+        .particle_above = particle_above,
+        .particle_below = particle_below,
+        .rtm_weight = rtm_weight,
+        .rayleigh_phase_coefficient2 = null,
+        .source_interface = source_interface,
+    };
+    fillSourceInterfaceFromBoundaryParts(&request);
 }
 
 pub fn fillSourceInterfaceAtLevelWithCarrierCache(
@@ -938,47 +1008,39 @@ pub fn fillSourceInterfaceAtLevelWithCarrierCache(
         level_geometry.particle_below_support_row_index,
         wavelength_cache.particle_scales,
     );
-    fillSourceInterfaceFromBoundaryParts(
-        self,
-        wavelength_nm,
-        gas_carrier.gas_scattering_optical_depth_per_km,
-        particle_above,
-        particle_below,
-        rtm_weight,
-        wavelength_cache.rayleigh_phase_coefficient2,
-        source_interface,
-    );
+    const request = SourceInterfaceBoundaryRequest{
+        .aerosol_phase_coefficients = &self.aerosol_phase_coefficients,
+        .wavelength_nm = wavelength_nm,
+        .gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km,
+        .particle_above = particle_above,
+        .particle_below = particle_below,
+        .rtm_weight = rtm_weight,
+        .rayleigh_phase_coefficient2 = wavelength_cache.rayleigh_phase_coefficient2,
+        .source_interface = source_interface,
+    };
+    fillSourceInterfaceFromBoundaryParts(&request);
 }
 
-fn fillSourceInterfaceFromBoundaryParts(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    gas_scattering_optical_depth_per_km: f64,
-    particle_above: ParticleBoundaryCarrier,
-    particle_below: ParticleBoundaryCarrier,
-    rtm_weight: f64,
-    rayleigh_phase_coefficient2: ?f64,
-    source_interface: *transport_common.SourceInterfaceInput,
-) void {
-    const particle_above_total = particle_above.totalScatteringOpticalDepthPerKm();
-    const rayleigh_coef2 = rayleigh_phase_coefficient2 orelse
-        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+fn fillSourceInterfaceFromBoundaryParts(request: *const SourceInterfaceBoundaryRequest) void {
+    const particle_above_total = request.particle_above.totalScatteringOpticalDepthPerKm();
+    const rayleigh_coef2 = request.rayleigh_phase_coefficient2 orelse
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(request.wavelength_nm);
     const phase_above = PhaseFunctions.PhaseMixture.fromScatteringMix(
         rayleigh_coef2,
-        gas_scattering_optical_depth_per_km,
-        particle_above.aerosol_scattering_optical_depth_per_km,
-        &self.aerosol_phase_coefficients,
+        request.gas_scattering_optical_depth_per_km,
+        request.particle_above.aerosol_scattering_optical_depth_per_km,
+        request.aerosol_phase_coefficients,
     );
     const phase_below = PhaseFunctions.PhaseMixture.fromScatteringMix(
         rayleigh_coef2,
-        gas_scattering_optical_depth_per_km,
-        particle_below.aerosol_scattering_optical_depth_per_km,
-        &self.aerosol_phase_coefficients,
+        request.gas_scattering_optical_depth_per_km,
+        request.particle_below.aerosol_scattering_optical_depth_per_km,
+        request.aerosol_phase_coefficients,
     );
-    source_interface.* = .{
+    request.source_interface.* = .{
         .source_weight = 0.0,
-        .rtm_weight = rtm_weight,
-        .ksca_above = gas_scattering_optical_depth_per_km + particle_above_total,
+        .rtm_weight = request.rtm_weight,
+        .ksca_above = request.gas_scattering_optical_depth_per_km + particle_above_total,
         .phase_above = phase_above,
         .phase_max_index_above = phase_above.maxIndex(),
         .phase_max_index_below = phase_below.maxIndex(),
@@ -1030,16 +1092,17 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
         sublayers,
         level_geometry.particle_below_support_row_index,
     );
-    fillRtmQuadratureLevelFromBoundaryParts(
-        wavelength_nm,
-        level_geometry,
-        gas_carrier.gas_scattering_optical_depth_per_km,
-        particle_above,
-        particle_below,
-        null,
-        rtm_level,
-        compute_jacobian,
-    );
+    const request = RtmQuadratureBoundaryRequest{
+        .level_geometry = level_geometry,
+        .wavelength_nm = wavelength_nm,
+        .gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km,
+        .particle_above = particle_above,
+        .particle_below = particle_below,
+        .rayleigh_phase_coefficient2 = null,
+        .rtm_level = rtm_level,
+        .compute_jacobian = compute_jacobian,
+    };
+    fillRtmQuadratureLevelFromBoundaryParts(&request);
 }
 
 pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
@@ -1077,38 +1140,33 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         level_geometry.particle_below_support_row_index,
         wavelength_cache.particle_scales,
     );
-    fillRtmQuadratureLevelFromBoundaryParts(
-        wavelength_nm,
-        level_geometry,
-        gas_carrier.gas_scattering_optical_depth_per_km,
-        particle_above,
-        particle_below,
-        wavelength_cache.rayleigh_phase_coefficient2,
-        rtm_level,
-        compute_jacobian,
-    );
+    const request = RtmQuadratureBoundaryRequest{
+        .level_geometry = level_geometry,
+        .wavelength_nm = wavelength_nm,
+        .gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km,
+        .particle_above = particle_above,
+        .particle_below = particle_below,
+        .rayleigh_phase_coefficient2 = wavelength_cache.rayleigh_phase_coefficient2,
+        .rtm_level = rtm_level,
+        .compute_jacobian = compute_jacobian,
+    };
+    fillRtmQuadratureLevelFromBoundaryParts(&request);
 }
 
-fn fillRtmQuadratureLevelFromBoundaryParts(
-    wavelength_nm: f64,
-    level_geometry: SharedRtmLevelGeometry,
-    gas_scattering_optical_depth_per_km: f64,
-    particle_above: ParticleBoundaryCarrier,
-    particle_below: ParticleBoundaryCarrier,
-    rayleigh_phase_coefficient2: ?f64,
-    rtm_level: *transport_common.RtmQuadratureLevel,
-    compute_jacobian: bool,
-) void {
-    const aerosol_ksca = particle_above.aerosol_scattering_optical_depth_per_km;
-    rtm_level.altitude_km = level_geometry.altitude_km;
-    rtm_level.weight = level_geometry.weight_km;
-    rtm_level.ksca = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm();
-    rtm_level.aerosol_ksca_above_per_km = aerosol_ksca;
-    rtm_level.aerosol_ksca_below_per_km = particle_below.aerosol_scattering_optical_depth_per_km;
-    if (compute_jacobian) rtm_level.aerosol_ksca_jacobian = 0.0;
-    rtm_level.setPhaseMixture(
-        rayleigh_phase_coefficient2 orelse PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
-        gas_scattering_optical_depth_per_km,
+fn fillRtmQuadratureLevelFromBoundaryParts(request: *const RtmQuadratureBoundaryRequest) void {
+    const aerosol_ksca = request.particle_above.aerosol_scattering_optical_depth_per_km;
+    request.rtm_level.altitude_km = request.level_geometry.altitude_km;
+    request.rtm_level.weight = request.level_geometry.weight_km;
+    request.rtm_level.ksca = request.gas_scattering_optical_depth_per_km +
+        request.particle_above.totalScatteringOpticalDepthPerKm();
+    request.rtm_level.aerosol_ksca_above_per_km = aerosol_ksca;
+    request.rtm_level.aerosol_ksca_below_per_km =
+        request.particle_below.aerosol_scattering_optical_depth_per_km;
+    if (request.compute_jacobian) request.rtm_level.aerosol_ksca_jacobian = 0.0;
+    request.rtm_level.setPhaseMixture(
+        request.rayleigh_phase_coefficient2 orelse
+            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(request.wavelength_nm),
+        request.gas_scattering_optical_depth_per_km,
         aerosol_ksca,
     );
 }
