@@ -4,18 +4,45 @@ const zdisamar = @import("zdisamar");
 const allocator = std.heap.smp_allocator;
 
 // c.zig ------------------------------------------------------------------------------------------------------|
-// C ABI wrapper for preparing O2 A inputs, running spectra, retrieving diagnostics, and freeing handles.      |
+// C ABI boundary for Python bindings and other callers that cannot hold native Zig owners directly.           |
 //                                                                                                             |
-// boundary                                                                                                    |
-//   Public structs below are extern ABI rows. Field order is part of the C contract, so layout comments show  |
-//   source order plus explicit padding measured with @sizeOf, @alignOf, and @offsetOf on the current target.  |
+// called from                                                                                                 |
+//   build.zig builds this file as the C shared-library root.                                                  |
+//   python/zdisamar/bindings/signatures.py binds every zds_* export with ctypes-compatible signatures.        |
+//   python/zdisamar/bindings/handles.py owns the high-level Python handle lifecycle and calls the matching    |
+//   zds_*_free function for every borrowed result view.                                                       |
+//   src/root.zig, input/o2a_reference/root.zig, and optimal_estimation/retrieval.zig are the native Zig       |
+//   surfaces this boundary converts into and out of.                                                          |
+//                                                                                                             |
+// exports                                                                                                     |
+//   context       : create/destroy, last_error, parsed/default O2 A preparation, session warmup               |
+//   spectra       : run spectrum, run Jacobian spectrum, choose Jacobian states by external state id          |
+//   retrieval     : single, batch, fastmode batch, and prepared-correction optimal-estimation runs            |
+//   diagnostics   : spectrum summary, atmospheric budget, O2 lines, instrument response, O2-O2 CIA, RT rows   |
+//   cleanup       : zds_*_free functions remove Context-owned native handles or copied diagnostic row tables  |
+//                                                                                                             |
+// call path                                                                                                   |
+//   C request structs borrow caller buffers long enough to validate and convert into native Zig slices.       |
+//   Context owns prepared O2 A state, parsed JSON storage, session storage, native output handles, copied     |
+//   diagnostic row buffers, and the fixed last_error string.                                                  |
+//   Run functions allocate native outputs, store those pointers in Context lists, and return extern structs   |
+//   containing borrowed array pointers plus an opaque result_handle.                                          |
+//   Diagnostic functions copy native rows into Context-owned C row arrays so C/Python callers can read stable |
+//   tables until the matching free call.                                                                      |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   Result structs expose borrowed pointers owned by Context. C callers must release the matching result or   |
-//   diagnostic handle before destroying the context. Input request structs borrow caller-owned buffers.       |
+//   Input arrays and JSON buffers are borrowed from the caller. Result and diagnostic pointers are borrowed   |
+//   from Context. C callers must call the matching zds_*_free function before destroying the context, or let  |
+//   zds_context_destroy clear any still-retained handles.                                                     |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   This file does no file I/O, CLI parsing, or reference-data loading itself. It validates raw pointers and  |
+//   counts, translates errors into c_int status plus last_error, and forwards work to the public Zig facade.  |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Pointer fields are one-word C pointers here. Referenced arrays, JSON storage, and native result buffers   |
+//   Public structs below are extern ABI rows. Field order is part of the C contract, so layout comments show  |
+//   source order plus explicit padding measured with @sizeOf, @alignOf, and @offsetOf on the current target.  |
+//   Pointer fields are one-word C pointers here; referenced arrays, JSON storage, and native result buffers   |
 //   live out of line and are not counted in the ABI row size.                                                 |
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -41,7 +68,7 @@ pub const ZdsStatus = enum(c_int) {
 // [56..63] result_handle        : ?*anyopaque                                                                 |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   array pointers borrow result_handle storage until the matching release call.                              |
+//   array pointers borrow result_handle storage until the matching zds_spectrum_free call.                    |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 1 cache line at 64 B per line                                                                   |
@@ -202,7 +229,7 @@ pub const ZdsOptimalEstimationRequest = extern struct {
 // [112..119] result_handle                    : ?*anyopaque                                                   |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   all pointer fields borrow native result arrays until zds_release_optimal_estimation_result.               |
+//   all pointer fields borrow native result arrays until zds_optimal_estimation_result_free.                  |
 //                                                                                                             |
 // unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
 // cache span: 2 cache lines at 64 B per line                                                                  |
@@ -282,7 +309,7 @@ pub const ZdsOptimalEstimationBatchRequest = extern struct {
 // [64..71] result_handle    : ?*anyopaque                                                                     |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   pointer fields borrow native batch result arrays until the batch result is released.                      |
+//   pointer fields borrow native batch result arrays until zds_optimal_estimation_batch_result_free.          |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 2 cache lines at 64 B per line                                                                  |
@@ -321,7 +348,7 @@ pub const ZdsOptimalEstimationBatchResult = extern struct {
 // [ 96..103] result_handle                   : ?*anyopaque                                                    |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   pointer fields borrow native fastmode result arrays until the fastmode result is released.                |
+//   pointer fields borrow native fastmode arrays until the matching fastmode result free call.                |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 2 cache lines at 64 B per line                                                                  |
