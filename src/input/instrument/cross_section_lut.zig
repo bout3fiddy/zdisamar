@@ -10,17 +10,27 @@ const max_operational_refspec_temperature_coefficients = constants.max_operation
 const max_operational_refspec_pressure_coefficients = constants.max_operational_refspec_pressure_coefficients;
 
 // cross_section_lut.zig --------------------------------------------------------------------------------------|
-// Operational pressure/temperature cross-section LUT preparation and evaluation.                              |
+// Operational pressure/temperature cross-section LUT setup and support-row evaluator.                         |
 //                                                                                                             |
-// data                                                                                                        |
-//   OperationalCrossSectionLut is a header over wavelength planes and Legendre coefficient storage.           |
-//   buildLutFromSource samples a source line list, cross-section table, or CIA table into coefficient planes. |
-//   evaluateLut rebuilds the pressure/temperature basis for one support row and interpolates between          |
-//   wavelength planes.                                                                                        |
+// called from                                                                                                 |
+//   bundled/workflows.zig builds O2, O2-O2, and absorber-specific operational LUTs from reference sources.    |
+//   Instrument and Absorber retain resolved LUT payloads inside operational band support or spectroscopy rows.|
+//   state_build/context.zig clones operational O2/O2-O2 LUTs into PreparedOpticalState.                       |
+//   state_spectroscopy, layer_spectroscopy, carrier_eval, layer_accumulation, and band_means call sigmaAt or  |
+//   dSigmaDTemperatureAt while evaluating support rows and Jacobians.                                         |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   buildFromSource validates XsecControls, samples a line list, cross-section table, or CIA table over a     |
+//   Gauss-Legendre pressure/temperature grid, then projects those samples into Legendre coefficient planes.   |
+//   evaluateLut scales log(T) and log(p), builds bounded stack Legendre bases, brackets wavelength planes,    |
+//   and reduces flattened coefficients into sigma and dSigma/dT.                                              |
+//   coefficient storage is wavelength-major, then pressure coefficient, then temperature coefficient:         |
+//     index = wavelength * nT * nP + p_index * nT + t_index                                                   |
 //                                                                                                             |
 // hot reads                                                                                                   |
-//   Support-row optical-property evaluation repeatedly calls sigmaAt and dSigmaDTemperatureAt. The small      |
-//   basis arrays stay on the stack; coefficient and wavelength data stay out-of-line behind this header.      |
+//   Support-row optical-property evaluation repeatedly calls sigmaAt and dSigmaDTemperatureAt. The evaluator  |
+//   allocates nothing: small basis arrays stay on the stack and coefficient/wavelength planes stay out of     |
+//   line behind this header.                                                                                  |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   clone and buildFromSource allocate wavelength and coefficient arrays. deinitOwned releases those arrays.  |
