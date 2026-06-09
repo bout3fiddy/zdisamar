@@ -548,18 +548,6 @@ fn buildCrossSectionAbsorbers(
     );
 
     for (state.active_cross_section_absorbers, 0..) |cross_section_absorber, index| {
-        const representation_kind = switch (cross_section_absorber.representation) {
-            .xsec_table => if (cross_section_absorber.use_effective_cross_section)
-                State.CrossSectionRepresentationKind.effective_table
-            else
-                State.CrossSectionRepresentationKind.table,
-            .xsec_lut => if (cross_section_absorber.use_effective_cross_section)
-                State.CrossSectionRepresentationKind.effective_lut
-            else
-                State.CrossSectionRepresentationKind.lut,
-            .line_abs, .none => unreachable,
-        };
-
         const representation = switch (cross_section_absorber.representation) {
             .xsec_table => |table| State.PreparedCrossSectionRepresentation{
                 .table = .{
@@ -588,8 +576,6 @@ fn buildCrossSectionAbsorbers(
 
         state.owned_cross_section_absorbers[index] = .{
             .species = cross_section_absorber.species,
-            .representation_kind = representation_kind,
-            .polynomial_order = cross_section_absorber.polynomial_order,
             .representation = representation,
             .number_densities_cm3 = number_densities_cm3,
         };
@@ -775,18 +761,6 @@ fn collectActiveCrossSectionAbsorbers(
     var active = std.ArrayList(State.ActiveCrossSectionAbsorber).empty;
     defer active.deinit(allocator);
 
-    var any_strong_absorption_band = false;
-    for (scene.bands.items, 0..) |_, band_index| {
-        if (scene.observation_model.cross_section_fit.strongAbsorptionForBand(band_index)) {
-            any_strong_absorption_band = true;
-            break;
-        }
-    }
-    const use_effective_cross_section = scene.observation_model.cross_section_fit.use_effective_cross_section_oe or
-        scene.observation_model.cross_section_fit.use_polynomial_expansion or
-        any_strong_absorption_band;
-    const polynomial_order = scene.observation_model.cross_section_fit.maximumPolynomialOrder();
-
     for (scene.absorbers.items) |absorber| {
         const species = Spectroscopy.resolvedAbsorberSpecies(absorber) orelse continue;
         if (absorber.spectroscopy.mode != .cross_sections) continue;
@@ -801,8 +775,6 @@ fn collectActiveCrossSectionAbsorbers(
             .species = species,
             .representation = representation,
             .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-            .use_effective_cross_section = use_effective_cross_section,
-            .polynomial_order = polynomial_order,
         });
     }
 

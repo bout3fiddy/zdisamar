@@ -42,36 +42,6 @@ pub const ExternalAsset = struct {
     format: []const u8,
 };
 
-pub const OutputKind = enum {
-    summary_json,
-    generated_spectrum_csv,
-};
-
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: path=16 B, kind=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: path carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
-pub const OutputRequest = struct {
-    kind: OutputKind,
-    path: []const u8,
-};
-
-// layout(64-bit):
-//   size: 3 B, align: 1 B
-// field storage: strict_unknown_fields=1 B, require_resolved_assets=1 B, require_resolved_stage_references=1 B;
-// padding: 0 B (0 bits)
-//   unused bits: 0 padding + 21 bool-storage slack = 21 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3 B (0.003 KiB); total = per instance * live instance count
-pub const ValidationPolicy = struct {
-    strict_unknown_fields: bool,
-    require_resolved_assets: bool,
-    require_resolved_stage_references: bool,
-};
-
 // layout(64-bit):
 //   size: 1 B, align: 1 B
 //   field storage: derivative_mode=1 B; padding: 0 B (0 bits)
@@ -219,7 +189,7 @@ pub const SolarSpectrumSample = struct {
 //   size: 912 B, align: 8 B
 //   field storage: 908 B across 19 fields; largest: o2=208 B, inputs=192 B, aerosol=80 B; padding: 4 B (32 bits)
 //   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   out-of-line: scene_id, intervals, outputs carry references/descriptors; referenced storage is not included in size
+//   out-of-line: scene_id and intervals carry references/descriptors; referenced storage is not included in size
 //   cache span: 15 cache line(s) at 64 B per line
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
 //   footprint: per instance = 912 B (0.891 KiB); total also includes referenced storage above
@@ -241,8 +211,6 @@ pub const ResolvedVendorO2ACase = struct {
     o2: LineGasSpec,
     o2o2: CiaSpec,
     rtm_controls: RadiativeTransferControls,
-    outputs: []const OutputRequest,
-    validation: ValidationPolicy,
 };
 
 // layout(64-bit):

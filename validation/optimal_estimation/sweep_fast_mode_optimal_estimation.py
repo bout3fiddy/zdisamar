@@ -222,9 +222,6 @@ def build_rows() -> list[dict[str, Any]]:
                         thresholds.fourier_tail_reflectance_epsilon
                     ),
                     "threshold_doubl": thresholds.threshold_doubl,
-                    "qzero_rd_product_suppression": thresholds.qzero_rd_product_suppression,
-                    "qzero_tu_product_suppression": thresholds.qzero_tu_product_suppression,
-                    "qzero_td_product_suppression": thresholds.qzero_td_product_suppression,
                     "adaptive_grid_points_per_fwhm": adaptive_grid["points_per_fwhm"],
                     "adaptive_grid_strong_line_min_divisions": adaptive_grid[
                         "strong_line_min_divisions"

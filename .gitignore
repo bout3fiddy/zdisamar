@@ -17,6 +17,7 @@ __pycache__/
 *.bundle
 python/zdisamar/bindings/libzdisamar_c.*
 python/zdisamar/reference_data/assets/
+benchmark/fast_results.json
 
 # Package Directories
 zig-pkg/

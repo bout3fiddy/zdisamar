@@ -155,12 +155,9 @@ pub const ScatteringMode = enum(u2) {
 // [50..51] fourier_floor_scalar                : u16                                                          |
 // [52..55] fourier_order_cap                   : ?u16                                                         |
 // [56..59] aerosol_tangent_order_cap           : ?u16                                                         |
-// [60..60] qzero_rd_product_suppression        : bool                                                         |
-// [61..61] qzero_tu_product_suppression        : bool                                                         |
-// [62..62] qzero_td_product_suppression        : bool                                                         |
-// [63..63] padding                             : 1 B                                                          |
+// [60..63] padding                             : 4 B                                                          |
 //                                                                                                             |
-// unused bits: 8 padding + 21 bool-storage slack = 29 bits                                                    |
+// unused bits: 32 padding                                                                                     |
 // cache span: 1 cache line at 64 B per line                                                                   |
 // footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count                      |
 pub const RadiativeTransferPerformanceThresholds = struct {
@@ -174,9 +171,6 @@ pub const RadiativeTransferPerformanceThresholds = struct {
     threshold_doubl: f64 = 0.1,
     threshold_mul: f64 = 1.0e-12,
     phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
-    qzero_rd_product_suppression: bool = false,
-    qzero_tu_product_suppression: bool = false,
-    qzero_td_product_suppression: bool = false,
 
     pub fn validate(self: RadiativeTransferPerformanceThresholds) PrepareError!void {
         // RadiativeTransferPerformanceThresholds.validate ----------------------------------------------------|
@@ -257,9 +251,6 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         .threshold_doubl = 1.0e-6,
         .threshold_mul = 1.0e-8,
         .phase_function_truncation_threshold = 1.0e-8,
-        .qzero_rd_product_suppression = false,
-        .qzero_tu_product_suppression = false,
-        .qzero_td_product_suppression = false,
     };
 };
 // ------------------------------------------------------------------------------------------------------------|

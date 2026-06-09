@@ -10,9 +10,6 @@ test "default O2A input renders and parses as strict JSON" {
     try std.testing.expectEqual(@as(u16, 0), input.rtm_controls.performance_thresholds.num_orders_max);
     try std.testing.expectEqual(@as(?u16, null), input.rtm_controls.performance_thresholds.fourier_order_cap);
     try std.testing.expectEqual(@as(?u16, null), input.rtm_controls.performance_thresholds.aerosol_tangent_order_cap);
-    try std.testing.expect(!input.rtm_controls.performance_thresholds.qzero_rd_product_suppression);
-    try std.testing.expect(!input.rtm_controls.performance_thresholds.qzero_tu_product_suppression);
-    try std.testing.expect(!input.rtm_controls.performance_thresholds.qzero_td_product_suppression);
     try std.testing.expectApproxEqAbs(
         @as(f64, 3.0e-14),
         input.rtm_controls.performance_thresholds.fourier_tail_reflectance_epsilon,
@@ -40,9 +37,6 @@ test "default O2A input renders and parses as strict JSON" {
         @as(?u16, null),
         parsed.value.rtm_controls.performance_thresholds.aerosol_tangent_order_cap,
     );
-    try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_rd_product_suppression);
-    try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_tu_product_suppression);
-    try std.testing.expect(!parsed.value.rtm_controls.performance_thresholds.qzero_td_product_suppression);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, parsed.value.o2.isotopes_sim);
 }
 
@@ -59,6 +53,22 @@ test "O2A JSON rejects unknown fields" {
     try std.testing.expectError(
         error.UnknownField,
         zdisamar.parseO2AInputJson(std.testing.allocator, with_unknown),
+    );
+}
+
+test "O2A JSON rejects removed output metadata" {
+    const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    const with_outputs = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"outputs\":[],{s}",
+        .{json[1..]},
+    );
+    defer std.testing.allocator.free(with_outputs);
+
+    try std.testing.expectError(
+        error.UnknownField,
+        zdisamar.parseO2AInputJson(std.testing.allocator, with_outputs),
     );
 }
 

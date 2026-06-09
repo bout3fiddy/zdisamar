@@ -72,7 +72,6 @@ pub const Scene = struct {
         {
             return errors.Error.InvalidRequest;
         }
-        try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
         const explicit_operational_band_count = self.observation_model.operational_band_support.len;
         if (self.bands.items.len != 0 and
             explicit_operational_band_count != 0 and

@@ -572,8 +572,7 @@ fn doDouble(
         // and leaves out the tiny R-D product.                                                                |
         //                                                                                                     |
         // The gate is abs(trace(R) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_rd_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 563,874 / 24,518,833 hits and measured max reflectance delta 1.050e-06.  |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: R-D gate -----------------------------------------------------------|
         // captures: R-D product gate evaluations                                                              |
@@ -598,8 +597,7 @@ fn doDouble(
         const rd_nonzero = Perturbation.decision(
             .qseries_rd_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_rd_product_suppression) and
-                @abs(trace_r * trace_d) > threshold_mul,
+            @abs(trace_r * trace_d) > threshold_mul,
         );
         // end instrumentation: perturbation: R-D product gate ------------------------------------------------|
 
@@ -637,8 +635,7 @@ fn doDouble(
         // tiny, the code uses a scale/add update and drops the small T-U product.                             |
         //                                                                                                     |
         // The gate is abs(trace(T) * trace(U)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_tu_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 396,775 / 24,518,833 hits and measured max reflectance delta 1.002e-06.  |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: T-U gate -----------------------------------------------------------|
         // captures: T-U product gate evaluations                                                              |
@@ -652,8 +649,7 @@ fn doDouble(
         const tu_nonzero = Perturbation.decision(
             .qseries_tu_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_tu_product_suppression) and
-                @abs(trace_t * trace_u) > threshold_mul,
+            @abs(trace_t * trace_u) > threshold_mul,
         );
         // end instrumentation: perturbation: T-U product gate ------------------------------------------------|
 
@@ -688,9 +684,7 @@ fn doDouble(
         // uses the cheaper transmission update and drops the small T-D product.                               |
         //                                                                                                     |
         // The gate is abs(trace(T) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_td_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 1,143,287 / 24,518,666 hits and measured max reflectance delta           |
-        // 3.540e-06.                                                                                          |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: T-D gate -----------------------------------------------------------|
         // captures: T-D product gate evaluations                                                              |
@@ -704,8 +698,7 @@ fn doDouble(
         const td_nonzero = Perturbation.decision(
             .qseries_td_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_td_product_suppression) and
-                @abs(trace_t * trace_d) > threshold_mul,
+            @abs(trace_t * trace_d) > threshold_mul,
         );
         // end instrumentation: perturbation: T-D product gate ------------------------------------------------|
 
@@ -1022,8 +1015,7 @@ inline fn doDouble12x10Step(
     // below the cutoff, the code uses the cheaper semul path and drops the tiny R-D contribution.             |
     //                                                                                                         |
     // The gate is abs(trace(R) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_rd_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 563,874 / 24,518,833 hits and measured max reflectance delta 1.050e-06.                  |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed R-D gate ---------------------------------------------------------|
     // captures: fixed-size R-D product gate evaluations                                                       |
@@ -1045,11 +1037,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed R-D product gate --------------------------------------------------|
     // captures: fixed R-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this hot-path product.                                       |
-    const rd_gate_enabled = if (q_is_zero) !thresholds.qzero_rd_product_suppression else true;
     const rd_nonzero = Perturbation.decision(
         .qseries_rd_product,
         downstream_coord,
-        rd_gate_enabled and @abs(trace_r * trace_d) > threshold_mul,
+        @abs(trace_r * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed R-D product gate ----------------------------------------------|
 
@@ -1106,8 +1097,7 @@ inline fn doDouble12x10Step(
     // small to matter at the configured cutoff. The cost is that the small T-U contribution is not added.     |
     //                                                                                                         |
     // The gate is abs(trace(T) * trace(U)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_tu_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 396,775 / 24,518,833 hits and measured max reflectance delta 1.002e-06.                  |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed T-U gate ---------------------------------------------------------|
     // captures: fixed-size T-U product gate evaluations                                                       |
@@ -1118,11 +1108,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-U product gate --------------------------------------------------|
     // captures: fixed T-U product retention decision                                                          |
     // why: test whether q-zero branches can skip this reflectance update product.                             |
-    const tu_gate_enabled = if (q_is_zero) !thresholds.qzero_tu_product_suppression else true;
     const tu_nonzero = Perturbation.decision(
         .qseries_tu_product,
         downstream_coord,
-        tu_gate_enabled and @abs(trace_t * trace_u) > threshold_mul,
+        @abs(trace_t * trace_u) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-U product gate ----------------------------------------------|
 
@@ -1177,8 +1166,7 @@ inline fn doDouble12x10Step(
     // The cost is that a tiny transmission contribution is not added for this doubled sublayer.               |
     //                                                                                                         |
     // The gate is abs(trace(T) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_td_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 1,143,287 / 24,518,666 hits and measured max reflectance delta 3.540e-06.                |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed T-D gate ---------------------------------------------------------|
     // captures: fixed-size T-D product gate evaluations                                                       |
@@ -1189,11 +1177,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-D product gate --------------------------------------------------|
     // captures: fixed T-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this transmission update product.                            |
-    const td_gate_enabled = if (q_is_zero) !thresholds.qzero_td_product_suppression else true;
     const td_nonzero = Perturbation.decision(
         .qseries_td_product,
         downstream_coord,
-        td_gate_enabled and @abs(trace_t * trace_d) > threshold_mul,
+        @abs(trace_t * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-D product gate ----------------------------------------------|
 

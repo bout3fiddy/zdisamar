@@ -268,56 +268,6 @@ fn fillLayerTransmittance(
     }
 }
 
-fn pseudoSphericalDirectionCosine(
-    geo: *const basis.Geometry,
-    layer: common.LayerInput,
-    imu: usize,
-) f64 {
-    // pseudoSphericalDirectionCosine -------------------------------------------------------------------------|
-    // Pick the direction cosine used by the pseudo-spherical shortcut.                                        |
-    //                                                                                                         |
-    // Solar and viewing paths can have layer-dependent direction cosines. The                                 |
-    // Gauss quadrature directions keep the geometry value from Geometry.u.                                    |
-    // --------------------------------------------------------------------------------------------------------|
-
-    if (imu == geo.viewIdx()) return layer.view_mu;
-    if (imu == geo.n_gauss + 1) return layer.solar_mu;
-    return geo.u[imu];
-}
-
-fn applyPseudoSphericalTopLevelAttenuationDynamic(
-    atten: *DynamicAttenArray,
-    layers: []const common.LayerInput,
-    geo: *const basis.Geometry,
-) void {
-    // applyPseudoSphericalTopLevelAttenuationDynamic ---------------------------------------------------------|
-    // Override top-to-level values in the full dynamic table using per-layer                                  |
-    // pseudo-spherical direction cosines.                                                                     |
-    //                                                                                                         |
-    // This only writes paths from the top level down. Other level pairs remain the                            |
-    // plane-parallel products already built in the table.                                                     |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const top_level = layers.len;
-
-    for (0..geo.nmutot) |imu| {
-        var cumulative: f64 = 1.0;
-        atten.set(imu, top_level, top_level, 1.0);
-        var level = top_level;
-
-        while (level > 0) {
-            level -= 1;
-
-            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), direction_cosine_floor);
-
-            // pseudo-spherical top attenuation multiplies exp(-tau_layer / directional_mu_layer).
-            cumulative *= math.exp(-layers[level].optical_depth / u);
-
-            atten.set(imu, top_level, level, cumulative);
-        }
-    }
-}
-
 fn fillRuntimeTopToLevelFromLayerCache(
     top_to_level: []f64,
     layer_transmittance: []const f64,
@@ -347,41 +297,6 @@ fn fillRuntimeTopToLevelFromLayerCache(
 
             // top_to_level(level) multiplies the layer transmittance from this level up to the top.
             cumulative *= layer_transmittance[layer_offset + level];
-
-            top_to_level[top_offset + level] = cumulative;
-        }
-    }
-}
-
-fn applyPseudoSphericalRuntimeTopToLevel(
-    top_to_level: []f64,
-    layers: []const common.LayerInput,
-    geo: *const basis.Geometry,
-) void {
-    // applyPseudoSphericalRuntimeTopToLevel ------------------------------------------------------------------|
-    // Override runtime top-to-level values using per-layer pseudo-spherical                                   |
-    // direction cosines.                                                                                      |
-    //                                                                                                         |
-    // Runtime storage has no full level-pair table, so only top-to-level values are                           |
-    // replaced here.                                                                                          |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const top_level = layers.len;
-    const nlevel = top_level + 1;
-
-    for (0..geo.nmutot) |imu| {
-        const top_offset = imu * nlevel;
-        var cumulative: f64 = 1.0;
-        top_to_level[top_offset + top_level] = 1.0;
-        var level = top_level;
-
-        while (level > 0) {
-            level -= 1;
-
-            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), direction_cosine_floor);
-
-            // pseudo-spherical top_to_level multiplies exp(-tau_layer / directional_mu_layer).
-            cumulative *= math.exp(-layers[level].optical_depth / u);
 
             top_to_level[top_offset + level] = cumulative;
         }
@@ -710,7 +625,7 @@ pub fn fillAttenuationDynamic(
     layers: []const common.LayerInput,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) !DynamicAttenArray {
+) common.ExecuteError!DynamicAttenArray {
     // fillAttenuationDynamic ---------------------------------------------------------------------------------|
     // Convenience entry point for callers that do not provide a pseudo-spherical                              |
     // support grid.                                                                                           |
@@ -731,7 +646,7 @@ pub fn fillAttenuationDynamicWithGrid(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) !DynamicAttenArray {
+) common.ExecuteError!DynamicAttenArray {
     // fillAttenuationDynamicWithGrid -------------------------------------------------------------------------|
     // Allocate and fill the full dynamic attenuation table.                                                   |
     //                                                                                                         |
@@ -743,9 +658,11 @@ pub fn fillAttenuationDynamicWithGrid(
 
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
+    try requirePseudoSphericalGrid(pseudo_spherical_grid, nlayer, use_spherical_correction);
     const data = try allocator.alloc(f64, geo.nmutot * nlevel * nlevel);
+    errdefer allocator.free(data);
 
-    return fillAttenuationDynamicWithGridInBuffer(
+    return try fillAttenuationDynamicWithGridInBuffer(
         allocator,
         data,
         layers,
@@ -867,7 +784,7 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) DynamicAttenArray {
+) common.ExecuteError!DynamicAttenArray {
     // fillAttenuationDynamicWithGridInBuffer -----------------------------------------------------------------|
     // Fill a caller-provided dynamic attenuation buffer.                                                      |
     //                                                                                                         |
@@ -886,7 +803,7 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     if (layers.len <= max_levels) {
         var layer_transmittance: [basis.max_nmutot * max_levels]f64 = undefined;
 
-        return fillAttenuationDynamicWithGridInBufferAndLayerCache(
+        return try fillAttenuationDynamicWithGridInBufferAndLayerCache(
             allocator,
             data,
             layer_transmittance[0 .. geo.nmutot * layers.len],
@@ -898,7 +815,7 @@ pub fn fillAttenuationDynamicWithGridInBuffer(
     }
     // end tradeoff: dynamic attenuation cache cap ------------------------------------------------------------|
 
-    return fillAttenuationDynamicWithGridInBufferRepeatedExp(
+    return try fillAttenuationDynamicWithGridInBufferRepeatedExp(
         allocator,
         data,
         layers,
@@ -916,7 +833,7 @@ pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) DynamicAttenArray {
+) common.ExecuteError!DynamicAttenArray {
     // fillAttenuationDynamicWithGridInBufferAndLayerCache ----------------------------------------------------|
     // Build one-layer transmittance first, then expand it into all level                                      |
     // pairs, then optionally replace top-to-level values with pseudo-spherical                                |
@@ -935,6 +852,7 @@ pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
     const required_len = geo.nmutot * nlevel * nlevel;
+    try requirePseudoSphericalGrid(pseudo_spherical_grid, nlayer, use_spherical_correction);
     std.debug.assert(data.len >= required_len);
     std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
 
@@ -950,11 +868,7 @@ pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
     fillDynamicAttenuationFromLayerCache(&atten, layer_transmittance, nlayer);
 
     if (use_spherical_correction) {
-        if (pseudo_spherical_grid.isValidFor(nlayer)) {
-            applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
-        } else {
-            applyPseudoSphericalTopLevelAttenuationDynamic(&atten, layers, geo);
-        }
+        applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
     }
 
     return atten;
@@ -967,7 +881,7 @@ pub fn fillRuntimeAttenuationWithGridInBuffers(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) RuntimeAttenArray {
+) common.ExecuteError!RuntimeAttenArray {
     // fillRuntimeAttenuationWithGridInBuffers ----------------------------------------------------------------|
     // Fill compact runtime attenuation buffers without allocating.                                            |
     //                                                                                                         |
@@ -980,6 +894,7 @@ pub fn fillRuntimeAttenuationWithGridInBuffers(
 
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
+    try requirePseudoSphericalGrid(pseudo_spherical_grid, nlayer, use_spherical_correction);
     std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
     std.debug.assert(top_to_level.len >= geo.nmutot * nlevel);
 
@@ -988,11 +903,7 @@ pub fn fillRuntimeAttenuationWithGridInBuffers(
     fillRuntimeTopToLevelFromLayerCache(top_to_level, layer_transmittance, geo.nmutot, nlayer);
 
     if (use_spherical_correction) {
-        if (pseudo_spherical_grid.isValidFor(nlayer)) {
-            applyPseudoSphericalRuntimeTopToLevelWithGrid(top_to_level, pseudo_spherical_grid, geo);
-        } else {
-            applyPseudoSphericalRuntimeTopToLevel(top_to_level, layers, geo);
-        }
+        applyPseudoSphericalRuntimeTopToLevelWithGrid(top_to_level, pseudo_spherical_grid, geo);
     }
 
     return .{
@@ -1061,7 +972,7 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
     use_spherical_correction: bool,
-) DynamicAttenArray {
+) common.ExecuteError!DynamicAttenArray {
     // fillAttenuationDynamicWithGridInBufferRepeatedExp ------------------------------------------------------|
     // Fallback dynamic fill for layer counts that are too large for the local                                 |
     // layer-transmittance cache.                                                                              |
@@ -1074,6 +985,7 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
     const required_len = geo.nmutot * nlevel * nlevel;
+    try requirePseudoSphericalGrid(pseudo_spherical_grid, nlayer, use_spherical_correction);
     std.debug.assert(data.len >= required_len);
 
     var atten = DynamicAttenArray{
@@ -1115,12 +1027,18 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
     }
 
     if (use_spherical_correction) {
-        if (pseudo_spherical_grid.isValidFor(nlayer)) {
-            applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
-        } else {
-            applyPseudoSphericalTopLevelAttenuationDynamic(&atten, layers, geo);
-        }
+        applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
     }
 
     return atten;
+}
+
+fn requirePseudoSphericalGrid(
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    layer_count: usize,
+    use_spherical_correction: bool,
+) common.ExecuteError!void {
+    if (use_spherical_correction and !pseudo_spherical_grid.isValidFor(layer_count)) {
+        return error.UnsupportedRadiativeTransferControls;
+    }
 }

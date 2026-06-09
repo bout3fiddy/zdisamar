@@ -199,12 +199,6 @@ pub fn defaultInput() O2AInput {
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
-        .outputs = &.{},
-        .validation = .{
-            .strict_unknown_fields = true,
-            .require_resolved_assets = true,
-            .require_resolved_stage_references = true,
-        },
     };
 }
 
@@ -281,8 +275,6 @@ pub fn renderInputJson(allocator: Allocator, input: *const O2AInput) ![]u8 {
         },
         .o2o2 = input.o2o2,
         .rtm_controls = input.rtm_controls,
-        .outputs = input.outputs,
-        .validation = input.validation,
     };
     return std.fmt.allocPrint(
         allocator,

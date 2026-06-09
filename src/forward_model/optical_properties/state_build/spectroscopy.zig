@@ -9,19 +9,16 @@ const State = @import("state.zig");
 const Allocator = std.mem.Allocator;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
-// hot path:
-//   when: absorber preparation resolves line-by-line spectroscopy participants
-//   work: scans scene absorbers and materializes active line absorber descriptors
-//   data: scene absorber list, species metadata, line gas controls
-//   follow: absorbers.buildLineAbsorbers and line-list preparation
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
     var active = std.ArrayList(State.ActiveLineAbsorber).empty;
     defer active.deinit(allocator);
 
     for (scene.absorbers.items) |absorber| {
         const species = resolvedAbsorberSpecies(absorber) orelse continue;
+
         if (!species.isLineAbsorbing()) continue;
         if (absorber.spectroscopy.mode != .line_by_line) continue;
+
         try active.append(allocator, .{
             .species = species,
             .controls = absorber.spectroscopy.line_gas_controls,
@@ -31,11 +28,6 @@ pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]
     return active.toOwnedSlice(allocator);
 }
 
-// hot path:
-//   when: absorber preparation resolves cross-section spectroscopy participants
-//   work: scans scene absorbers and materializes active cross-section absorber descriptors
-//   data: scene absorber list, cross-section fit controls, fallback cross-section table
-//   follow: absorbers.buildCrossSectionAbsorbers and carrier_eval cross-section loops
 pub fn collectActiveCrossSectionAbsorbers(
     allocator: Allocator,
     scene: *const Scene,
@@ -44,20 +36,9 @@ pub fn collectActiveCrossSectionAbsorbers(
     var active = std.ArrayList(State.ActiveCrossSectionAbsorber).empty;
     defer active.deinit(allocator);
 
-    var any_strong_absorption_band = false;
-    for (scene.bands.items, 0..) |_, band_index| {
-        if (scene.observation_model.cross_section_fit.strongAbsorptionForBand(band_index)) {
-            any_strong_absorption_band = true;
-            break;
-        }
-    }
-    const use_effective_cross_section = scene.observation_model.cross_section_fit.use_effective_cross_section_oe or
-        scene.observation_model.cross_section_fit.use_polynomial_expansion or
-        any_strong_absorption_band;
-    const polynomial_order = scene.observation_model.cross_section_fit.maximumPolynomialOrder();
-
     for (scene.absorbers.items) |*absorber| {
         const species = resolvedAbsorberSpecies(absorber.*) orelse continue;
+
         if (absorber.spectroscopy.mode != .cross_sections) continue;
 
         const representation = switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
@@ -70,8 +51,6 @@ pub fn collectActiveCrossSectionAbsorbers(
             .species = species,
             .representation = representation,
             .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-            .use_effective_cross_section = use_effective_cross_section,
-            .polynomial_order = polynomial_order,
         });
     }
 
@@ -88,11 +67,15 @@ pub fn resolveActiveLineSpecies(
     operational_o2_lut: OperationalCrossSectionLut,
 ) !?AbsorberModel.AbsorberSpecies {
     if (active_line_absorber) |line_absorber| return line_absorber.species;
+
     if (operational_o2_lut.enabled()) return .o2;
+
     const spectroscopy_lines = line_list orelse return null;
+
     if (spectroscopy_lines.runtime_controls.gas_index) |gas_index| {
         return speciesForHitranIndex(gas_index) orelse error.UnsupportedSpectroscopyConfiguration;
     }
+
     return try inferLineSpecies(spectroscopy_lines.lines);
 }
 
@@ -102,11 +85,15 @@ pub fn resolveContinuumOwnerSpecies(
     operational_o2_lut: OperationalCrossSectionLut,
 ) ?AbsorberModel.AbsorberSpecies {
     if (operational_o2_lut.enabled()) return .o2;
+
     if (active_line_species) |species| return species;
+
     if (line_absorbers.len == 1) return line_absorbers[0].species;
+
     for (line_absorbers) |*line_absorber| {
         if (line_absorber.species == .o2) return .o2;
     }
+
     return null;
 }
 
@@ -124,11 +111,6 @@ pub fn operationalO2EvaluationAtWavelength(
     );
 }
 
-// hot path:
-//   when: absorber preparation samples species volume-mixing-ratio profiles
-//   work: resolves profile interpolation or default species mixing ratio at pressure
-//   data: optional VMR profile, pressure, species, scene fallback
-//   follow: profile line-state preparation and layer accumulation density fields
 pub fn speciesMixingRatioAtPressure(
     scene: *const Scene,
     species: AbsorberModel.AbsorberSpecies,
@@ -136,25 +118,34 @@ pub fn speciesMixingRatioAtPressure(
     pressure_hpa: f64,
     default_fraction: ?f64,
 ) ?f64 {
-    const profile_ppmv = if (explicit_profile_ppmv.len != 0)
-        explicit_profile_ppmv
-    else if (findAbsorberBySpecies(scene, species)) |absorber|
-        absorber.volume_mixing_ratio_profile_ppmv
-    else
-        &.{};
+    const profile_ppmv = choose_profile: {
+        if (explicit_profile_ppmv.len != 0) break :choose_profile explicit_profile_ppmv;
+
+        if (findAbsorberBySpecies(scene, species)) |absorber| {
+            break :choose_profile absorber.volume_mixing_ratio_profile_ppmv;
+        }
+
+        break :choose_profile &.{};
+    };
+
     if (profile_ppmv.len != 0) {
         return interpolateMixingRatioProfileFraction(profile_ppmv, pressure_hpa);
     }
+
     return default_fraction;
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) !?AbsorberModel.AbsorberSpecies {
     if (lines.len == 0) return null;
+
     const first_gas_index = lines[0].gas_index;
+
     if (first_gas_index == 0) return null;
+
     for (lines[1..]) |line| {
         if (line.gas_index != first_gas_index) return null;
     }
+
     return speciesForHitranIndex(first_gas_index) orelse error.UnsupportedSpectroscopyConfiguration;
 }
 

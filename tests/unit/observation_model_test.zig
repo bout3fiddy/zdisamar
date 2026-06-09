@@ -5,7 +5,6 @@ const Scene = zdisamar.Input;
 const empty_scene: Scene = .{};
 const ObservationModel = @TypeOf(empty_scene.observation_model);
 const empty_model: ObservationModel = .{};
-const CrossSectionFitControls = @TypeOf(empty_model.cross_section_fit);
 const OperationalBandSupport = std.meta.Child(@TypeOf(empty_model.operational_band_support));
 const empty_support: OperationalBandSupport = .{};
 const InstrumentLineShape = @TypeOf(empty_support.instrument_line_shape);
@@ -128,54 +127,6 @@ test "observation model spectral response borrows owned support line-shape carri
 
     line_shape.deinitOwned(std.testing.allocator);
     line_shape_table.deinitOwned(std.testing.allocator);
-}
-
-test "cross-section fit controls validate band-scoped settings" {
-    const valid: CrossSectionFitControls = .{
-        .use_effective_cross_section_oe = true,
-        .use_polynomial_expansion = true,
-        .xsec_strong_absorption_bands = &.{ true, false },
-        .polynomial_degree_bands = &.{ 5, 3 },
-    };
-
-    try valid.validateForBandCount(2);
-    try std.testing.expect(valid.strongAbsorptionForBand(0));
-    try std.testing.expectEqual(@as(u32, 3), valid.polynomialOrderForBand(1));
-    try std.testing.expectEqual(@as(u32, 0), valid.polynomialOrderForBand(3));
-    try std.testing.expectEqual(@as(u32, 5), valid.maximumPolynomialOrder());
-
-    try std.testing.expectError(
-        error.InvalidRequest,
-        (CrossSectionFitControls{
-            .polynomial_degree_bands = &.{ 4, 2 },
-        }).validateForBandCount(1),
-    );
-    try std.testing.expectError(
-        error.InvalidRequest,
-        (CrossSectionFitControls{
-            .polynomial_degree_bands = &.{8},
-        }).validate(),
-    );
-}
-
-fn cloneCrossSectionFitControlsWithAllocator(allocator: std.mem.Allocator) !void {
-    const controls: CrossSectionFitControls = .{
-        .use_effective_cross_section_oe = true,
-        .use_polynomial_expansion = true,
-        .xsec_strong_absorption_bands = &.{ true, false },
-        .polynomial_degree_bands = &.{ 5, 3 },
-    };
-
-    var cloned = try controls.clone(allocator);
-    defer cloned.deinitOwned(allocator);
-}
-
-test "cross-section fit controls clone cleans up across allocation failure" {
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        cloneCrossSectionFitControlsWithAllocator,
-        .{},
-    );
 }
 
 test "observation model rejects multi-band operational support until runtime becomes band-indexed" {

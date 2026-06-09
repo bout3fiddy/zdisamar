@@ -24,86 +24,6 @@ const ResolvedHighResolutionGrid = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage:
-//     xsec_strong_absorption_bands=16 B, polynomial_degree_bands=16 B
-//     use_effective_cross_section_oe=1 B, use_polynomial_expansion=1 B
-//     padding: 6 B (48 bits)
-//   unused bits: 48 padding + 14 bool-storage slack = 62 bits
-//   out-of-line:
-//     xsec_strong_absorption_bands and polynomial_degree_bands carry slice descriptors
-//     referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
-pub const CrossSectionFitControls = struct {
-    use_effective_cross_section_oe: bool = false,
-    use_polynomial_expansion: bool = false,
-    xsec_strong_absorption_bands: []const bool = &.{},
-    polynomial_degree_bands: []const u32 = &.{},
-
-    pub fn validate(self: CrossSectionFitControls) errors.Error!void {
-        for (self.polynomial_degree_bands) |degree| {
-            if (degree > 7) return errors.Error.InvalidRequest;
-        }
-    }
-
-    pub fn validateForBandCount(self: CrossSectionFitControls, band_count: usize) errors.Error!void {
-        try self.validate();
-        if (self.xsec_strong_absorption_bands.len != 0 and self.xsec_strong_absorption_bands.len != band_count) {
-            return errors.Error.InvalidRequest;
-        }
-        if (self.polynomial_degree_bands.len != 0 and self.polynomial_degree_bands.len != band_count) {
-            return errors.Error.InvalidRequest;
-        }
-    }
-
-    pub fn clone(self: CrossSectionFitControls, allocator: Allocator) !CrossSectionFitControls {
-        const strong_absorption_bands = if (self.xsec_strong_absorption_bands.len != 0)
-            try allocator.dupe(bool, self.xsec_strong_absorption_bands)
-        else
-            &.{};
-        errdefer if (strong_absorption_bands.len != 0) allocator.free(strong_absorption_bands);
-
-        const polynomial_degree_bands = if (self.polynomial_degree_bands.len != 0)
-            try allocator.dupe(u32, self.polynomial_degree_bands)
-        else
-            &.{};
-        errdefer if (polynomial_degree_bands.len != 0) allocator.free(polynomial_degree_bands);
-
-        return .{
-            .use_effective_cross_section_oe = self.use_effective_cross_section_oe,
-            .use_polynomial_expansion = self.use_polynomial_expansion,
-            .xsec_strong_absorption_bands = strong_absorption_bands,
-            .polynomial_degree_bands = polynomial_degree_bands,
-        };
-    }
-
-    pub fn deinitOwned(self: *CrossSectionFitControls, allocator: Allocator) void {
-        if (self.xsec_strong_absorption_bands.len != 0) allocator.free(self.xsec_strong_absorption_bands);
-        if (self.polynomial_degree_bands.len != 0) allocator.free(self.polynomial_degree_bands);
-        self.* = .{};
-    }
-
-    pub fn strongAbsorptionForBand(self: CrossSectionFitControls, band_index: usize) bool {
-        if (band_index >= self.xsec_strong_absorption_bands.len) return false;
-        return self.xsec_strong_absorption_bands[band_index];
-    }
-
-    pub fn polynomialOrderForBand(self: CrossSectionFitControls, band_index: usize) u32 {
-        if (band_index >= self.polynomial_degree_bands.len) return 0;
-        return self.polynomial_degree_bands[band_index];
-    }
-
-    pub fn maximumPolynomialOrder(self: CrossSectionFitControls) u32 {
-        var maximum: u32 = 0;
-        for (self.polynomial_degree_bands) |degree| {
-            maximum = @max(maximum, degree);
-        }
-        return maximum;
-    }
-};
-
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
@@ -119,7 +39,6 @@ pub const ObservationModel = struct {
     weighted_reference_grid_source: Binding = .none,
     operational_band_support: []const OperationalBandSupport = &.{},
     owns_operational_band_support: bool = false,
-    cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
     owns_measured_wavelengths: bool = false,
 
@@ -193,8 +112,6 @@ pub const ObservationModel = struct {
                 if (std.mem.eql(u8, support.id, other.id)) return errors.Error.InvalidRequest;
             }
         }
-
-        try self.cross_section_fit.validate();
     }
 
     pub fn resolvedChannelControls(
@@ -284,7 +201,6 @@ pub const ObservationModel = struct {
         }
         self.operational_band_support = &.{};
         self.owns_operational_band_support = false;
-        self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) {
             allocator.free(self.measured_wavelengths_nm);
         }
