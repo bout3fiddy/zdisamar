@@ -7,14 +7,30 @@ const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
 // o2_o2_cia.zig ----------------------------------------------------------------------------------------------|
-// Builds O2-O2 collision-induced absorption diagnostic rows from atmospheric-budget rows.                     |
+// O2-O2 collision-induced absorption diagnostics derived from the atmospheric-budget table. This is an output |
+// view over prepared optical state, not a separate CIA physics path.                                          |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.zig exposes buildO2O2CIADiagnostics for Zig callers. api/c.zig uses the same builder, copies the     |
+//   rows into Context-owned C ABI storage, and frees the native temporary rows before returning.              |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   build         reuses atmospheric_budget.build and allocates the CIA output slice                          |
-//   rowFromBudget derives pair-path cross section and CIA share columns                                       |
+//   build         -> atmospheric_budget.build -> allocate CIA rows -> rowFromBudget                           |
+//   rowFromBudget -> derive pair-path cross section and CIA share columns from one budget row                 |
+//                                                                                                             |
+// relation to atmospheric_budget.zig                                                                          |
+//   AtmosphericBudgetRow already contains the wavelength, vertical-row identity, oxygen density, path length, |
+//   CIA optical depth, and total optical-depth columns. This file only projects those values into a smaller   |
+//   CIA-focused export row.                                                                                   |
+//                                                                                                             |
+// math                                                                                                        |
+//   pair path          = oxygen_number_density_cm3^2 * path_length_cm                                         |
+//   CIA cross section  = cia_optical_depth / pair path                                                        |
+//   CIA share columns  = cia_optical_depth / total absorption or total optical depth                          |
 //                                                                                                             |
 // memory                                                                                                      |
-//   The temporary atmospheric-budget slice is freed before returning. CIA rows are caller-owned values.       |
+//   The temporary atmospheric-budget slice is freed before returning. The returned CIA row slice is owned by  |
+//   the caller and contains value rows with no referenced storage.                                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2O2CIARow -------------------------------------------------------------------------------------------------|
