@@ -198,6 +198,27 @@ const ForwardSampleScratch = struct {
         self.support_carrier_cache.deinit(allocator);
         self.* = undefined;
     }
+
+    fn forwardInputScratch(
+        self: *ForwardSampleScratch,
+        profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    ) ForwardInput.ForwardInputScratch {
+        // ForwardSampleScratch.forwardInputScratch ----------------------------------------------------------------------|
+        // Return the borrowed buffer view needed by forward_input.zig. The worker keeps owning all backing               |
+        // arrays; this view only names the subset refreshed for one wavelength.                                          |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        return .{
+            .layer_inputs = self.layer_inputs,
+            .source_interfaces = self.source_interfaces,
+            .rtm_quadrature_levels = self.rtm_quadrature_levels,
+            .pseudo_spherical_samples = self.pseudo_spherical_samples,
+            .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts,
+            .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes,
+            .support_carrier_cache = &self.support_carrier_cache,
+            .profile_spectroscopy_cache = profile_spectroscopy_cache,
+        };
+    }
 };
 
 // ForwardPrefetchErrorState ---------------------------------------------------------------------------------------------|
@@ -358,9 +379,7 @@ fn radianceScaleFromForward(
 }
 
 fn integratedSampleFromForward(
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    wavelength_nm: f64,
+    request: ForwardInput.ForwardSampleRequest,
     forward: common.ForwardResult,
 ) ForwardIntegratedSample {
     // integratedSampleFromForward ---------------------------------------------------------------------------------------|
@@ -375,13 +394,13 @@ fn integratedSampleFromForward(
     //   are fixed for that state vector, so the product rule reduces to scale * d(reflectance_factor)/dx.                |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const scale = radianceScaleFromForward(scene, wavelength_nm);
+    const scale = radianceScaleFromForward(request.scene, request.wavelength_nm);
     var radiance_jacobian = jacobian.zero();
     if (forward.jacobian) |reflectance_jacobian| {
         radiance_jacobian = jacobian.scaleMasked(
             reflectance_jacobian,
             scale,
-            rtm_config.derivative_state_mask,
+            request.rtm_config.derivative_state_mask,
         );
     }
 
@@ -393,23 +412,13 @@ fn integratedSampleFromForward(
 
 fn computeForwardSampleAtWavelengthWithScratch(
     allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []common.LayerInput,
-    source_interfaces: []common.SourceInterfaceInput,
-    rtm_quadrature_levels: []common.RtmQuadratureLevel,
-    pseudo_spherical_samples: []common.PseudoSphericalSample,
-    pseudo_spherical_level_starts: []usize,
-    pseudo_spherical_level_altitudes: []f64,
-    support_carrier_cache: *CarrierEval.SupportRowScalarCache,
-    profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    request: ForwardInput.ForwardSampleRequest,
+    scratch: ForwardInput.ForwardInputScratch,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
     // computeForwardSampleAtWavelengthWithScratch -----------------------------------------------------------------------|
-    // Compute one high-resolution forward miss. The caller supplies scratch buffers so this function can run             |
-    // inside worker loops without allocating transport arrays.                                                           |
+    // Compute one high-resolution forward miss. Request names the fixed sample inputs; scratch names the                 |
+    // caller-owned buffers reused inside worker loops without allocating transport arrays.                               |
     //                                                                                                                    |
     // steps                                                                                                              |
     //   1. build wavelength-specific ForwardInput from carrier caches                                                    |
@@ -443,21 +452,11 @@ fn computeForwardSampleAtWavelengthWithScratch(
         // end instrumentation: trace zone: configured forward input ---------------------------------------------------- |
 
         break :input try ForwardInput.configuredForwardInput(
-            scene,
-            rtm_config,
-            prepared,
-            wavelength_nm,
-            layer_inputs,
-            source_interfaces,
-            rtm_quadrature_levels,
-            pseudo_spherical_samples,
-            pseudo_spherical_level_starts,
-            pseudo_spherical_level_altitudes,
-            support_carrier_cache,
-            profile_spectroscopy_cache,
+            request,
+            scratch,
         );
     };
-    var effective_config = rtm_config;
+    var effective_config = request.rtm_config;
     effective_config.rtm_controls = input.rtm_controls;
     const forward = forward: {
 
@@ -475,7 +474,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
             labos_workspace,
         );
     };
-    return integratedSampleFromForward(scene, rtm_config, wavelength_nm, forward);
+    return integratedSampleFromForward(request, forward);
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
@@ -553,20 +552,16 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
                         miss.wavelength_nm,
                     ));
                     defer Telemetry.setContext(previous_context);
+                    const request = ForwardInput.ForwardSampleRequest{
+                        .scene = worker.scene,
+                        .rtm_config = worker.rtm_config,
+                        .prepared = worker.prepared,
+                        .wavelength_nm = miss.wavelength_nm,
+                    };
                     break :compute_sample computeForwardSampleAtWavelengthWithScratch(
                         allocator,
-                        worker.scene,
-                        worker.rtm_config,
-                        worker.prepared,
-                        miss.wavelength_nm,
-                        scratch.layer_inputs,
-                        scratch.source_interfaces,
-                        scratch.rtm_quadrature_levels,
-                        scratch.pseudo_spherical_samples,
-                        scratch.pseudo_spherical_level_starts,
-                        scratch.pseudo_spherical_level_altitudes,
-                        &scratch.support_carrier_cache,
-                        profile_spectroscopy_cache,
+                        request,
+                        scratch.forwardInputScratch(profile_spectroscopy_cache),
                         &scratch.labos_workspace,
                     ) catch |err| {
                         worker.error_state.store(err);
@@ -656,20 +651,16 @@ pub fn prefetchForwardSamples(
                     miss.wavelength_nm,
                 ));
                 defer Telemetry.setContext(previous_context);
+                const request = ForwardInput.ForwardSampleRequest{
+                    .scene = scene,
+                    .rtm_config = rtm_config,
+                    .prepared = prepared,
+                    .wavelength_nm = miss.wavelength_nm,
+                };
                 break :result_value try computeForwardSampleAtWavelengthWithScratch(
                     allocator,
-                    scene,
-                    rtm_config,
-                    prepared,
-                    miss.wavelength_nm,
-                    scratch.layer_inputs,
-                    scratch.source_interfaces,
-                    scratch.rtm_quadrature_levels,
-                    scratch.pseudo_spherical_samples,
-                    scratch.pseudo_spherical_level_starts,
-                    scratch.pseudo_spherical_level_altitudes,
-                    &scratch.support_carrier_cache,
-                    profile_spectroscopy_cache,
+                    request,
+                    scratch.forwardInputScratch(profile_spectroscopy_cache),
                     &scratch.labos_workspace,
                 );
             };
