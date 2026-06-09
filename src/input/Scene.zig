@@ -4,6 +4,31 @@ const LutControls = @import("../common/lut_controls.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberModel = @import("Absorber.zig");
 
+// Scene.zig ------------------------------------------------------------------------------------------------- |
+// Public typed request boundary for one forward-model run.                                                    |
+//                                                                                                             |
+// used by                                                                                                     |
+//   optical_properties/state_build/context.zig as the input validation gate before preparation                |
+//   instrument_grid/grid_calculation/simulate.zig as the product-grid request                                 |
+//   reference_data/bundled selection workflows when generated LUT compatibility is checked                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   validate                                                                                                  |
+//     -> validate every nested input row, cross-check measured wavelengths against spectral_grid, and reject  |
+//        operational-band support that cannot yet match the requested band count                              |
+//                                                                                                             |
+//   lutCompatibilityKey                                                                                       |
+//     -> derive the cache key for generated cross-section and O2-O2 LUTs from scene geometry, nominal grid,   |
+//        operational support, surface albedo, spectroscopy bindings, and active line controls                 |
+//                                                                                                             |
+//   deinitOwned                                                                                               |
+//     -> release only nested storage that the Scene or its child structs explicitly own                       |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Scene is a value row with many nested slice headers. The row does not own referenced storage by default;  |
+//   ownership flags live inside the child structs that know how to free their buffers.                        |
+// ----------------------------------------------------------------------------------------------------------- |
+
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
 pub const Binding = @import("Binding.zig").Binding;
 pub const BindingKind = @import("Binding.zig").BindingKind;

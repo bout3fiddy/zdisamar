@@ -11,6 +11,35 @@ const OperationalBandSupport = @import("Instrument.zig").Instrument.OperationalB
 const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 const Allocator = std.mem.Allocator;
 
+// ObservationModel.zig --------------------------------------------------------------------------------------|
+// Instrument, sampling, calibration, and operational support controls nested inside Scene.                   |
+//                                                                                                            |
+// called by                                                                                                  |
+//   Scene.validate before a request reaches optical-property or instrument-grid setup                        |
+//   instrument integration and calibration code through resolvedChannelControls                              |
+//   LUT selection and bundled workflows through primaryOperationalBandSupport and lutSamplingHalfSpanNm      |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   validate                                                                                                 |
+//     -> check bindings, instrument identity, measured wavelength ordering, integration-mode prerequisites,  |
+//        adaptive grid controls, and the current single operational-band support boundary                    |
+//                                                                                                            |
+//   resolvedChannelControls                                                                                  |
+//     -> build SpectralResponse from builtin line shape, explicit line-shape rows, adaptive grid, and HR grid|
+//     -> add radiance-only gain and stray-light controls; irradiance keeps neutral post-calibration          |
+//                                                                                                            |
+//   deinitOwned                                                                                              |
+//     -> release only support and measured-wavelength storage this model owns                                |
+//                                                                                                            |
+// control resolution                                                                                         |
+//   integration_mode = auto chooses adaptive first, then explicit high-resolution grid, then default kernel. |
+//   Requested modes are validated up front so later code does not silently ignore missing grid or FWHM data. |
+//                                                                                                            |
+// ownership                                                                                                  |
+//   operational_band_support and measured_wavelengths_nm may be borrowed or owned by loaders.                |
+//   resolved SpectralResponse rows borrow explicit line-shape storage so downstream code cannot free it.     |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub const ObservationRegime = enum {
     nadir,
 };
