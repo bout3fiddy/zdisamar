@@ -3,16 +3,24 @@ const zdisamar = @import("zdisamar");
 
 const report = zdisamar.report;
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: output_dir=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// Config -----------------------------------------------------------------------------------------------------|
+// Parsed command-line settings for the local O2 A spectrum-plot helper.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] output_dir : []const u8                                                                            |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   output_dir points at either the default string literal or the process-args buffer.                        |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); stack value during argument parsing                             |
 const Config = struct {
     output_dir: []const u8 = "out/analysis/o2a/plot_bundle_tmp",
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -40,13 +48,15 @@ fn parseArgs(args: []const []const u8) !Config {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--output-dir")) {
-            index += 1;
-            if (index >= args.len) return error.MissingOutputDir;
-            config.output_dir = args[index];
-        } else {
-            return error.UnsupportedArgument;
-        }
+        const is_output_dir = std.mem.eql(u8, arg, "--output-dir");
+
+        if (!is_output_dir) return error.UnsupportedArgument;
+
+        index += 1;
+        if (index >= args.len) return error.MissingOutputDir;
+
+        config.output_dir = args[index];
     }
+
     return config;
 }

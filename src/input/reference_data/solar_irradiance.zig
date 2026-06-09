@@ -1,6 +1,14 @@
 const std = @import("std");
 const Scene = @import("../Scene.zig").Scene;
 
+// solar_irradiance.zig ---------------------------------------------------------------------------------------|
+// Resolve the solar irradiance used by nominal channels and integration samples.                              |
+//                                                                                                             |
+// data                                                                                                        |
+//   A scene may carry an operational solar spectrum. Otherwise the bundled O2 A support table is used for     |
+//   default O2 A scenes, falling back to a smooth black-body continuum outside the bundled wavelengths.       |
+// ------------------------------------------------------------------------------------------------------------|
+
 const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };
 const bundled_o2a_solar_irradiance = [_]f64{
     4.805854615e14,
@@ -12,28 +20,48 @@ const bundled_o2a_solar_irradiance = [_]f64{
     4.759839792e14,
 };
 
-// hot path:
-//   when: irradiance cache misses resolve solar irradiance for nominal or integration samples
-//   work: selects operational solar support, bundled O2 A support, or default continuum value
-//   data: observation-model solar support, wavelength, bundled support arrays
-//   follow: OperationalSolarSpectrum interpolation and spectral_eval.cachedIrradianceAtWavelength
 pub fn irradianceAtWavelength(scene: *const Scene, wavelength_nm: f64) f64 {
+    // irradianceAtWavelength ---------------------------------------------------------------------------------|
+    // Resolve one irradiance sample from scene support, bundled O2 A support, or continuum fallback.          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : irradiance-cache misses for nominal channels and integration samples                       |
+    //   reads    : observation-model solar support, target wavelength, bundled support arrays                 |
+    //   calls    : OperationalSolarSpectrum interpolation, bundledSolarIrradiance                             |
+    // --------------------------------------------------------------------------------------------------------|
+
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
-    const source_irradiance = if (operational_band_support.operational_solar_spectrum.enabled())
-        operational_band_support.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
-    else if (scene.observation_model.solar_spectrum_source.kind() == .bundle_default)
-        bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm)
-    else
-        defaultSolarContinuumIrradiance(wavelength_nm);
+    const source_irradiance = choose_source_irradiance: {
+        const operational_solar_spectrum = &operational_band_support.operational_solar_spectrum;
+        if (operational_solar_spectrum.enabled()) {
+            const interpolated_irradiance = operational_solar_spectrum.interpolateIrradiance(wavelength_nm);
+            break :choose_source_irradiance interpolated_irradiance;
+        }
+
+        const uses_bundled_default = scene.observation_model.solar_spectrum_source.kind() == .bundle_default;
+        if (uses_bundled_default) {
+            const bundled_irradiance =
+                bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm);
+            break :choose_source_irradiance bundled_irradiance;
+        }
+
+        break :choose_source_irradiance defaultSolarContinuumIrradiance(wavelength_nm);
+    };
+
     return @max(source_irradiance, 1e-6);
 }
 
 fn bundledSolarIrradiance(wavelength_nm: f64) ?f64 {
-    if (wavelength_nm < bundled_o2a_solar_wavelengths_nm[0] or wavelength_nm > bundled_o2a_solar_wavelengths_nm[bundled_o2a_solar_wavelengths_nm.len - 1]) {
+    const first_wavelength_nm = bundled_o2a_solar_wavelengths_nm[0];
+    const last_wavelength_nm = bundled_o2a_solar_wavelengths_nm[bundled_o2a_solar_wavelengths_nm.len - 1];
+    const outside_bundle = wavelength_nm < first_wavelength_nm or wavelength_nm > last_wavelength_nm;
+
+    if (outside_bundle) {
         return null;
     }
 
-    if (wavelength_nm <= bundled_o2a_solar_wavelengths_nm[0]) return bundled_o2a_solar_irradiance[0];
+    if (wavelength_nm <= first_wavelength_nm) return bundled_o2a_solar_irradiance[0];
+
     for (
         bundled_o2a_solar_wavelengths_nm[0 .. bundled_o2a_solar_wavelengths_nm.len - 1],
         bundled_o2a_solar_wavelengths_nm[1..],
@@ -43,10 +71,12 @@ fn bundledSolarIrradiance(wavelength_nm: f64) ?f64 {
         if (wavelength_nm <= right_nm) {
             const span = right_nm - left_nm;
             if (span == 0.0) return right_irradiance;
+
             const blend = (wavelength_nm - left_nm) / span;
             return left_irradiance + blend * (right_irradiance - left_irradiance);
         }
     }
+
     return bundled_o2a_solar_irradiance[bundled_o2a_solar_irradiance.len - 1];
 }
 

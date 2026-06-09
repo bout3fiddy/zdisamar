@@ -32,14 +32,32 @@ pub const DerivativeMode = enum {
     semi_analytical,
 };
 
-// layout(64-bit):
-//   size: 2456 B, align: 8 B
-//   field storage: 2456 B across 11 fields; largest: observation_model=1816 B, aerosol=224 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: id carry references/descriptors; referenced storage is not included in size
-//   cache span: 39 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2456 B (2.398 KiB); total also includes referenced storage above
+// Scene ------------------------------------------------------------------------------------------------------|
+// Complete user-facing forward-model request.                                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 672 B (0.656 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] id                                  : []const u8                                                 |
+// [ 16..111] atmosphere                          : Atmosphere                                                 |
+// [112..151] geometry                            : Geometry                                                   |
+// [152..175] spectral_grid                       : SpectralGrid                                               |
+// [176..191] bands                               : SpectralBandSet                                            |
+// [192..207] absorbers                           : AbsorberSet                                                |
+// [208..223] surface                             : Surface                                                    |
+// [224..391] aerosol                             : Aerosol                                                    |
+// [392..607] observation_model                   : ObservationModel                                           |
+// [608..663] lut_controls                        : LutControls.Controls                                       |
+// [664..671] phase_function_truncation_threshold : f64                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   id and nested slice headers point at caller-owned or prepared data.                                       |
+//   Referenced storage is not in this row.                                                                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 11 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 672 B (0.656 KiB); total also includes referenced nested storage                  |
 pub const Scene = struct {
     id: []const u8 = "scene-0",
     atmosphere: Atmosphere = .{},
@@ -230,3 +248,4 @@ pub const Scene = struct {
         self.observation_model.deinitOwned(allocator);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

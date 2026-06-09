@@ -31,13 +31,25 @@ pub const RadiativeTransferPerformanceThresholds = radiative_transfer.RadiativeT
 pub const RadiativeTransferControls = radiative_transfer.RadiativeTransferControls;
 pub const RadiativeTransferJacobian = radiative_transfer.Jacobian;
 
-// layout(64-bit):
-//   size: 7392 B, align: 8 B
-//   field storage: input=2680 B, reference_data=3040 B, optical_properties=1056 B, storage=616 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 116 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 7392 B (7.219 KiB); total = per instance * live instance count
+// PreparedInput ----------------------------------------------------------------------------------------------|
+// Public owner bundle returned by prepare().                                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 4368 B (4.266 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0.. 671] input              : Input                                                                     |
+// [ 672..1679] reference_data     : ReferenceData                                                             |
+// [1680..3815] optical_properties: OpticalProperties                                                          |
+// [3816..4367] storage            : CalculationStorage                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   Embedded owners retain their own buffers; this row owns teardown order.                                   |
+//   Backing arrays stay inside those embedded owners.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 69 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 4368 B (4.266 KiB); total also includes referenced storage in each embedded owner |
 pub const PreparedInput = struct {
     input: Input,
     reference_data: ReferenceData,
@@ -51,6 +63,7 @@ pub const PreparedInput = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const o2a = o2a_reference;
 pub const report = report_json;
