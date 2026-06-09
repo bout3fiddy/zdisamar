@@ -215,7 +215,7 @@ pub const PreparedCrossSectionAbsorber = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// PreparedLayer --------------------------------------------------------------------------------------------- |
+// PreparedLayer ----------------------------------------------------------------------------------------------|
 // Prepared layer state on the transport grid. One row keeps the physical layer values plus the indexes        |
 // that connect the row back to its prepared support rows.                                                     |
 //                                                                                                             |
@@ -257,8 +257,10 @@ pub const PreparedCrossSectionAbsorber = struct {
 // footprint: per instance = 208 B (0.203 KiB); total = per instance * live instance count                     |
 //                                                                                                             |
 // hot path                                                                                                    |
-// some loops read only support indexes from this wide row. Keep the row whole because nearby layer            |
-// evaluation and transport-input paths consume the physical fields from the same layer array.                 |
+// Index-only loops read the four u32 support fields at the end of this 208 B row. The row stays whole         |
+// because forward-layer, RTM quadrature, and optical-depth paths consume the same layer array's physical      |
+// fields nearby. Split columns would need a measured repeated-boundary win before they are worth the extra    |
+// ownership and call-surface complexity.                                                                      |
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
