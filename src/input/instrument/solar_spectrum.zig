@@ -3,12 +3,25 @@ const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
 // solar_spectrum.zig -----------------------------------------------------------------------------------------|
-// Operational solar irradiance table and interpolation helpers.                                               |
+// Operational solar irradiance table used to align source and target wavelength grids.                        |
 //                                                                                                             |
-// data                                                                                                        |
-//   OperationalSolarSpectrum is a small header over wavelength, irradiance, and optional prepared spline      |
-//   second-derivative arrays. The public interpolation helpers clamp outside the table; the private           |
-//   within-bounds helpers keep the repeated sampling path branch-local.                                       |
+// called from                                                                                                 |
+//   Instrument and ObservationModel retain the table inside operational band support.                         |
+//   input/o2a_reference/run.zig loads, retains, rewinds, and prepares O2 A solar support for parity cases.    |
+//   input/reference_data/solar_irradiance.zig uses interpolateIrradiance on cache misses before falling back  |
+//   to bundled or continuum irradiance.                                                                       |
+//   instrument-grid spectral evaluation reads the prepared support while producing measured-space spectra.    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   validate checks sorted finite wavelengths, non-negative irradiance, and optional spline-state shape.      |
+//   prepareInterpolation builds DISAMAR-compatible cubic spline second derivatives when enough samples exist. |
+//   interpolateIrradiance clamps outside the table; interpolateIrradianceWithinBounds returns null there so   |
+//   callers can keep fallback decisions local.                                                                |
+//   interpolateOnto and correctMeasuredSpectrumOnto materialize solar correction arrays for support rewiring. |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Irradiance cache misses and support-grid generation repeatedly sample this row. Prepared spline reads use |
+//   binary bracketing; linear fallback scans adjacent wavelength pairs.                                       |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   clone duplicates wavelength and irradiance arrays. prepareInterpolation owns only the spline state it     |

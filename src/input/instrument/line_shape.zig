@@ -5,19 +5,31 @@ const max_line_shape_samples = constants.max_line_shape_samples;
 const max_line_shape_nominals = constants.max_line_shape_nominals;
 
 // line_shape.zig ---------------------------------------------------------------------------------------------|
-// Instrument line-shape kernels parsed from input or operational support tables.                              |
+// Instrument line-shape payloads used before spectral convolution writes integration kernels.                 |
 //                                                                                                             |
-// data                                                                                                        |
-//   InstrumentLineShape stores one explicit kernel. InstrumentLineShapeTable stores several kernels keyed by  |
-//   nominal wavelength. Both structs are small headers over out-of-line offsets and weights.                  |
+// called from                                                                                                 |
+//   Instrument and ObservationModel retain these rows inside operational band support.                        |
+//   ObservationModel.spectralResponse borrows the active explicit kernel/table into SpectralResponse.         |
+//   integrationForWavelengthWithAdaptiveCacheChecked chooses the table-backed or fixed explicit kernel route  |
+//   before falling back to adaptive or built-in line-shape integration.                                       |
+//   instrument-grid cache hashing records the retained kernel values so changed ISRF data invalidates cached  |
+//   forward-model products.                                                                                   |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   BuiltinLineShapeKind.parse maps input/vendor names onto the built-in slit family.                         |
+//   validate checks bounded counts, backing slice lengths, sorted nominal wavelengths, and positive weights.  |
+//   ensureOwnedStorage expands borrowed parser slices into fixed-capacity arrays used by mutable loaders.     |
+//   writeNormalizedKernel and writeNormalizedKernelForNominal copy one bounded kernel into caller-owned       |
+//   scratch slices and normalize weights before convolution.                                                  |
 //                                                                                                             |
 // hot reads                                                                                                   |
-//   Instrument integration repeatedly asks these structs to copy a bounded kernel into caller-owned scratch   |
-//   slices and normalize the weights before convolution.                                                      |
+//   Instrument integration repeats the selected kernel write for nominal channel samples. Table lookup scans  |
+//   nominal_wavelengths_nm for the closest row, then streams offset/weight samples from flattened storage.    |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   clone and ensureOwnedStorage allocate fixed support arrays and set owns_memory. deinitOwned frees only    |
-//   when that flag is true, so borrowed parser slices are not released here.                                  |
+//   InstrumentLineShape and InstrumentLineShapeTable are slice headers over borrowed or owned arrays. clone   |
+//   and ensureOwnedStorage allocate support arrays and set owns_memory. deinitOwned frees only when that flag |
+//   is true, so borrowed parser slices are not released here.                                                 |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const BuiltinLineShapeKind = enum {

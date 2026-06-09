@@ -2,15 +2,26 @@ const std = @import("std");
 const spline = @import("../common/math/interpolation/spline.zig");
 
 // hitran_partition_tables.zig -------------------------------------------------------------------------------|
-// Embedded HITRAN-style partition-sum tables used for temperature scaling spectroscopy line strengths.       |
+// Embedded HITRAN-style partition-sum tables used by strong-line temperature scaling.                        |
 //                                                                                                            |
-// data shape                                                                                                 |
+// called from                                                                                                |
+//   input/reference/spectroscopy/strong_lines.zig calls ratioT0OverT while preparing strong-line ConvTP and  |
+//   persistent prepared states. Unknown isotopologue codes fall back at the caller to a simple temperature   |
+//   ratio.                                                                                                   |
+//   tests/unit/hitran_partition_tables_test.zig checks representative O2-family codes and interpolation.     |
+//                                                                                                            |
+// table model                                                                                                |
 //   temperature_grid is the shared kelvin grid. q_* tables are keyed by HITRAN isotopologue code in          |
 //   ratioT0OverT. Most tables are f64; q_67 is f32 to keep the embedded constant block smaller.              |
 //                                                                                                            |
-// runtime path                                                                                               |
-//   ratioT0OverT chooses one table by isotopologue code and linearly samples it through the endpoint-secant  |
-//   spline helper. The tables are compile-time constants; this file owns no heap storage.                    |
+// main paths                                                                                                 |
+//   ratioT0OverT switches from isotopologue code to the matching partition table, samples Q(T) and Q(T0),    |
+//   and returns Q(T0) / Q(T).                                                                                |
+//   interpolatePartitionTable clamps temperature to the grid range, then uses the endpoint-secant spline     |
+//   helper. The f32 table is widened on the stack before using the same interpolation path.                  |
+//                                                                                                            |
+// runtime shape                                                                                              |
+//   These tables are compile-time constants. There is no heap ownership, parser state, or runtime mutation.  |
 // -----------------------------------------------------------------------------------------------------------|
 
 const temperature_grid = [_]f64{
