@@ -941,7 +941,15 @@ pub fn fillAdjacentLayerPhaseMaxIndices(
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     // totalScatteringOpticalDepth ----------------------------------------------------------------------------|
-    // Sum positive scattering optical depth across all layers.                                                |
+    // Sum positive layer scattering optical depth for the LABOS order/Fourier decisions.                      |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   execute.zig uses this before ordersScat to choose the scattering-order cap.                           |
+    //   root.zig also exports it for callers that need the same transport-layer total.                        |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   LayerInput is a 176 B transport row. This scan reads one f64 by pointer, so rows are not copied.      |
+    //   The same layer slice is immediately consumed by LABOS transport; a side column would need sync proof. |
     //                                                                                                         |
     // math                                                                                                    |
     //   total scattering optical depth = sum(max(layer scattering optical depth, 0))                          |
@@ -1403,7 +1411,14 @@ fn activeAerosolInteriorBounds(
 
 fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
     // aerosolSingleScatteringAlbedo --------------------------------------------------------------------------|
-    // Layer-total aerosol SSA used to blend scattering and absorption weighting.                              |
+    // Collapse layer aerosol extinction and aerosol scattering into one effective aerosol SSA.                |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   Aerosol Jacobian weighting calls this before optical-depth and pressure contributions are split.      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Reads two f64 fields from each LayerInput by pointer.                                                 |
+    //   The scan stays on the transport layer slice, so weighting uses the rows that produced reflectance.    |
     //                                                                                                         |
     // math                                                                                                    |
     //   aerosol SSA = aerosol scattering optical depth / aerosol optical depth                                |

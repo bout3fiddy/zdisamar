@@ -823,6 +823,21 @@ fn profileEquivalentPhaseCoefficients(
     context: *const Context,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) [PhaseFunctions.phase_coefficient_count]f64 {
+    // profileEquivalentPhaseCoefficients ----------------------------------------------------------------------  |
+    // Collapse a profile aerosol layer set into one Henyey-Greenstein phase row for the prepared state.          |
+    //                                                                                                            |
+    // call path                                                                                                  |
+    //   AerosolSublayers.phaseCoefficients calls this once during preparation for profile aerosol input.         |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   AerosolSublayerProperties is 48 B. The loop reads scattering inputs plus asymmetry by pointer.           |
+    //   It writes only the final phase coefficient row into context.aerosol_phase_coefficients.                  |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   g_equiv = sum(scattering_i * asymmetry_i) / sum(scattering_i)                                            |
+    //   scattering_i is midpoint-wavelength aerosol optical depth times single-scatter albedo.                   |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     var scattering: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
 

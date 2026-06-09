@@ -612,6 +612,21 @@ fn collectAdaptiveStrongLineCentersFromList(
     centers_nm: *[types.max_integration_sample_count]f64,
     center_count: *usize,
 ) bool {
+    // collectAdaptiveStrongLineCentersFromList --------------------------------------------------------------   |
+    // Append strong line centers that should split the adaptive instrument intervals.                           |
+    //                                                                                                           |
+    // call path                                                                                                 |
+    //   collectAdaptiveStrongLineCenters calls this for the base line list and each prepared line absorber.     |
+    //   buildAdaptiveIntervalPlan sorts and merges the collected centers before assigning Gauss divisions.      |
+    //                                                                                                           |
+    // memory                                                                                                    |
+    //   SpectroscopyLine is a 104 B setup row. This scan reads strength and center by pointer.                  |
+    //   It writes only the compact centers_nm prefix used to split intervals; no line data is retained here.    |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   keep line when strength >= thresholdStrength(lines) and center is inside the global support window      |
+    // --------------------------------------------------------------------------------------------------------- |
+
     const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
 
     for (line_list.lines) |*line| {
