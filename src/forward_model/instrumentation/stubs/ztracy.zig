@@ -2,7 +2,31 @@ const std = @import("std");
 
 const Src = std.builtin.SourceLocation;
 
-// No-op ztracy shim for builds without tracing.
+// ztracy.zig -------------------------------------------------------------------------------------------------|
+// Disabled Tracy-compatible shim selected when builds do not link the real ztracy dependency.                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   trace.zig imports this module through the build.zig module alias when enable_ztracy is false. Product,    |
+//   tests, telemetry, and perturbation targets use this shim; trace CLIs swap in the real dependency only     |
+//   when requested.                                                                                           |
+//                                                                                                             |
+// mirrored API                                                                                                |
+//   The real dependency exposes ZoneCtx, zone creation, messages, frame marks, plots, thread names, and a     |
+//   TracyAllocator wrapper. This file keeps the same surface that trace.zig needs without exposing Tracy to   |
+//   normal builds.                                                                                            |
+//                                                                                                             |
+// disabled path                                                                                               |
+//   enabled=false tells callers that no timeline is being captured. Zone creation returns an empty context,   |
+//   markers and plots discard their inputs, and TracyAllocator hands back the child allocator unchanged.      |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   RTM preparation, wavelength sampling, LABOS, OE, and trace scaffolding can keep Trace.* calls around      |
+//   expensive phases. Disabled builds do not allocate zones, emit messages, touch counters, or link Tracy.    |
+//                                                                                                             |
+// memory                                                                                                      |
+//   ZoneCtx is zero-size. TracyAllocator stores only the borrowed child allocator handle; it does not wrap    |
+//   allocations with tracing metadata in this variant.                                                        |
+// ------------------------------------------------------------------------------------------------------------|
 pub const enabled = false;
 
 pub const ZoneCtx = struct {
