@@ -8,14 +8,23 @@ pub const AssetKind = enum {
     lookup_table,
 };
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: path=16 B, contents=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: path, contents carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// EmbeddedAsset ----------------------------------------------------------------------------------------------|
+// One compile-time embedded asset used by bundle loaders.                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] path     : []const u8                                                                              |
+// [16..31] contents : []const u8                                                                              |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   path and contents point at embedded byte strings; referenced storage is not included in this row.         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total also includes embedded byte storage                       |
 pub const EmbeddedAsset = struct {
     path: []const u8,
     contents: []const u8,
 };
+// ------------------------------------------------------------------------------------------------------------|

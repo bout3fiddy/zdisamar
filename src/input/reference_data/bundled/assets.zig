@@ -4,20 +4,19 @@ const AbsorberModel = @import("../../Absorber.zig");
 const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
+// assets.zig -------------------------------------------------------------------------------------------------|
+// Bundled reference-data asset IDs and loaders.                                                               |
+//                                                                                                             |
+// bundle_manifest_paths and asset_ids are namespace-only constant groups. They intentionally carry no runtime |
+// state, so this file avoids repeating 0 B layout boxes for those namespaces.                                 |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const bundle_manifest_paths = struct {
     pub const climatology = "data/reference_data/climatologies/bundle_manifest.json";
     pub const cross_sections = "data/reference_data/cross_sections/bundle_manifest.json";
     pub const luts = "data/reference_data/luts/bundle_manifest.json";
 };
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const asset_ids = struct {
     pub const standard_climatology_profile = "us_standard_1976_profile";
     pub const o2a_line_list = "o2a_hitran_07_hit08_tropomi";
@@ -40,6 +39,7 @@ pub fn zeroContinuumTable(
     end_nm: f64,
 ) !ReferenceData.CrossSectionTable {
     const midpoint_nm = (start_nm + end_nm) * 0.5;
+
     // UNITS:
     //   The continuum grid is kept in nanometers so downstream interpolation sees the same
     //   spectral support even when the coefficient values are zero.
@@ -147,6 +147,7 @@ pub fn loadAirmassFactorLut(
 }
 
 pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
+
     // DECISION:
     //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
     //   explicit configuration.
@@ -155,6 +156,7 @@ pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
 }
 
 pub fn shouldLoadBundledO2ACia(scene: *const Scene) bool {
+
     // DECISION:
     //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
     //   explicit configuration.
@@ -170,6 +172,7 @@ pub fn sceneRequestsSpectroscopyMode(
 ) bool {
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != mode) continue;
+
         const absorber_species = resolvedAbsorberSpecies(absorber) orelse continue;
         if (absorber_species == species) return true;
     }
@@ -219,7 +222,9 @@ pub fn cloneResolvedSpectroscopyLineList(
     return null;
 }
 
-pub fn resolvedCollisionInducedAbsorptionTable(scene: *const Scene) ?*const ReferenceData.CollisionInducedAbsorptionTable {
+pub fn resolvedCollisionInducedAbsorptionTable(
+    scene: *const Scene,
+) ?*const ReferenceData.CollisionInducedAbsorptionTable {
     for (scene.absorbers.items) |*absorber| {
         if (absorber.spectroscopy.resolved_cia_table) |*cia_table| return cia_table;
     }
