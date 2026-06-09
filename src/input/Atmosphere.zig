@@ -12,13 +12,41 @@ pub const IntervalGrid = @import("atmosphere/interval_grid.zig").IntervalGrid;
 pub const IntervalPlacement = @import("atmosphere/interval_grid.zig").IntervalPlacement;
 pub const FractionControl = @import("atmosphere/fraction_control.zig").FractionControl;
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 95 B across 6 fields; largest: profile_source=56 B, interval_grid=24 B; padding: 1 B (8 bits)
-//   unused bits: 8 padding + 7 bool-storage slack = 15 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
+// Atmosphere.zig ---------------------------------------------------------------------------------------------|
+// Public atmosphere controls and aliases for interval/fraction support types.                                 |
+//                                                                                                             |
+// data                                                                                                        |
+//   Atmosphere carries layer counts, profile binding, surface pressure, and optional explicit interval grid.  |
+//   Interval and fraction payload storage is documented in the atmosphere/ submodule files.                   |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   deinitOwned delegates to IntervalGrid. The profile source binding is validated here but not owned here.   |
+//                                                                                                             |
+// validation                                                                                                  |
+//   Prepared layer count comes from explicit intervals when present; otherwise it uses layer_count.           |
+// ------------------------------------------------------------------------------------------------------------|
+
+// Atmosphere -------------------------------------------------------------------------------------------------|
+// Public atmosphere control header.                                                                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..55] profile_source       : Binding                                                                     |
+// [56..63] surface_pressure_hpa : f64                                                                         |
+// [64..87] interval_grid        : IntervalGrid                                                                |
+// [88..91] layer_count          : u32                                                                         |
+// [92..92] sublayer_divisions   : u8                                                                          |
+// [93..93] has_aerosols         : bool                                                                        |
+// [94..95] trailing padding     : 2 B                                                                         |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   profile_source can point at out-of-line binding names. interval_grid may own interval rows.               |
+//                                                                                                             |
+// unused bits: 16 padding + 7 bool-storage slack = 23 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B (0.094 KiB); total also includes referenced binding/interval storage         |
 pub const Atmosphere = struct {
     layer_count: u32 = 0,
     sublayer_divisions: u8 = 3,
@@ -50,7 +78,11 @@ pub const Atmosphere = struct {
         {
             return errors.Error.InvalidRequest;
         }
-        if (self.interval_grid.enabled() and self.layer_count != 0 and self.layer_count != self.interval_grid.intervalCount()) {
+
+        if (self.interval_grid.enabled() and
+            self.layer_count != 0 and
+            self.layer_count != self.interval_grid.intervalCount())
+        {
             return errors.Error.InvalidRequest;
         }
     }
@@ -59,3 +91,4 @@ pub const Atmosphere = struct {
         self.interval_grid.deinitOwned(allocator);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

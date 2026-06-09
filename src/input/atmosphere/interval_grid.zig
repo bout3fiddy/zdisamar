@@ -7,12 +7,39 @@ const types = @import("types.zig");
 pub const IntervalSemantics = types.IntervalSemantics;
 pub const ParticlePlacementSemantics = types.ParticlePlacementSemantics;
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 8 fields; largest: top_pressure_hpa=8 B, bottom_pressure_hpa=8 B, top_altitude_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+// interval_grid.zig ------------------------------------------------------------------------------------------|
+// Explicit atmosphere interval and particle-placement controls.                                               |
+//                                                                                                             |
+// data                                                                                                        |
+//   VerticalInterval is one prepared support interval. IntervalGrid owns the optional interval slice.         |
+//   IntervalPlacement carries aerosol or particle placement bounds.                                           |
+//                                                                                                             |
+// validation                                                                                                  |
+//   Pressure bounds use hPa and must be ordered from top to bottom. Altitude bounds are optional but must be  |
+//   present as a pair when used.                                                                              |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   IntervalGrid.deinitOwned releases the interval slice only when owns_intervals is true.                    |
+// ------------------------------------------------------------------------------------------------------------|
+
+// VerticalInterval -------------------------------------------------------------------------------------------|
+// One explicit vertical support interval.                                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] top_pressure_hpa              : f64                                                                |
+// [ 8..15] bottom_pressure_hpa           : f64                                                                |
+// [16..23] top_altitude_km               : f64                                                                |
+// [24..31] bottom_altitude_km            : f64                                                                |
+// [32..39] top_pressure_variance_hpa2    : f64                                                                |
+// [40..47] bottom_pressure_variance_hpa2 : f64                                                                |
+// [48..51] index_1based                  : u32                                                                |
+// [52..55] altitude_divisions            : u32                                                                |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 56 B (0.055 KiB); total = per instance * live interval count                      |
 pub const VerticalInterval = struct {
     index_1based: u32 = 0,
     top_pressure_hpa: f64 = 0.0,
@@ -39,12 +66,14 @@ pub const VerticalInterval = struct {
         const has_top_altitude = std.math.isFinite(self.top_altitude_km);
         const has_bottom_altitude = std.math.isFinite(self.bottom_altitude_km);
         if (has_top_altitude != has_bottom_altitude) return errors.Error.InvalidRequest;
+
         if (self.hasAltitudeBounds()) {
             (units.AltitudeRangeKm{
                 .bottom_km = self.bottom_altitude_km,
                 .top_km = self.top_altitude_km,
             }).validate() catch return errors.Error.InvalidRequest;
         }
+
         if (self.top_pressure_variance_hpa2 < 0.0 or self.bottom_pressure_variance_hpa2 < 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -60,14 +89,26 @@ pub const VerticalInterval = struct {
         return @max(self.top_altitude_km - self.bottom_altitude_km, 0.0);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: intervals=16 B, fit_interval_index_1based=4 B, semantics=1 B, owns_intervals=1 B; padding: 2 B (16 bits)
-//   unused bits: 16 padding + 7 bool-storage slack = 23 bits
-//   out-of-line: intervals carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+// IntervalGrid -----------------------------------------------------------------------------------------------|
+// Owner/view header for explicit vertical intervals.                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] intervals                  : []const VerticalInterval                                              |
+// [16..19] fit_interval_index_1based  : u32                                                                   |
+// [20..20] semantics                  : IntervalSemantics                                                     |
+// [21..21] owns_intervals             : bool                                                                  |
+// [22..23] trailing padding           : 2 B                                                                   |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   intervals stores out-of-line VerticalInterval rows. It is owned only when owns_intervals is true.         |
+//                                                                                                             |
+// unused bits: 16 padding + 6 enum-storage slack + 7 bool-storage slack = 29 bits                             |
+// footprint: per instance = 24 B (0.023 KiB); total also includes owned interval rows                         |
 pub const IntervalGrid = struct {
     semantics: IntervalSemantics = .none,
     fit_interval_index_1based: u32 = 0,
@@ -96,6 +137,7 @@ pub const IntervalGrid = struct {
             }
             return;
         }
+
         if (self.semantics == .none) return errors.Error.InvalidRequest;
 
         var previous_bottom_pressure_hpa: f64 = 0.0;
@@ -104,20 +146,34 @@ pub const IntervalGrid = struct {
         for (self.intervals, 0..) |interval, index| {
             try interval.validate();
             if (interval.index_1based != index + 1) return errors.Error.InvalidRequest;
+
             if (index != 0) {
-                if (!std.math.approxEqAbs(f64, interval.top_pressure_hpa, previous_bottom_pressure_hpa, 1.0e-9)) {
+                if (!std.math.approxEqAbs(
+                    f64,
+                    interval.top_pressure_hpa,
+                    previous_bottom_pressure_hpa,
+                    1.0e-9,
+                )) {
                     return errors.Error.InvalidRequest;
                 }
+
                 if (previous_has_altitude_bounds and interval.hasAltitudeBounds() and
-                    !std.math.approxEqAbs(f64, previous_bottom_altitude_km, interval.top_altitude_km, 1.0e-9))
+                    !std.math.approxEqAbs(
+                        f64,
+                        previous_bottom_altitude_km,
+                        interval.top_altitude_km,
+                        1.0e-9,
+                    ))
                 {
                     return errors.Error.InvalidRequest;
                 }
             }
+
             previous_bottom_pressure_hpa = interval.bottom_pressure_hpa;
             previous_bottom_altitude_km = interval.bottom_altitude_km;
             previous_has_altitude_bounds = interval.hasAltitudeBounds();
         }
+
         if (self.fit_interval_index_1based > self.intervals.len) return errors.Error.InvalidRequest;
         if (fallback_sublayer_divisions == 0) return errors.Error.InvalidRequest;
     }
@@ -127,13 +183,25 @@ pub const IntervalGrid = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 37 B across 6 fields; largest: top_pressure_hpa=8 B, bottom_pressure_hpa=8 B, top_altitude_km=8 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// IntervalPlacement ------------------------------------------------------------------------------------------|
+// Particle placement bounds resolved from interval-style controls.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] top_pressure_hpa      : f64                                                                        |
+// [ 8..15] bottom_pressure_hpa   : f64                                                                        |
+// [16..23] top_altitude_km       : f64                                                                        |
+// [24..31] bottom_altitude_km    : f64                                                                        |
+// [32..35] interval_index_1based : u32                                                                        |
+// [36..36] semantics             : ParticlePlacementSemantics                                                 |
+// [37..39] trailing padding      : 3 B                                                                        |
+//                                                                                                             |
+// unused bits: 24 padding + 6 enum-storage slack = 30 bits                                                    |
+// footprint: per instance = 40 B (0.039 KiB); total = per instance * live placement count                     |
 pub const IntervalPlacement = struct {
     semantics: ParticlePlacementSemantics = .none,
     interval_index_1based: u32 = 0,
@@ -163,13 +231,16 @@ pub const IntervalPlacement = struct {
             },
             .explicit_interval_bounds => {
                 if (self.interval_index_1based == 0) return errors.Error.InvalidRequest;
+
                 (units.PressureRangeHpa{
                     .top_hpa = self.top_pressure_hpa,
                     .bottom_hpa = self.bottom_pressure_hpa,
                 }).validate() catch return errors.Error.InvalidRequest;
+
                 const has_top_altitude = std.math.isFinite(self.top_altitude_km);
                 const has_bottom_altitude = std.math.isFinite(self.bottom_altitude_km);
                 if (has_top_altitude != has_bottom_altitude) return errors.Error.InvalidRequest;
+
                 if (self.hasAltitudeBounds()) {
                     (units.AltitudeRangeKm{
                         .bottom_km = self.bottom_altitude_km,
