@@ -6,19 +6,32 @@ const Types = @import("types.zig");
 const line_list_module = @This();
 
 // line_list.zig --------------------------------------------------------------------------------------------- |
-// Owns line lists, strong-line sidecars, controls, and prepared evaluation paths.                             |
+// Spectroscopy line-list owner, filter, window planner, and evaluation entrypoint.                            |
+//                                                                                                             |
+// called by                                                                                                   |
+//   o2a_reference/run.zig loads and attaches vendor O2 sidecars; absorbers.zig applies runtime controls and   |
+//   prepares profile/support states; carrier_eval.zig and band_means.zig call prepared evaluation paths.      |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   raw lines -> runtime controls -> relevant wavelength windows -> weak/strong line sigma accumulation       |
-//   raw sidecars -> strong-line match index -> prepared strong-line state -> wavelength-time line mixing      |
+//   raw lines -> runtime controls -> sorted/filtered lines -> relevant wavelength windows -> weak sigma       |
+//   raw sidecars -> vendor partition detection -> strong-line match index -> prepared strong-line state       |
+//   prepared weak/strong state -> wavelength window -> total sigma + line-mixing sigma                        |
+//                                                                                                             |
+// setup indexes                                                                                               |
+//   buildStrongLineMatchIndex, validateStrongLinePartition, and detectVendorStrongLinePartition deliberately  |
+//   scan wide SpectroscopyLine rows for one or two fields. They run during setup and produce match/partition  |
+//   state used by repeated wavelength evaluation; splitting a center-wavelength/gas-index column would need   |
+//   benchmark evidence across the prepared evaluation boundary.                                               |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Wavelength-time evaluation walks a relevant weak-line window and optional strong-line sidecars. Setup     |
-//   paths prepare strong/weak state so repeated carrier evaluation avoids repartitioning the line list.       |
+//   Wavelength-time evaluation walks the binary-searched relevant weak-line window and optional strong-line   |
+//   sidecars. Prepared-state routes precompute thermodynamic weak/strong terms so carrier evaluation avoids   |
+//   repartitioning the list and rebuilding line-shape state for every wavelength.                             |
 //                                                                                                             |
 // memory                                                                                                      |
-//   SpectroscopyLineList owns or borrows out-of-line line/sidecar/control slices. Window structs are small    |
-//   borrowed views into those line arrays and caller-provided anchor storage.                                 |
+//   SpectroscopyLineList owns or borrows out-of-line line, sidecar, relaxation, match-index, and runtime      |
+//   control slices. Window structs are borrowed views into those line arrays and caller-provided anchor       |
+//   storage; they do not own line data.                                                                       |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // SpectroscopyLineList -------------------------------------------------------------------------------------- |

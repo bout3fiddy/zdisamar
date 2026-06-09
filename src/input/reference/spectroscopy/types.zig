@@ -4,12 +4,29 @@ const std = @import("std");
 // Shared spectroscopy constants, line rows, runtime controls, and prepared line-state layouts.                |
 //                                                                                                             |
 // used by                                                                                                     |
-//   reference loaders, line-list evaluation, absorber prep, and forward-model carrier                         |
-//   evaluation.                                                                                               |
+//   reference-data loaders produce SpectroscopyLine rows; line_list.zig owns filtering/windowing/evaluation;  |
+//   absorbers.zig prepares weak/strong line states; carrier_eval.zig reads those prepared states at           |
+//   wavelength time.                                                                                          |
+//                                                                                                             |
+// important rows                                                                                              |
+//   SpectroscopyLine is the normalized HITRAN/O2 A row. Strong-line sidecars and relaxation matrices carry    |
+//   DISAMAR O2 line-mixing inputs. WeakLinePreparedState and StrongLinePreparedState are exactly-sized        |
+//   retained arrays built for profile nodes or support rows. SpectroscopyRuntimeControls keeps threshold,     |
+//   isotope, gas-index, cutoff-grid, and line-mixing controls next to the list that consumes them.            |
+//                                                                                                             |
+// numbers                                                                                                     |
+//   HITRAN and DISAMAR constants here intentionally keep reference literals such as truncated pi and the      |
+//   O2 line-mixing hc/kB value because O2 A parity changes at the precision tested by validation.             |
+//                                                                                                             |
+// layout                                                                                                      |
+//   SpectroscopyLine is a 104 B row. Setup loops may read only center_wavelength_nm, gas_index, or            |
+//   line_strength_cm2_per_molecule while building indexes and thresholds; the row stays whole because         |
+//   wavelength-time Voigt evaluation consumes the same row's strength, width, energy, isotope, and shift      |
+//   fields nearby.                                                                                            |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Line rows are inline records copied into owned lists. Prepared states use compact headers                 |
-//   over out-of-line per-line arrays allocated during setup and reused across wavelength-time evaluation.     |
+//   Line rows are inline records copied into owned lists. Prepared states are compact owner headers over      |
+//   out-of-line per-line arrays allocated during setup and reused across wavelength-time evaluation.          |
 // ----------------------------------------------------------------------------------------------------------- |
 
 pub const Allocator = std.mem.Allocator;

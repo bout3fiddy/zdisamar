@@ -4,11 +4,25 @@ const Core = @import("physics_core.zig");
 const Types = @import("types.zig");
 
 // strong_lines.zig ------------------------------------------------------------------------------------------ |
-// Strong-line spectroscopy helpers and isotopologue-specific scaling logic.                                   |
+// DISAMAR-style O2 strong-line sidecar preparation and line-mixing evaluation.                                |
+//                                                                                                             |
+// called by                                                                                                   |
+//   line_list.zig attaches sidecars, prepares strong-line state, and sums strong-line contributions;          |
+//   physics_core.zig calls partition helpers while preparing weak-line thermodynamic state.                   |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   sidecar rows + relaxation matrix + T/P -> ConvTP state or exactly-sized StrongLinePreparedState           |
+//   wavelength + prepared state -> complex probability function -> line sigma + line-mixing sigma             |
+//   gas/isotope codes -> HITRAN partition table and molecular-weight selection                                |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Strong-line contribution reads prepared temperature/pressure arrays and calls the shared CPF routine for  |
-//   each active sidecar at wavelength time.                                                                   |
+//   Wavelength-time strong-line contribution reads one slot from each prepared array and calls the shared     |
+//   CPF routine once per active sidecar. One-shot evaluation can use the fixed-capacity ConvTP stack row;     |
+//   retained profile/support caches use StrongLinePreparedState to avoid carrying a 5 KiB row per node.       |
+//                                                                                                             |
+// math                                                                                                        |
+//   ConvTP applies partition scaling, pressure shift, relaxation-matrix weights, dipole terms, and the        |
+//   DISAMAR line-mixing coefficient before the final CPF-based absorption and mixing contribution.            |
 //                                                                                                             |
 // memory                                                                                                      |
 //   StrongLineConvTPState is the fixed-capacity stack form. Types.StrongLinePreparedState is the persistent   |
