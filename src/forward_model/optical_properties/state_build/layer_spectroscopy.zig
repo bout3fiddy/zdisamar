@@ -32,29 +32,57 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 //   worker fills a chunk of profile-node spectroscopy values before spline setup.                             |
 // ------------------------------------------------------------------------------------------------------------|
 
-// ProfileCacheValueWorker ------------------------------------------------------------------------------------|
-// Work item passed to each profile-spectroscopy cache initialization worker.                                  |
+// ProfileCacheValueRequest -----------------------------------------------------------------------------------|
+// Borrowed inputs shared by profile-spectroscopy cache fill workers.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 288 B (0.281 KiB), align: 8 B                                                                         |
+// size: 264 B (0.258 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// line_list: 208 B                                                                                            |
-// cache, context, wavelength window, and queue pointers: 4 x pointer-sized fields                             |
-// prepared strong/weak state slices: 2 x optional slice headers                                               |
-// wavelength_nm and worker_index: 2 x 8 B                                                                     |
+// [  0..207] line_list            : SpectroscopyLineList                                                      |
+// [208..223] prepared_states      : ?[]const StrongLinePreparedState                                          |
+// [224..239] prepared_weak_states : ?[]const WeakLinePreparedState                                            |
+// [240..247] context              : *const PreparationContext                                                 |
+// [248..255] wavelength_nm        : f64                                                                       |
+// [256..263] wavelength_window    : ?*const StrongLineWavelengthWindow                                        |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   context, prepared state rows, and wavelength-window storage are borrowed from the cache init call.        |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 5 cache lines at 64 B per line                                                                  |
-// footprint: per worker = 288 B; cache, context, window, and queue storage are borrowed                       |
-const ProfileCacheValueWorker = struct {
-    cache: *ProfileSpectroscopyCache,
+// footprint: per cache fill = 264 B plus borrowed context/profile storage                                     |
+const ProfileCacheValueRequest = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     context: *const Context,
     wavelength_nm: f64,
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
     wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// ProfileCacheValueWorker ------------------------------------------------------------------------------------|
+// Work item passed to each profile-spectroscopy cache initialization worker.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] cache        : *ProfileSpectroscopyCache                                                           |
+// [ 8..15] request      : *const ProfileCacheValueRequest                                                     |
+// [16..23] queue        : *ChunkQueue                                                                         |
+// [24..31] worker_index : usize                                                                               |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   cache, request, and queue storage are borrowed. Each worker writes only the chunks it claims from queue.  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 1 cache line at 64 B per line                                                                   |
+// footprint: per worker = 32 B plus borrowed request/cache/queue storage                                      |
+const ProfileCacheValueWorker = struct {
+    cache: *ProfileSpectroscopyCache,
+    request: *const ProfileCacheValueRequest,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
@@ -252,16 +280,19 @@ fn fillProfileSpectroscopyCacheValues(
     // worker and chunk zones expose parallel cache-fill cost in timeline traces.                              |
     // ------------------------------------------------------------------------------------------------------- |
 
+    const request = ProfileCacheValueRequest{
+        .line_list = line_list,
+        .context = context,
+        .wavelength_nm = wavelength_nm,
+        .prepared_states = prepared_states,
+        .prepared_weak_states = prepared_weak_states,
+        .wavelength_window = wavelength_window,
+    };
     const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
     if (worker_count == 1) {
         fillProfileSpectroscopyCacheValueRange(
             cache,
-            line_list,
-            context,
-            wavelength_nm,
-            prepared_states,
-            prepared_weak_states,
-            wavelength_window,
+            &request,
             0,
             cache.node_count,
         );
@@ -278,12 +309,7 @@ fn fillProfileSpectroscopyCacheValues(
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
             .cache = cache,
-            .line_list = line_list,
-            .context = context,
-            .wavelength_nm = wavelength_nm,
-            .prepared_states = prepared_states,
-            .prepared_weak_states = prepared_weak_states,
-            .wavelength_window = wavelength_window,
+            .request = &request,
             .queue = &queue,
             .worker_index = worker_index,
         };
@@ -336,12 +362,7 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
 
             fillProfileSpectroscopyCacheValueRange(
                 worker.cache,
-                worker.line_list,
-                worker.context,
-                worker.wavelength_nm,
-                worker.prepared_states,
-                worker.prepared_weak_states,
-                worker.wavelength_window,
+                worker.request,
                 chunk.start,
                 chunk.end,
             );
@@ -351,12 +372,7 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
 
 fn fillProfileSpectroscopyCacheValueRange(
     cache: *ProfileSpectroscopyCache,
-    line_list: ReferenceData.SpectroscopyLineList,
-    context: *const Context,
-    wavelength_nm: f64,
-    prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
-    prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
-    wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
+    request: *const ProfileCacheValueRequest,
     start: usize,
     end: usize,
 ) void {
@@ -369,23 +385,23 @@ fn fillProfileSpectroscopyCacheValueRange(
 
     for (start..end) |index| {
         const evaluation = evaluate_profile_node: {
-            if (prepared_states) |states| {
+            if (request.prepared_states) |states| {
                 break :evaluate_profile_node LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
-                    line_list,
-                    wavelength_nm,
-                    context.spectroscopy_profile_temperatures_k[index],
-                    context.spectroscopy_profile_pressures_hpa[index],
+                    request.line_list,
+                    request.wavelength_nm,
+                    request.context.spectroscopy_profile_temperatures_k[index],
+                    request.context.spectroscopy_profile_pressures_hpa[index],
                     &states[index],
-                    if (prepared_weak_states) |weak_states| &weak_states[index] else null,
-                    wavelength_window.?,
+                    if (request.prepared_weak_states) |weak_states| &weak_states[index] else null,
+                    request.wavelength_window.?,
                 );
             }
 
             break :evaluate_profile_node LineListEval.totalSigmaAt(
-                line_list,
-                wavelength_nm,
-                context.spectroscopy_profile_temperatures_k[index],
-                context.spectroscopy_profile_pressures_hpa[index],
+                request.line_list,
+                request.wavelength_nm,
+                request.context.spectroscopy_profile_temperatures_k[index],
+                request.context.spectroscopy_profile_pressures_hpa[index],
             );
         };
         cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
