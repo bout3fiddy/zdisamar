@@ -2,14 +2,98 @@ const std = @import("std");
 const ReferenceData = @import("../../ReferenceData.zig");
 const types = @import("reference_assets_types.zig");
 
-// layout(64-bit):
-//   size: 152 B, align: 8 B
-//   field storage: 149 B across 11 fields; largest: bundle_manifest_path=16 B, bundle_id=16 B, owner_package=16 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   out-of-line: bundle_manifest_path, bundle_id, owner_package, asset_id, asset_path, +4 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 152 B (0.148 KiB); total also includes referenced storage above
+const spectroscopy_vendor_source_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "center_wavenumber_cm1",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "air_half_width_cm1",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "pressure_shift_cm1",
+    "line_mixing_coefficient",
+    "branch_ic1",
+    "branch_ic2",
+    "rotational_nf",
+    "vendor_filter_metadata_from_source",
+};
+
+const spectroscopy_vendor_nm_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "line_mixing_coefficient",
+    "branch_ic1",
+    "branch_ic2",
+    "rotational_nf",
+    "vendor_filter_metadata_from_source",
+};
+
+const spectroscopy_source_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "center_wavenumber_cm1",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "air_half_width_cm1",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "pressure_shift_cm1",
+    "line_mixing_coefficient",
+};
+
+const spectroscopy_nm_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "line_mixing_coefficient",
+};
+
+// LoadedAsset ------------------------------------------------------------------------------------------------|
+// Owned metadata and numeric table storage for one hydrated reference asset.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 152 B (0.148 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] bundle_manifest_path : []const u8                                                                |
+// [ 16.. 31] bundle_id            : []const u8                                                                |
+// [ 32.. 47] owner_package        : []const u8                                                                |
+// [ 48.. 63] asset_id             : []const u8                                                                |
+// [ 64.. 79] asset_path           : []const u8                                                                |
+// [ 80.. 95] dataset_id           : []const u8                                                                |
+// [ 96..111] dataset_hash         : []const u8                                                                |
+// [112..127] column_names         : []const []const u8                                                        |
+// [128..143] values               : []f64                                                                     |
+// [144..147] row_count            : u32                                                                       |
+// [148..148] kind                 : types.AssetKind                                                           |
+// [149..151] trailing padding     : 3 B                                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   String, column-name, and values slices are owned by this row and released by deinit.                      |
+//                                                                                                             |
+// unused bits: 24 padding + 0 bool-storage slack = 24 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 152 B (0.148 KiB); total also includes owned metadata and numeric arrays          |
 pub const LoadedAsset = struct {
     kind: types.AssetKind,
     bundle_manifest_path: []const u8,
@@ -31,7 +115,9 @@ pub const LoadedAsset = struct {
         allocator.free(self.asset_path);
         allocator.free(self.dataset_id);
         allocator.free(self.dataset_hash);
-        for (self.column_names) |column_name| allocator.free(column_name);
+        for (self.column_names) |column_name| {
+            allocator.free(column_name);
+        }
         allocator.free(self.column_names);
         allocator.free(self.values);
         self.* = undefined;
@@ -45,7 +131,10 @@ pub const LoadedAsset = struct {
         return self.values[row_index * self.column_names.len + column_index];
     }
 
-    pub fn toClimatologyProfile(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.ClimatologyProfile {
+    pub fn toClimatologyProfile(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.ClimatologyProfile {
         if (self.kind != .climatology_profile or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
             "altitude_km",
@@ -69,7 +158,10 @@ pub const LoadedAsset = struct {
         return .{ .rows = rows };
     }
 
-    pub fn toCrossSectionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CrossSectionTable {
+    pub fn toCrossSectionTable(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.CrossSectionTable {
         if (self.kind != .cross_section_table or self.columnCount() != 2) return error.InvalidAssetKind;
         if (!std.mem.eql(u8, self.column_names[0], "wavelength_nm")) return error.InvalidColumns;
         if (!std.mem.endsWith(u8, self.column_names[1], "_sigma_cm2_per_molecule")) return error.InvalidColumns;
@@ -87,7 +179,10 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
-    pub fn toCollisionInducedAbsorptionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CollisionInducedAbsorptionTable {
+    pub fn toCollisionInducedAbsorptionTable(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.CollisionInducedAbsorptionTable {
         if (self.kind != .collision_induced_absorption_table or self.columnCount() != 5) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
             "wavelength_nm",
@@ -115,115 +210,87 @@ pub const LoadedAsset = struct {
         };
     }
 
-    pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
+    pub fn toSpectroscopyLineList(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.SpectroscopyLineList {
         if (self.kind != .spectroscopy_line_list) return error.InvalidAssetKind;
         const has_source_cm1_fields = columnNamesContain(self.column_names, "center_wavenumber_cm1");
         const has_vendor_o2a_fields = columnNamesContain(self.column_names, "vendor_filter_metadata_from_source");
-        if (has_vendor_o2a_fields and has_source_cm1_fields) {
-            try expectColumns(self.column_names, &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "center_wavenumber_cm1",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "air_half_width_cm1",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "pressure_shift_cm1",
-                "line_mixing_coefficient",
-                "branch_ic1",
-                "branch_ic2",
-                "rotational_nf",
-                "vendor_filter_metadata_from_source",
-            });
-        } else if (has_vendor_o2a_fields) {
-            try expectColumns(self.column_names, &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "line_mixing_coefficient",
-                "branch_ic1",
-                "branch_ic2",
-                "rotational_nf",
-                "vendor_filter_metadata_from_source",
-            });
-        } else if (has_source_cm1_fields) {
-            try expectColumns(self.column_names, &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "center_wavenumber_cm1",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "air_half_width_cm1",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "pressure_shift_cm1",
-                "line_mixing_coefficient",
-            });
-        } else {
-            try expectColumns(self.column_names, &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "line_mixing_coefficient",
-            });
-        }
+        try expectColumns(
+            self.column_names,
+            spectroscopyLineColumns(has_source_cm1_fields, has_vendor_o2a_fields),
+        );
 
         const lines = try allocator.alloc(ReferenceData.SpectroscopyLine, self.row_count);
         errdefer allocator.free(lines);
 
         for (lines, 0..) |*line, row_index| {
             const row = row_index * self.columnCount();
-            const line_strength_index: usize = if (has_source_cm1_fields) 5 else 4;
-            const air_half_width_nm_index: usize = if (has_source_cm1_fields) 6 else 5;
-            const temperature_exponent_index: usize = if (has_source_cm1_fields) 8 else 6;
-            const lower_state_energy_index: usize = if (has_source_cm1_fields) 9 else 7;
-            const pressure_shift_nm_index: usize = if (has_source_cm1_fields) 10 else 8;
-            const line_mixing_index: usize = if (has_source_cm1_fields) 12 else 9;
-            const vendor_index: usize = if (has_source_cm1_fields) 13 else 10;
+            var line_strength_index: usize = 4;
+            var air_half_width_nm_index: usize = 5;
+            var temperature_exponent_index: usize = 6;
+            var lower_state_energy_index: usize = 7;
+            var pressure_shift_nm_index: usize = 8;
+            var line_mixing_index: usize = 9;
+            var vendor_index: usize = 10;
+            var center_wavenumber_cm1 = std.math.nan(f64);
+            var air_half_width_cm1 = std.math.nan(f64);
+            var pressure_shift_cm1 = std.math.nan(f64);
+
+            if (has_source_cm1_fields) {
+                line_strength_index = 5;
+                air_half_width_nm_index = 6;
+                temperature_exponent_index = 8;
+                lower_state_energy_index = 9;
+                pressure_shift_nm_index = 10;
+                line_mixing_index = 12;
+                vendor_index = 13;
+                center_wavenumber_cm1 = self.values[row + 4];
+                air_half_width_cm1 = self.values[row + 7];
+                pressure_shift_cm1 = self.values[row + 11];
+            }
+
+            var branch_ic1: ?u8 = null;
+            var branch_ic2: ?u8 = null;
+            var rotational_nf: ?u8 = null;
+            var vendor_filter_metadata_from_source = false;
+
+            if (has_vendor_o2a_fields) {
+                branch_ic1 = optionalVendorMetadataValue(self.values[row + vendor_index]);
+                branch_ic2 = optionalVendorMetadataValue(self.values[row + vendor_index + 1]);
+                rotational_nf = optionalVendorMetadataValue(self.values[row + vendor_index + 2]);
+                vendor_filter_metadata_from_source = self.values[row + vendor_index + 3] != 0.0;
+            }
+
             line.* = .{
                 .gas_index = @intFromFloat(self.values[row + 0]),
                 .isotope_number = @intFromFloat(self.values[row + 1]),
                 .abundance_fraction = self.values[row + 2],
                 .center_wavelength_nm = self.values[row + 3],
-                .center_wavenumber_cm1 = if (has_source_cm1_fields) self.values[row + 4] else std.math.nan(f64),
+                .center_wavenumber_cm1 = center_wavenumber_cm1,
                 .line_strength_cm2_per_molecule = self.values[row + line_strength_index],
                 .air_half_width_nm = self.values[row + air_half_width_nm_index],
-                .air_half_width_cm1 = if (has_source_cm1_fields) self.values[row + 7] else std.math.nan(f64),
+                .air_half_width_cm1 = air_half_width_cm1,
                 .temperature_exponent = self.values[row + temperature_exponent_index],
                 .lower_state_energy_cm1 = self.values[row + lower_state_energy_index],
                 .pressure_shift_nm = self.values[row + pressure_shift_nm_index],
-                .pressure_shift_cm1 = if (has_source_cm1_fields) self.values[row + 11] else std.math.nan(f64),
+                .pressure_shift_cm1 = pressure_shift_cm1,
                 .line_mixing_coefficient = self.values[row + line_mixing_index],
-                .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index]) else null,
-                .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 1]) else null,
-                .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 2]) else null,
-                .vendor_filter_metadata_from_source = has_vendor_o2a_fields and self.values[row + vendor_index + 3] != 0.0,
+                .branch_ic1 = branch_ic1,
+                .branch_ic2 = branch_ic2,
+                .rotational_nf = rotational_nf,
+                .vendor_filter_metadata_from_source = vendor_filter_metadata_from_source,
             };
         }
 
         return .{ .lines = lines };
     }
 
-    pub fn toSpectroscopyStrongLineSet(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyStrongLineSet {
+    pub fn toSpectroscopyStrongLineSet(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.SpectroscopyStrongLineSet {
         if (self.kind != .spectroscopy_strong_line_set or self.columnCount() != 12) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
             "center_wavenumber_cm1",
@@ -264,7 +331,10 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
-    pub fn toSpectroscopyRelaxationMatrix(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.RelaxationMatrix {
+    pub fn toSpectroscopyRelaxationMatrix(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.RelaxationMatrix {
         if (self.kind != .spectroscopy_relaxation_matrix or self.columnCount() != 2) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
             "wt0",
@@ -292,7 +362,10 @@ pub const LoadedAsset = struct {
         };
     }
 
-    pub fn toAirmassFactorLut(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.AirmassFactorLut {
+    pub fn toAirmassFactorLut(
+        self: LoadedAsset,
+        allocator: std.mem.Allocator,
+    ) !ReferenceData.AirmassFactorLut {
         if (self.kind != .lookup_table or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectAirmassFactorColumns(self.column_names);
 
@@ -327,13 +400,25 @@ fn columnNamesContain(actual: []const []const u8, expected: []const u8) bool {
     return false;
 }
 
+fn spectroscopyLineColumns(
+    has_source_cm1_fields: bool,
+    has_vendor_o2a_fields: bool,
+) []const []const u8 {
+    if (has_vendor_o2a_fields and has_source_cm1_fields) return &spectroscopy_vendor_source_columns;
+    if (has_vendor_o2a_fields) return &spectroscopy_vendor_nm_columns;
+    if (has_source_cm1_fields) return &spectroscopy_source_columns;
+    return &spectroscopy_nm_columns;
+}
+
 fn expectAirmassFactorColumns(actual: []const []const u8) !void {
     try expectColumns(actual[0..3], &.{
         "solar_zenith_deg",
         "view_zenith_deg",
         "relative_azimuth_deg",
     });
-    if (std.mem.eql(u8, actual[3], "air_mass_factor") or std.mem.eql(u8, actual[3], "airmass_factor")) {
+    const has_spelled_air_mass_factor = std.mem.eql(u8, actual[3], "air_mass_factor");
+    const has_compact_airmass_factor = std.mem.eql(u8, actual[3], "airmass_factor");
+    if (has_spelled_air_mass_factor or has_compact_airmass_factor) {
         return;
     }
     return error.ColumnMismatch;
