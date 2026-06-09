@@ -8,11 +8,21 @@ const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 // selection.zig ---------------------------------------------------------------------------------------------|
-// Chooses bundled reference assets for a typed Scene when no explicit asset binding is present.              |
+// Scene-to-bundled-reference selection for defaults, generated LUT workflows, and setup wavelength grids.    |
+//                                                                                                            |
+// used by                                                                                                    |
+//   bundled/load.zig hydrates a working Scene before optical preparation                                     |
+//   bundled/workflows.zig builds generated O2/O2-O2 LUT inputs and support wavelength arrays                 |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   continuum      : unresolved cross-section requests reject; otherwise build an owned zero continuum table |
+//   spectroscopy   : resolved scene line list wins, explicit unresolved bindings reject, O2 A defaults load  |
+//   O2-O2 CIA      : resolved scene CIA wins, operational LUTs suppress sidecar load, O2 A defaults load     |
+//   wavelengths    : high-resolution LUT sampling, measured wavelengths, or uniform scene grid               |
 //                                                                                                            |
 // boundary                                                                                                   |
-//   This file may load bundled input assets, but it does not parse user control files. Explicit unresolved   |
-//   bindings are rejected instead of falling back to defaults.                                               |
+//   This is setup code that may allocate owned rows and wavelength arrays. It does not parse control files,  |
+//   and it does not silently replace explicit asset bindings with bundled defaults.                          |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {

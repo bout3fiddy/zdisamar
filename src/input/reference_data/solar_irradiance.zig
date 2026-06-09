@@ -2,11 +2,22 @@ const std = @import("std");
 const Scene = @import("../Scene.zig").Scene;
 
 // solar_irradiance.zig ---------------------------------------------------------------------------------------|
-// Resolve the solar irradiance used by nominal channels and integration samples.                              |
+// Solar irradiance compatibility layer for nominal channels and instrument-integration samples.               |
 //                                                                                                             |
-// data                                                                                                        |
-//   A scene may carry an operational solar spectrum. Otherwise the bundled O2 A support table is used for     |
-//   default O2 A scenes, falling back to a smooth black-body continuum outside the bundled wavelengths.       |
+// used by                                                                                                     |
+//   spectral_forward.zig converts LABOS reflectance into radiance                                             |
+//   spectral_eval.zig evaluates irradiance samples and prefilled irradiance cache rows                        |
+//                                                                                                             |
+// main path                                                                                                   |
+//   scene operational solar spectrum -> bundled O2 A support -> Planck-shaped continuum fallback              |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Called for irradiance cache misses, not every final product row once the cache is warm. The function      |
+//   allocates nothing and walks the tiny bundled O2 A table only when the scene requests bundled defaults.    |
+//                                                                                                             |
+// numbers                                                                                                     |
+//   Bundled values are retained O2 A support samples near 760 nm. The continuum is scaled to the same         |
+//   magnitude at 760 nm using a 5778 K black-body shape so out-of-band fallback stays smooth and positive.    |
 // ------------------------------------------------------------------------------------------------------------|
 
 const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };

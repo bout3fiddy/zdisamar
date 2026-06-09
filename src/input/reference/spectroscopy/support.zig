@@ -3,11 +3,20 @@ const PhysicsCore = @import("physics_core.zig");
 const Types = @import("types.zig");
 
 // support.zig -----------------------------------------------------------------------------------------------|
-// Spectroscopy line-list support helpers that are not themselves line-shape physics.                         |
+// Spectroscopy metadata and unit helpers shared by line-list preparation, evaluation, and diagnostics.       |
+//                                                                                                            |
+// used by                                                                                                    |
+//   line_list.zig filters runtime gas/isotope controls, anchors strong lines, and returns zero evaluations   |
+//   output/o2_line_contributions.zig renders line metadata with canonical wavenumber/width/shift units       |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   lineCenterWavenumberCm1 / lineAirHalfWidthCm1 / linePressureShiftCm1 fill missing derived units          |
+//   lineHasVendorStrongLineMetadata and O2 A predicates recognize vendor strong-line sidecar candidates      |
+//   runtimeControlsMatchLine and runtimeControlsKeepStrongLineSidecars apply active gas/isotope controls     |
 //                                                                                                            |
 // boundary                                                                                                   |
-//   These helpers normalize vendor/raw line metadata before the line-list and strong-line evaluators use it. |
-//   They stay allocation-free and do not own spectroscopy storage.                                           |
+//   This file normalizes metadata but does not evaluate line shapes, allocate storage, or own line-list rows.|
+//   Helpers take SpectroscopyLine pointers because the row is wide and callers often need only one field.    |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {

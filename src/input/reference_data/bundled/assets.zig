@@ -5,10 +5,26 @@ const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
 // assets.zig -------------------------------------------------------------------------------------------------|
-// Bundled reference-data asset IDs and loaders.                                                               |
+// Bundled O2 A reference-data asset IDs, typed loaders, and resolved-scene helper predicates.                 |
 //                                                                                                             |
-// bundle_manifest_paths and asset_ids are namespace-only constant groups. They intentionally carry no runtime |
-// state, so this file avoids repeating 0 B layout boxes for those namespaces.                                 |
+// used by                                                                                                     |
+//   selection.zig chooses defaults or rejects unresolved explicit bindings                                    |
+//   bundled/load.zig and bundled/workflows.zig hydrate scenes, generated LUT inputs, and support products     |
+//   tests exercise resolved payload cloning, bundle default behavior, and asset schema conversion             |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   load* functions route manifest IDs through ingest/reference_assets.zig and convert LoadedAsset rows       |
+//   loadO2aSpectroscopyLineList attaches the strong-line set and relaxation matrix sidecars                   |
+//   cloneResolvedSpectroscopyLineList copies scene-provided rows and normalizes missing HITRAN gas indexes    |
+//   shouldLoadBundled* treats empty absorber lists as the bundled-default O2 A scene                          |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file names bundled assets and returns owned typed rows. It does not parse user control files;        |
+//   explicit unresolved bindings are handled by selection.zig instead of silently falling back to defaults.   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   bundle_manifest_paths and asset_ids are namespace-only constant groups, so they have no runtime state.    |
+//   Loaded tables own their returned arrays; zeroContinuumTable allocates the small 3-point zero table.       |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const bundle_manifest_paths = struct {
@@ -235,6 +251,18 @@ fn normalizeResolvedLineGasIndex(
     line_list: *ReferenceData.SpectroscopyLineList,
     maybe_species: ?AbsorberSpecies,
 ) void {
+    // normalizeResolvedLineGasIndex --------------------------------------------------------------------------|
+    // Fill missing HITRAN gas indexes on a cloned scene-provided line list.                                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   This is setup work after cloneResolvedSpectroscopyLineList, not per-wavelength spectroscopy.          |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   The loop reads and may write only gas_index on each wide SpectroscopyLine row. It uses pointer        |
+    //   capture, does not copy rows, and avoids a side index because this one-time normalization must keep    |
+    //   the public line-list row intact for later spectroscopy evaluation.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     const species = maybe_species orelse return;
     const gas_index = species.hitranIndex() orelse return;
     for (line_list.lines) |*line| {
