@@ -1,3 +1,19 @@
+// reference_assets_types.zig ---------------------------------------------------------------------------------|
+// Small shared types for reference-asset manifest loading.                                                    |
+//                                                                                                             |
+// called by                                                                                                   |
+//   reference_assets.zig re-exports AssetKind and EmbeddedAsset for bundle loaders                            |
+//   reference_assets_loaded_asset.zig tags parsed tables with AssetKind before typed conversion               |
+//   bundled/assets.zig passes EmbeddedAsset byte slices for compile-time bundled reference data               |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   AssetKind is the manifest-level table category. EmbeddedAsset is a borrowed pointer pair over compile-    |
+//   time embedded bytes; ownership stays with the binary image, not the loader.                               |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Enum tags and borrowed slices only. This file owns no buffers and performs no parsing.                    |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const AssetKind = enum {
     climatology_profile,
     cross_section_table,
