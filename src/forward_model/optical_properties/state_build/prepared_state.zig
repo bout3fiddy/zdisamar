@@ -28,9 +28,11 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // row model                                                                                                   |
 //   layers    : transport-grid rows. Each row stores physical layer values and the support-row span           |
-//               {sublayer_start_index, sublayer_count}.                                                       |
+//               {sublayer_start_index, sublayer_count}. The PreparedLayer layout lives in state.zig; this     |
+//               file owns the slice header and the methods that walk it.                                      |
 //   sublayers : optional fine support rows. DISAMAR-parity interval grids can share boundary rows between     |
 //               adjacent transport layers, so summing every layer's sublayer_count may exceed sublayers.len.  |
+//               The PreparedSublayer layout also lives in state.zig because layer accumulation writes it.     |
 //   absorber rows keep line/cross-section data beside density columns; wavelength-specific spectroscopy work  |
 //   lives in state_spectroscopy.zig and carrier_eval.zig.                                                     |
 //                                                                                                             |
@@ -63,6 +65,13 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // measured with                                                                                               |
 //   @sizeOf, @alignOf, and @offsetOf for the current 64-bit Zig target.                                       |
+//                                                                                                             |
+// storage groups                                                                                              |
+//   row headers      : layers, optional sublayers, absorber rows, spectroscopy profile arrays                 |
+//   retained payload : operational LUT headers, generated LUT metadata, cached shared RTM geometry            |
+//   scalar summaries : optical depths, effective thermodynamics, column factors, aerosol parameters           |
+//   cache identity   : spectroscopy_plan_key and spectroscopy_profile_cache_inputs_key                        |
+//   ownership flags  : bottom of the row, close to the enum/small-tag storage that Zig also packs there       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2136 B (2.086 KiB), align: 8 B                                                                        |

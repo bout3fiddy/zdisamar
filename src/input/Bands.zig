@@ -4,14 +4,26 @@ const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
 // Bands.zig --------------------------------------------------------------------------------------------------|
-// Spectral band definitions and exclusion windows.                                                            |
+// Spectral band and exclusion-window input rows used to constrain scene wavelength ranges.                    |
 //                                                                                                             |
-// data                                                                                                        |
-//   SpectralWindow stores one wavelength exclusion interval in nm. SpectralBand owns an id string reference   |
-//   and optional exclusion-window rows. SpectralBandSet owns the band rows when cloned.                       |
+// used by                                                                                                     |
+//   Scene.validate checks band lists and matches explicit operational support counts                          |
+//   O2 A reference scene builders carry one primary band beside operational support data                      |
+//   validation/tests exercise exclusion ordering before product wavelength plans are built                    |
 //                                                                                                             |
-// validation                                                                                                  |
-//   Band and exclusion windows must be ordered and remain inside the parent band bounds.                      |
+// main paths                                                                                                  |
+//   SpectralWindow.validate checks one wavelength interval                                                    |
+//   SpectralBand.validate checks band bounds, positive step, and ordered in-band exclusions                   |
+//   SpectralBandSet.validate rejects duplicate ids; clone/deinitOwned manage band and exclusion storage       |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   These rows describe requested spectral ranges only. Product wavelength grids are built later from Scene   |
+//   spectral_grid and observation_model controls. Band exclusions are validated metadata here, not the        |
+//   measurement mask consumed by Measurement.zig.                                                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   SpectralBandSet is a slice header. Cloned sets own band rows; cloned bands own exclusion rows and borrow  |
+//   their id string unless a future caller chooses to duplicate ids separately.                               |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralWindow ---------------------------------------------------------------------------------------------|
