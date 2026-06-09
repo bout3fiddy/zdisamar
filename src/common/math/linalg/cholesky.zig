@@ -1,6 +1,19 @@
 const std = @import("std");
 const dense = @import("small_dense.zig");
 
+// cholesky.zig -----------------------------------------------------------------------------------------------|
+// Cholesky helpers for small row-major dense matrices used by local polynomial and covariance-style solves.   |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   factor2x2        adapts a fixed 2x2 matrix through the in-place factorizer                                |
+//   factorInPlace    overwrites a row-major square matrix with its lower-triangular Cholesky factor           |
+//   solveWithFactor  solves against a previously factored matrix                                              |
+//   invertFromFactor builds an inverse by solving one basis vector at a time                                  |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Callers own matrix, rhs, output, and scratch slices. This file does not allocate.                         |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const Error = error{
     NotPositiveDefinite,
     ShapeMismatch,
@@ -18,12 +31,19 @@ pub fn factor2x2(matrix: [2][2]f64) Error![2][2]f64 {
     };
 }
 
-// hot path:
-//   when: small dense polynomial fits or covariance-style helpers factor normal matrices
-//   work: performs in-place lower-triangular Cholesky factorization
-//   data: row-major dense matrix slice and dimension
-//   follow: cross_sections.differentialVector and dense.index access order
 pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
+    // factorInPlace ------------------------------------------------------------------------------------------|
+    // Factors one row-major square matrix in place into a lower-triangular Cholesky factor.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : small polynomial fits and covariance-style helper solves                                   |
+    //   costly   : inner product over the already factored lower triangle                                     |
+    //   memory   : caller-owned row-major matrix; upper triangle is zeroed after each row                     |
+    //                                                                                                         |
+    // data                                                                                                    |
+    //   index(row, column, dimension) maps matrix cells to the flat row-major slice.                          |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
 
     for (0..dimension) |row| {
@@ -50,17 +70,24 @@ pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     }
 }
 
-// hot path:
-//   when: a previously factored small dense system solves polynomial coefficients
-//   work: runs forward and back substitution against a Cholesky factor
-//   data: factor matrix, rhs vector, output coefficient vector
-//   follow: cross_sections.differentialVector coefficient solve
 pub fn solveWithFactor(
     factor: []const f64,
     dimension: usize,
     rhs: []const f64,
     out: []f64,
 ) Error!void {
+    // solveWithFactor ----------------------------------------------------------------------------------------|
+    // Solves one rhs vector against a previously computed lower-triangular Cholesky factor.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : coefficient solves after a small dense factorization                                       |
+    //   costly   : forward substitution followed by back substitution                                         |
+    //   memory   : caller-owned rhs and output slices; output is reused for the intermediate y vector         |
+    //                                                                                                         |
+    // data                                                                                                    |
+    //   factor is row-major. The upper triangle is expected to be zero from factorInPlace.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (factor.len != dimension * dimension or rhs.len != dimension or out.len != dimension) {
         return Error.ShapeMismatch;
     }

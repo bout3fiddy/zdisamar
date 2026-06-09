@@ -1,28 +1,57 @@
-// layout(64-bit):
-//   size: 168 B, align: 8 B
-//   field storage: nodes=80 B, weights=80 B, count=4 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   metadata fields: count=4 B
-//   inline arrays: nodes:[10]f64=80 B, weights:[10]f64=80 B
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
+const std = @import("std");
+
+// gauss_legendre.zig -----------------------------------------------------------------------------------------|
+// Gauss-Legendre quadrature support for fixed reference rules and DISAMAR-style dynamic division points.      |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   rule                         returns a fixed table for orders 1 through 10                                |
+//   fillNodesAndWeights           computes a symmetric Gauss-Legendre rule from Legendre roots                |
+//   fillDisamarDivPoints01        computes DISAMAR unit-interval division points and weights                  |
+//   fillDisamarDivPointsInterval  computes DISAMAR division points and scales them to an interval             |
+//   fillDisamarDivPointsIntervalNodes computes DISAMAR interval nodes without weights                         |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Fixed Rule values carry inline arrays. Dynamic DISAMAR paths use bounded stack work arrays.               |
+// ------------------------------------------------------------------------------------------------------------|
+
+// Rule -------------------------------------------------------------------------------------------------------|
+// Stores one fixed Gauss-Legendre rule before callers read the first count entries from each inline array.    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 168 B (0.164 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 79] nodes   : [10]f64                                                                                |
+// [ 80..159] weights : [10]f64                                                                                |
+// [160..163] count   : u32                                                                                    |
+// [164..167] trailing padding                                                                                 |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count                     |
 pub const Rule = struct {
     count: u32,
     nodes: [10]f64,
     weights: [10]f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: dynamic Gauss quadrature is built for integration or RTM subgrids
-//   work: solves Legendre roots and weights for the requested order
-//   data: output node/weight slices, Legendre polynomial recurrence state
-//   follow: fixed-rule callers and dynamic node rebuild boundaries
 pub fn fillNodesAndWeights(
     order: u32,
     nodes_out: []f64,
     weights_out: []f64,
 ) error{InvalidOrder}!void {
+    // fillNodesAndWeights ------------------------------------------------------------------------------------|
+    // Builds one symmetric Gauss-Legendre rule for the requested order.                                       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : every dynamic quadrature build for integration or RTM subgrids                             |
+    //   costly   : Newton solve for each mirrored Legendre root                                               |
+    //   memory   : caller-owned output slices; no heap allocation                                             |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   nodes are solved on [-1, 1]. Each root writes a mirrored pair, and both entries share one weight.     |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (order == 0 or nodes_out.len < order or weights_out.len < order) {
         return error.InvalidOrder;
     }
@@ -32,7 +61,11 @@ pub fn fillNodesAndWeights(
     const tolerance = 1.0e-14;
 
     for (0..half_count) |index| {
-        var root = std.math.cos(std.math.pi * (@as(f64, @floatFromInt(index)) + 0.75) / (@as(f64, @floatFromInt(order)) + 0.5));
+        var root = std.math.cos(
+            std.math.pi *
+                (@as(f64, @floatFromInt(index)) + 0.75) /
+                (@as(f64, @floatFromInt(order)) + 0.5),
+        );
         while (true) {
             const polynomial = legendrePolynomial(order, root);
             const derivative = legendreDerivative(order, root, polynomial.value, polynomial.previous_value);
@@ -58,16 +91,25 @@ pub fn fillNodesAndWeights(
 
 pub const max_disamar_division_points: usize = 256;
 
-// hot path:
-//   when: adaptive instrument sampling needs DISAMAR-style unit interval division points
-//   work: computes quadrature nodes and squared first-row weights via the DISAMAR eigen routine
-//   data: diagonal/off-diagonal work arrays, first-row weights, output node/weight slices
-//   follow: adaptive_plan.fillAdaptiveUnitGauss and interval sample generation
 pub fn fillDisamarDivPoints01(
     order: u32,
     nodes_out: []f64,
     weights_out: []f64,
 ) error{InvalidOrder}!void {
+    // fillDisamarDivPoints01 ---------------------------------------------------------------------------------|
+    // Builds DISAMAR-style division points and weights on the unit interval.                                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : adaptive instrument sampling when the fixed rules do not apply                             |
+    //   costly   : tridiagonal eigen solve and eigenvalue sort                                                |
+    //   memory   : three bounded stack arrays, each max 2.000 KiB                                             |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   initDisamarTridiagonal                                                                                |
+    //   initDisamarFirstRow                                                                                   |
+    //   gausq2Disamar                                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (order == 0 or
         nodes_out.len < order or
         weights_out.len < order or
@@ -96,11 +138,6 @@ pub fn fillDisamarDivPoints01(
     }
 }
 
-// hot path:
-//   when: RTM shared geometry or adaptive sampling builds interval quadrature points
-//   work: computes DISAMAR division points and scales them to a target interval
-//   data: diagonal/off-diagonal work arrays, interval bounds, output node/weight slices
-//   follow: shared_geometry.resolveGaussRule and adaptive interval consumers
 pub fn fillDisamarDivPointsInterval(
     order: u32,
     a0: f64,
@@ -108,6 +145,19 @@ pub fn fillDisamarDivPointsInterval(
     nodes_out: []f64,
     weights_out: []f64,
 ) error{InvalidOrder}!void {
+    // fillDisamarDivPointsInterval ---------------------------------------------------------------------------|
+    // Builds DISAMAR-style division points and scales nodes and weights to one interval.                      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : RTM shared geometry and adaptive instrument interval sampling                              |
+    //   costly   : same tridiagonal eigen solve as the unit-interval path                                     |
+    //   memory   : three bounded stack arrays, each max 2.000 KiB                                             |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   x_interval = (x_unit + 1) / 2 * (b0 - a0) + a0                                                        |
+    //   w_interval = w_unit / 2 * (b0 - a0)                                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (order == 0 or
         nodes_out.len < order or
         weights_out.len < order or
@@ -137,18 +187,25 @@ pub fn fillDisamarDivPointsInterval(
     }
 }
 
-// hot path:
-//   when: parity vertical-grid preparation needs RTM division points but never
-//   consumes quadrature weights
-//   work: computes DISAMAR interval nodes without tracking first-row weights
-//   data: diagonal/off-diagonal work arrays and output node slice
-//   follow: optical_properties.state_build.vertical_grid buildExplicitDisamarParity
 pub fn fillDisamarDivPointsIntervalNodes(
     order: u32,
     a0: f64,
     b0: f64,
     nodes_out: []f64,
 ) error{InvalidOrder}!void {
+    // fillDisamarDivPointsIntervalNodes ----------------------------------------------------------------------|
+    // Builds DISAMAR interval nodes for callers that do not consume quadrature weights.                       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : parity vertical-grid preparation                                                           |
+    //   costly   : tridiagonal eigen solve without first-row tracking                                         |
+    //   memory   : two bounded stack arrays, each max 2.000 KiB                                               |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   initDisamarTridiagonal                                                                                |
+    //   gausq2DisamarNodes                                                                                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (order == 0 or
         nodes_out.len < order or
         order > max_disamar_division_points)
@@ -172,11 +229,6 @@ pub fn fillDisamarDivPointsIntervalNodes(
     }
 }
 
-// hot path:
-//   when: DISAMAR-style division points are computed for dynamic quadrature
-//   work: diagonalizes the tridiagonal quadrature system and sorts eigenvalues
-//   data: diagonal, off-diagonal, and first-row work arrays
-//   follow: fillDisamarDivPoints01 and fillDisamarDivPointsInterval
 fn gausq2Disamar(
     diagonal: []f64,
     off_diagonal: []f64,
@@ -199,6 +251,19 @@ fn gausq2DisamarImpl(
     off_diagonal: []f64,
     first_row: []f64,
 ) error{InvalidOrder}!void {
+    // gausq2DisamarImpl --------------------------------------------------------------------------------------|
+    // Diagonalizes the DISAMAR tridiagonal quadrature system and sorts the resulting nodes.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : dynamic DISAMAR division-point builders                                                    |
+    //   costly   : implicit QL iterations and final eigenvalue ordering                                       |
+    //   memory   : caller-owned stack slices; first_row is tracked only when weights are requested            |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   When track_first_row is true, the same rotations update the first eigenvector row.                    |
+    //   Squaring that row after this function yields the quadrature weights used by the caller.               |
+    // --------------------------------------------------------------------------------------------------------|
+
     const n = diagonal.len;
     if (n == 0 or off_diagonal.len != n) return error.InvalidOrder;
     if (track_first_row and first_row.len != n) return error.InvalidOrder;
@@ -269,17 +334,23 @@ fn gausq2DisamarImpl(
     var sort_start: usize = 1;
     while (sort_start < n) : (sort_start += 1) {
         const i = sort_start - 1;
+
         var k = i;
         var p = diagonal[i];
+
         var j = sort_start;
         while (j < n) : (j += 1) {
             if (diagonal[j] >= p) continue;
+
             k = j;
             p = diagonal[j];
         }
+
         if (k == i) continue;
+
         diagonal[k] = diagonal[i];
         diagonal[i] = p;
+
         if (track_first_row) {
             const first_row_i = first_row[i];
             first_row[i] = first_row[k];
@@ -320,38 +391,192 @@ pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     return switch (order) {
         1 => .{
             .count = 1,
-            .nodes = .{ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                2.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         2 => .{
             .count = 2,
-            .nodes = .{ -0.5773502691896257, 0.5773502691896257, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.5773502691896257,
+                0.5773502691896257,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         3 => .{
             .count = 3,
-            .nodes = .{ -0.7745966692414834, 0.0, 0.7745966692414834, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 0.5555555555555556, 0.8888888888888888, 0.5555555555555556, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.7745966692414834,
+                0.0,
+                0.7745966692414834,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                0.5555555555555556,
+                0.8888888888888888,
+                0.5555555555555556,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         4 => .{
             .count = 4,
-            .nodes = .{ -0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 0.3478548451374538, 0.6521451548625461, 0.6521451548625461, 0.3478548451374538, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.8611363115940526,
+                -0.3399810435848563,
+                0.3399810435848563,
+                0.8611363115940526,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                0.3478548451374538,
+                0.6521451548625461,
+                0.6521451548625461,
+                0.3478548451374538,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         5 => .{
             .count = 5,
-            .nodes = .{ -0.9061798459386640, -0.5384693101056831, 0.0, 0.5384693101056831, 0.9061798459386640, 0.0, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 0.2369268850561891, 0.4786286704993665, 0.5688888888888889, 0.4786286704993665, 0.2369268850561891, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.9061798459386640,
+                -0.5384693101056831,
+                0.0,
+                0.5384693101056831,
+                0.9061798459386640,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                0.2369268850561891,
+                0.4786286704993665,
+                0.5688888888888889,
+                0.4786286704993665,
+                0.2369268850561891,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         6 => .{
             .count = 6,
-            .nodes = .{ -0.9324695142031521, -0.6612093864662645, -0.2386191860831969, 0.2386191860831969, 0.6612093864662645, 0.9324695142031521, 0.0, 0.0, 0.0, 0.0 },
-            .weights = .{ 0.1713244923791704, 0.3607615730481386, 0.4679139345726910, 0.4679139345726910, 0.3607615730481386, 0.1713244923791704, 0.0, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.9324695142031521,
+                -0.6612093864662645,
+                -0.2386191860831969,
+                0.2386191860831969,
+                0.6612093864662645,
+                0.9324695142031521,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                0.1713244923791704,
+                0.3607615730481386,
+                0.4679139345726910,
+                0.4679139345726910,
+                0.3607615730481386,
+                0.1713244923791704,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         7 => .{
             .count = 7,
-            .nodes = .{ -0.9491079123427585, -0.7415311855993945, -0.4058451513773972, 0.0, 0.4058451513773972, 0.7415311855993945, 0.9491079123427585, 0.0, 0.0, 0.0 },
-            .weights = .{ 0.1294849661688697, 0.2797053914892766, 0.3818300505051189, 0.4179591836734694, 0.3818300505051189, 0.2797053914892766, 0.1294849661688697, 0.0, 0.0, 0.0 },
+            .nodes = .{
+                -0.9491079123427585,
+                -0.7415311855993945,
+                -0.4058451513773972,
+                0.0,
+                0.4058451513773972,
+                0.7415311855993945,
+                0.9491079123427585,
+                0.0,
+                0.0,
+                0.0,
+            },
+            .weights = .{
+                0.1294849661688697,
+                0.2797053914892766,
+                0.3818300505051189,
+                0.4179591836734694,
+                0.3818300505051189,
+                0.2797053914892766,
+                0.1294849661688697,
+                0.0,
+                0.0,
+                0.0,
+            },
         },
         8 => .{
             .count = 8,
@@ -438,16 +663,23 @@ pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     };
 }
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: value=8 B, previous_value=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// PolynomialState --------------------------------------------------------------------------------------------|
+// Carries the current and previous Legendre polynomial values for Newton derivative evaluation.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] value          : f64                                                                               |
+// [ 8..15] previous_value : f64                                                                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 const PolynomialState = struct {
     value: f64,
     previous_value: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn legendrePolynomial(order: u32, x: f64) PolynomialState {
     if (order == 0) {
@@ -480,5 +712,3 @@ fn legendrePolynomial(order: u32, x: f64) PolynomialState {
 fn legendreDerivative(order: u32, x: f64, value: f64, previous_value: f64) f64 {
     return (@as(f64, @floatFromInt(order)) * (x * value - previous_value)) / ((x * x) - 1.0);
 }
-
-const std = @import("std");

@@ -1,6 +1,20 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 
+// lut_controls.zig -------------------------------------------------------------------------------------------|
+// Shared LUT compatibility controls used by input preparation and cache-matching code.                        |
+//                                                                                                             |
+// public values                                                                                               |
+//   Mode                : direct, generate, or consume behavior for a compatibility surface                   |
+//   ReflectanceControls : reflectance and correction compatibility knobs                                      |
+//   XsecControls        : cross-section LUT temperature/pressure grid knobs                                   |
+//   Controls            : grouped reflectance and cross-section controls                                      |
+//   CompatibilityKey    : full scene, instrument, spectroscopy, and LUT identity key                          |
+//                                                                                                             |
+// memory                                                                                                      |
+//   CompatibilityKey is copied and compared as a compact value. It contains no owned heap storage.            |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const Mode = enum {
     direct,
     generate,
@@ -15,13 +29,21 @@ pub const Mode = enum {
     }
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: surface_albedo=8 B, reflectance_mode=1 B,
-//     correction_mode=1 B, use_chandra_formula=1 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 7 bool-storage slack = 47 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// ReflectanceControls ----------------------------------------------------------------------------------------|
+// Stores the reflectance compatibility knobs used when LUT behavior must match a prepared case.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] surface_albedo      : f64                                                                          |
+// [ 8.. 8] reflectance_mode    : Mode                                                                         |
+// [ 9.. 9] correction_mode     : Mode                                                                         |
+// [10..10] use_chandra_formula : bool                                                                         |
+// [11..15] trailing padding                                                                                   |
+//                                                                                                             |
+// unused bits: 40 padding + 12 enum-storage slack + 7 bool-storage slack = 59 bits                            |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 pub const ReflectanceControls = struct {
     reflectance_mode: Mode = .direct,
     correction_mode: Mode = .direct,
@@ -45,14 +67,28 @@ pub const ReflectanceControls = struct {
             approxEqCompatibleF64(self.surface_albedo, other.surface_albedo);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 37 B across 9 fields; largest: min_temperature_k=8 B,
-//     max_temperature_k=8 B, min_pressure_hpa=8 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// XsecControls -----------------------------------------------------------------------------------------------|
+// Stores the cross-section LUT grid controls used when generated or consumed cross sections must match.       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] min_temperature_k             : f64                                                                |
+// [ 8..15] max_temperature_k             : f64                                                                |
+// [16..23] min_pressure_hpa              : f64                                                                |
+// [24..31] max_pressure_hpa              : f64                                                                |
+// [32..32] mode                          : Mode                                                               |
+// [33..33] temperature_grid_count        : u8                                                                 |
+// [34..34] pressure_grid_count           : u8                                                                 |
+// [35..35] temperature_coefficient_count : u8                                                                 |
+// [36..36] pressure_coefficient_count    : u8                                                                 |
+// [37..39] trailing padding                                                                                   |
+//                                                                                                             |
+// unused bits: 24 padding + 6 enum-storage slack + 0 bool-storage slack = 30 bits                             |
+// footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count                      |
 pub const XsecControls = struct {
     mode: Mode = .direct,
     min_temperature_k: f64 = 0.0,
@@ -121,13 +157,20 @@ pub const XsecControls = struct {
             self.pressure_coefficient_count == other.pressure_coefficient_count;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: reflectance=16 B, xsec=40 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
+// Controls ---------------------------------------------------------------------------------------------------|
+// Groups reflectance and cross-section LUT controls so callers can validate and compare both together.        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] reflectance : ReflectanceControls                                                                  |
+// [16..55] xsec        : XsecControls                                                                         |
+//                                                                                                             |
+// unused bits: 0 top-level padding + nested control slack is documented by each nested layout                 |
+// footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count                      |
 pub const Controls = struct {
     reflectance: ReflectanceControls = .{},
     xsec: XsecControls = .{},
@@ -145,15 +188,33 @@ pub const Controls = struct {
         return self.reflectance.matches(other.reflectance) and self.xsec.matches(other.xsec);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 160 B, align: 8 B
-//   field storage: 156 B across 14 fields; largest: controls=56 B,
-//     spectral_start_nm=8 B, spectral_end_nm=8 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count
+// CompatibilityKey -------------------------------------------------------------------------------------------|
+// Stores the full compatibility identity used to decide whether a LUT product can be reused.                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 160 B (0.156 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 55] controls                      : Controls                                                         |
+// [ 56.. 63] spectral_start_nm             : f64                                                              |
+// [ 64.. 71] spectral_end_nm               : f64                                                              |
+// [ 72.. 79] nominal_wavelength_hash       : u64                                                              |
+// [ 80.. 87] solar_zenith_deg              : f64                                                              |
+// [ 88.. 95] viewing_zenith_deg            : f64                                                              |
+// [ 96..103] relative_azimuth_deg          : f64                                                              |
+// [104..111] surface_albedo                : f64                                                              |
+// [112..119] instrument_line_fwhm_nm       : f64                                                              |
+// [120..127] high_resolution_step_nm       : f64                                                              |
+// [128..135] high_resolution_half_span_nm  : f64                                                              |
+// [136..143] lut_sampling_half_span_nm     : f64                                                              |
+// [144..151] spectroscopy_source_hash      : u64                                                              |
+// [152..155] nominal_sample_count          : u32                                                              |
+// [156..159] trailing padding                                                                                 |
+//                                                                                                             |
+// unused bits: 32 top-level padding bits; nested control slack is documented by Controls                      |
+// footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count                     |
 pub const CompatibilityKey = struct {
     controls: Controls = .{},
     spectral_start_nm: f64 = 0.0,
@@ -231,6 +292,7 @@ pub const CompatibilityKey = struct {
             self.spectroscopy_source_hash == other.spectroscopy_source_hash;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn approxEqCompatibleF64(lhs: f64, rhs: f64) bool {
     return lhs == rhs or

@@ -5,16 +5,36 @@ pub const Error = error{
     InvalidValue,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: start_nm=8 B, end_nm=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// units.zig --------------------------------------------------------------------------------------------------|
+// Shared scalar range and angle wrappers used by scene input, adapters, and validation code.                  |
+//                                                                                                             |
+// names                                                                                                       |
+//   WavelengthRange  : nanometer spectral interval                                                            |
+//   AltitudeRangeKm  : kilometer altitude interval                                                            |
+//   PressureRangeHpa : pressure interval in hPa, ordered top then bottom                                      |
+//   AngleDeg         : finite angle wrapper without range limits                                              |
+//   ZenithAngleDeg   : angle constrained to [0, 180] degrees                                                  |
+//   AzimuthAngleDeg  : angle constrained to [0, 360] degrees                                                  |
+//                                                                                                             |
+// memory                                                                                                      |
+//   These wrappers are small value types. Arrays, owning structs, and stack locals decide the live count.     |
+// ------------------------------------------------------------------------------------------------------------|
+
+// WavelengthRange --------------------------------------------------------------------------------------------|
+// Stores the spectral interval used before any wavenumber-space transform.                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] start_nm : f64                                                                                     |
+// [ 8..15] end_nm   : f64                                                                                     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 pub const WavelengthRange = struct {
-    // UNITS:
-    //   Both bounds are stored in nanometers because the public scene model expresses
-    //   spectral coverage on that grid before any wavenumber-space transforms.
+
+    // Both bounds stay in nanometers because the public scene model expresses spectral coverage on that grid.
     start_nm: f64 = 270.0,
     end_nm: f64 = 2400.0,
 
@@ -27,13 +47,20 @@ pub const WavelengthRange = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: bottom_km=8 B, top_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// AltitudeRangeKm --------------------------------------------------------------------------------------------|
+// Stores the altitude interval used by atmosphere and aerosol-layer inputs.                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] bottom_km : f64                                                                                    |
+// [ 8..15] top_km    : f64                                                                                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 pub const AltitudeRangeKm = struct {
     bottom_km: f64 = 0.0,
     top_km: f64 = 0.0,
@@ -47,13 +74,20 @@ pub const AltitudeRangeKm = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: top_hpa=8 B, bottom_hpa=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// PressureRangeHpa -------------------------------------------------------------------------------------------|
+// Stores a pressure interval in the top-to-bottom order used by vertical-grid code.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] top_hpa    : f64                                                                                   |
+// [ 8..15] bottom_hpa : f64                                                                                   |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count                      |
 pub const PressureRangeHpa = struct {
     top_hpa: f64 = 0.0,
     bottom_hpa: f64 = 0.0,
@@ -67,17 +101,22 @@ pub const PressureRangeHpa = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 8 B, align: 8 B
-//   field storage: value=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count
+// AngleDeg ---------------------------------------------------------------------------------------------------|
+// Stores one finite angle value in degrees without applying a physical range limit.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] value : f64                                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count                       |
 pub const AngleDeg = struct {
-    // UNITS:
-    //   Stored in degrees to match the geometry parameters used by the canonical scene
-    //   model and vendor-facing adapter layers.
+
+    // Degrees match the geometry parameters used by the scene model and vendor-facing adapters.
     value: f64 = 0.0,
 
     pub fn validate(self: AngleDeg) Error!void {
@@ -86,13 +125,19 @@ pub const AngleDeg = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 8 B, align: 8 B
-//   field storage: value=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count
+// ZenithAngleDeg ---------------------------------------------------------------------------------------------|
+// Stores a zenith angle constrained to the inclusive physical range used by scene geometry.                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] value : f64                                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count                       |
 pub const ZenithAngleDeg = struct {
     value: f64 = 0.0,
 
@@ -103,13 +148,19 @@ pub const ZenithAngleDeg = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 8 B, align: 8 B
-//   field storage: value=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count
+// AzimuthAngleDeg --------------------------------------------------------------------------------------------|
+// Stores an azimuth angle constrained to the inclusive scene-geometry range.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] value : f64                                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 8 B (0.008 KiB); total = per instance * live instance count                       |
 pub const AzimuthAngleDeg = struct {
     value: f64 = 0.0,
 
@@ -120,3 +171,4 @@ pub const AzimuthAngleDeg = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

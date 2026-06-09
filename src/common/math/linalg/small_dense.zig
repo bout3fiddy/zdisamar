@@ -3,6 +3,20 @@ pub const Error = error{
     ShapeMismatch,
 };
 
+// small_dense.zig --------------------------------------------------------------------------------------------|
+// Small row-major dense-matrix helpers used where fixed scientific fits are cheaper than heap-backed solvers. |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   index       maps a row and column into a row-major flat slice                                             |
+//   setIdentity writes an identity matrix into caller-owned storage                                           |
+//   trace       sums the diagonal of caller-owned storage                                                     |
+//   solve2x2    solves one tiny system directly                                                               |
+//   solve3x3    solves one tiny system with pivoted Gaussian elimination                                      |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Fixed-size solves keep matrix and rhs copies on the stack. Slice helpers mutate caller-owned storage.     |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn index(row: usize, column: usize, column_count: usize) usize {
     return row * column_count + column;
 }
@@ -34,12 +48,19 @@ pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     };
 }
 
-// hot path:
-//   when: small fixed-size scientific fits need a direct 3x3 solve
-//   work: applies pivoted Gaussian elimination on stack-resident arrays
-//   data: 3x3 matrix cells and 3-vector rhs
-//   follow: fixed dense solve callers and heap-backed factorization boundaries
 pub fn solve3x3(matrix: [3][3]f64, rhs: [3]f64) Error![3]f64 {
+    // solve3x3 -----------------------------------------------------------------------------------------------|
+    // Solves one fixed 3x3 system with pivoted Gaussian elimination on stack-resident copies.                 |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : small fixed-size scientific fits                                                           |
+    //   costly   : pivot selection and row elimination over three rows                                        |
+    //   memory   : copies matrix and rhs onto the stack; no heap allocation                                   |
+    //                                                                                                         |
+    // data                                                                                                    |
+    //   a is the mutable matrix copy. b carries the rhs and becomes the returned solution.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     var a = matrix;
     var b = rhs;
 

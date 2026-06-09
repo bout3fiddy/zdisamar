@@ -1,6 +1,21 @@
 const std = @import("std");
 const max_spline_point_count = 256;
 
+// spline.zig -------------------------------------------------------------------------------------------------|
+// Cubic-spline helpers for spectral/profile interpolation paths.                                              |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   sampleNatural                    builds a natural spline on a bounded stack workspace and samples once    |
+//   sampleEndpointSecant             builds DISAMAR-compatible endpoint-secant second derivatives             |
+//   endpointSecantSecondDerivatives  writes second derivatives for one series                                 |
+//   endpointSecantSecondDerivatives3 writes second derivatives for three colocated series                     |
+//   endpointSecantSecondDerivatives5 writes second derivatives for five colocated series                      |
+//   sampleWithSecondDerivatives      samples a precomputed second-derivative spline                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Preparation uses bounded stack arrays capped by max_spline_point_count. Sampling reuses caller storage.   |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const Error = error{
     ShapeMismatch,
     NotEnoughPoints,
@@ -12,8 +27,7 @@ pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     if (x.len < 3) return Error.NotEnoughPoints;
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
-    // DECISION:
-    //   Fixed scratch buffers keep the helper allocation-free for short spectral windows.
+    // Fixed scratch buffers keep the helper allocation-free for short spectral windows.
     var second: [max_spline_point_count]f64 = undefined;
     if (x.len > second.len) return Error.NotEnoughPoints;
     var u: [max_spline_point_count]f64 = undefined;
@@ -80,11 +94,9 @@ pub fn endpointSecantSecondDerivatives(
     var c3: [max_spline_point_count]f64 = undefined;
     var c4: [max_spline_point_count]f64 = undefined;
 
-    // PARITY:
-    //   DISAMAR `mathTools::spline` wraps de Boor `cubspl` with endpoint
-    //   slopes set to the adjacent secants, then exposes a derived
-    //   second-derivative array to `splint`. This intentionally mirrors that
-    //   wrapper instead of a textbook clamped-spline tridiagonal system.
+    // DISAMAR `mathTools::spline` wraps de Boor `cubspl` with endpoint slopes set to the adjacent secants,
+    // then exposes a derived second-derivative array to `splint`. This mirrors that wrapper instead of a
+    // textbook clamped-spline tridiagonal system.
     for (0..x.len) |index| {
         c1[index] = y[index];
         c2[index] = 0.0;
@@ -133,11 +145,6 @@ pub fn endpointSecantSecondDerivatives(
     second[x.len - 1] = -0.5 * c3[x.len - 2];
 }
 
-// hot path:
-//   when: profile spectroscopy cache prepares three profile series for a forward miss
-//   work: computes endpoint-secant spline second derivatives for line, line-mixing, and total series
-//   data: shared x grid, three y-series inputs, three second-derivative outputs
-//   follow: ProfileSpectroscopyCache.init and sampleWithSecondDerivatives
 pub fn endpointSecantSecondDerivatives3(
     x: []const f64,
     y0: []const f64,
@@ -147,11 +154,25 @@ pub fn endpointSecantSecondDerivatives3(
     second1: []f64,
     second2: []f64,
 ) Error!void {
+    // endpointSecantSecondDerivatives3 -----------------------------------------------------------------------|
+    // Computes DISAMAR-compatible endpoint-secant second derivatives for three colocated profile series.      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : profile spectroscopy cache preparation on a forward miss                                   |
+    //   costly   : one tridiagonal setup shared across three value series                                     |
+    //   memory   : caller-owned outputs plus stack arrays capped at 256 points                                |
+    //                                                                                                         |
+    // data                                                                                                    |
+    //   x is the shared altitude grid. y0, y1, and y2 are sampled at the same x points.                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     const values = [_][]const f64{ y0, y1, y2 };
     const seconds = [_][]f64{ second0, second1, second2 };
+
     inline for (values, seconds) |y, second| {
         if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
     }
+
     if (x.len < 3) return Error.NotEnoughPoints;
     if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
 
@@ -218,11 +239,6 @@ pub fn endpointSecantSecondDerivatives3(
     }
 }
 
-// hot path:
-//   when: profile spectroscopy cache prepares five profile series for a forward miss
-//   work: computes endpoint-secant spline second derivatives for five value series sharing one x grid
-//   data: shared x grid, five y-series inputs, five second-derivative outputs
-//   follow: ProfileSpectroscopyCache.init and sampleWithSecondDerivatives
 pub fn endpointSecantSecondDerivatives5(
     x: []const f64,
     y0: []const f64,
@@ -236,11 +252,25 @@ pub fn endpointSecantSecondDerivatives5(
     second3: []f64,
     second4: []f64,
 ) Error!void {
+    // endpointSecantSecondDerivatives5 -----------------------------------------------------------------------|
+    // Computes DISAMAR-compatible endpoint-secant second derivatives for five colocated profile series.       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : profile spectroscopy cache preparation on a forward miss                                   |
+    //   costly   : one tridiagonal setup shared across five value series                                      |
+    //   memory   : caller-owned outputs plus stack arrays capped at 256 points                                |
+    //                                                                                                         |
+    // data                                                                                                    |
+    //   x is the shared altitude grid. y0 through y4 are sampled at the same x points.                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     const values = [_][]const f64{ y0, y1, y2, y3, y4 };
     const seconds = [_][]f64{ second0, second1, second2, second3, second4 };
+
     inline for (values, seconds) |y, second| {
         if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
     }
+
     if (x.len < 3) return Error.NotEnoughPoints;
     if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
 
@@ -307,17 +337,24 @@ pub fn endpointSecantSecondDerivatives5(
     }
 }
 
-// hot path:
-//   when: support-row spectroscopy samples cached profile series at altitude
-//   work: brackets x, blends cubic spline coefficients, and returns one interpolated value
-//   data: x grid, y values, second derivatives, target coordinate
-//   follow: layer_spectroscopy.evaluationAtAltitude and profile-cache field order
 pub fn sampleWithSecondDerivatives(
     x: []const f64,
     y: []const f64,
     second: []const f64,
     target_x: f64,
 ) Error!f64 {
+    // sampleWithSecondDerivatives ----------------------------------------------------------------------------|
+    // Samples one cubic spline value from caller-prepared second derivatives.                                 |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : support-row spectroscopy samples cached profile series at altitude                         |
+    //   costly   : bracket search and cubic blend                                                             |
+    //   memory   : borrowed x, y, and second-derivative slices                                                |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   The returned value is the linear blend plus cubic curvature correction over the bracketing interval.  |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
