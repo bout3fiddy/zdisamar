@@ -16,18 +16,52 @@ const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
 
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: altitudes_km=16 B, weights_km=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: altitudes_km and weights_km are views into GaussRuleScratch storage
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced scratch storage
+// shared_carrier.zig ----------------------------------------------------------------------------------------|
+// Evaluates optical carriers on the shared RTM support grid.                                                 |
+//                                                                                                            |
+// called by                                                                                                  |
+//   forward-layer, RTM-quadrature, source-interface, and pseudo-spherical builders when shared geometry      |
+//   can replace per-layer scalar approximations.                                                             |
+//                                                                                                            |
+// main path                                                                                                  |
+//   resolve a Gauss subgrid for an altitude interval                                                         |
+//   evaluate gas, CIA, aerosol, scattering, and phase carriers at support rows                               |
+//   accumulate the weighted carrier into layer, level, or source-interface output rows                       |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Runs inside wavelength and shared-support loops. Strong-line state lookup is centralized so each carrier |
+//   loop pays one bounded optional-slice check instead of repeating the same guard in several places.        |
+//                                                                                                            |
+// memory                                                                                                     |
+//   SharedRtmSubgrid borrows GaussRuleScratch storage; prepared sublayers and strong-line states stay owned  |
+//   by PreparedOpticalState.                                                                                 |
+// -----------------------------------------------------------------------------------------------------------|
+
+// SharedRtmSubgrid ------------------------------------------------------------------------------------------|
+// Borrowed altitude and weight rows for one shared RTM subgrid.                                              |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 32 B (0.031 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..15] altitudes_km : []const f64                                                                        |
+// [16..31] weights_km   : []const f64                                                                        |
+//                                                                                                            |
+// footprint: per instance = 32 B; rows borrow GaussRuleScratch storage                                       |
+// -----------------------------------------------------------------------------------------------------------|
 pub const SharedRtmSubgrid = struct {
     altitudes_km: []const f64 = &.{},
     weights_km: []const f64 = &.{},
 };
+
+fn strongLineStateAt(
+    states: ?[]const ReferenceData.StrongLinePreparedState,
+    local_index: usize,
+) ?*const ReferenceData.StrongLinePreparedState {
+    const owned_states = states orelse return null;
+    if (local_index >= owned_states.len) return null;
+    return &owned_states[local_index];
+}
 
 pub fn sharedRtmSubgridSampleCount(scene: *const Scene) usize {
     return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
@@ -42,6 +76,7 @@ pub fn resolveSharedRtmSubgrid(
     if (sample_count == 0) return .{};
 
     if (sample_count == 1) {
+
         // math: one-point quadrature collapses to midpoint altitude and full interval thickness.
         scratch.nodes[0] = 0.5 * (lower_altitude_km + upper_altitude_km);
         scratch.weights[0] = @max(upper_altitude_km - lower_altitude_km, 0.0);
@@ -77,6 +112,7 @@ pub fn accumulateSharedCarrier(
     carrier: *const carrier_eval.SharedOpticalCarrier,
     weight_km: f64,
 ) void {
+
     // math: layer tau contribution = per-km optical-depth carrier * quadrature/support weight_km.
     const weighted_gas_absorption = carrier.gas_absorption_optical_depth_per_km * weight_km;
     const weighted_gas_scattering = carrier.gas_scattering_optical_depth_per_km * weight_km;
@@ -140,6 +176,7 @@ fn fillLayerInputFromSharedCarrier(
 ) void {
     const total_optical_depth = breakdown.totalOpticalDepth();
     const total_scattering = breakdown.totalScatteringOpticalDepth();
+
     // math: omega0 = total_scattering / total_optical_depth and phase is the gas/aerosol scattering-weighted mixture.
     // No-derivative LABOS consumes the aggregate transport fields below;
     // per-component fields feed derivative weighting.
@@ -150,14 +187,17 @@ fn fillLayerInputFromSharedCarrier(
         layer_input.aerosol_optical_depth = breakdown.aerosol_optical_depth;
         layer_input.aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth;
     }
+
     layer_input.optical_depth = total_optical_depth;
     layer_input.scattering_optical_depth = total_scattering;
     layer_input.single_scatter_albedo = breakdown.singleScatterAlbedo();
+
     if (compute_jacobian) {
         layer_input.optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
         layer_input.scattering_optical_depth_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
         layer_input.single_scatter_albedo_jacobian = .{0.0} ** transport_common.Jacobian.state_count;
     }
+
     layer_input.solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km);
     layer_input.view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km);
     layer_input.phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
@@ -210,10 +250,8 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
         if (weight_km <= 0.0) continue;
-        const strong_line_state = if (strong_line_states) |states|
-            if (local_index < states.len) &states[local_index] else null
-        else
-            null;
+
+        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
         const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
             self,
             wavelength_nm,
@@ -224,6 +262,7 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
         );
         accumulateSharedCarrier(&breakdown, &carrier, weight_km);
     }
+
     return evaluatedLayerFromSharedCarrier(
         scene,
         wavelength_nm,
@@ -249,10 +288,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
-            const strong_line_state = if (strong_line_states) |states|
-                if (local_index < states.len) &states[local_index] else null
-            else
-                null;
+
+            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
             const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
                 self,
                 wavelength_nm,
@@ -264,6 +301,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
             accumulateSharedCarrier(&breakdown, &carrier, weight_km);
         }
     }
+
     fillLayerInputFromSharedCarrier(
         scene,
         wavelength_nm,
@@ -276,12 +314,6 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
     return breakdown;
 }
 
-// hot path:
-//   when: forward input construction reduces support rows into a transport layer
-//   work: samples carrier cache rows and accumulates layer optical properties
-//   data: support-row descriptors, cached optical scalars, layer output fields
-//   math: breakdown terms integrate k(lambda,z_i) * weight_i over active support rows
-//   follow: WavelengthCarrierCache scalar access and direct phase-numerator accumulation
 pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -291,6 +323,14 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     layer_geometry: SharedRtmLayerGeometry,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
 ) EvaluatedLayer {
+    // evaluateReducedLayerFromSupportRowsWithCarrierCache ---------------------------------------------------|
+    // Reduce support rows into one transport layer using cached wavelength scalars.                          |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // forward input construction calls this for reduced shared-RTM layers.                                   |
+    // math: breakdown terms integrate k(lambda, z_i) * weight_i over active support rows.                    |
+    // -------------------------------------------------------------------------------------------------------|
+
     var breakdown: OpticalDepthBreakdown = .{};
     if (support_sublayers.len < 2) {
         return evaluatedLayerFromSharedCarrier(
@@ -305,10 +345,8 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
         if (weight_km <= 0.0) continue;
-        const strong_line_state = if (strong_line_states) |states|
-            if (local_index < states.len) &states[local_index] else null
-        else
-            null;
+
+        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
         var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
         const scalars = wavelength_cache.cachedSupportRowScalarsRef(
             self,
@@ -324,6 +362,7 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
             weight_km,
         );
     }
+
     return evaluatedLayerFromSharedCarrier(
         scene,
         wavelength_nm,
@@ -349,10 +388,8 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
         for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
-            const strong_line_state = if (strong_line_states) |states|
-                if (local_index < states.len) &states[local_index] else null
-            else
-                null;
+
+            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
             var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
             const scalars = wavelength_cache.cachedSupportRowScalarsRef(
                 self,
@@ -369,6 +406,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
             );
         }
     }
+
     fillLayerInputFromSharedCarrier(
         scene,
         wavelength_nm,
@@ -392,23 +430,23 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
 ) usize {
     var sample_index = sample_index_start;
     if (support_sublayers.len < 2) return sample_index;
+
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
-        const strong_line_state = if (strong_line_states) |states|
-            if (local_index < states.len) &states[local_index] else null
-        else
-            null;
-        const optical_depth = if (weight_km > 0.0)
-            weight_km * carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+        const optical_depth = choose_optical_depth: {
+            if (weight_km <= 0.0) break :choose_optical_depth 0.0;
+
+            break :choose_optical_depth weight_km * carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
                 self,
                 wavelength_nm,
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
                 profile_cache,
-            ).totalOpticalDepthPerKm()
-        else
-            0.0;
+            ).totalOpticalDepthPerKm();
+        };
+
         attenuation_samples[sample_index] = .{
             .altitude_km = support_sublayer.altitude_km,
             .thickness_km = weight_km,
@@ -416,15 +454,10 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
         };
         sample_index += 1;
     }
+
     return sample_index;
 }
 
-// hot path:
-//   when: pseudo-spherical grids expand shared support rows for a cached wavelength solve
-//   work: writes attenuation samples from support-row carrier optical depth per kilometer
-//   data: support sublayers, strong-line states, scalar carrier cache, attenuation sample outputs
-//   math: sample optical_depth = total_k_ext(lambda,z_i) * support_weight_km_i
-//   follow: fillPseudoSphericalGridAtWavelengthWithCarrierCache and carrier cache reuse
 pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -434,15 +467,23 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     sample_index_start: usize,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
 ) usize {
+    // fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache ---------------------------------------|
+    // Write pseudo-spherical attenuation samples from cached support-row optical depth.                      |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // pseudo-spherical grids use this for cached shared support rows.                                        |
+    // math: sample optical_depth = total_k_ext(lambda, z_i) * support_weight_km_i.                           |
+    // -------------------------------------------------------------------------------------------------------|
+
     var sample_index = sample_index_start;
     if (support_sublayers.len < 2) return sample_index;
+
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
-        const strong_line_state = if (strong_line_states) |states|
-            if (local_index < states.len) &states[local_index] else null
-        else
-            null;
-        const optical_depth = if (weight_km > 0.0) optical_depth: {
+        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+        const optical_depth = choose_optical_depth: {
+            if (weight_km <= 0.0) break :choose_optical_depth 0.0;
+
             var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
             const scalars = wavelength_cache.cachedSupportRowScalarsRef(
                 self,
@@ -452,8 +493,9 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
                 strong_line_state,
                 &fallback_scalars,
             );
-            break :optical_depth weight_km * scalars.totalOpticalDepthPerKm();
-        } else 0.0;
+            break :choose_optical_depth weight_km * scalars.totalOpticalDepthPerKm();
+        };
+
         attenuation_samples[sample_index] = .{
             .altitude_km = support_sublayer.altitude_km,
             .thickness_km = weight_km,
@@ -461,6 +503,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
         };
         sample_index += 1;
     }
+
     return sample_index;
 }
 
@@ -485,12 +528,6 @@ pub fn evaluateSharedLayerOnSubgrid(
     );
 }
 
-// hot path:
-//   when: integrated source-function routes evaluate RTM subgrid levels
-//   work: evaluates shared optical carriers on Gauss subgrid points for quadrature
-//   data: subgrid support rows, profile spectroscopy cache, layer input outputs
-//   math: layer breakdown approximates integral int k(lambda,z) dz by sum_i k(lambda,z_i) * w_i
-//   follow: resolveSharedRtmSubgrid and fillSharedPseudoSphericalSamplesOnSubgrid
 pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -501,6 +538,14 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     scratch: *shared_geometry.GaussRuleScratch,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) EvaluatedLayer {
+    // evaluateSharedLayerOnSubgridWithSpectroscopyCache -----------------------------------------------------|
+    // Evaluate shared optical carriers on Gauss subgrid points for RTM quadrature.                           |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // integrated source-function routes call this for shared RTM subgrid levels.                             |
+    // math: layer breakdown approximates int k(lambda,z) dz by sum_i k(lambda,z_i) * w_i.                    |
+    // -------------------------------------------------------------------------------------------------------|
+
     const subgrid = resolveSharedRtmSubgrid(
         layer_geometry.lower_altitude_km,
         layer_geometry.upper_altitude_km,
@@ -525,6 +570,7 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
             weight_km,
         );
     }
+
     return evaluatedLayerFromSharedCarrier(
         scene,
         wavelength_nm,
@@ -580,17 +626,19 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
     var sample_index = sample_index_start;
     for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
-        const optical_depth = if (weight_km > 0.0)
-            weight_km * carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+        const optical_depth = choose_optical_depth: {
+            if (weight_km <= 0.0) break :choose_optical_depth 0.0;
+
+            break :choose_optical_depth weight_km * carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
                 self,
                 wavelength_nm,
                 support_sublayers,
                 strong_line_states,
                 subgrid.altitudes_km[node_index],
                 profile_cache,
-            ).totalOpticalDepthPerKm()
-        else
-            0.0;
+            ).totalOpticalDepthPerKm();
+        };
+
         attenuation_samples[sample_index] = .{
             .altitude_km = subgrid.altitudes_km[node_index],
             .thickness_km = weight_km,
@@ -598,5 +646,6 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
         };
         sample_index += 1;
     }
+
     return sample_index;
 }

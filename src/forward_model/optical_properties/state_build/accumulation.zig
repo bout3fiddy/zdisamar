@@ -6,13 +6,43 @@ const Absorbers = @import("absorbers.zig");
 
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 168 B, align: 8 B
-//   field storage: 168 B across 20 fields; largest: line_means=16 B, cross_section_mean_cm2_per_molecule=8 B, cia_mean_cross_section_cm5_per_molecule2=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
+// accumulation.zig -------------------------------------------------------------------------------------------|
+// Reduces prepared layer rows and absorber state into the scalar means stored on PreparedOpticalState.        |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.prepare after Context.init and Absorbers.build.                                                      |
+//                                                                                                             |
+// main path                                                                                                   |
+//   LayerAccumulation.populate builds the per-layer and per-sublayer totals.                                  |
+//   computePreparedMeans folds those totals into effective thermodynamics, band means, column factors,        |
+//   optical-depth totals, aerosol means, and depolarization.                                                  |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Runs once per prepared scene. The reductions are scalar and should stay close to the layer-accumulation   |
+//   data they summarize so changes to weighting math are easy to audit.                                       |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Reads Context and AbsorberBuildState; returns PreparedMeans by value and does not retain borrowed rows.   |
+// ------------------------------------------------------------------------------------------------------------|
+
+// PreparedMeans ----------------------------------------------------------------------------------------------|
+// Scalar and band means copied into PreparedOpticalState during final assembly.                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 152 B (0.148 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory inside the struct                                                                                    |
+// [  0..  7] cross_section_mean_cm2_per_molecule      : f64                                                   |
+// [  8.. 23] line_means                               : BandMeans.LineBandMeans                               |
+// [ 24.. 31] cia_mean_cross_section_cm5_per_molecule2 : f64                                                   |
+// [ 32.. 63] effective airmass, SSA, temperature, pressure: 4 x f64                                           |
+// [ 64.. 95] air, oxygen, gas column, and CIA pair factors: 4 x f64                                           |
+// [ 96..135] gas/CIA/aerosol optical depths and temperature derivative: 5 x f64                               |
+// [136..151] total_optical_depth and depolarization_factor: 2 x f64                                           |
+//                                                                                                             |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count                     |
+// ------------------------------------------------------------------------------------------------------------|
 pub const PreparedMeans = struct {
     cross_section_mean_cm2_per_molecule: f64 = 0.0,
     line_means: BandMeans.LineBandMeans = .{},
@@ -34,104 +64,139 @@ pub const PreparedMeans = struct {
     depolarization_factor: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 168 B, align: 8 B
-//   field storage: means=168 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
-pub const AccumulationResult = struct {
-    means: PreparedMeans = .{},
-};
-
-// hot path:
-//   when: optical-state preparation accumulates layers and prepared mean values
-//   work: builds layer totals, particle/phase/spectroscopy support, and band/effective means
-//   data: preparation context, absorber build state, layer accumulation result
-//   math: final means reduce layer/sublayer sums into effective T, p, column factors, band means, and tau totals
-//   follow: LayerAccumulation.populate and computePreparedMeans
 pub fn accumulate(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
-) !AccumulationResult {
+) !PreparedMeans {
+    // accumulate ---------------------------------------------------------------------------------------------|
+    // Build layer totals, particle/phase/spectroscopy support, and prepared means.                            |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // optical-state preparation calls this once per prepared scene.                                           |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    // LayerAccumulation.populate -> computePreparedMeans                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
     const layer_totals = try LayerAccumulation.populate(allocator, context, absorbers);
-    const means = try computePreparedMeans(
+    return computePreparedMeans(
         allocator,
         context,
         absorbers,
         layer_totals,
     );
-    return .{ .means = means };
 }
 
-// hot path:
-//   when: optical-state preparation derives scalar means after layer accumulation
-//   work: computes cross-section, line, CIA, airmass, SSA, pressure, and optical-depth means
-//   data: accumulated layer totals, absorber state, reference band support, scene context
-//   math: T_eff = sum(T_i*n_i*w_i)/sum(n_i*w_i); p_eff analogous; sigma_bar = sum(sigma_k*column_k)/sum(column_k); omega0_eff = tau_sca/tau_ext
-//   follow: BandMeans.computeBandLineMeans and final prepared-state fields
 fn computePreparedMeans(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     layer_totals: LayerAccumulation.LayerAccumulation,
 ) !PreparedMeans {
+    // computePreparedMeans -----------------------------------------------------------------------------------|
+    // Reduce layer/sublayer sums into effective T, p, column factors, band means, and optical-depth totals.   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // runs once per optical-state preparation after all layer rows have been accumulated.                     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    // T_eff = sum(T_i * n_i * w_i) / sum(n_i * w_i); p_eff uses the same weights.                             |
+    // sigma_bar = sum(sigma_k * column_k) / sum(column_k); omega0_eff = tau_sca / tau_ext.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const EffectiveThermodynamics = struct {
+        temperature_k: f64,
+        pressure_hpa: f64,
+    };
+    const OpticalDepthWeightedMeans = struct {
+        single_scatter_albedo: f64,
+        depolarization_factor: f64,
+    };
+
     const scene = context.scene;
     const operational_o2_lut = context.operational_o2_lut;
     const operational_o2o2_lut = context.operational_o2o2_lut;
-    const effective_temperature = if (layer_totals.total_weight == 0.0)
-        0.0
-    else
-        layer_totals.total_temperature_weighted / layer_totals.total_weight;
-    const effective_pressure = if (layer_totals.total_weight == 0.0)
-        0.0
-    else
-        layer_totals.total_pressure_weighted / layer_totals.total_weight;
 
-    const cross_section_mean = if (absorbers.owned_cross_section_absorbers.len != 0) blk: {
+    const effective: EffectiveThermodynamics = choose_effective_thermodynamics: {
+        if (layer_totals.total_weight == 0.0) {
+            break :choose_effective_thermodynamics .{
+                .temperature_k = 0.0,
+                .pressure_hpa = 0.0,
+            };
+        }
+
+        break :choose_effective_thermodynamics .{
+            .temperature_k = layer_totals.total_temperature_weighted / layer_totals.total_weight,
+            .pressure_hpa = layer_totals.total_pressure_weighted / layer_totals.total_weight,
+        };
+    };
+
+    const cross_section_mean = choose_cross_section_mean: {
+        if (absorbers.owned_cross_section_absorbers.len == 0) {
+            break :choose_cross_section_mean absorbers.mean_sigma;
+        }
+
         var cross_section_total_weight: f64 = 0.0;
         var weighted_mean: f64 = 0.0;
         for (absorbers.owned_cross_section_absorbers) |*cross_section_absorber| {
             const weight = cross_section_absorber.column_density_factor;
             if (weight <= 0.0) continue;
+
             cross_section_total_weight += weight;
             weighted_mean += cross_section_absorber.meanSigmaInRange(
                 scene.spectral_grid.start_nm,
                 scene.spectral_grid.end_nm,
-                effective_temperature,
-                effective_pressure,
+                effective.temperature_k,
+                effective.pressure_hpa,
             ) * weight;
         }
-        if (cross_section_total_weight <= 0.0) break :blk 0.0;
-        break :blk weighted_mean / cross_section_total_weight;
-    } else absorbers.mean_sigma;
 
-    const line_means = if (absorbers.owned_line_absorbers.len != 0 or operational_o2_lut.enabled()) blk: {
+        if (cross_section_total_weight <= 0.0) break :choose_cross_section_mean 0.0;
+        break :choose_cross_section_mean weighted_mean / cross_section_total_weight;
+    };
+
+    const line_means = choose_line_means: {
+        if (absorbers.owned_line_absorbers.len == 0 and !operational_o2_lut.enabled()) {
+            if (absorbers.owned_lines) |*line_list| {
+                break :choose_line_means try BandMeans.computeBandLineMeans(
+                    allocator,
+                    scene,
+                    line_list,
+                    effective.temperature_k,
+                    effective.pressure_hpa,
+                );
+            }
+
+            break :choose_line_means BandMeans.LineBandMeans{};
+        }
+
         var line_mean_weight: f64 = 0.0;
         var weighted: BandMeans.LineBandMeans = .{};
         if (operational_o2_lut.enabled() and layer_totals.oxygen_column_density_factor > 0.0) {
             const operational_mean = BandMeans.computeOperationalBandMean(
                 scene,
                 operational_o2_lut,
-                effective_temperature,
-                effective_pressure,
+                effective.temperature_k,
+                effective.pressure_hpa,
             );
             line_mean_weight += layer_totals.oxygen_column_density_factor;
             weighted.line_mean_cross_section_cm2_per_molecule +=
                 operational_mean * layer_totals.oxygen_column_density_factor;
         }
+
         for (absorbers.owned_line_absorbers) |*line_absorber| {
             if (operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+
             const weight = line_absorber.column_density_factor;
             if (weight <= 0.0) continue;
+
             const means = try BandMeans.computeBandLineMeans(
                 allocator,
                 scene,
                 &line_absorber.line_list,
-                effective_temperature,
-                effective_pressure,
+                effective.temperature_k,
+                effective.pressure_hpa,
             );
             line_mean_weight += weight;
             weighted.line_mean_cross_section_cm2_per_molecule +=
@@ -143,39 +208,53 @@ fn computePreparedMeans(
             weighted.line_mean_cross_section_cm2_per_molecule /= line_mean_weight;
             weighted.line_mixing_mean_cross_section_cm2_per_molecule /= line_mean_weight;
         }
-        break :blk weighted;
-    } else if (absorbers.owned_lines) |*line_list|
-        try BandMeans.computeBandLineMeans(allocator, scene, line_list, effective_temperature, effective_pressure)
-    else
-        BandMeans.LineBandMeans{};
 
-    const cia_mean_sigma = if (operational_o2o2_lut.enabled())
-        BandMeans.computeOperationalBandMean(
-            scene,
-            operational_o2o2_lut,
-            @max(effective_temperature, 150.0),
-            effective_pressure,
-        )
-    else if (context.collision_induced_absorption) |cia_table|
-        cia_table.meanSigmaInRange(
-            scene.spectral_grid.start_nm,
-            scene.spectral_grid.end_nm,
-            @max(effective_temperature, 150.0),
-        )
-    else
-        0.0;
+        break :choose_line_means weighted;
+    };
+
+    const cia_mean_sigma = choose_cia_mean_sigma: {
+        if (operational_o2o2_lut.enabled()) {
+            break :choose_cia_mean_sigma BandMeans.computeOperationalBandMean(
+                scene,
+                operational_o2o2_lut,
+                @max(effective.temperature_k, 150.0),
+                effective.pressure_hpa,
+            );
+        }
+
+        if (context.collision_induced_absorption) |cia_table| {
+            break :choose_cia_mean_sigma cia_table.meanSigmaInRange(
+                scene.spectral_grid.start_nm,
+                scene.spectral_grid.end_nm,
+                @max(effective.temperature_k, 150.0),
+            );
+        }
+
+        break :choose_cia_mean_sigma 0.0;
+    };
+
+    const optical_depth_weighted_means: OpticalDepthWeightedMeans = choose_optical_depth_weighted_means: {
+        if (layer_totals.total_optical_depth == 0.0) {
+            break :choose_optical_depth_weighted_means .{
+                .single_scatter_albedo = layer_totals.base_single_scatter_albedo,
+                .depolarization_factor = 0.0,
+            };
+        }
+
+        break :choose_optical_depth_weighted_means .{
+            .single_scatter_albedo = layer_totals.total_scattering_optical_depth / layer_totals.total_optical_depth,
+            .depolarization_factor = layer_totals.depolarization_weighted / layer_totals.total_optical_depth,
+        };
+    };
 
     return .{
         .cross_section_mean_cm2_per_molecule = cross_section_mean,
         .line_means = line_means,
         .cia_mean_cross_section_cm5_per_molecule2 = cia_mean_sigma,
         .effective_air_mass_factor = absorbers.air_mass_factor,
-        .effective_single_scatter_albedo = if (layer_totals.total_optical_depth == 0.0)
-            layer_totals.base_single_scatter_albedo
-        else
-            layer_totals.total_scattering_optical_depth / layer_totals.total_optical_depth,
-        .effective_temperature_k = effective_temperature,
-        .effective_pressure_hpa = effective_pressure,
+        .effective_single_scatter_albedo = optical_depth_weighted_means.single_scatter_albedo,
+        .effective_temperature_k = effective.temperature_k,
+        .effective_pressure_hpa = effective.pressure_hpa,
         .air_column_density_factor = layer_totals.air_column_density_factor,
         .oxygen_column_density_factor = layer_totals.oxygen_column_density_factor,
         .column_density_factor = layer_totals.column_density_factor,
@@ -186,9 +265,6 @@ fn computePreparedMeans(
         .aerosol_base_optical_depth = layer_totals.total_aerosol_base_optical_depth,
         .d_optical_depth_d_temperature = layer_totals.total_d_optical_depth_d_temperature,
         .total_optical_depth = layer_totals.total_optical_depth,
-        .depolarization_factor = if (layer_totals.total_optical_depth == 0.0)
-            0.0
-        else
-            layer_totals.depolarization_weighted / layer_totals.total_optical_depth,
+        .depolarization_factor = optical_depth_weighted_means.depolarization_factor,
     };
 }

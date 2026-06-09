@@ -11,15 +11,42 @@ const Types = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 2136 B, align: 8 B
-//   field storage: 2129 B across 57 fields; largest: aerosol_phase_coefficients=1208 B, spectroscopy_lines=216 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 63 bool-storage slack = 119 bits
-//   inline arrays: aerosol_phase_coefficients:[151]f64=1208 B
-//   out-of-line: continuum_points, spectroscopy_profile_altitudes_km, spectroscopy_profile_pressures_hpa, spectroscopy_profile_temperatures_k, cross_section_absorbers, +4 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 34 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2136 B (2.086 KiB); total also includes referenced storage above
+// prepared_state.zig -----------------------------------------------------------------------------------------|
+// PreparedOpticalState lifecycle and read helpers.                                                            |
+//                                                                                                             |
+// built by                                                                                                    |
+//   finalize.zig after context setup, absorber preparation, and layer accumulation finish.                    |
+//                                                                                                             |
+// used by                                                                                                     |
+//   optical-depth evaluation, forward-layer construction, shared RTM geometry, and diagnostics.               |
+//                                                                                                             |
+// important state                                                                                             |
+//   layers and sublayers hold the prepared vertical model.                                                    |
+//   absorber rows hold spectroscopy/cross-section data and density columns.                                   |
+//   ownership flags say whether referenced tables, profile arrays, LUT assets, and line states are borrowed   |
+//   or owned by this final state.                                                                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   PreparedOpticalState is a wide header over out-of-line rows. Deinit must follow the same ownership flags  |
+//   that finalize.zig sets when moving buffers out of the preparation structs.                                |
+// ------------------------------------------------------------------------------------------------------------|
+
+// PreparedOpticalState ---------------------------------------------------------------------------------------|
+// Final optical-property state returned to transport and diagnostics.                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2136 B (2.086 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// inline: aerosol_phase_coefficients : [151]f64 = 1208 B                                                      |
+// inline: spectroscopy_lines        : ?SpectroscopyLineList = 216 B                                           |
+// inline: scalar fields, flags, ownership markers, cache keys, and slice/table headers                        |
+// out-of-line: continuum points, spectroscopy profile arrays, absorber arrays, line states, LUT assets,       |
+//              generated LUT assets, and execution-entry strings                                              |
+//                                                                                                             |
+// unused bits: 56 padding + 63 bool-storage slack = 119 bits                                                  |
+// cache span: 34 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2136 B (2.086 KiB); total also includes referenced storage above                  |
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -81,21 +108,31 @@ pub const PreparedOpticalState = struct {
     owns_lut_execution_entries: bool = false,
 
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
+        // PreparedOpticalState.deinit ----------------------------------------------------------------------- |
+        // Release owned prepared optical-property storage. Borrowed tables and profile arrays stay with       |
+        // their owner when the corresponding owns_* flag is false.                                            |
+        // --------------------------------------------------------------------------------------------------- |
+
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
+
         self.shared_rtm_geometry.deinit(allocator);
+
         if (self.owns_continuum_points) allocator.free(self.continuum_points);
+
         if (self.owns_collision_induced_absorption and self.collision_induced_absorption != null) {
             const cia = self.collision_induced_absorption.?;
             var owned_cia = cia;
             owned_cia.deinit(allocator);
         }
+
         if (self.cross_section_absorbers.len != 0) {
             for (self.cross_section_absorbers) |*cross_section_absorber| {
                 cross_section_absorber.deinit(allocator);
             }
             allocator.free(self.cross_section_absorbers);
         }
+
         if (self.line_absorbers.len != 0) {
             for (self.line_absorbers) |*line_absorber| {
                 line_absorber.deinit(allocator);
@@ -106,45 +143,61 @@ pub const PreparedOpticalState = struct {
                 for (states) |*state| state.deinit(allocator);
                 allocator.free(states);
             }
+
             if (self.spectroscopy_profile_strong_line_states) |states| {
                 if (self.owns_spectroscopy_profile_strong_line_states) {
                     for (states) |*state| state.deinit(allocator);
                     allocator.free(states);
                 }
             }
+
             if (self.spectroscopy_profile_weak_line_states) |states| {
                 if (self.owns_spectroscopy_profile_weak_line_states) {
                     for (states) |*state| state.deinit(allocator);
                     allocator.free(states);
                 }
             }
+
             if (self.spectroscopy_lines) |line_list| {
                 var owned = line_list;
                 owned.deinit(allocator);
             }
         }
+
         if (self.owns_spectroscopy_profile_arrays) {
-            if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
-            if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
-            if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
+            if (self.spectroscopy_profile_altitudes_km.len != 0) {
+                allocator.free(self.spectroscopy_profile_altitudes_km);
+            }
+            if (self.spectroscopy_profile_pressures_hpa.len != 0) {
+                allocator.free(self.spectroscopy_profile_pressures_hpa);
+            }
+            if (self.spectroscopy_profile_temperatures_k.len != 0) {
+                allocator.free(self.spectroscopy_profile_temperatures_k);
+            }
         }
+
         self.aerosol_fraction_control.deinitOwned(allocator);
+
         if (self.owns_operational_o2_lut) {
             var owned = self.operational_o2_lut;
             owned.deinitOwned(allocator);
         }
+
         if (self.owns_operational_o2o2_lut) {
             var owned = self.operational_o2o2_lut;
             owned.deinitOwned(allocator);
         }
+
         if (self.owns_generated_lut_assets) {
             for (self.generated_lut_assets) |*asset| asset.deinitOwned(allocator);
             if (self.generated_lut_assets.len != 0) allocator.free(self.generated_lut_assets);
         }
+
         if (self.owns_lut_execution_entries) {
             for (self.lut_execution_entries) |entry| allocator.free(entry);
             if (self.lut_execution_entries.len != 0) allocator.free(self.lut_execution_entries);
         }
+
         self.* = undefined;
     }
 
@@ -177,11 +230,21 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn intervalSemanticsUseReducedSharedRtmLayers(self: *const PreparedOpticalState) bool {
+        // PreparedOpticalState.intervalSemanticsUseReducedSharedRtmLayers ----------------------------------- |
+        // Detect the DISAMAR interval mode where several support rows collapse into fewer RTM layers.         |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        // This loop reads only sublayer_count from each wide PreparedLayer row. It stays here because this    |
+        // is a rare cache-validity decision, not the repeated per-wavelength carrier evaluation loop.         |
+        // --------------------------------------------------------------------------------------------------- |
+
         if (self.interval_semantics == .none) return false;
         const sublayers = self.sublayers orelse return false;
+
         var referenced_support_rows: usize = 0;
         const layers: []const Types.PreparedLayer = self.layers;
         for (layers) |*layer| referenced_support_rows += @as(usize, @intCast(layer.sublayer_count));
+
         return referenced_support_rows > sublayers.len;
     }
 
@@ -194,11 +257,14 @@ pub const PreparedOpticalState = struct {
         self.shared_rtm_geometry = try @import("shared_geometry.zig").buildSharedRtmGeometry(allocator, self);
     }
 
-    // layout(64-bit):
-    //   anonymous return struct: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per returned value = 16 B (0.016 KiB)
     pub fn resolvedAerosolSingleScatterAlbedo(self: *const PreparedOpticalState) f64 {
-        // math: effective aerosol SSA is clamped into [0, 1], preferring explicit aerosol SSA when provided.
+        // PreparedOpticalState.resolvedAerosolSingleScatterAlbedo ------------------------------------------- |
+        // Return the effective aerosol SSA in physical [0, 1] bounds.                                         |
+        //                                                                                                     |
+        // math                                                                                                |
+        // explicit aerosol SSA wins when present; otherwise the mixed effective SSA is used.                  |
+        // --------------------------------------------------------------------------------------------------- |
+
         return std.math.clamp(
             if (self.aerosol_single_scatter_albedo >= 0.0)
                 self.aerosol_single_scatter_albedo
@@ -494,6 +560,7 @@ pub const PreparedOpticalState = struct {
         );
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn updateSpectroscopyCacheInputs(
     hash: *std.hash.Wyhash,

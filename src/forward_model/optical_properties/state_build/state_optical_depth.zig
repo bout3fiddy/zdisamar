@@ -12,23 +12,59 @@ const PreparedSublayer = Types.PreparedSublayer;
 const OpticalDepthBreakdown = Types.OpticalDepthBreakdown;
 const EvaluatedLayer = Types.EvaluatedLayer;
 
-// hot path:
-//   when: diagnostics or layer-free routes need total optical-depth breakdown at one wavelength
-//   work: accumulates gas, CIA, aerosol, and scattering optical depths
-//   data: prepared layers/sublayers, spectroscopy cache, cross-section tables, particle controls
-//   math: tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda); tau_aerosol_sca = tau_aerosol * omega0_aerosol
-//   follow: evaluateLayerAtWavelengthWithSpectroscopyCache and particleOpticalDepthAtWavelength
+// state_optical_depth.zig -----------------------------------------------------------------------------------|
+// Evaluates gas, Rayleigh, CIA, aerosol, and scattering optical-depth breakdowns at one wavelength.          |
+//                                                                                                            |
+// called by                                                                                                  |
+//   diagnostics and forward-layer builders that need scalar totals or layer-resolved evaluated rows.         |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   sublayer route: evaluate each PreparedLayer span with a ProfileNodeSpectroscopyCache.                    |
+//   mean route    : use prepared scene means when no sublayer table is present.                              |
+//   layer route   : return an EvaluatedLayer for one prepared layer or support interval.                     |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Runs per wavelength sample. The profile cache keeps spectroscopy profile work from repeating while the   |
+//   caller walks several layers at the same wavelength.                                                      |
+//                                                                                                            |
+// math                                                                                                       |
+//   tau_total(lambda) = gas absorption + Rayleigh scattering + CIA + aerosol extinction.                     |
+//   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn opticalDepthBreakdownAtWavelength(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
 ) OpticalDepthBreakdown {
+    // opticalDepthBreakdownAtWavelength -------------------------------------------------------------------- |
+    // Accumulate gas, CIA, aerosol, and scattering optical depths at one wavelength.                         |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // used by diagnostics and layer-free routes that need a scalar optical-depth breakdown.                  |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    // Layered input reads only support indexes from PreparedLayer before evaluating the matching             |
+    // PreparedSublayer span. Keep the wide layer row whole because the evaluation path consumes the same     |
+    // prepared layer model nearby.                                                                           |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                         |
+    // tau_aerosol_sca  = tau_aerosol * omega0_aerosol                                                        |
+    // -------------------------------------------------------------------------------------------------------|
+
     var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
+
     if (self.sublayers) |sublayers| {
         var totals: OpticalDepthBreakdown = .{};
         const layers: []const Types.PreparedLayer = self.layers;
         for (layers) |*layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
+            const strong_line_state = if (self.strong_line_states) |states|
+                states[start_index..end_index]
+            else
+                null;
+
             const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(
                 self,
                 null,
@@ -36,9 +72,10 @@ pub fn opticalDepthBreakdownAtWavelength(
                 wavelength_nm,
                 start_index,
                 sublayers[start_index..end_index],
-                if (self.strong_line_states) |states| states[start_index..end_index] else null,
+                strong_line_state,
                 &profile_cache,
             );
+
             totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
             totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
             totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
@@ -52,16 +89,26 @@ pub fn opticalDepthBreakdownAtWavelength(
         Spectroscopy.totalCrossSectionAtWavelength(self, wavelength_nm) * self.column_density_factor;
     const gas_scattering_optical_depth = Rayleigh.crossSectionCm2(wavelength_nm) *
         self.air_column_density_factor;
-    const cia_optical_depth = if (self.operational_o2o2_lut.enabled())
-        self.operational_o2o2_lut.sigmaAt(
-            wavelength_nm,
-            self.effective_temperature_k,
-            self.effective_pressure_hpa,
-        ) * self.cia_pair_path_factor_cm5
-    else if (self.collision_induced_absorption) |cia_table|
-        cia_table.sigmaAt(wavelength_nm, self.effective_temperature_k) * self.cia_pair_path_factor_cm5
-    else
-        0.0;
+
+    const cia_optical_depth = choose_cia_optical_depth: {
+        if (self.operational_o2o2_lut.enabled()) {
+            break :choose_cia_optical_depth self.operational_o2o2_lut.sigmaAt(
+                wavelength_nm,
+                self.effective_temperature_k,
+                self.effective_pressure_hpa,
+            ) * self.cia_pair_path_factor_cm5;
+        }
+
+        if (self.collision_induced_absorption) |cia_table| {
+            break :choose_cia_optical_depth cia_table.sigmaAt(
+                wavelength_nm,
+                self.effective_temperature_k,
+            ) * self.cia_pair_path_factor_cm5;
+        }
+
+        break :choose_cia_optical_depth 0.0;
+    };
+
     const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
         self.aerosol_optical_depth,
         self.aerosol_base_optical_depth,
@@ -71,6 +118,7 @@ pub fn opticalDepthBreakdownAtWavelength(
         wavelength_nm,
     );
     const aerosol_single_scatter_albedo = self.resolvedAerosolSingleScatterAlbedo();
+
     return .{
         .gas_absorption_optical_depth = gas_absorption_optical_depth,
         .gas_scattering_optical_depth = gas_scattering_optical_depth,
@@ -101,12 +149,6 @@ pub fn evaluateLayerAtWavelength(
     );
 }
 
-// hot path:
-//   when: atmospheric budget or non-shared layer routes evaluate one layer at a wavelength
-//   work: accumulates sublayer absorption, scattering, CIA, particles, and phase numerator fields
-//   data: sublayer slice, strong-line states, profile spectroscopy cache, continuum/cross-section data
-//   math: per sublayer tau_abs = sigma_cont*N_cont + sigma_xs*N_xs + sigma_line*N_line; tau_rayleigh = sigma_R*N_air; tau_cia = sigma_cia*n_pair*path
-//   follow: state_scalar density helpers and state_spectroscopy sigma evaluation
 pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: ?*const Scene,
@@ -117,52 +159,82 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const Spectroscopy.ProfileNodeSpectroscopyCache,
 ) EvaluatedLayer {
+    // evaluateLayerAtWavelengthWithSpectroscopyCache ------------------------------------------------------- |
+    // Evaluate one physical layer or support-row span at one wavelength.                                     |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // used by atmospheric budgets and non-shared layer routes.                                               |
+    // work: accumulate sublayer absorption, scattering, CIA, particles, and phase numerator fields.          |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // per sublayer tau_abs = sigma_cont*N_cont + sigma_xs*N_xs + sigma_line*N_line                           |
+    // tau_rayleigh = sigma_R*N_air; tau_cia = sigma_cia*n_pair*path                                          |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const AerosolProfile = struct {
+        reference_wavelength_nm: f64,
+        angstrom_exponent: f64,
+    };
+    const DirectionCosines = struct {
+        solar_mu: f64,
+        view_mu: f64,
+    };
+
     var breakdown: OpticalDepthBreakdown = .{};
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
+    const use_table_continuum = self.cross_section_absorbers.len == 0;
 
     for (sublayers, 0..) |sublayer, sublayer_index| {
         const global_sublayer_index = sublayer_start_index + sublayer_index;
-        const continuum_sigma = if (self.cross_section_absorbers.len == 0)
-            continuum_table.interpolateSigma(wavelength_nm)
-        else
-            0.0;
-        const gas_absorption_optical_depth = blk: {
-            const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
-                Scalar.continuumCarrierDensityAtSublayer(self, sublayer, global_sublayer_index)
-            else
-                0.0;
-            const continuum_optical_depth =
-                continuum_sigma *
+
+        const continuum_optical_depth = choose_continuum_optical_depth: {
+            if (!use_table_continuum) break :choose_continuum_optical_depth 0.0;
+
+            const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+            const continuum_density_cm3 =
+                Scalar.continuumCarrierDensityAtSublayer(self, sublayer, global_sublayer_index);
+            break :choose_continuum_optical_depth continuum_sigma *
                 continuum_density_cm3 *
                 sublayer.path_length_cm;
+        };
+
+        const gas_absorption_optical_depth = compute_gas_absorption: {
             var cross_section_optical_depth: f64 = 0.0;
             for (self.cross_section_absorbers) |cross_section_absorber| {
                 if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
-                const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[global_sublayer_index];
+
+                const absorber_density_cm3 =
+                    cross_section_absorber.number_densities_cm3[global_sublayer_index];
                 if (absorber_density_cm3 <= 0.0) continue;
+
                 cross_section_optical_depth += cross_section_absorber.sigmaAt(
                     wavelength_nm,
                     sublayer.temperature_k,
                     sublayer.pressure_hpa,
                 ) * absorber_density_cm3 * sublayer.path_length_cm;
             }
+
             if (self.line_absorbers.len != 0) {
                 var line_optical_depth: f64 = 0.0;
                 for (self.line_absorbers) |line_absorber| {
                     if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+
                     const absorber_density_cm3 = line_absorber.number_densities_cm3[global_sublayer_index];
                     if (absorber_density_cm3 <= 0.0) continue;
+
+                    const strong_line_state = if (line_absorber.strong_line_states) |states|
+                        &states[global_sublayer_index]
+                    else
+                        null;
                     const sigma = line_absorber.line_list.sigmaAtPrepared(
                         wavelength_nm,
                         sublayer.temperature_k,
                         sublayer.pressure_hpa,
-                        if (line_absorber.strong_line_states) |states|
-                            &states[global_sublayer_index]
-                        else
-                            null,
+                        strong_line_state,
                     );
                     line_optical_depth += sigma * absorber_density_cm3 * sublayer.path_length_cm;
                 }
+
                 if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
                     line_optical_depth +=
                         self.operational_o2_lut.sigmaAt(
@@ -173,16 +245,20 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                         sublayer.oxygen_number_density_cm3 *
                         sublayer.path_length_cm;
                 }
-                break :blk continuum_optical_depth + cross_section_optical_depth + line_optical_depth;
+
+                break :compute_gas_absorption continuum_optical_depth +
+                    cross_section_optical_depth +
+                    line_optical_depth;
             }
 
+            const strong_line_state = if (strong_line_states) |states| &states[sublayer_index] else null;
             const spectroscopy_sigma = Spectroscopy.spectroscopySigmaAtAltitudeWithCache(
                 self,
                 wavelength_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
                 sublayer.altitude_km,
-                if (strong_line_states) |states| &states[sublayer_index] else null,
+                strong_line_state,
                 profile_cache,
             );
             const spectroscopy_carrier_density_cm3 = Scalar.lineSpectroscopyCarrierDensityAtSublayer(
@@ -191,12 +267,17 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                 global_sublayer_index,
             );
             const gas_column_density_cm2 = spectroscopy_carrier_density_cm3 * sublayer.path_length_cm;
-            break :blk continuum_optical_depth + cross_section_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
+
+            break :compute_gas_absorption continuum_optical_depth +
+                cross_section_optical_depth +
+                spectroscopy_sigma * gas_column_density_cm2;
         };
+
         const gas_scattering_optical_depth =
             Rayleigh.crossSectionCm2(wavelength_nm) *
             sublayer.number_density_cm3 *
             sublayer.path_length_cm;
+
         const cia_sigma_cm5_per_molecule2 = Spectroscopy.ciaSigmaAtWavelength(
             self,
             wavelength_nm,
@@ -207,15 +288,30 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             cia_sigma_cm5_per_molecule2 *
             sublayer.ciaPairDensityCm6() *
             sublayer.path_length_cm;
+
+        const aerosol_profile: AerosolProfile = choose_aerosol_profile: {
+            if (self.has_aerosol_profile_properties) {
+                break :choose_aerosol_profile .{
+                    .reference_wavelength_nm = sublayer.aerosol_reference_wavelength_nm,
+                    .angstrom_exponent = sublayer.aerosol_angstrom_exponent,
+                };
+            }
+
+            break :choose_aerosol_profile .{
+                .reference_wavelength_nm = self.aerosol_reference_wavelength_nm,
+                .angstrom_exponent = self.aerosol_angstrom_exponent,
+            };
+        };
         const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
             sublayer.aerosol_optical_depth,
             sublayer.aerosol_base_optical_depth,
-            if (self.has_aerosol_profile_properties) sublayer.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
-            if (self.has_aerosol_profile_properties) sublayer.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
+            aerosol_profile.reference_wavelength_nm,
+            aerosol_profile.angstrom_exponent,
             self.aerosol_fraction_control,
             wavelength_nm,
         );
-        const aerosol_scattering_optical_depth = aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
+        const aerosol_scattering_optical_depth =
+            aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
 
         breakdown.gas_absorption_optical_depth += gas_absorption_optical_depth;
         breakdown.gas_scattering_optical_depth += gas_scattering_optical_depth;
@@ -224,15 +320,30 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         breakdown.aerosol_scattering_optical_depth += aerosol_scattering_optical_depth;
     }
 
+    const phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        breakdown.gas_scattering_optical_depth,
+        breakdown.aerosol_scattering_optical_depth,
+        &self.aerosol_phase_coefficients,
+    );
+    const direction_cosines: DirectionCosines = choose_direction_cosines: {
+        if (scene) |owned_scene| {
+            break :choose_direction_cosines .{
+                .solar_mu = owned_scene.geometry.solarCosineAtAltitude(altitude_km),
+                .view_mu = owned_scene.geometry.viewingCosineAtAltitude(altitude_km),
+            };
+        }
+
+        break :choose_direction_cosines .{
+            .solar_mu = 1.0,
+            .view_mu = 1.0,
+        };
+    };
+
     return .{
         .breakdown = breakdown,
-        .phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
-            PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
-            breakdown.gas_scattering_optical_depth,
-            breakdown.aerosol_scattering_optical_depth,
-            &self.aerosol_phase_coefficients,
-        ),
-        .solar_mu = if (scene) |owned_scene| owned_scene.geometry.solarCosineAtAltitude(altitude_km) else 1.0,
-        .view_mu = if (scene) |owned_scene| owned_scene.geometry.viewingCosineAtAltitude(altitude_km) else 1.0,
+        .phase = phase,
+        .solar_mu = direction_cosines.solar_mu,
+        .view_mu = direction_cosines.view_mu,
     };
 }

@@ -11,49 +11,86 @@ const Allocator = std.mem.Allocator;
 
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
-// Active line absorber resolved from the scene's absorber set.
-// layout(64-bit):
-//   size: 160 B, align: 8 B
-//   field storage: controls=136 B, volume_mixing_ratio_profile_ppmv=16 B, species=1 B
-//   padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: volume_mixing_ratio_profile_ppmv carries referenced storage
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 160 B (0.156 KiB); total also includes referenced storage above
+// state.zig --------------------------------------------------------------------------------------------------|
+// Core row types for optical-property preparation and transport setup.                                        |
+//                                                                                                             |
+// used by                                                                                                     |
+//   context, absorber preparation, layer accumulation, final assembly, wavelength evaluation, and RTM input   |
+//   builders.                                                                                                 |
+//                                                                                                             |
+// important rows                                                                                              |
+//   Active* rows describe scene absorbers before preparation.                                                 |
+//   Prepared* rows own or borrow density, spectroscopy, layer, sublayer, and LUT data after preparation.      |
+//   OpticalDepthBreakdown and EvaluatedLayer are short-lived wavelength results.                              |
+//   SharedRtm* rows hold cached geometry for reduced shared-RTM layer routes.                                 |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Most top-level rows are headers over out-of-line arrays. Ownership lives on PreparedOpticalState in       |
+//   prepared_state.zig and is transferred by finalize.zig.                                                    |
+// ------------------------------------------------------------------------------------------------------------|
+
+// ActiveLineAbsorber -----------------------------------------------------------------------------------------|
+// Active line absorber resolved from the scene's absorber set.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 160 B (0.156 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..135] controls                         : LineGasControls                                               |
+// [136..151] volume_mixing_ratio_profile_ppmv : []const [2]f64                                                |
+// [152..152] species                          : AbsorberSpecies                                               |
+// [153..159] padding                          : 7 B                                                           |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 160 B; VMR profile storage is borrowed                                            |
 pub const ActiveLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     controls: AbsorberModel.LineGasControls,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// Active cross-section absorber resolved from the scene's absorber set.
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 33 B across 3 fields
-//   largest: representation=16 B, volume_mixing_ratio_profile_ppmv=16 B, species=1 B
-//   padding: 7 B (56 bits)
-//   unused bits: 56 padding
-//   out-of-line: volume_mixing_ratio_profile_ppmv carries referenced storage
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// ActiveCrossSectionAbsorber ---------------------------------------------------------------------------------|
+// Active cross-section absorber resolved from the scene's absorber set.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] representation                   : AbsorptionRepresentation                                        |
+// [16..31] volume_mixing_ratio_profile_ppmv : []const [2]f64                                                  |
+// [32..32] species                          : AbsorberSpecies                                                 |
+// [33..39] padding                          : 7 B                                                             |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// footprint: per instance = 40 B; VMR profile storage is borrowed                                             |
 pub const ActiveCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation: AbsorberModel.AbsorptionRepresentation,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// Prepared line absorber with runtime controls and stored number densities.
-// layout(64-bit):
-//   size: 280 B, align: 8 B
-//   field storage: 273 B across 7 fields
-//   largest: line_list=208 B, number_densities_cm3=16 B, strong_line_states=16 B
-//   padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: number_densities_cm3 carries referenced storage
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
+// PreparedLineAbsorber ---------------------------------------------------------------------------------------|
+// Prepared line absorber with runtime controls and stored number densities.                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 280 B (0.273 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..207] line_list                     : SpectroscopyLineList                                             |
+// [208..223] number_densities_cm3          : []f64                                                            |
+// [224..239] strong_line_states            : ?[]StrongLinePreparedState                                       |
+// [240..255] strong_line_state_initialized : ?[]bool                                                          |
+// [256..263] strong_line_state_count       : usize                                                            |
+// [264..271] column_density_factor         : f64                                                              |
+// [272..272] species                       : AbsorberSpecies                                                  |
+// [273..279] padding                       : 7 B                                                              |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 5 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 280 B; line list, densities, and optional line states own out-of-line storage     |
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -92,23 +129,29 @@ pub const PreparedLineAbsorber = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const PreparedCrossSectionRepresentation = union(enum) {
     table: ReferenceData.CrossSectionTable,
     lut: OperationalCrossSectionLut,
 };
 
-// Prepared cross-section absorber with stored densities and typed representation metadata.
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 105 B across 4 fields
-//   largest: representation=80 B, number_densities_cm3=16 B, column_density_factor=8 B
-//   padding: 7 B (56 bits)
-//   unused bits: 56 padding
-//   out-of-line: number_densities_cm3 carries referenced storage
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total also includes referenced storage above
+// PreparedCrossSectionAbsorber -------------------------------------------------------------------------------|
+// Prepared cross-section absorber with stored densities and typed representation metadata.                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 112 B (0.109 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 79] representation        : PreparedCrossSectionRepresentation                                       |
+// [ 80.. 95] number_densities_cm3  : []f64                                                                    |
+// [ 96..103] column_density_factor : f64                                                                      |
+// [104..104] species               : AbsorberSpecies                                                          |
+// [105..111] padding               : 7 B                                                                      |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 112 B; density and table/LUT storage can be out of line                           |
 pub const PreparedCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation: PreparedCrossSectionRepresentation,
@@ -170,17 +213,52 @@ pub const PreparedCrossSectionAbsorber = struct {
         };
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// Prepared layer state on the radiative transfer grid.
-// layout(64-bit):
-//   size: 184 B, align: 8 B
-//   field storage: 184 B across 25 fields
-//   largest: aerosol_optical_depth=8 B, depolarization_factor=8 B, optical_depth=8 B
-//   padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 184 B (0.180 KiB); total = per instance * live instance count
+// PreparedLayer --------------------------------------------------------------------------------------------- |
+// Prepared layer state on the transport grid. One row keeps the physical layer values plus the indexes        |
+// that connect the row back to its prepared support rows.                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 208 B (0.203 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] aerosol_optical_depth                         : f64                                              |
+// [  8.. 15] bottom_altitude_km                             : f64                                             |
+// [ 16.. 23] aerosol_fraction                               : f64                                             |
+// [ 24.. 31] altitude_km                                    : f64                                             |
+// [ 32.. 39] bottom_pressure_hpa                            : f64                                             |
+// [ 40.. 47] temperature_k                                  : f64                                             |
+// [ 48.. 55] number_density_cm3                             : f64                                             |
+// [ 56.. 63] continuum_cross_section_cm2_per_molecule       : f64                                             |
+// [ 64.. 71] line_cross_section_cm2_per_molecule            : f64                                             |
+// [ 72.. 79] line_mixing_cross_section_cm2_per_molecule     : f64                                             |
+// [ 80.. 87] cia_optical_depth                              : f64                                             |
+// [ 88.. 95] d_cross_section_d_temperature_cm2_per_molecule_per_k : f64                                       |
+// [ 96..103] top_pressure_hpa                               : f64                                             |
+// [104..111] gas_optical_depth                              : f64                                             |
+// [112..119] pressure_hpa                                   : f64                                             |
+// [120..127] aerosol_base_optical_depth                     : f64                                             |
+// [128..135] aerosol_single_scatter_albedo                  : f64                                             |
+// [136..143] aerosol_reference_wavelength_nm                : f64                                             |
+// [144..151] aerosol_angstrom_exponent                      : f64                                             |
+// [152..159] layer_single_scatter_albedo                    : f64                                             |
+// [160..167] depolarization_factor                          : f64                                             |
+// [168..175] optical_depth                                  : f64                                             |
+// [176..183] top_altitude_km                                : f64                                             |
+// [184..191] gas_scattering_optical_depth                   : f64                                             |
+// [192..195] sublayer_start_index                           : u32                                             |
+// [196..199] layer_index                                    : u32                                             |
+// [200..203] interval_index_1based                          : u32                                             |
+// [204..207] sublayer_count                                 : u32                                             |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 208 B (0.203 KiB); total = per instance * live instance count                     |
+//                                                                                                             |
+// hot path                                                                                                    |
+// some loops read only support indexes from this wide row. Keep the row whole because nearby layer            |
+// evaluation and transport-input paths consume the physical fields from the same layer array.                 |
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -211,6 +289,7 @@ pub const PreparedLayer = struct {
     interval_index_1based: u32 = 0,
     aerosol_fraction: f64 = 0.0,
 };
+// ----------------------------------------------------------------------------------------------------------- |
 
 pub const PreparedSupportRowKind = enum {
     physical,
@@ -218,16 +297,53 @@ pub const PreparedSupportRowKind = enum {
     parity_active,
 };
 
-// Prepared sublayer state on the fine radiative transfer grid.
-// layout(64-bit):
-//   size: 272 B, align: 8 B
-//   field storage: 266 B across 37 fields
-//   largest: altitude_km=8 B, pressure_hpa=8 B, temperature_k=8 B
-//   padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 272 B (0.266 KiB); total = per instance * live instance count
+// PreparedSublayer ------------------------------------------------------------------------------------------ |
+// Prepared support row on the fine optical-property grid. Layer reduction code can collapse many rows         |
+// into one transport layer while still preserving DISAMAR support-row placement.                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 256 B (0.250 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] d_cross_section_d_temperature_cm2_per_molecule_per_k : f64                                       |
+// [  8.. 15] gas_absorption_optical_depth                  : f64                                              |
+// [ 16.. 23] aerosol_fraction                              : f64                                              |
+// [ 24.. 31] altitude_km                                   : f64                                              |
+// [ 32.. 39] pressure_hpa                                  : f64                                              |
+// [ 40.. 47] temperature_k                                 : f64                                              |
+// [ 48.. 55] number_density_cm3                            : f64                                              |
+// [ 56.. 63] oxygen_number_density_cm3                     : f64                                              |
+// [ 64.. 71] cia_pair_density_cm6                          : f64                                              |
+// [ 72.. 79] absorber_number_density_cm3                   : f64                                              |
+// [ 80.. 87] gas_scattering_optical_depth                  : f64                                              |
+// [ 88.. 95] continuum_cross_section_cm2_per_molecule      : f64                                              |
+// [ 96..103] line_cross_section_cm2_per_molecule           : f64                                              |
+// [104..111] line_mixing_cross_section_cm2_per_molecule    : f64                                              |
+// [112..119] cia_sigma_cm5_per_molecule2                   : f64                                              |
+// [120..127] cia_optical_depth                             : f64                                              |
+// [128..135] bottom_pressure_hpa                           : f64                                              |
+// [136..143] top_pressure_hpa                              : f64                                              |
+// [144..151] path_length_cm                                : f64                                              |
+// [152..159] gas_extinction_optical_depth                  : f64                                              |
+// [160..167] d_gas_optical_depth_d_temperature             : f64                                              |
+// [168..175] d_cia_optical_depth_d_temperature             : f64                                              |
+// [176..183] aerosol_optical_depth                         : f64                                              |
+// [184..191] aerosol_base_optical_depth                    : f64                                              |
+// [192..199] aerosol_single_scatter_albedo                 : f64                                              |
+// [200..207] aerosol_reference_wavelength_nm               : f64                                              |
+// [208..215] aerosol_angstrom_exponent                     : f64                                              |
+// [216..223] top_altitude_km                               : f64                                              |
+// [224..231] bottom_altitude_km                            : f64                                              |
+// [232..235] parent_layer_index                            : u32                                              |
+// [236..239] sublayer_index                                : u32                                              |
+// [240..243] interval_index_1based                         : u32                                              |
+// [244..247] global_sublayer_index                         : u32                                              |
+// [248..248] support_row_kind                              : PreparedSupportRowKind                           |
+// [249..255] padding                                       : 7 B                                              |
+//                                                                                                             |
+// unused bits: 56 padding + 7 enum-storage slack = 63 bits                                                    |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 256 B (0.250 KiB); total = per instance * live instance count                     |
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
@@ -271,15 +387,23 @@ pub const PreparedSublayer = struct {
             self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
     }
 };
+// ----------------------------------------------------------------------------------------------------------- |
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 40 B across 5 fields
-//   largest: gas absorption=8 B, gas scattering=8 B, cia=8 B
-//   padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// OpticalDepthBreakdown --------------------------------------------------------------------------------------|
+// Wavelength-local optical-depth components used to build transport rows.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] gas_absorption_optical_depth     : f64                                                             |
+// [ 8..15] gas_scattering_optical_depth     : f64                                                             |
+// [16..23] cia_optical_depth                : f64                                                             |
+// [24..31] aerosol_optical_depth            : f64                                                             |
+// [32..39] aerosol_scattering_optical_depth : f64                                                             |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B; stack or caller-owned row                                                   |
 pub const OpticalDepthBreakdown = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -311,30 +435,47 @@ pub const OpticalDepthBreakdown = struct {
         );
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 80 B, align: 8 B
-//   field storage: breakdown=40 B, phase=24 B, solar_mu=8 B, view_mu=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   encoded fields: phase stores gas/aerosol weights plus shared phase rows
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 80 B (0.078 KiB); total also includes referenced phase storage above
+// EvaluatedLayer ---------------------------------------------------------------------------------------------|
+// Optical-depth and phase result for one layer or shared support interval.                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..39] breakdown : OpticalDepthBreakdown                                                                  |
+// [40..63] phase     : PhaseMixture                                                                           |
+// [64..71] solar_mu  : f64                                                                                    |
+// [72..79] view_mu   : f64                                                                                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 80 B; phase can reference shared phase storage                                    |
 pub const EvaluatedLayer = struct {
     breakdown: OpticalDepthBreakdown = .{},
     phase: PhaseFunctions.PhaseMixture = .{},
     solar_mu: f64 = 1.0,
     view_mu: f64 = 1.0,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 40 B across 6 fields
-//   largest: lower_altitude_km=8 B, upper_altitude_km=8 B, midpoint_altitude_km=8 B
-//   padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// SharedRtmLayerGeometry -------------------------------------------------------------------------------------|
+// Cached altitude and support-span geometry for one shared RTM layer.                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] lower_altitude_km  : f64                                                                           |
+// [ 8..15] upper_altitude_km  : f64                                                                           |
+// [16..23] midpoint_altitude_km : f64                                                                         |
+// [24..31] thickness_km       : f64                                                                           |
+// [32..35] support_start_index: u32                                                                           |
+// [36..39] support_count      : u32                                                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B; stored in SharedRtmGeometry.layers                                          |
 pub const SharedRtmLayerGeometry = struct {
     lower_altitude_km: f64 = 0.0,
     upper_altitude_km: f64 = 0.0,
@@ -343,15 +484,26 @@ pub const SharedRtmLayerGeometry = struct {
     support_start_index: u32 = 0,
     support_count: u32 = 0,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 36 B across 7 fields
-//   largest: altitude_km=8 B, weight_km=8 B, support_start_index=4 B
-//   padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// SharedRtmLevelGeometry -------------------------------------------------------------------------------------|
+// Cached level altitude, quadrature weight, and support-row references for shared RTM source terms.           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] altitude_km                      : f64                                                             |
+// [ 8..15] weight_km                        : f64                                                             |
+// [16..19] support_start_index              : u32                                                             |
+// [20..23] support_count                    : u32                                                             |
+// [24..27] support_row_index                : u32                                                             |
+// [28..31] particle_above_support_row_index : u32                                                             |
+// [32..35] particle_below_support_row_index : u32                                                             |
+// [36..39] padding                          : 4 B                                                             |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per instance = 40 B; stored in SharedRtmGeometry.levels                                          |
 pub const SharedRtmLevelGeometry = struct {
     altitude_km: f64 = 0.0,
     weight_km: f64 = 0.0,
@@ -361,14 +513,20 @@ pub const SharedRtmLevelGeometry = struct {
     particle_above_support_row_index: u32 = std.math.maxInt(u32),
     particle_below_support_row_index: u32 = std.math.maxInt(u32),
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: layers=16 B, levels=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layers and levels carry referenced storage
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// SharedRtmGeometry ------------------------------------------------------------------------------------------|
+// Owned cached geometry arrays for the shared RTM grid.                                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] layers : []SharedRtmLayerGeometry                                                                  |
+// [16..31] levels : []SharedRtmLevelGeometry                                                                  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B; layer and level arrays are out of line                                      |
 pub const SharedRtmGeometry = struct {
     layers: []SharedRtmLayerGeometry = &.{},
     levels: []SharedRtmLevelGeometry = &.{},
@@ -383,6 +541,7 @@ pub const SharedRtmGeometry = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const GeneratedLutAssetKind = enum {
     reflectance,
@@ -390,16 +549,24 @@ pub const GeneratedLutAssetKind = enum {
     xsec,
 };
 
-// layout(64-bit):
-//   size: 216 B, align: 8 B
-//   field storage: 215 B across 10 fields
-//   largest: compatibility=152 B, dataset_id=16 B, lut_id=16 B
-//   padding: 1 B (8 bits)
-//   unused bits: 8 padding + 7 bool-storage slack = 15 bits
-//   out-of-line: dataset_id, lut_id, provenance_label carry referenced storage
-//   cache span: 4 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 216 B (0.211 KiB); total also includes referenced storage above
+// GeneratedLutAsset ------------------------------------------------------------------------------------------|
+// Metadata and optional owned strings for generated LUT assets retained on PreparedOpticalState.              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 216 B (0.211 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] dataset_id       : []const u8                                                                    |
+// [ 16.. 31] lut_id           : []const u8                                                                    |
+// [ 32.. 47] provenance_label : []const u8                                                                    |
+// [ 48.. 48] kind             : GeneratedLutAssetKind                                                         |
+// [ 49.. 49] mode             : LutControls.Mode                                                              |
+// [ 52.. 63] spectral/layer/coefficient counts: 3 x u32                                                       |
+// [ 64..215] compatibility, owns_strings, and padding                                                         |
+//                                                                                                             |
+// unused bits: 8 padding + 7 bool-storage slack = 15 bits                                                     |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 216 B; optional strings are out of line                                           |
 pub const GeneratedLutAsset = struct {
     dataset_id: []const u8 = "",
     lut_id: []const u8 = "",
@@ -421,17 +588,26 @@ pub const GeneratedLutAsset = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 88 B, align: 8 B
-//   field storage: aerosol_fraction_control=80 B, aerosol_phase_support=1 B; padding: 7 B (56 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 88 B (0.086 KiB); total = per instance * live instance count
+// PreparedStateFractions -------------------------------------------------------------------------------------|
+// Fraction-control state copied into PreparedOpticalState for aerosol optical-depth evaluation.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 88 B (0.086 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..79] aerosol_fraction_control : AtmosphereModel.FractionControl                                         |
+// [80..80] aerosol_phase_support    : PhaseSupportKind                                                        |
+// [81..87] padding                  : 7 B                                                                     |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 88 B; stack or caller-owned row                                                   |
 pub const PreparedStateFractions = struct {
     aerosol_phase_support: PhaseSupportKind = .none,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const PreparedOpticalState = @import("prepared_state.zig").PreparedOpticalState;

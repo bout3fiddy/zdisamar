@@ -6,6 +6,27 @@ const Context = @import("state_build/context.zig");
 const Finalize = @import("state_build/finalize.zig");
 const Trace = @import("../instrumentation/trace.zig");
 
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Optical-property preparation entry point for the forward model.                                             |
+//                                                                                                             |
+// main path                                                                                                   |
+//   Scene + PreparationInputs                                                                                 |
+//     -> PreparationContext                                                                                   |
+//     -> AbsorberBuildState                                                                                   |
+//     -> PreparedMeans                                                                                        |
+//     -> PreparedOpticalState                                                                                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   forward-model implementations before they build transport inputs.                                         |
+//                                                                                                             |
+// instrumentation                                                                                             |
+//   Trace zones split context setup, absorber preparation, layer accumulation, final assembly, and shared     |
+//   RTM geometry so retained benchmark traces can show where optical preparation time moved.                  |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Context and AbsorberBuildState own temporary arrays until Finalize moves them into PreparedOpticalState.  |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const state = @import("state_build/state.zig");
 pub const spectroscopy = @import("state_build/spectroscopy.zig");
 pub const evaluation = @import("state_build/evaluation.zig");
@@ -33,6 +54,7 @@ pub fn prepare(
     inputs: PreparationInputs,
 ) !PreparedOpticalState {
     var context = context: {
+
         // instrumentation: trace zone
         // captures: optical preparation context initialization
         // why: separate input-owned setup from absorber and layer construction.
@@ -43,6 +65,7 @@ pub fn prepare(
     defer context.deinit(allocator);
 
     var absorber_state = absorber_state: {
+
         // instrumentation: trace zone
         // captures: absorber preparation wall time
         // why: isolate spectroscopy and cross-section setup before layer accumulation.
@@ -52,7 +75,8 @@ pub fn prepare(
     };
     defer absorber_state.deinit(allocator);
 
-    const accumulation = accumulation: {
+    const means = accumulation: {
+
         // instrumentation: trace zone
         // captures: layer accumulation wall time
         // why: show cost of reducing atmospheric/spectroscopy data into RTM layers.
@@ -62,16 +86,18 @@ pub fn prepare(
     };
 
     var prepared = prepared: {
+
         // instrumentation: trace zone
         // captures: prepared optical-state finalization wall time
         // why: separate final data-layout assembly from physical layer accumulation.
         const zone = Trace.staticZone(@src(), "optical_prepare.finalize");
         defer zone.end();
-        break :prepared Finalize.assemble(&context, &absorber_state, accumulation);
+        break :prepared Finalize.assemble(&context, &absorber_state, means);
     };
     errdefer prepared.deinit(allocator);
 
     {
+
         // instrumentation: trace zone
         // captures: shared RTM geometry cache construction
         // why: distinguish reusable geometry setup from wavelength-dependent optical work.

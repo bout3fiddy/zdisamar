@@ -5,34 +5,68 @@ const Absorbers = @import("absorbers.zig");
 const Context = @import("context.zig").PreparationContext;
 const State = @import("state.zig");
 
+// finalize.zig -----------------------------------------------------------------------------------------------|
+// Final assembly step for PreparedOpticalState.                                                               |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.prepare after Context, Absorbers, and Accumulation have finished.                                    |
+//                                                                                                             |
+// main path                                                                                                   |
+//   copy scalar means                                                                                         |
+//   move owned context and absorber buffers into PreparedOpticalState                                         |
+//   compute spectroscopy cache keys when they were not borrowed                                               |
+//   clear moved-from owners so cleanup does not double-free them                                              |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   This file does not allocate. Its correctness is the ownership transfer between preparation-only structs   |
+//   and the final state returned to transport and diagnostics.                                                |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn assemble(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
-    accumulation: Accumulation.AccumulationResult,
+    means: Accumulation.PreparedMeans,
 ) State.PreparedOpticalState {
+    // assemble -----------------------------------------------------------------------------------------------|
+    // Move owned preparation buffers into the final PreparedOpticalState and clear the source owners.         |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    // After this returns, PreparedOpticalState owns the arrays it references and context/absorbers no longer  |
+    // free those moved buffers.                                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
     const scene = context.scene;
-    const means = accumulation.means;
     const aerosol_phase_support = if (scene.aerosol.enabled)
         PhaseSupportKind.analytic_hg
     else
         PhaseSupportKind.none;
+    const mean_cross_section_cm2_per_molecule =
+        means.cross_section_mean_cm2_per_molecule +
+        means.line_means.line_mean_cross_section_cm2_per_molecule +
+        means.line_means.line_mixing_mean_cross_section_cm2_per_molecule;
+    const line_mixing_mean_cross_section_cm2_per_molecule =
+        means.line_means.line_mixing_mean_cross_section_cm2_per_molecule;
+
     var prepared: State.PreparedOpticalState = .{
         .layers = context.layers,
         .sublayers = context.sublayers,
         .strong_line_states = absorbers.strong_line_states,
         .spectroscopy_profile_strong_line_states = absorbers.profile_strong_line_states,
         .spectroscopy_profile_weak_line_states = absorbers.profile_weak_line_states,
+
         .continuum_points = context.continuum_points,
         .owns_continuum_points = context.owns_continuum_points,
         .collision_induced_absorption = context.collision_induced_absorption,
         .owns_collision_induced_absorption = context.owns_collision_induced_absorption,
         .spectroscopy_lines = absorbers.owned_lines,
+
         .spectroscopy_profile_altitudes_km = context.spectroscopy_profile_altitudes_km,
         .spectroscopy_profile_pressures_hpa = context.spectroscopy_profile_pressures_hpa,
         .spectroscopy_profile_temperatures_k = context.spectroscopy_profile_temperatures_k,
         .owns_spectroscopy_profile_arrays = context.owns_spectroscopy_profile_arrays,
         .owns_spectroscopy_profile_strong_line_states = absorbers.owns_profile_strong_line_states,
         .owns_spectroscopy_profile_weak_line_states = absorbers.owns_profile_weak_line_states,
+
         .cross_section_absorbers = absorbers.owned_cross_section_absorbers,
         .line_absorbers = absorbers.owned_line_absorbers,
         .continuum_owner_species = absorbers.continuum_owner_species,
@@ -40,14 +74,14 @@ pub fn assemble(
         .operational_o2o2_lut = context.operational_o2o2_lut,
         .owns_operational_o2_lut = context.operational_o2_lut.enabled(),
         .owns_operational_o2o2_lut = context.operational_o2o2_lut.enabled(),
-        .mean_cross_section_cm2_per_molecule = means.cross_section_mean_cm2_per_molecule +
-            means.line_means.line_mean_cross_section_cm2_per_molecule +
-            means.line_means.line_mixing_mean_cross_section_cm2_per_molecule,
+
+        .mean_cross_section_cm2_per_molecule = mean_cross_section_cm2_per_molecule,
         .line_mean_cross_section_cm2_per_molecule = means.line_means.line_mean_cross_section_cm2_per_molecule,
-        .line_mixing_mean_cross_section_cm2_per_molecule = means.line_means.line_mixing_mean_cross_section_cm2_per_molecule,
+        .line_mixing_mean_cross_section_cm2_per_molecule = line_mixing_mean_cross_section_cm2_per_molecule,
         .cia_mean_cross_section_cm5_per_molecule2 = means.cia_mean_cross_section_cm5_per_molecule2,
         .effective_air_mass_factor = means.effective_air_mass_factor,
         .effective_single_scatter_albedo = means.effective_single_scatter_albedo,
+
         .aerosol_single_scatter_albedo = scene.aerosol.single_scatter_albedo,
         .aerosol_phase_coefficients = context.aerosol_phase_coefficients,
         .effective_temperature_k = means.effective_temperature_k,
@@ -59,6 +93,7 @@ pub fn assemble(
         .aerosol_reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
         .aerosol_angstrom_exponent = scene.aerosol.angstrom_exponent,
         .has_aerosol_profile_properties = context.aerosol_profile_layers.len != 0,
+
         .gas_optical_depth = means.gas_optical_depth,
         .cia_optical_depth = means.cia_optical_depth,
         .aerosol_optical_depth = means.aerosol_optical_depth,
@@ -66,19 +101,29 @@ pub fn assemble(
         .d_optical_depth_d_temperature = means.d_optical_depth_d_temperature,
         .depolarization_factor = means.depolarization_factor,
         .total_optical_depth = means.total_optical_depth,
+
         .interval_semantics = scene.atmosphere.interval_grid.semantics,
         .fit_interval_index_1based = scene.atmosphere.interval_grid.fit_interval_index_1based,
         .aerosol_phase_support = aerosol_phase_support,
         .aerosol_fraction_control = context.aerosol_fraction_control,
     };
-    prepared.spectroscopy_plan_key = if (context.borrowed_spectroscopy_plan_key != 0)
-        context.borrowed_spectroscopy_plan_key
-    else
-        prepared.computeSpectroscopyPlanKey();
-    prepared.spectroscopy_profile_cache_inputs_key = if (context.borrowed_spectroscopy_profile_cache_inputs_key != 0)
-        context.borrowed_spectroscopy_profile_cache_inputs_key
-    else
-        prepared.computeSpectroscopyProfileCacheInputsKey();
+    const spectroscopy_plan_key = choose_spectroscopy_plan_key: {
+        if (context.borrowed_spectroscopy_plan_key != 0) {
+            break :choose_spectroscopy_plan_key context.borrowed_spectroscopy_plan_key;
+        }
+
+        break :choose_spectroscopy_plan_key prepared.computeSpectroscopyPlanKey();
+    };
+    prepared.spectroscopy_plan_key = spectroscopy_plan_key;
+
+    const spectroscopy_profile_cache_inputs_key = choose_profile_cache_inputs_key: {
+        if (context.borrowed_spectroscopy_profile_cache_inputs_key != 0) {
+            break :choose_profile_cache_inputs_key context.borrowed_spectroscopy_profile_cache_inputs_key;
+        }
+
+        break :choose_profile_cache_inputs_key prepared.computeSpectroscopyProfileCacheInputsKey();
+    };
+    prepared.spectroscopy_profile_cache_inputs_key = spectroscopy_profile_cache_inputs_key;
 
     context.layers = &.{};
     context.sublayers = &.{};
