@@ -5,15 +5,30 @@ const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
 // Measurement.zig --------------------------------------------------------------------------------------------|
-// Measurement product metadata, spectral masks, and simple error model controls.                              |
+// Measurement product request, spectral exclusion mask, and simple covariance-control metadata.               |
 //                                                                                                             |
-// data                                                                                                        |
-//   SpectralMask stores one band id and optional exclusion windows. ErrorModel carries covariance switches.   |
-//   Measurement stores product identity, source binding, sample count, mask, and error model.                 |
+// called from                                                                                                 |
+//   Scene re-exports Measurement, MeasurementVector, SpectralMask, and ErrorModel for public input assembly.  |
+//   tests/unit/measurement_model_test.zig exercises validation and wavelength exclusion behavior directly.    |
+//   Optimal-estimation C/API code has its own dense MeasurementWorkspace; this file is the input-side request |
+//   shape, not the retrieval workspace.                                                                       |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   Measurement.validate checks the source binding, mask rows, non-zero sample count, and error model floor.  |
+//   SpectralMask.validate ensures exclusion windows are valid and sorted so includesWavelength can scan once. |
+//   includesWavelength and selectedSampleCount apply the exclusions to caller-supplied wavelength arrays.     |
+//   Bands.zig validates named spectral windows; this file is where the measurement mask actually removes      |
+//   samples from the selected measurement wavelength set.                                                     |
+//                                                                                                             |
+// row model                                                                                                   |
+//   SpectralMask stores one band id plus optional exclusion windows.                                          |
+//   ErrorModel carries the source-noise/floor switches that tell later retrieval code whether covariance      |
+//   information is present.                                                                                   |
+//   Measurement stores product identity, source binding, sample count, mask, and error controls together.     |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   Measurement owns only nested mask exclusion rows when cloned by callers. The source binding owns its own  |
-//   copied names.                                                                                             |
+//   Measurement owns only nested mask exclusion rows when cloned by callers. The source binding manages its   |
+//   own copied names, and this file does not own measurement vectors or product arrays.                       |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralMask -----------------------------------------------------------------------------------------------|

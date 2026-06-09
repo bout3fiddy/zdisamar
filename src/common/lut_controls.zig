@@ -2,17 +2,31 @@ const std = @import("std");
 const errors = @import("errors.zig");
 
 // lut_controls.zig -------------------------------------------------------------------------------------------|
-// Shared LUT compatibility controls used by input preparation and cache-matching code.                        |
+// LUT compatibility rows shared by scene input, bundled asset workflows, and prepared optical-state caches.   |
 //                                                                                                             |
-// public values                                                                                               |
-//   Mode                : direct, generate, or consume behavior for a compatibility surface                   |
-//   ReflectanceControls : reflectance and correction compatibility knobs                                      |
-//   XsecControls        : cross-section LUT temperature/pressure grid knobs                                   |
-//   Controls            : grouped reflectance and cross-section controls                                      |
-//   CompatibilityKey    : full scene, instrument, spectroscopy, and LUT identity key                          |
+// called from                                                                                                 |
+//   Scene.validate checks the control rows before execution.                                                  |
+//   Scene.lutCompatibilityKey folds geometry, surface, instrument support, spectroscopy identity, and these   |
+//   controls into the value key passed to generated/consumed LUT workflows.                                   |
+//   input/reference_data/bundled/workflows.zig uses the key when deciding which reflectance or cross-section  |
+//   LUT products to generate, consume, or reject.                                                             |
+//   input/instrument/cross_section_lut.zig uses XsecControls while building operational pressure/temperature  |
+//   Legendre coefficient tables.                                                                              |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   Mode.parse/label keeps text adapters out of the forward model.                                            |
+//   ReflectanceControls and XsecControls validate the knobs for one LUT surface.                              |
+//   Controls groups both surfaces so Scene can validate and compare them together.                            |
+//   CompatibilityKey.matches compares the scene identity with exact enum/count/hash checks and tolerant f64   |
+//   checks for numeric controls that are serialized through text or generated assets.                         |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   These rows are setup/cache identity data. They do not load assets, open files, or run the RTM.            |
+//   The generated LUT evaluators may be hot, but these control structs stay outside the per-sample loop.      |
 //                                                                                                             |
 // memory                                                                                                      |
-//   CompatibilityKey is copied and compared as a compact value. It contains no owned heap storage.            |
+//   CompatibilityKey is a 160 B value copied and compared directly. It contains no slices, pointers, or owned |
+//   heap storage, so cache entries can retain it without a deinit path.                                       |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Mode = enum {

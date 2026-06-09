@@ -13,17 +13,30 @@ pub const IntervalPlacement = @import("atmosphere/interval_grid.zig").IntervalPl
 pub const FractionControl = @import("atmosphere/fraction_control.zig").FractionControl;
 
 // Atmosphere.zig ---------------------------------------------------------------------------------------------|
-// Public atmosphere controls and aliases for interval/fraction support types.                                 |
+// Public atmosphere setup row and re-export point for interval and fraction controls.                         |
 //                                                                                                             |
-// data                                                                                                        |
-//   Atmosphere carries layer counts, profile binding, surface pressure, and optional explicit interval grid.  |
-//   Interval and fraction payload storage is documented in the atmosphere/ submodule files.                   |
+// called from                                                                                                 |
+//   Scene.validate checks this row before optical preparation.                                                |
+//   vertical_grid.zig calls preparedLayerCount and interval_grid to choose legacy evenly divided layers or    |
+//   explicit pressure/altitude intervals.                                                                     |
+//   layer_accumulation.zig and Context consume the prepared interval/fraction controls after vertical-grid    |
+//   construction, especially for particle and aerosol support placement.                                      |
+//   input/o2a_reference/root.zig fills these fields for the O2 A reference cases.                             |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   preparedLayerCount returns the explicit interval count when interval_grid is enabled, otherwise the       |
+//   legacy layer_count. That count controls vertical-grid allocation and later prepared layer storage.        |
+//   validate rejects inert-looking partial configurations: enabled aerosol/profile/surface-pressure controls  |
+//   require at least one prepared layer, interval grids must agree with layer_count when both are present,    |
+//   and sublayer_divisions must be non-zero.                                                                  |
+//                                                                                                             |
+// exported support rows                                                                                       |
+//   IntervalSemantics, VerticalInterval, IntervalGrid, IntervalPlacement, and FractionControl live in the     |
+//   atmosphere/ submodule files where their payload and layout comments are kept with the concrete structs.   |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   deinitOwned delegates to IntervalGrid. The profile source binding is validated here but not owned here.   |
-//                                                                                                             |
-// validation                                                                                                  |
-//   Prepared layer count comes from explicit intervals when present; otherwise it uses layer_count.           |
+//   deinitOwned delegates to IntervalGrid. The profile source binding is validated here; binding name storage |
+//   is managed by the caller or loader that created the Atmosphere row.                                       |
 // ------------------------------------------------------------------------------------------------------------|
 
 // Atmosphere -------------------------------------------------------------------------------------------------|

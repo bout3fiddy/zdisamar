@@ -8,18 +8,28 @@ pub const IntervalSemantics = types.IntervalSemantics;
 pub const ParticlePlacementSemantics = types.ParticlePlacementSemantics;
 
 // interval_grid.zig ------------------------------------------------------------------------------------------|
-// Explicit atmosphere interval and particle-placement controls.                                               |
+// Explicit vertical interval and particle-placement input rows used before optical support rows are prepared. |
 //                                                                                                             |
-// data                                                                                                        |
-//   VerticalInterval is one prepared support interval. IntervalGrid owns the optional interval slice.         |
-//   IntervalPlacement carries aerosol or particle placement bounds.                                           |
+// called from                                                                                                 |
+//   Atmosphere re-exports these types as part of the public input model.                                      |
+//   Scene.validate reaches IntervalGrid.validate through Atmosphere.validate before any forward-model setup.  |
+//   vertical_grid.zig materializes VerticalInterval rows into layer and sublayer altitude/pressure arrays,    |
+//   keeping 1-based interval indexes for later support-row diagnostics.                                       |
+//   particle_profiles and layer_accumulation use IntervalPlacement to distribute scalar aerosol or particle   |
+//   optical depth over the prepared support grid.                                                             |
 //                                                                                                             |
-// validation                                                                                                  |
-//   Pressure bounds use hPa and must be ordered from top to bottom. Altitude bounds are optional but must be  |
-//   present as a pair when used.                                                                              |
+// main paths                                                                                                  |
+//   VerticalInterval.validate checks one interval's pressure bounds, optional paired altitude bounds, and     |
+//   pressure variance values.                                                                                 |
+//   IntervalGrid.validate checks interval contiguity, 1-based indexes, fit-interval bounds, and fallback      |
+//   sublayer divisions before vertical-grid allocation depends on them.                                       |
+//   IntervalPlacement.validate accepts either an altitude center/width approximation or explicit interval     |
+//   bounds; both routes use the shared units validators in common/units.zig.                                  |
+//   midpointAltitudeKm and thicknessKm are setup helpers for approximate placement, not RTM hot-loop math.    |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   IntervalGrid.deinitOwned releases the interval slice only when owns_intervals is true.                    |
+//   IntervalGrid owns only the optional VerticalInterval slice when owns_intervals is true.                   |
+//   IntervalPlacement is a plain value row and has no deinit path.                                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // VerticalInterval -------------------------------------------------------------------------------------------|

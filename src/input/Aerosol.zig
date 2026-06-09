@@ -7,18 +7,27 @@ pub const FractionControl = AtmosphereModel.FractionControl;
 pub const max_profile_layers: usize = 256;
 
 // Aerosol.zig ------------------------------------------------------------------------------------------------|
-// Public aerosol controls and optional profile rows.                                                          |
+// Public aerosol input rows used before optical preparation distributes particles over support sublayers.     |
 //                                                                                                             |
-// data                                                                                                        |
-//   ProfileLayer stores explicit pressure-layer aerosol properties. Profile is a borrowed slice header over   |
-//   those rows. Aerosol carries scalar defaults plus optional interval placement and fraction controls.       |
+// called from                                                                                                 |
+//   Scene.validate checks scalar aerosol controls as part of public input validation.                         |
+//   input/o2a_reference/root.zig exposes ProfileLayer rows for O2 A reference and benchmark cases.            |
+//   state_build/context.zig validates explicit profile rows and rejects mixing them with scalar fraction      |
+//   controls.                                                                                                 |
+//   layer_accumulation.zig either maps scalar Aerosol placement/fraction controls through particle_profiles   |
+//   or spreads explicit ProfileLayer rows across prepared sublayers by pressure overlap.                      |
+//   forward_layers and state_optical_depth later read the prepared aerosol optical-depth and phase values,    |
+//   including Jacobian attachment when aerosol optical depth is requested.                                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   ProfileLayer.validate checks explicit pressure-layer optical properties and spectral scaling inputs.      |
+//   Profile.validate checks a borrowed row slice supplied by a loader or caller.                              |
+//   Aerosol.validate checks scalar defaults, requires placement when scalar aerosol is enabled/non-zero, and  |
+//   ensures the nested FractionControl targets aerosol when active.                                           |
+//   deinitOwned only releases nested fraction arrays; explicit profile rows stay borrowed.                    |
 //                                                                                                             |
 // units                                                                                                       |
 //   Optical depth is dimensionless. Reference wavelength is stored in nanometers. Pressure bounds are hPa.    |
-//                                                                                                             |
-// ownership                                                                                                   |
-//   Aerosol owns only nested fraction arrays when FractionControl.owns_arrays is true. Profile rows are       |
-//   managed by their loader or caller.                                                                        |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ProfileLayer -----------------------------------------------------------------------------------------------|
