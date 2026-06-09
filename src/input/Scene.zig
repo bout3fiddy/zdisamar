@@ -4,30 +4,37 @@ const LutControls = @import("../common/lut_controls.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberModel = @import("Absorber.zig");
 
-// Scene.zig ------------------------------------------------------------------------------------------------- |
-// Public typed request boundary for one forward-model run.                                                    |
+// Scene.zig --------------------------------------------------------------------------------------------------|
+// Public typed request boundary for one forward-model run and the stable zdisamar.Input type.                 |
 //                                                                                                             |
 // used by                                                                                                     |
-//   optical_properties/state_build/context.zig as the input validation gate before preparation                |
-//   instrument_grid/grid_calculation/simulate.zig as the product-grid request                                 |
-//   reference_data/bundled selection workflows when generated LUT compatibility is checked                    |
+//   root.zig exposes Scene as the public Input API                                                            |
+//   o2a_reference/run.zig builds owned O2 A scenes from parsed vendor/control data                            |
+//   optical_properties/state_build/context.zig validates Scene before optical preparation                     |
+//   instrument_grid/grid_calculation/simulate.zig reads Scene as the product-grid request                     |
+//   bundled reference-data workflows derive LUT selection and generated-asset compatibility from it           |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   validate                                                                                                  |
-//     -> validate every nested input row, cross-check measured wavelengths against spectral_grid, and reject  |
-//        operational-band support that cannot yet match the requested band count                              |
+//   validate -> nested row validation, band-support count checks, measured-wavelength/grid agreement          |
+//   lutCompatibilityKey -> geometry + nominal grid + instrument support + active spectroscopy controls        |
+//   lutNominalWavelengthBounds / lutLowResolutionSamplingIdentity -> effective nominal grid for LUT keys      |
+//   deinitOwned -> release only nested storage with explicit ownership in child rows                          |
 //                                                                                                             |
-//   lutCompatibilityKey                                                                                       |
-//     -> derive the cache key for generated cross-section and O2-O2 LUTs from scene geometry, nominal grid,   |
-//        operational support, surface albedo, spectroscopy bindings, and active line controls                 |
+// boundary rules                                                                                              |
+//   Scene carries typed inputs only. Forward-model code may read it, but parsing, file I/O, and generated     |
+//   asset loading stay in input/reference-data layers. No nested control should be silently ignored: validate |
+//   accepts it, rejects it, or key-building includes the controls that affect generated LUT compatibility.    |
 //                                                                                                             |
-//   deinitOwned                                                                                               |
-//     -> release only nested storage that the Scene or its child structs explicitly own                       |
+// layout                                                                                                      |
+//   Scene is a 672 B value row with nested owner/view headers. The row itself does not own referenced storage |
+//   by default; ownership flags live in child structs such as bands, absorbers, aerosol, observation_model,   |
+//   interval grids, and operational support rows.                                                             |
 //                                                                                                             |
-// ownership                                                                                                   |
-//   Scene is a value row with many nested slice headers. The row does not own referenced storage by default;  |
-//   ownership flags live inside the child structs that know how to free their buffers.                        |
-// ----------------------------------------------------------------------------------------------------------- |
+// hot path                                                                                                    |
+//   Scene is passed by pointer through preparation and product simulation. Cache-key hashing scans absorber   |
+//   controls during setup; wavelength-time RTM and instrument loops should consume prepared state instead of  |
+//   repeatedly interpreting this public input row.                                                            |
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
 pub const Binding = @import("Binding.zig").Binding;
