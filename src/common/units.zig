@@ -6,18 +6,30 @@ pub const Error = error{
 };
 
 // units.zig --------------------------------------------------------------------------------------------------|
-// Shared scalar range and angle wrappers used by scene input, adapters, and validation code.                  |
+// Small unit-aware value wrappers used by input models to keep range checks close to the stored unit.         |
 //                                                                                                             |
-// names                                                                                                       |
-//   WavelengthRange  : nanometer spectral interval                                                            |
-//   AltitudeRangeKm  : kilometer altitude interval                                                            |
+// used by                                                                                                     |
+//   Spectrum and Bands validate nanometer spectral windows.                                                   |
+//   Geometry validates solar/view zenith and relative azimuth angles before scene execution.                  |
+//   atmosphere/interval_grid.zig validates explicit pressure and altitude interval controls before vertical   |
+//   grid preparation copies them into support rows.                                                           |
+//   common/units_test.zig covers the inclusive and ordered bounds used by those callers.                      |
+//                                                                                                             |
+// value rows                                                                                                  |
+//   WavelengthRange  : nanometer interval, start < end                                                        |
+//   AltitudeRangeKm  : kilometer interval, bottom <= top and bottom >= 0                                      |
 //   PressureRangeHpa : pressure interval in hPa, ordered top then bottom                                      |
-//   AngleDeg         : finite angle wrapper without range limits                                              |
-//   ZenithAngleDeg   : angle constrained to [0, 180] degrees                                                  |
-//   AzimuthAngleDeg  : angle constrained to [0, 360] degrees                                                  |
+//   AngleDeg         : finite angle wrapper without a physical range limit                                    |
+//   ZenithAngleDeg   : finite angle constrained to [0, 180] degrees                                           |
+//   AzimuthAngleDeg  : finite angle constrained to [0, 360] degrees                                           |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   This file does validation only. It does not convert units, store provenance, allocate, or own input text. |
+//   Callers map InvalidRange/InvalidValue into their public error type when needed.                           |
 //                                                                                                             |
 // memory                                                                                                      |
-//   These wrappers are small value types. Arrays, owning structs, and stack locals decide the live count.     |
+//   Each wrapper is one or two f64 fields copied by value. Arrays, owning structs, and stack locals decide    |
+//   the live count; there is no referenced storage or deinit path here.                                       |
 // ------------------------------------------------------------------------------------------------------------|
 
 // WavelengthRange --------------------------------------------------------------------------------------------|
