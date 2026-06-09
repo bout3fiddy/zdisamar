@@ -128,6 +128,78 @@ pub const ReducedLayerInputCarrierRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------|
 
+// SharedLayerSubgridEvaluationRequest -----------------------------------------------------------------------|
+// Borrowed inputs for evaluating one shared RTM layer on a Gauss subgrid.                                    |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 112 B (0.109 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] prepared           : *const PreparedOpticalState                                                |
+// [  8.. 15] scene              : *const Scene                                                               |
+// [ 16.. 23] wavelength_nm      : f64                                                                        |
+// [ 24.. 39] support_sublayers  : []const PreparedSublayer                                                   |
+// [ 40.. 55] strong_line_states : ?[]const StrongLinePreparedState                                           |
+// [ 56.. 95] layer_geometry     : SharedRtmLayerGeometry                                                     |
+// [ 96..103] scratch            : *GaussRuleScratch                                                          |
+// [104..111] profile_cache      : ?*const ProfileNodeSpectroscopyCache                                       |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, support rows, strong-line rows, scratch, and profile cache are borrowed.                |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per subgrid evaluation = 112 B plus borrowed support/cache/scratch storage                      |
+pub const SharedLayerSubgridEvaluationRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    scratch: *shared_geometry.GaussRuleScratch,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// SharedPseudoSphericalSubgridRequest -----------------------------------------------------------------------|
+// Borrowed inputs for writing pseudo-spherical samples on a shared RTM subgrid.                              |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 136 B (0.133 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] prepared            : *const PreparedOpticalState                                               |
+// [  8.. 15] scene               : *const Scene                                                              |
+// [ 16.. 23] wavelength_nm       : f64                                                                       |
+// [ 24.. 39] support_sublayers   : []const PreparedSublayer                                                  |
+// [ 40.. 55] strong_line_states  : ?[]const StrongLinePreparedState                                          |
+// [ 56.. 95] layer_geometry      : SharedRtmLayerGeometry                                                    |
+// [ 96..111] attenuation_samples : []PseudoSphericalSample                                                   |
+// [112..119] sample_index_start  : usize                                                                     |
+// [120..127] scratch             : *GaussRuleScratch                                                         |
+// [128..135] profile_cache       : ?*const ProfileNodeSpectroscopyCache                                      |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, support rows, strong-line rows, output samples, scratch, and profile cache are borrowed.|
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 3 cache lines at 64 B per line                                                                 |
+// footprint: per subgrid fill = 136 B plus borrowed support/output/cache/scratch storage                     |
+pub const SharedPseudoSphericalSubgridRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    sample_index_start: usize,
+    scratch: *shared_geometry.GaussRuleScratch,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 fn strongLineStateAt(
     states: ?[]const ReferenceData.StrongLinePreparedState,
     local_index: usize,
@@ -574,27 +646,21 @@ pub fn evaluateSharedLayerOnSubgrid(
     layer_geometry: SharedRtmLayerGeometry,
     scratch: *shared_geometry.GaussRuleScratch,
 ) EvaluatedLayer {
-    return evaluateSharedLayerOnSubgridWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        support_sublayers,
-        strong_line_states,
-        layer_geometry,
-        scratch,
-        null,
-    );
+    const request = SharedLayerSubgridEvaluationRequest{
+        .prepared = self,
+        .scene = scene,
+        .wavelength_nm = wavelength_nm,
+        .support_sublayers = support_sublayers,
+        .strong_line_states = strong_line_states,
+        .layer_geometry = layer_geometry,
+        .scratch = scratch,
+        .profile_cache = null,
+    };
+    return evaluateSharedLayerOnSubgridWithSpectroscopyCache(&request);
 }
 
 pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    scratch: *shared_geometry.GaussRuleScratch,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    request: *const SharedLayerSubgridEvaluationRequest,
 ) EvaluatedLayer {
     // evaluateSharedLayerOnSubgridWithSpectroscopyCache -----------------------------------------------------|
     // Evaluate shared optical carriers on Gauss subgrid points for RTM quadrature.                           |
@@ -605,22 +671,22 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     // -------------------------------------------------------------------------------------------------------|
 
     const subgrid = resolveSharedRtmSubgrid(
-        layer_geometry.lower_altitude_km,
-        layer_geometry.upper_altitude_km,
-        sharedRtmSubgridSampleCount(scene),
-        scratch,
+        request.layer_geometry.lower_altitude_km,
+        request.layer_geometry.upper_altitude_km,
+        sharedRtmSubgridSampleCount(request.scene),
+        request.scratch,
     );
     var breakdown: OpticalDepthBreakdown = .{};
     for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         if (weight_km <= 0.0) continue;
         const carrier = carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-            self,
-            wavelength_nm,
-            support_sublayers,
-            strong_line_states,
+            request.prepared,
+            request.wavelength_nm,
+            request.support_sublayers,
+            request.strong_line_states,
             subgrid.altitudes_km[node_index],
-            profile_cache,
+            request.profile_cache,
         );
         accumulateSharedCarrier(
             &breakdown,
@@ -630,11 +696,11 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     }
 
     return evaluatedLayerFromSharedCarrier(
-        scene,
-        wavelength_nm,
-        layer_geometry.midpoint_altitude_km,
+        request.scene,
+        request.wavelength_nm,
+        request.layer_geometry.midpoint_altitude_km,
         breakdown,
-        &self.aerosol_phase_coefficients,
+        &request.prepared.aerosol_phase_coefficients,
     );
 }
 
@@ -649,55 +715,47 @@ pub fn fillSharedPseudoSphericalSamplesOnSubgrid(
     sample_index_start: usize,
     scratch: *shared_geometry.GaussRuleScratch,
 ) usize {
-    return fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        support_sublayers,
-        strong_line_states,
-        layer_geometry,
-        attenuation_samples,
-        sample_index_start,
-        scratch,
-        null,
-    );
+    const request = SharedPseudoSphericalSubgridRequest{
+        .prepared = self,
+        .scene = scene,
+        .wavelength_nm = wavelength_nm,
+        .support_sublayers = support_sublayers,
+        .strong_line_states = strong_line_states,
+        .layer_geometry = layer_geometry,
+        .attenuation_samples = attenuation_samples,
+        .sample_index_start = sample_index_start,
+        .scratch = scratch,
+        .profile_cache = null,
+    };
+    return fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(&request);
 }
 
 pub fn fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    sample_index_start: usize,
-    scratch: *shared_geometry.GaussRuleScratch,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    request: *const SharedPseudoSphericalSubgridRequest,
 ) usize {
     const subgrid = resolveSharedRtmSubgrid(
-        layer_geometry.lower_altitude_km,
-        layer_geometry.upper_altitude_km,
-        sharedRtmSubgridSampleCount(scene),
-        scratch,
+        request.layer_geometry.lower_altitude_km,
+        request.layer_geometry.upper_altitude_km,
+        sharedRtmSubgridSampleCount(request.scene),
+        request.scratch,
     );
-    var sample_index = sample_index_start;
+    var sample_index = request.sample_index_start;
     for (0..subgrid.altitudes_km.len) |node_index| {
         const weight_km = subgrid.weights_km[node_index];
         const optical_depth = choose_optical_depth: {
             if (weight_km <= 0.0) break :choose_optical_depth 0.0;
 
             break :choose_optical_depth weight_km * carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-                self,
-                wavelength_nm,
-                support_sublayers,
-                strong_line_states,
+                request.prepared,
+                request.wavelength_nm,
+                request.support_sublayers,
+                request.strong_line_states,
                 subgrid.altitudes_km[node_index],
-                profile_cache,
+                request.profile_cache,
             ).totalOpticalDepthPerKm();
         };
 
-        attenuation_samples[sample_index] = .{
+        request.attenuation_samples[sample_index] = .{
             .altitude_km = subgrid.altitudes_km[node_index],
             .thickness_km = weight_km,
             .optical_depth = optical_depth,
