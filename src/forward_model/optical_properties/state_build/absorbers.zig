@@ -45,11 +45,11 @@ const max_profile_spectroscopy_cache_nodes: usize = 64;
 //   PreparedOpticalState.                                                                                        |
 // ------------------------------------------------------------------------------------------------------------   |
 
-// ProfileLineStateWorker ------------------------------------------------------------------------------------    |
-// Per-thread descriptor for profile line-state preparation.                                                      |
+// ProfileLineStateRequest -----------------------------------------------------------------------------------    |
+// Borrowed inputs shared by profile line-state workers.                                                          |
 //                                                                                                                |
 // layout(64-bit)                                                                                                 |
-// size: 304 B (0.297 KiB), align: 8 B                                                                            |
+// size: 272 B (0.266 KiB), align: 8 B                                                                            |
 //                                                                                                                |
 // memory                                                                                                         |
 // [  0..207] line_list                 : SpectroscopyLineList                                                    |
@@ -57,23 +57,43 @@ const max_profile_spectroscopy_cache_nodes: usize = 64;
 // [224..239] pressures_hpa             : []const f64                                                             |
 // [240..255] weak_states               : ?[]WeakLinePreparedState                                                |
 // [256..271] strong_states             : ?[]StrongLinePreparedState                                              |
-// [272..287] strong_relaxation_weights : []f64                                                                   |
-// [288..295] queue                     : *ChunkQueue                                                             |
-// [296..303] worker_index              : usize                                                                   |
 //                                                                                                                |
 // out-of-line                                                                                                    |
-//   profile arrays, state arrays, relaxation weights, and queue storage are borrowed by the worker.              |
-//   line_list carries descriptors for spectroscopy line storage; ownership stays outside this worker row.        |
+//   profile arrays and state arrays are borrowed from prepareProfileLineStates.                                  |
+//   line_list carries descriptors for spectroscopy line storage; ownership stays outside this request.           |
 //                                                                                                                |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
 // cache span: 5 cache lines at 64 B per line                                                                     |
-// footprint: per instance = 304 B plus borrowed storage                                                          |
-const ProfileLineStateWorker = struct {
+// footprint: per profile fill = 272 B plus borrowed profile/state storage                                        |
+const ProfileLineStateRequest = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
+};
+// ------------------------------------------------------------------------------------------------------------   |
+
+// ProfileLineStateWorker ------------------------------------------------------------------------------------    |
+// Per-thread descriptor for profile line-state preparation.                                                      |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 40 B (0.039 KiB), align: 8 B                                                                             |
+//                                                                                                                |
+// memory                                                                                                         |
+// [ 0.. 7] request                   : *const ProfileLineStateRequest                                            |
+// [ 8..23] strong_relaxation_weights : []f64                                                                     |
+// [24..31] queue                     : *ChunkQueue                                                               |
+// [32..39] worker_index              : usize                                                                     |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   request, relaxation weights, and queue storage are borrowed by the worker.                                   |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 1 cache line at 64 B per line                                                                      |
+// footprint: per worker = 40 B plus borrowed request/scratch/queue storage                                       |
+const ProfileLineStateWorker = struct {
+    request: *const ProfileLineStateRequest,
     strong_relaxation_weights: []f64,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
@@ -481,14 +501,17 @@ fn fillProfileLineStates(
     //   fillProfileLineStateRange                                                                                |
     // ---------------------------------------------------------------------------------------------------------  |
 
+    const request = ProfileLineStateRequest{
+        .line_list = line_list,
+        .temperatures_k = temperatures_k,
+        .pressures_hpa = pressures_hpa,
+        .weak_states = weak_states,
+        .strong_states = strong_states,
+    };
     const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
     if (worker_count == 1) {
         fillProfileLineStateRange(
-            line_list,
-            temperatures_k,
-            pressures_hpa,
-            weak_states,
-            strong_states,
+            &request,
             strong_relaxation_weight_scratch[0..strong_weight_count],
             0,
             temperatures_k.len,
@@ -511,11 +534,7 @@ fn fillProfileLineStates(
             empty_strong_relaxation_weights[0..];
 
         workers[worker_index] = .{
-            .line_list = line_list,
-            .temperatures_k = temperatures_k,
-            .pressures_hpa = pressures_hpa,
-            .weak_states = weak_states,
-            .strong_states = strong_states,
+            .request = &request,
             .strong_relaxation_weights = strong_relaxation_weights,
 
             .queue = &queue,
@@ -571,11 +590,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
             defer chunk_zone.end();
 
             fillProfileLineStateRange(
-                worker.line_list,
-                worker.temperatures_k,
-                worker.pressures_hpa,
-                worker.weak_states,
-                worker.strong_states,
+                worker.request,
                 worker.strong_relaxation_weights,
                 chunk.start,
                 chunk.end,
@@ -585,29 +600,25 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
 }
 
 fn fillProfileLineStateRange(
-    line_list: ReferenceData.SpectroscopyLineList,
-    temperatures_k: []const f64,
-    pressures_hpa: []const f64,
-    weak_states: ?[]ReferenceData.WeakLinePreparedState,
-    strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    request: *const ProfileLineStateRequest,
     strong_relaxation_weights: []f64,
     start: usize,
     end: usize,
 ) void {
     for (start..end) |index| {
-        if (weak_states) |states| {
-            line_list.prepareWeakLineStateInto(
+        if (request.weak_states) |states| {
+            request.line_list.prepareWeakLineStateInto(
                 &states[index],
-                temperatures_k[index],
-                pressures_hpa[index],
+                request.temperatures_k[index],
+                request.pressures_hpa[index],
             );
         }
-        if (strong_states) |states| {
-            line_list.prepareStrongLineStateIntoWithScratch(
+        if (request.strong_states) |states| {
+            request.line_list.prepareStrongLineStateIntoWithScratch(
                 &states[index],
                 strong_relaxation_weights,
-                temperatures_k[index],
-                pressures_hpa[index],
+                request.temperatures_k[index],
+                request.pressures_hpa[index],
             );
         }
     }
