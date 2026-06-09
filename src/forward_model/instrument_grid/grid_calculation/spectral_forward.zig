@@ -18,7 +18,24 @@ const Telemetry = @import("../../instrumentation/telemetry.zig");
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
-// PUB FOR TEST: re-exported via measurement/internal.zig.
+// spectral_forward.zig --------------------------------------------------------------------------------------------------|
+// Computes high-resolution forward misses. Each miss is one wavelength that must run through optical input               |
+// preparation, LABOS transport, and radiance scaling before nominal instrument rows can gather the result.               |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   spectral_eval.zig after wavelength_sampling.zig has deduplicated radiance integration wavelengths                    |
+//                                                                                                                        |
+// main paths                                                                                                             |
+//   prefetchForwardSamples                    -> schedule all misses                                                     |
+//   prefetchForwardWorkerMain                 -> worker loop with reusable scratch                                       |
+//   computeForwardSampleAtWavelengthWithScratch -> one wavelength through ForwardInput + LABOS                           |
+//                                                                                                                        |
+// memory                                                                                                                 |
+//   Each worker owns ForwardSampleScratch so layer/source/quadrature/pseudo-spherical/LABOS buffers can be               |
+//   reused across many misses without sharing mutable transport state.                                                   |
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// Re-exported through src/internal.zig so the worker-count threshold stays covered by unit tests.
 pub const min_parallel_forward_miss_count: usize = 32;
 
 pub const ForwardIntegratedSample = Types.ForwardIntegratedSample;
@@ -30,10 +47,10 @@ const forward_prefetch_chunk_size: usize = 8;
 // more queue traffic for less tail imbalance across thousands of LABOS misses.
 const forward_prefetch_pooled_chunk_size: usize = 8;
 
-// migration note: Zig 0.15.2 prefetch runtime ---------------------------------------------------------------|
-// Forward prefetch uses std.Thread.Pool while product builds remain pinned to Zig 0.15.2.                    |
-// The abandoned 0.16 migration used std.Io.Threaded/Group here; keep retained timing independent of that.    |
-// end migration note: Zig 0.15.2 prefetch runtime -----------------------------------------------------------|
+// migration note: Zig 0.15.2 prefetch runtime ---------------------------------------------------------------------------|
+// Forward prefetch uses std.Thread.Pool while product builds remain pinned to Zig 0.15.2.                                |
+// The abandoned 0.16 migration used std.Io.Threaded/Group here; keep retained timing independent of that.                |
+// end migration note: Zig 0.15.2 prefetch runtime -----------------------------------------------------------------------|
 
 const TracePrefetchRoute = if (Storage.trace_phase_timing_enabled) struct {
     const WorkerLabosTiming = ?*labos.PhaseTiming;
@@ -59,23 +76,30 @@ const trace_worker_labos_timing_default = TracePrefetchRoute.worker_labos_timing
 const trace_single_labos_timing_default = TracePrefetchRoute.single_labos_timing_empty;
 const trace_labos_timing_storage_default: TraceLabosTimingStorage = undefined;
 
-// hot path:
-//   when: allocated once per forward prefetch worker
-//   work: owns reusable layer, source, quadrature, carrier, pseudo-spherical, and LABOS buffers
-//   reads: per-worker scratch slices and labos.Workspace
-//   follow: reuse inside prefetchForwardWorkerMain across forward misses
-// layout(64-bit):
-//   size: 3304 B, align: 8 B
-//   field storage:
-//     3304 B across 8 fields; largest: labos_workspace=3168 B, support_carrier_cache=40 B
-//     layer_inputs=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line:
-//     layer_inputs always owns transport rows
-//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are rtm_config-gated
-//   cache span: 52 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3304 B (3.227 KiB); total also includes referenced storage above
+// ForwardSampleScratch --------------------------------------------------------------------------------------------------|
+// Worker-local scratch storage for repeated high-resolution forward misses.                                              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 3304 B (3.227 KiB) normally; 3320 B (3.242 KiB) with trace phase timing, align: 8 B                              |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [   0..  15] layer_inputs                     : []common.LayerInput                                                    |
+// [  16..  31] source_interfaces                : []common.SourceInterfaceInput                                          |
+// [  32..  47] rtm_quadrature_levels            : []common.RtmQuadratureLevel                                            |
+// [  48..  63] pseudo_spherical_samples         : []common.PseudoSphericalSample                                         |
+// [  64..  79] pseudo_spherical_level_starts    : []usize                                                                |
+// [  80..  95] pseudo_spherical_level_altitudes : []f64                                                                  |
+// [  96.. 135] support_carrier_cache            : CarrierEval.SupportRowScalarCache                                      |
+// [ 136..3303] labos_workspace                  : labos.Workspace                                                        |
+//                                                                                                                        |
+// trace phase timing build                                                                                               |
+//   labos_workspace grows to [136..3319] because LABOS retains a trace-phase timing pointer.                             |
+//                                                                                                                        |
+// slice fields carry out-of-line transport buffers not included in the struct size.                                      |
+//                                                                                                                        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 52 cache lines at 64 B per line                                                                            |
+// footprint: per instance = 3304 B (3.227 KiB) normally; 3320 B (3.242 KiB) with trace phase timing                      |
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -93,6 +117,14 @@ const ForwardSampleScratch = struct {
         rtm_config: common.SolveConfig,
         prepared: *const OpticsPreparation.PreparedOpticalState,
     ) !void {
+        // ForwardSampleScratch.initInto ---------------------------------------------------------------------------------|
+        // Allocate worker-local scratch buffers sized from the resolved prepared state and RTM controls.                 |
+        //                                                                                                                |
+        // why                                                                                                            |
+        //   A worker computes many misses. Reusing these buffers avoids per-miss allocation and keeps LABOS              |
+        //   workspace state private to the worker.                                                                       |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         const layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
         const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
@@ -151,6 +183,10 @@ const ForwardSampleScratch = struct {
     }
 
     fn deinit(self: *ForwardSampleScratch, allocator: Allocator) void {
+        // ForwardSampleScratch.deinit -----------------------------------------------------------------------------------|
+        // Release every worker-local scratch buffer and the nested LABOS workspace.                                      |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         self.labos_workspace.deinit();
         allocator.free(self.layer_inputs);
         if (self.source_interfaces.len != 0) allocator.free(self.source_interfaces);
@@ -164,38 +200,62 @@ const ForwardSampleScratch = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// ForwardPrefetchErrorState ---------------------------------------------------------------------------------------------|
+// Shared first-error slot for parallel forward-prefetch workers.                                                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] mutex   : std.Thread.Mutex                                                                                    |
+// [16..17] err     : ?Error                                                                                              |
+// [18..23] padding : 6 B                                                                                                 |
+//                                                                                                                        |
+// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                               |
+// footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count                                 |
 const ForwardPrefetchErrorState = struct {
     mutex: std.Thread.Mutex = .{},
     err: ?Error = null,
 
     fn store(self: *ForwardPrefetchErrorState, err: Error) void {
+        // ForwardPrefetchErrorState.store -------------------------------------------------------------------------------|
+        // Record the first worker error. A mutex is enough here because workers only write on failure.                   |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.err == null) self.err = err;
     }
 };
 
-// layout(product 64-bit):
-//   size: 184 B, align: 8 B
-//   field storage:
-//     184 B across 11 product fields; largest: rtm_config=80 B, misses=16 B
-//     profile_spectroscopy_caches=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line:
-//     scene, prepared, misses, profile_spectroscopy_caches, results, +2 more carry references/descriptors
-//     referenced storage is not included in size
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 184 B (0.180 KiB); total also includes referenced storage above
-//   telemetry:
-//     telemetry_context is zero-size in product builds
-//     validation telemetry builds use it for row attribution
+// ForwardPrefetchWorker -------------------------------------------------------------------------------------------------|
+// Worker context for high-resolution LABOS prefetch.                                                                     |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 184 B (0.180 KiB) normally; 192 B (0.188 KiB) with trace phase timing, align: 8 B                                |
+//                                                                                                                        |
+// memory, normal build                                                                                                   |
+// [  0..  7] scene                        : *const Scene                                                                 |
+// [  8.. 87] rtm_config                   : common.SolveConfig                                                           |
+// [ 88.. 95] prepared                     : *const OpticsPreparation.PreparedOpticalState                                |
+// [ 96..111] misses                       : []const ForwardCacheMiss                                                     |
+// [112..127] profile_spectroscopy_caches  : []const SpectroscopyState.ProfileNodeSpectroscopyCache                       |
+// [128..143] results                      : []ForwardIntegratedSample                                                    |
+// [144..151] error_state                  : *ForwardPrefetchErrorState                                                   |
+// [152..159] start_index                  : usize                                                                        |
+// [160..167] end_index                    : usize                                                                        |
+// [168..175] queue                        : ?*work_partition.ChunkQueue                                                  |
+// [176..183] worker_index                 : usize                                                                        |
+//                                                                                                                        |
+// trace phase timing build                                                                                               |
+//   labos_phase_timing occupies [184..191]. telemetry_context is zero-size in product and trace-phase builds.            |
+//                                                                                                                        |
+// pointers and slices reference external storage not included in the struct size.                                        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 3 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 184 B (0.180 KiB) normally; 192 B (0.188 KiB) with trace phase timing                        |
+// telemetry                                                                                                              |
+//   validation telemetry builds use telemetry_context for row attribution.                                               |
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     rtm_config: common.SolveConfig,
@@ -217,6 +277,10 @@ inline fn initializeTraceLabosTimingStorage(
     worker_count: usize,
     storage: *TraceLabosTimingStorage,
 ) void {
+    // initializeTraceLabosTimingStorage ---------------------------------------------------------------------------------|
+    // Clear per-worker LABOS timing slots when the opt-in phase timing route is active.                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime Storage.trace_phase_timing_enabled) {
         if (trace_phase_timing != null) {
             for (storage[0..worker_count]) |*timing| timing.* = .{};
@@ -229,6 +293,11 @@ inline fn attachSingleTraceLabosTiming(
     scratch: *ForwardSampleScratch,
     timing: *TraceSingleLabosTiming,
 ) void {
+    // attachSingleTraceLabosTiming --------------------------------------------------------------------------------------|
+    // Attach LABOS phase timing for the single-worker route so it reports through the same aggregate fields              |
+    // as the parallel route.                                                                                             |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime Storage.trace_phase_timing_enabled) {
         _ = trace_phase_timing orelse return;
         scratch.labos_workspace.setTracePhaseTiming(timing);
@@ -236,6 +305,10 @@ inline fn attachSingleTraceLabosTiming(
 }
 
 inline fn clearTraceLabosTiming(scratch: *ForwardSampleScratch) void {
+    // clearTraceLabosTiming ---------------------------------------------------------------------------------------------|
+    // Detach any opt-in LABOS timing sink before worker scratch is reused or destroyed.                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime Storage.trace_phase_timing_enabled) {
         scratch.labos_workspace.clearTracePhaseTiming();
     }
@@ -246,6 +319,11 @@ inline fn traceWorkerLabosTiming(
     storage: *TraceLabosTimingStorage,
     worker_index: usize,
 ) TraceWorkerLabosTiming {
+    // traceWorkerLabosTiming --------------------------------------------------------------------------------------------|
+    // Return the per-worker LABOS timing slot when phase timing is active; otherwise return the zero-cost                |
+    // disabled representation.                                                                                           |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime Storage.trace_phase_timing_enabled) {
         if (trace_phase_timing != null) return &storage[worker_index];
 
@@ -259,10 +337,23 @@ fn radianceScaleFromForward(
     scene: *const Scene,
     wavelength_nm: f64,
 ) f64 {
+    // radianceScaleFromForward ------------------------------------------------------------------------------------------|
+    // Convert top-of-atmosphere reflectance factor into radiance scaling for the built-in O2 A surface path.             |
+    //                                                                                                                    |
+    // math                                                                                                               |
+    //   reflectance_factor = pi * L / (mu0 * E0)                                                                         |
+    //   therefore L        = reflectance_factor * mu0 * E0 / pi                                                          |
+    //   scale(lambda)     = mu0 * E0(lambda) / pi                                                                        |
+    //                                                                                                                    |
+    // symbols                                                                                                            |
+    //   L  : radiance                                                                                                    |
+    //   E0 : solar irradiance                                                                                            |
+    //   mu0: solar zenith cosine at the surface                                                                          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const solar_irradiance = solar_compat.irradianceAtWavelength(scene, wavelength_nm);
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
 
-    // math: built-in O2 A surface scaling is Lambertian, so BRDF_factor(lambda) = 1.
     return solar_cosine * solar_irradiance / std.math.pi;
 }
 
@@ -272,6 +363,18 @@ fn integratedSampleFromForward(
     wavelength_nm: f64,
     forward: common.ForwardResult,
 ) ForwardIntegratedSample {
+    // integratedSampleFromForward ---------------------------------------------------------------------------------------|
+    // Pack one LABOS reflectance result into the dense forward-result row consumed by radiance integration.              |
+    //                                                                                                                    |
+    // math                                                                                                               |
+    //   L(lambda)   = reflectance_factor(lambda) * scale(lambda)                                                         |
+    //   dL/dx       = scale(lambda) * d(reflectance_factor)/dx for active retrieval states                               |
+    //                                                                                                                    |
+    // why no d(scale)/dx term                                                                                            |
+    //   The Jacobian states handled here change the RTM reflectance. The solar irradiance and geometry scale             |
+    //   are fixed for that state vector, so the product rule reduces to scale * d(reflectance_factor)/dx.                |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const scale = radianceScaleFromForward(scene, wavelength_nm);
     var radiance_jacobian = jacobian.zero();
     if (forward.jacobian) |reflectance_jacobian| {
@@ -283,11 +386,7 @@ fn integratedSampleFromForward(
     }
 
     return .{
-
-        // math: L(lambda) = reflectance_factor(lambda) * scale(lambda).
         .radiance = forward.toa_reflectance_factor * scale,
-
-        // math: dL/dx = scale(lambda) * d(reflectance_factor)/dx for each active retrieval state x.
         .jacobian = radiance_jacobian,
     };
 }
@@ -308,33 +407,41 @@ fn computeForwardSampleAtWavelengthWithScratch(
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
+    // computeForwardSampleAtWavelengthWithScratch -----------------------------------------------------------------------|
+    // Compute one high-resolution forward miss. The caller supplies scratch buffers so this function can run             |
+    // inside worker loops without allocating transport arrays.                                                           |
+    //                                                                                                                    |
+    // steps                                                                                                              |
+    //   1. build wavelength-specific ForwardInput from carrier caches                                                    |
+    //   2. execute LABOS with the worker-local workspace                                                                 |
+    //   3. scale reflectance and active Jacobians into radiance units                                                    |
+    //                                                                                                                    |
+    // math                                                                                                               |
+    //   lambda -> optical layers(lambda) -> LABOS reflectance_factor(lambda) -> L(lambda)                                |
+    // -------------------------------------------------------------------------------------------------------------------|
 
-    // hot path:
-    //   when: once per high-resolution wavelength cache miss in forward/retrieval runs
-    //   work: builds wavelength-specific forward input and executes LABOS transport
-    //   Uses layer inputs, carrier cache arrays, pseudo-spherical buffers, and labos workspace.
-    //   follow: ForwardInput.configuredForwardInput and executePreparedWithLabosWorkspace
-    //   math:
-    //     lambda -> optical layers(lambda) -> LABOS reflectance_factor(lambda)
-    //     then L(lambda) via solar/BRDF scaling
-
-    // instrumentation: trace zone
-    // captures: one high-resolution forward-sample solve
-    // why: separate per-miss optical input setup and LABOS execution from nominal-grid assembly.
+    // instrumentation: trace zone: forward sample ---------------------------------------------------------------------- |
+    // captures: one high-resolution forward-sample solve                                                                 |
+    // why: separates per-miss optical input setup and LABOS execution from nominal-grid assembly.                        |
     const sample_zone = Trace.deepStaticZone(@src(), "forward_sample");
     defer sample_zone.end();
+    // end instrumentation: trace zone: forward sample ------------------------------------------------------------------ |
 
-    // instrumentation: trace counter
-    // captures: number of high-resolution forward samples evaluated
-    // why: normalize prefetch wall time by actual LABOS solve count.
+    // instrumentation: trace counter: forward sample count ------------------------------------------------------------- |
+    // captures: number of high-resolution forward samples evaluated                                                      |
+    // why: normalizes prefetch wall time by actual LABOS solve count.                                                    |
     Trace.plotU("forward_samples", 1);
+    // end instrumentation: trace counter: forward sample count --------------------------------------------------------- |
+
     const input = input: {
 
-        // instrumentation: trace zone
-        // captures: wavelength-specific forward-input construction
-        // why: show carrier/layer preparation cost before transport.
+        // instrumentation: trace zone: configured forward input -------------------------------------------------------- |
+        // captures: wavelength-specific forward-input construction                                                       |
+        // why: shows carrier/layer preparation cost before transport.                                                    |
         const zone = Trace.deepStaticZone(@src(), "forward_sample.configured_forward_input");
         defer zone.end();
+        // end instrumentation: trace zone: configured forward input ---------------------------------------------------- |
+
         break :input try ForwardInput.configuredForwardInput(
             scene,
             rtm_config,
@@ -354,11 +461,13 @@ fn computeForwardSampleAtWavelengthWithScratch(
     effective_config.rtm_controls = input.rtm_controls;
     const forward = forward: {
 
-        // instrumentation: trace zone
-        // captures: LABOS transport execution for one forward sample
-        // why: keep the radiative-transfer solve separate from surrounding input and scaling work.
+        // instrumentation: trace zone: LABOS execute ------------------------------------------------------------------- |
+        // captures: LABOS transport execution for one forward sample                                                     |
+        // why: keeps the radiative-transfer solve separate from surrounding input and scaling work.                      |
         const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
         defer zone.end();
+        // end instrumentation: trace zone: LABOS execute --------------------------------------------------------------- |
+
         break :forward try common.executePreparedWithLabosWorkspace(
             allocator,
             effective_config,
@@ -370,13 +479,10 @@ fn computeForwardSampleAtWavelengthWithScratch(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
-
-    // hot path:
-    //   when: on each forward prefetch worker across assigned miss chunks
-    //   work: computes one dense result per miss using the worker scratch
-    //   reads: miss array, result array, profile spectroscopy cache slice, worker scratch
-    //   follow: nextForwardPrefetchChunk and computeForwardSampleAtWavelengthWithScratch
-    //   math: results[k] = F(misses[k].wavelength_nm) for the chunk's high-resolution wavelength misses
+    // prefetchForwardWorkerMain -----------------------------------------------------------------------------------------|
+    // Worker loop for forward misses. Each worker owns one scratch bundle and repeatedly fills result slots              |
+    // for either a static range or chunks from a shared queue.                                                           |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     var thread_name_buffer: [64]u8 = undefined;
     const thread_name = std.fmt.bufPrintZ(
@@ -385,17 +491,19 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         .{worker.worker_index},
     ) catch "zdisamar-forward-worker";
 
-    // instrumentation: trace thread label
-    // captures: forward-prefetch worker identity
-    // why: make parallel miss batches separable in timeline traces.
+    // instrumentation: trace thread label: forward prefetch worker ----------------------------------------------------- |
+    // captures: forward-prefetch worker identity                                                                         |
+    // why: makes parallel miss batches separable in timeline traces.                                                     |
     Trace.setThreadName(thread_name);
+    // end instrumentation: trace thread label: forward prefetch worker ------------------------------------------------- |
 
-    // instrumentation: trace zone
-    // captures: forward-prefetch worker wall time
-    // why: expose load balance across high-resolution miss chunks.
+    // instrumentation: trace zone: forward prefetch worker ------------------------------------------------------------- |
+    // captures: forward-prefetch worker wall time                                                                        |
+    // why: exposes load balance across high-resolution miss chunks.                                                      |
     const worker_zone = Trace.staticZone(@src(), "forward_prefetch.worker");
     worker_zone.value(@intCast(worker.worker_index));
     defer worker_zone.end();
+    // end instrumentation: trace zone: forward prefetch worker --------------------------------------------------------- |
 
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
@@ -422,12 +530,13 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     while (nextForwardPrefetchChunk(worker)) |chunk| {
         {
 
-            // instrumentation: trace zone
-            // captures: one prefetch chunk size and wall time
-            // why: reveal tail imbalance and chunking overhead in parallel forward solves.
+            // instrumentation: trace zone: forward prefetch chunk ------------------------------------------------------ |
+            // captures: one prefetch chunk size and wall time                                                            |
+            // why: reveals tail imbalance and chunking overhead in parallel forward solves.                              |
             const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
             defer chunk_zone.end();
+            // end instrumentation: trace zone: forward prefetch chunk -------------------------------------------------- |
 
             for (chunk.start..chunk.end) |index| {
                 const miss = worker.misses[index];
@@ -470,6 +579,11 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
 }
 
 fn nextForwardPrefetchChunk(worker: *ForwardPrefetchWorker) ?work_partition.Range {
+    // nextForwardPrefetchChunk ------------------------------------------------------------------------------------------|
+    // Return the next miss range for a worker. Pooled workers share a queue for better load balance; direct              |
+    // spawned workers use their static range.                                                                            |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (worker.queue) |queue| return queue.next();
     if (worker.start_index >= worker.end_index) return null;
     const chunk = work_partition.Range{
@@ -492,26 +606,30 @@ pub fn prefetchForwardSamples(
     thread_pool: ?*std.Thread.Pool,
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
-
-    // hot path:
-    //   when: once per forward miss batch before nominal wavelength integration
-    //   work: schedules miss chunks across one worker, spawned threads, or a reusable thread pool
-    //   reads: miss array, profile cache array, result array, worker descriptors
-    //   follow: preferredForwardWorkerCount and ForwardSampleScratch allocation boundaries
+    // prefetchForwardSamples --------------------------------------------------------------------------------------------|
+    // Schedule all high-resolution forward misses across the selected worker route. Single-worker runs avoid             |
+    // thread setup; larger batches use static ranges or a reusable queue-backed pool.                                    |
+    //                                                                                                                    |
+    // output                                                                                                             |
+    //   results[index] is filled from misses[index]. Any worker failure records the first error and stops the            |
+    //   batch after joined workers return.                                                                               |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     if (misses.len == 0) return;
     const preferred_worker_count = preferredForwardWorkerCount(misses.len);
     const worker_count = preferred_worker_count;
 
-    // instrumentation: trace counter
-    // captures: selected forward worker count
-    // why: tie prefetch timing to the concurrency shape chosen for this miss batch.
+    // instrumentation: trace counter: forward worker count ------------------------------------------------------------- |
+    // captures: selected forward worker count                                                                            |
+    // why: ties prefetch timing to the concurrency shape chosen for this miss batch.                                     |
     Trace.plotU("forward_worker_count", @intCast(worker_count));
+    // end instrumentation: trace counter: forward worker count --------------------------------------------------------- |
 
-    // instrumentation: trace counter
-    // captures: unique high-resolution cache misses
-    // why: distinguish fewer computations from cheaper computation per miss.
+    // instrumentation: trace counter: high-resolution misses ----------------------------------------------------------- |
+    // captures: unique high-resolution cache misses                                                                      |
+    // why: distinguishes fewer computations from cheaper computation per miss.                                           |
     Trace.plotU("high_resolution_misses", @intCast(misses.len));
+    // end instrumentation: trace counter: high-resolution misses ------------------------------------------------------- |
 
     const telemetry_context = Telemetry.currentContext();
 
@@ -638,6 +756,10 @@ fn mergeLabosPhaseTiming(
     trace_phase_timing: ?*Storage.TracePhaseTiming,
     worker_timings: []const labos.PhaseTiming,
 ) void {
+    // mergeLabosPhaseTiming ---------------------------------------------------------------------------------------------|
+    // Merge worker-local LABOS phase counters into the product-level phase timing sink.                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime Storage.trace_phase_timing_enabled) {
         const timing = trace_phase_timing orelse return;
         for (worker_timings) |worker_timing| timing.labos.merge(worker_timing);
@@ -647,13 +769,19 @@ fn mergeLabosPhaseTiming(
 }
 
 pub fn preferredForwardWorkerCount(miss_count: usize) usize {
-
-    // PUB FOR TEST: re-exported via measurement/internal.zig.
+    // preferredForwardWorkerCount ---------------------------------------------------------------------------------------|
+    // Keep small miss batches single-threaded and scale larger batches through the shared work-partition                 |
+    // policy.                                                                                                            |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     return work_partition.preferredWorkerCount(miss_count, min_parallel_forward_miss_count);
 }
 
 fn telemetrySampleContext(base: Telemetry.Context, sample_index: usize, wavelength_nm: f64) Telemetry.Context {
+    // telemetrySampleContext --------------------------------------------------------------------------------------------|
+    // Add per-miss row and wavelength information to telemetry events when telemetry is compiled in.                     |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (comptime !Telemetry.enabled) return base;
     var context = base;
     context.sample_index = std.math.cast(i64, sample_index) orelse std.math.maxInt(i64);

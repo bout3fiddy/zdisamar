@@ -6,15 +6,35 @@ const Allocator = std.mem.Allocator;
 pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
-// Measurement-space summary statistics for one spectral sweep.
-// layout(64-bit):
-//   size: 88 B, align: 8 B
-// field storage: 84 B across 8 fields; largest: mean_jacobian=32 B, wavelength_start_nm=8 B, wavelength_end_nm=8 B;
-// padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 88 B (0.086 KiB); total = per instance * live instance count
+// types.zig -------------------------------------------------------------------------------------------------------------|
+// Product data shapes for measurement-space spectra. Storage code fills borrowed views first; public API                 |
+// paths clone those views into owned products when the caller needs independent lifetime.                                |
+//                                                                                                                        |
+// main paths                                                                                                             |
+//   InstrumentGridProductView -> borrowed workspace-backed result                                                        |
+//   InstrumentGridProduct     -> owned public result                                                                     |
+//   clone*Jacobian            -> convert state-major workspace columns into public row-major arrays                      |
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// InstrumentGridSummary -------------------------------------------------------------------------------------------------|
+// Measurement-space summary statistics for one spectral sweep.                                                           |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 80 B (0.078 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] wavelength_start_nm : f64                                                                                     |
+// [ 8..15] wavelength_end_nm   : f64                                                                                     |
+// [16..23] mean_radiance       : f64                                                                                     |
+// [24..31] mean_irradiance     : f64                                                                                     |
+// [32..39] mean_reflectance    : f64                                                                                     |
+// [40..71] mean_jacobian       : ?[3]f64                                                                                 |
+// [72..75] sample_count        : u32                                                                                     |
+// [76..79] padding             : 4 B                                                                                     |
+//                                                                                                                        |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                               |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count                                 |
 pub const InstrumentGridSummary = struct {
     sample_count: u32,
     wavelength_start_nm: f64,
@@ -24,30 +44,58 @@ pub const InstrumentGridSummary = struct {
     mean_reflectance: f64,
     mean_jacobian: ?jacobian.Vector = null,
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
-// High-resolution forward result retained between prefetch and cache insertion.
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: radiance=8 B, jacobian=24 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: jacobian:[3]f64=24 B
-//   count: one cell per unique forward-cache miss in the prefetch batch
-//   footprint: per instance = 32 B (0.031 KiB); storage reuses one dense array across batches
+// ForwardIntegratedSample -----------------------------------------------------------------------------------------------|
+// High-resolution forward result retained between LABOS prefetch and nominal-channel integration.                        |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] radiance : f64                                                                                                |
+// [ 8..31] jacobian : [3]f64                                                                                             |
+//                                                                                                                        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// count: one cell per unique forward-cache miss in the prefetch batch                                                    |
+// footprint: per instance = 32 B (0.031 KiB); storage reuses one dense array across batches                              |
 pub const ForwardIntegratedSample = struct {
     radiance: f64,
     jacobian: jacobian.Vector = jacobian.zero(),
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
-// Measurement-space product arrays and associated bulk optical properties.
-// layout(64-bit):
-//   size: 272 B, align: 8 B
-// field storage: 272 B across 18 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced
-// storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 272 B (0.266 KiB); total also includes referenced storage above
+// InstrumentGridProduct -------------------------------------------------------------------------------------------------|
+// Owned product arrays plus the bulk optical-property scalars used for the run.                                          |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 240 B (0.234 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0.. 79] summary                         : InstrumentGridSummary                                                     |
+// [ 80.. 95] wavelengths                     : []f64                                                                     |
+// [ 96..111] radiance                        : []f64                                                                     |
+// [112..127] irradiance                      : []f64                                                                     |
+// [128..143] reflectance                     : []f64                                                                     |
+// [144..159] jacobian                        : ?[]f64                                                                    |
+// [160..167] effective_air_mass_factor       : f64                                                                       |
+// [168..175] effective_single_scatter_albedo : f64                                                                       |
+// [176..183] effective_temperature_k         : f64                                                                       |
+// [184..191] effective_pressure_hpa          : f64                                                                       |
+// [192..199] gas_optical_depth               : f64                                                                       |
+// [200..207] cia_optical_depth               : f64                                                                       |
+// [208..215] aerosol_optical_depth           : f64                                                                       |
+// [216..223] total_optical_depth             : f64                                                                       |
+// [224..231] depolarization_factor           : f64                                                                       |
+// [232..239] d_optical_depth_d_temperature   : f64                                                                       |
+//                                                                                                                        |
+// out-of-line storage                                                                                                    |
+//   wavelengths, radiance, irradiance, reflectance, and optional jacobian each own heap slices.                          |
+//   The optical-property scalar fields are copied from PreparedOpticalState for reporting.                               |
+//                                                                                                                        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 4 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 240 B (0.234 KiB); total also includes referenced storage above                              |
 pub const InstrumentGridProduct = struct {
     summary: InstrumentGridSummary,
     wavelengths: []f64,
@@ -67,6 +115,10 @@ pub const InstrumentGridProduct = struct {
     d_optical_depth_d_temperature: f64,
 
     pub fn deinit(self: *InstrumentGridProduct, allocator: Allocator) void {
+        // InstrumentGridProduct.deinit ----------------------------------------------------------------------------------|
+        // Release owned product arrays. The scalar fields live inside the struct and need no separate free.              |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         allocator.free(self.wavelengths);
         allocator.free(self.radiance);
         allocator.free(self.irradiance);
@@ -75,17 +127,42 @@ pub const InstrumentGridProduct = struct {
         self.* = undefined;
     }
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
-// Borrowed instrument grid outputs backed by a reusable product storage.
-// layout(64-bit):
-//   size: 280 B, align: 8 B
-// field storage: 273 B across 19 fields; largest: summary=80 B, wavelengths=16 B, radiance=16 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-// out-of-line: wavelengths, radiance, irradiance, reflectance, and jacobian carry references/descriptors; referenced
-// storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
+// InstrumentGridProductView ---------------------------------------------------------------------------------------------|
+// Borrowed instrument-grid output backed by ProductStorage. Views are cheap to return but become invalid                 |
+// after the workspace buffers are reused or freed.                                                                       |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 248 B (0.242 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0.. 79] summary                         : InstrumentGridSummary                                                     |
+// [ 80.. 95] wavelengths                     : []const f64                                                               |
+// [ 96..111] radiance                        : []const f64                                                               |
+// [112..127] irradiance                      : []const f64                                                               |
+// [128..143] reflectance                     : []const f64                                                               |
+// [144..159] jacobian                        : ?[]const f64                                                              |
+// [160..167] effective_air_mass_factor       : f64                                                                       |
+// [168..175] effective_single_scatter_albedo : f64                                                                       |
+// [176..183] effective_temperature_k         : f64                                                                       |
+// [184..191] effective_pressure_hpa          : f64                                                                       |
+// [192..199] gas_optical_depth               : f64                                                                       |
+// [200..207] cia_optical_depth               : f64                                                                       |
+// [208..215] aerosol_optical_depth           : f64                                                                       |
+// [216..223] total_optical_depth             : f64                                                                       |
+// [224..231] depolarization_factor           : f64                                                                       |
+// [232..239] d_optical_depth_d_temperature   : f64                                                                       |
+// [240..240] jacobian_state_mask             : jacobian.StateMask                                                        |
+// [241..247] padding                         : 7 B                                                                       |
+//                                                                                                                        |
+// out-of-line storage                                                                                                    |
+//   wavelengths, radiance, irradiance, reflectance, and optional jacobian are borrowed slices.                           |
+//   Workspace Jacobians are state-major and compacted to active states only.                                             |
+//                                                                                                                        |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// cache span: 4 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 248 B (0.242 KiB); total also includes referenced storage above                              |
 pub const InstrumentGridProductView = struct {
     summary: InstrumentGridSummary,
     wavelengths: []const f64,
@@ -111,6 +188,11 @@ pub const InstrumentGridProductView = struct {
     d_optical_depth_d_temperature: f64,
 
     pub fn toOwned(self: InstrumentGridProductView, allocator: Allocator) !InstrumentGridProduct {
+        // InstrumentGridProductView.toOwned -----------------------------------------------------------------------------|
+        // Clone the borrowed view into the default public product shape. Jacobians expand to all supported               |
+        // states in row-major sample order.                                                                              |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         return self.toOwnedWithJacobianStates(allocator, @as([]const jacobian.State, &.{}));
     }
 
@@ -119,6 +201,15 @@ pub const InstrumentGridProductView = struct {
         allocator: Allocator,
         output_states: []const jacobian.State,
     ) !InstrumentGridProduct {
+        // InstrumentGridProductView.toOwnedWithJacobianStates -----------------------------------------------------------|
+        // Clone workspace-backed arrays into owned storage and convert compact state-major Jacobian columns              |
+        // to the requested public row-major shape.                                                                       |
+        //                                                                                                                |
+        // output                                                                                                         |
+        //   output_states empty -> full [sample][all states] layout with inactive states filled as zero                  |
+        //   output_states set   -> compact [sample][requested states] layout                                             |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         const wavelengths = try cloneF64Slice(allocator, self.wavelengths);
 
         errdefer allocator.free(wavelengths);
@@ -171,6 +262,7 @@ pub const InstrumentGridProductView = struct {
         };
     }
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
 fn cloneExpandedJacobian(
     allocator: Allocator,
@@ -178,6 +270,11 @@ fn cloneExpandedJacobian(
     active_mask: jacobian.StateMask,
     sample_count: usize,
 ) ![]f64 {
+    // cloneExpandedJacobian ---------------------------------------------------------------------------------------------|
+    // Convert compact workspace Jacobians into the legacy public full-state row-major layout. Inactive                   |
+    // states are present as zero columns so older callers see stable column positions.                                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const active_count = jacobian.activeStateCount(active_mask);
     if (active_count == 0 or values.len != active_count * sample_count) return error.ShapeMismatch;
 
@@ -201,6 +298,11 @@ fn cloneSelectedRowMajorJacobian(
     sample_count: usize,
     output_states: []const jacobian.State,
 ) ![]f64 {
+    // cloneSelectedRowMajorJacobian -------------------------------------------------------------------------------------|
+    // Convert compact workspace Jacobians into a caller-selected row-major layout. Every requested state must            |
+    // be active in the workspace mask, otherwise returning a partial matrix would silently drop a derivative.            |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const active_count = jacobian.activeStateCount(active_mask);
     if (output_states.len == 0 or active_count == 0 or values.len != active_count * sample_count) {
         return error.ShapeMismatch;
@@ -219,6 +321,11 @@ fn cloneSelectedRowMajorJacobian(
 }
 
 fn cloneF64Slice(allocator: Allocator, values: []const f64) ![]f64 {
+    // cloneF64Slice -----------------------------------------------------------------------------------------------------|
+    // Clone one product column while preserving the empty-slice ownership rule: callers still receive a                  |
+    // heap allocation they can free through InstrumentGridProduct.deinit.                                                |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (values.len == 0) return try allocator.alloc(f64, 0);
     return try allocator.dupe(f64, values);
 }

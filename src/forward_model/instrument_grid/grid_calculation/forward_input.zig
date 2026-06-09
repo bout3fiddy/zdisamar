@@ -5,6 +5,18 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Trace = @import("../../instrumentation/trace.zig");
 const common = @import("../../radiative_transfer/root.zig");
 
+// forward_input.zig -----------------------------------------------------------------------------------------------------|
+// Builds one LABOS ForwardInput at one high-resolution wavelength. The caller owns all mutable buffers so                |
+// this file can fill wavelength-specific optical layers without allocation in the hot prefetch loop.                     |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   spectral_forward.zig for each unique high-resolution forward miss                                                    |
+//                                                                                                                        |
+// main path                                                                                                              |
+//   carrier cache -> layer optical depths -> optional RTM quadrature/source interfaces -> optional spherical             |
+//   correction grid -> radiative_transfer.ForwardInput                                                                   |
+// -----------------------------------------------------------------------------------------------------------------------|
+
 pub fn configuredForwardInput(
     scene: *const Scene,
     rtm_config: common.SolveConfig,
@@ -19,12 +31,20 @@ pub fn configuredForwardInput(
     support_carrier_cache: *CarrierEval.SupportRowScalarCache,
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) common.ExecuteError!common.ForwardInput {
-
-    // hot path:
-    //   when: once per high-resolution wavelength before LABOS transport
-    //   work: fills optical depth layers, source interfaces, RTM quadrature, and pseudo-spherical samples
-    //   reads: wavelength carrier cache, layer input arrays, quadrature/source-interface buffers
-    //   follow: carrier-backed transport fills and the ForwardInput consumed by LABOS
+    // configuredForwardInput --------------------------------------------------------------------------------------------|
+    // Fill the wavelength-specific transport input consumed by LABOS. The fixed scene/prepared state stays               |
+    // outside this function; only arrays that depend on wavelength are refreshed here.                                   |
+    //                                                                                                                    |
+    // steps                                                                                                              |
+    //   1. build carrier-backed spectroscopy caches for this wavelength                                                  |
+    //   2. fill layer optical depths and base ForwardInput                                                               |
+    //   3. attach integrated-source quadrature, or source interfaces when the RTM route needs that fallback              |
+    //   4. attach pseudo-spherical support samples when spherical correction is enabled                                  |
+    //                                                                                                                    |
+    // boundary                                                                                                           |
+    //   No file I/O or text parsing happens here. All buffers are provided by ProductStorage or worker                   |
+    //   scratch storage.                                                                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     const compute_jacobian = rtm_config.derivative_mode != .none;
 
@@ -45,11 +65,13 @@ pub fn configuredForwardInput(
 
     const optical_depths = optical_depths: {
 
-        // instrumentation: trace zone
-        // captures: wavelength-specific layer optical-depth fill
-        // why: measure carrier-backed layer preparation before LABOS transport.
+        // instrumentation: trace zone: forward layers -------------------------------------------------------------------|
+        // captures: wavelength-specific layer optical-depth fill                                                         |
+        // why: measures carrier-backed layer preparation before LABOS transport.                                         |
         const zone = Trace.deepStaticZone(@src(), "forward_input.layers");
         defer zone.end();
+        // end instrumentation: trace zone: forward layers ---------------------------------------------------------------|
+
         break :optical_depths OpticsPreparation.forward_layers.fillForwardLayersAtWavelengthWithCarrierCache(
             prepared,
             scene,
@@ -71,16 +93,18 @@ pub fn configuredForwardInput(
     var has_rtm_quadrature = false;
     if (rtm_config.rtm_controls.integrate_source_function) {
 
-        // DECISION:
-        //   Only attach RTM quadrature when the rtm_config requests integrated
-        //   source-function evaluation.
+        // The integrated-source route first tries the RTM-native quadrature table. When explicit interval
+        // semantics are active, falling back to coarse source interfaces would silently change the layer
+        // placement, so missing quadrature is rejected below.
         {
 
-            // instrumentation: trace zone
-            // captures: RTM source-function quadrature preparation
-            // why: isolate explicit quadrature setup from coarse source-interface fallback.
+            // instrumentation: trace zone: RTM quadrature ---------------------------------------------------------------|
+            // captures: RTM source-function quadrature preparation                                                       |
+            // why: separates explicit quadrature setup from coarse source-interface fallback.                            |
             const zone = Trace.deepStaticZone(@src(), "forward_input.rtm_quadrature");
             defer zone.end();
+            // end instrumentation: trace zone: RTM quadrature -----------------------------------------------------------|
+
             const fill_rtm_quadrature =
                 OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache;
             has_rtm_quadrature = fill_rtm_quadrature(
@@ -100,10 +124,8 @@ pub fn configuredForwardInput(
             };
         } else if (prepared.interval_semantics != .none) {
 
-            // INVARIANT:
-            //   The explicit-interval integrated-source rtm_config must stay on
-            //   the RTM-native carrier path instead of silently drifting back
-            //   to the coarse source-interface fallback.
+            // Explicit-interval integrated-source cases must stay on the RTM-native carrier path. The coarse
+            // source-interface fallback would use a different vertical contract.
             return error.MissingExplicitRtmQuadrature;
         }
     }
@@ -113,11 +135,13 @@ pub fn configuredForwardInput(
 
         {
 
-            // instrumentation: trace zone
-            // captures: source-interface fill wall time
-            // why: quantify the fallback source-function boundary when RTM quadrature is unavailable.
+            // instrumentation: trace zone: source interfaces ------------------------------------------------------------|
+            // captures: source-interface fill wall time                                                                  |
+            // why: quantifies the fallback source-function boundary when RTM quadrature is unavailable.                  |
             const zone = Trace.deepStaticZone(@src(), "forward_input.source_interfaces");
             defer zone.end();
+            // end instrumentation: trace zone: source interfaces --------------------------------------------------------|
+
             OpticsPreparation.source_interfaces.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
                 prepared,
                 wavelength_nm,
@@ -132,18 +156,18 @@ pub fn configuredForwardInput(
 
     if (rtm_config.rtm_controls.use_spherical_correction) {
 
-        // DECISION:
-        //   Pseudo-spherical samples are only attached when the RTM config requests
-        //   the geometric correction. Explicit shared-grid cases rebuild the
-        //   dense wavelength-specific attenuation contract directly from the
-        //   RTM subgrid instead of reusing midpoint-style layer surrogates.
+        // Pseudo-spherical samples are attached only for the geometric-correction route. Explicit shared-grid
+        // cases rebuild the dense wavelength-specific attenuation contract from the RTM subgrid instead of
+        // reusing midpoint-style layer surrogates.
         const has_pseudo_spherical_grid = has_grid: {
 
-            // instrumentation: trace zone
-            // captures: pseudo-spherical support-grid fill wall time
-            // why: keep geometric-correction setup visible in forward-sample traces.
+            // instrumentation: trace zone: pseudo-spherical grid --------------------------------------------------------|
+            // captures: pseudo-spherical support-grid fill wall time                                                     |
+            // why: keeps geometric-correction setup visible in forward-sample traces.                                    |
             const zone = Trace.deepStaticZone(@src(), "forward_input.pseudo_spherical");
             defer zone.end();
+            // end instrumentation: trace zone: pseudo-spherical grid ----------------------------------------------------|
+
             break :has_grid OpticsPreparation.pseudo_spherical.fillPseudoSphericalGridAtWavelengthWithCarrierCache(
                 prepared,
                 scene,

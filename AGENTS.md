@@ -17,6 +17,12 @@
 - Scaffolding: [scaffolding/AGENTS.md](scaffolding/AGENTS.md).
 - Scripts: [scripts/AGENTS.md](scripts/AGENTS.md).
 
+## Scratch Docs
+
+- For local reports, TODOs, investigation notes, or other docs that should not
+  be committed, write them under the root `scratch/` directory. Use
+  `scratch/reports/` for report-style artifacts.
+
 ## Commands
 
 - Fast baseline: `zig build check`.

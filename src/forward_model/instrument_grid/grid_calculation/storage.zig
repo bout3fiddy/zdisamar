@@ -15,10 +15,25 @@ const Types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
-// migration note: Zig 0.15.2 runtime boundary ---------------------------------------------------------------|
-// Product storage keeps the existing std.Thread.Pool route while the project is pinned to Zig 0.15.2.        |
-// The failed 0.16 migration briefly moved this path to std.Io.Threaded; do not reintroduce that API here.    |
-// end migration note: Zig 0.15.2 runtime boundary -----------------------------------------------------------|
+// storage.zig -----------------------------------------------------------------------------------------------------------|
+// Reusable memory owner for instrument-grid simulations. This file decides which buffers exist for an RTM                |
+// config, when cached wavelength/profile plans are invalid, and how borrowed product views stay shaped.                  |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   root.zig and simulate.zig for product workspace setup                                                                |
+//   spectral_forward.zig for per-worker scratch sizing                                                                   |
+//                                                                                                                        |
+// main paths                                                                                                             |
+//   ProductStorage.buffers           -> reusable output and transport buffers                                            |
+//   ProductStorage.spectralCache     -> one irradiance cache per product run                                             |
+//   ProductStorage.invalidateWavelengthPlan -> clear derived sampling/profile caches                                     |
+//   validateBuffers                  -> assert a coherent one-sweep buffer contract                                      |
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// migration note: Zig 0.15.2 runtime boundary ---------------------------------------------------------------------------|
+// Product storage keeps the existing std.Thread.Pool route while the project is pinned to Zig 0.15.2.                    |
+// The failed 0.16 migration briefly moved this path to std.Io.Threaded; do not reintroduce that API here.                |
+// end migration note: Zig 0.15.2 runtime boundary -----------------------------------------------------------------------|
 
 pub const trace_phase_timing_enabled: bool = enabled_by_build: {
     if (!@hasDecl(build_options, "enable_trace_phase_timing")) break :enabled_by_build false;
@@ -47,18 +62,33 @@ pub const Error =
         OutOfMemory,
     };
 
-// layout(64-bit):
-//   size: 280 B, align: 8 B
-//   field storage:
-//     273 B across 18 fields; largest: wavelengths=16 B, radiance=16 B, irradiance=16 B
-//     padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line:
-//     wavelength/product slices are always active
-//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* slices are rtm_config-gated
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 280 B (0.273 KiB); total also includes referenced storage above
+// Buffers ---------------------------------------------------------------------------------------------------------------|
+// Trimmed borrowed buffer views for one simulation run. ProductStorage owns the referenced backing storage.              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 216 B (0.211 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0.. 15] wavelengths                      : []f64                                                                    |
+// [ 16.. 31] radiance                         : []f64                                                                    |
+// [ 32.. 47] irradiance                       : []f64                                                                    |
+// [ 48.. 63] reflectance                      : []f64                                                                    |
+// [ 64.. 79] scratch                          : []f64                                                                    |
+// [ 80.. 95] scratch_aux                      : []f64                                                                    |
+// [ 96..111] layer_inputs                     : []common.LayerInput                                                      |
+// [112..127] source_interfaces                : []common.SourceInterfaceInput                                            |
+// [128..143] rtm_quadrature_levels            : []common.RtmQuadratureLevel                                              |
+// [144..159] pseudo_spherical_samples         : []common.PseudoSphericalSample                                           |
+// [160..175] pseudo_spherical_level_starts    : []usize                                                                  |
+// [176..191] pseudo_spherical_level_altitudes : []f64                                                                    |
+// [192..207] jacobian                         : ?[]f64                                                                   |
+// [208..208] jacobian_state_mask              : jacobian.StateMask                                                       |
+// [209..215] padding                          : 7 B                                                                      |
+//                                                                                                                        |
+// all slices reference ProductStorage backing storage and do not include it in the 216 B view size.                      |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// cache span: 4 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 216 B (0.211 KiB); total also includes referenced storage above                              |
 pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
@@ -76,9 +106,9 @@ pub const Buffers = struct {
     jacobian_state_mask: jacobian.StateMask = 0,
 };
 
-// instrumentation: trace phase timing -----------------------------------------------------------------------|
-// captures: coarse product-simulation phase timings for trace-harness JSON summaries                         |
-// why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones. |
+// instrumentation: trace phase timing -----------------------------------------------------------------------------------|
+// captures: coarse product-simulation phase timings for trace-harness JSON summaries                                     |
+// why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones.             |
 const EnabledTracePhaseTiming = struct {
     wavelength_sampling_ns: u64 = 0,
     forward_miss_collection_ns: u64 = 0,
@@ -95,46 +125,99 @@ const EnabledTracePhaseTiming = struct {
     labos: common.labos.PhaseTiming = .{},
 
     pub fn reset(self: *@This()) void {
+        // EnabledTracePhaseTiming.reset ---------------------------------------------------------------------------------|
+        // Clear all phase counters before a workspace-backed product run starts.                                         |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         self.* = .{};
     }
 };
 
 const DisabledTracePhaseTiming = struct {
     pub inline fn reset(self: *@This()) void {
+        // DisabledTracePhaseTiming.reset --------------------------------------------------------------------------------|
+        // Compile-time no-op used when trace phase timing is not built in.                                               |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         _ = self;
     }
 };
 
 pub const TracePhaseTiming = if (trace_phase_timing_enabled) EnabledTracePhaseTiming else DisabledTracePhaseTiming;
-// end instrumentation: trace phase timing -------------------------------------------------------------------|
+// end instrumentation: trace phase timing -------------------------------------------------------------------------------|
 
 pub fn configMayUseSourceInterfaces(scene: *const Scene, rtm_config: common.SolveConfig) bool {
+    // configMayUseSourceInterfaces --------------------------------------------------------------------------------------|
+    // Source-interface buffers are only needed when integrated-source transport is requested and the scene               |
+    // still uses the coarse non-interval atmosphere contract.                                                            |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (!rtm_config.rtm_controls.integrate_source_function) return false;
     return scene.atmosphere.interval_grid.semantics == .none;
 }
 
 pub fn configUsesRtmQuadrature(rtm_config: common.SolveConfig) bool {
+    // configUsesRtmQuadrature -------------------------------------------------------------------------------------------|
+    // RTM quadrature storage follows the integrated-source flag. Some runs may later fail to populate the                |
+    // quadrature table, but the buffer must be available for that attempt.                                               |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     return rtm_config.rtm_controls.integrate_source_function;
 }
 
 pub fn configUsesPseudoSphericalGrid(rtm_config: common.SolveConfig) bool {
+    // configUsesPseudoSphericalGrid -------------------------------------------------------------------------------------|
+    // Pseudo-spherical support storage is only needed when geometric correction is enabled.                              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     return rtm_config.rtm_controls.use_spherical_correction;
 }
 
-// Reusable instrument grid storage that owns the backing storage.
-// layout(64-bit):
-//   size: 560 B normally; 568 B when trace phase timing is enabled, align: 8 B
-//   field storage:
-//     540 B across 26 normal fields; trace builds add trace_phase_timing=8 B
-//     largest: forward_prefetch_pool=112 B, evaluation_cache=64 B
-//     wavelength_sampling=48 B, forward_miss_plan=48 B; padding: 20 B (160 bits)
-//   unused bits: 160 padding + 28 bool-storage slack = 188 bits in trace builds
-//   out-of-line:
-//     product/cache/result slices carry backing storage
-//     source_interfaces, rtm_quadrature_levels, and pseudo_spherical_* storage are rtm_config-gated
-//   cache span: 9 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 560 B (0.547 KiB) normally; 568 B (0.555 KiB) in trace builds
+// ProductStorage --------------------------------------------------------------------------------------------------------|
+// Reusable instrument-grid workspace that owns product buffers, retained wavelength plans, and the optional              |
+// prefetch pool.                                                                                                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 552 B (0.539 KiB) normally; 560 B (0.547 KiB) with trace phase timing, align: 8 B                                |
+//                                                                                                                        |
+// memory, normal build                                                                                                   |
+// [  0.. 63] evaluation_cache                  : ?Cache.SpectralEvaluationCache                                          |
+// [ 64.. 71] shared_forward_prefetch_pool      : ?*std.Thread.Pool                                                       |
+// [ 72.. 87] irradiance                        : []f64                                                                   |
+// [ 88..103] reflectance                       : []f64                                                                   |
+// [104..119] wavelengths                       : []f64                                                                   |
+// [120..135] scratch_aux                       : []f64                                                                   |
+// [136..151] forward_results                   : []Types.ForwardIntegratedSample                                         |
+// [152..167] layer_inputs                      : []common.LayerInput                                                     |
+// [168..183] source_interfaces                 : []common.SourceInterfaceInput                                           |
+// [184..199] rtm_quadrature_levels             : []common.RtmQuadratureLevel                                             |
+// [200..215] pseudo_spherical_samples          : []common.PseudoSphericalSample                                          |
+// [216..231] pseudo_spherical_level_starts     : []usize                                                                 |
+// [232..247] radiance                          : []f64                                                                   |
+// [248..263] pseudo_spherical_level_altitudes  : []f64                                                                   |
+// [264..279] scratch                           : []f64                                                                   |
+// [280..327] wavelength_sampling               : Plan.OwnedWavelengthSampling                                            |
+// [328..375] forward_miss_plan                 : Plan.OwnedForwardMissPlan                                               |
+// [376..391] profile_spectroscopy_caches       : []SpectroscopyState.ProfileNodeSpectroscopyCache                        |
+// [392..399] wavelength_plan_key               : u64                                                                     |
+// [400..407] forward_prefetch_pool_worker_threads : usize                                                                |
+// [408..519] forward_prefetch_pool             : std.Thread.Pool                                                         |
+// [520..527] profile_spectroscopy_cache_key    : u64                                                                     |
+// [528..543] jacobian                          : []f64                                                                   |
+// [544..544] profile_spectroscopy_cache_valid  : bool                                                                    |
+// [545..545] forward_miss_plan_valid           : bool                                                                    |
+// [546..546] wavelength_plan_valid             : bool                                                                    |
+// [547..547] forward_prefetch_pool_valid       : bool                                                                    |
+// [548..551] padding                           : 4 B                                                                     |
+//                                                                                                                        |
+// trace phase timing build                                                                                               |
+//   trace_phase_timing occupies [400..407], moving forward_prefetch_pool_worker_threads to [408..415],                   |
+//   forward_prefetch_pool to [424..535], jacobian to [536..551], and the four bools to [552..555].                       |
+//                                                                                                                        |
+// slices, plans, caches, and the thread pool carry referenced storage not included in the struct size.                   |
+// unused bits: 32 padding + 28 bool-storage slack = 60 bits                                                              |
+// cache span: 9 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 552 B (0.539 KiB) normally; 560 B (0.547 KiB) with trace phase timing                        |
 pub const ProductStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -166,6 +249,11 @@ pub const ProductStorage = struct {
     trace_phase_timing: TracePhaseTimingSlot = trace_phase_timing_slot_default,
 
     pub fn deinit(self: *ProductStorage, allocator: Allocator) void {
+        // ProductStorage.deinit -----------------------------------------------------------------------------------------|
+        // Release every buffer and retained plan owned by the workspace. Shared prefetch pools are borrowed              |
+        // and are not deinitialized here.                                                                                |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (self.forward_prefetch_pool_valid) {
             self.forward_prefetch_pool.deinit();
         }
@@ -191,18 +279,31 @@ pub const ProductStorage = struct {
     }
 
     pub fn setTracePhaseTiming(self: *ProductStorage, timing: *TracePhaseTiming) void {
+        // ProductStorage.setTracePhaseTiming ----------------------------------------------------------------------------|
+        // Attach an opt-in phase timing sink for the next workspace-backed simulation. Product builds compile            |
+        // this to a no-op when trace phase timing is disabled.                                                           |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (comptime trace_phase_timing_enabled) {
             self.trace_phase_timing = timing;
         }
     }
 
     pub fn clearTracePhaseTiming(self: *ProductStorage) void {
+        // ProductStorage.clearTracePhaseTiming --------------------------------------------------------------------------|
+        // Detach the opt-in phase timing sink so normal product runs do not retain trace state.                          |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (comptime trace_phase_timing_enabled) {
             self.trace_phase_timing = null;
         }
     }
 
     pub fn activeTracePhaseTiming(self: *ProductStorage) ?*TracePhaseTiming {
+        // ProductStorage.activeTracePhaseTiming -------------------------------------------------------------------------|
+        // Return the currently attached phase timing sink, or null in normal builds and normal product runs.             |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (comptime trace_phase_timing_enabled) {
             return self.trace_phase_timing;
         } else {
@@ -215,6 +316,15 @@ pub const ProductStorage = struct {
         allocator: Allocator,
         worker_count: usize,
     ) ?*std.Thread.Pool {
+        // ProductStorage.forwardPrefetchPool ----------------------------------------------------------------------------|
+        // Return a reusable worker pool for LABOS prefetch when parallelism is useful. The pool stores                   |
+        // worker_count - 1 helper threads because the caller uses the current thread as the final worker.                |
+        //                                                                                                                |
+        // fallback                                                                                                       |
+        //   If pool initialization fails, return null so the caller can spawn direct threads or run chunks               |
+        //   locally. The simulation result is unchanged; only scheduling changes.                                        |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (worker_count <= 1) return null;
         if (self.shared_forward_prefetch_pool) |pool| return pool;
 
@@ -241,6 +351,11 @@ pub const ProductStorage = struct {
     }
 
     pub fn invalidateWavelengthPlan(self: *ProductStorage, allocator: Allocator) void {
+        // ProductStorage.invalidateWavelengthPlan -----------------------------------------------------------------------|
+        // Drop derived wavelength sampling, forward-miss, and profile spectroscopy caches together. These                |
+        // caches are keyed from the same spectral/instrument/prepared state and must not drift independently.            |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         self.wavelength_sampling.deinit(allocator);
         self.forward_miss_plan.deinit(allocator);
         allocator.free(self.profile_spectroscopy_caches);
@@ -255,6 +370,11 @@ pub const ProductStorage = struct {
     }
 
     pub fn spectralCache(self: *ProductStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
+        // ProductStorage.spectralCache ----------------------------------------------------------------------------------|
+        // Return the reusable irradiance cache for this run. The cache keeps capacity but clears values so               |
+        // a previous spectrum cannot affect the next spectrum.                                                           |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (self.evaluation_cache == null) {
             self.evaluation_cache = Cache.SpectralEvaluationCache.init(allocator);
         }
@@ -267,12 +387,11 @@ pub const ProductStorage = struct {
         allocator: Allocator,
         capacity: usize,
     ) Error![]Types.ForwardIntegratedSample {
+        // ProductStorage.forwardResultBuffer ----------------------------------------------------------------------------|
+        // Return the dense staging array used for high-resolution LABOS miss results. Reusing this buffer                |
+        // avoids repeated allocation across retrieval iterations with similar wavelength plans.                          |
+        // ---------------------------------------------------------------------------------------------------------------|
 
-        // hot path:
-        //   when: OE iterations reuse the same high-resolution miss plan
-        //   work: retains the dense prefetch result staging array between batches
-        //   reads: one ForwardIntegratedSample per unique forward-cache miss
-        //   follow: spectral_eval.prefetchForwardSamples cache insertion
         try ensureForwardResultCapacity(allocator, &self.forward_results, capacity);
         return self.forward_results[0..capacity];
     }
@@ -283,6 +402,18 @@ pub const ProductStorage = struct {
         scene: *const Scene,
         rtm_config: common.SolveConfig,
     ) Error!Buffers {
+        // ProductStorage.buffers ----------------------------------------------------------------------------------------|
+        // Ensure all output and transport buffers are large enough for one simulation, then return trimmed               |
+        // views for the active sample/layer counts.                                                                      |
+        //                                                                                                                |
+        // allocation rule                                                                                                |
+        //   Buffers grow when needed and keep capacity across runs. Buffers for disabled RTM features are                |
+        //   freed so stale source-interface, quadrature, or pseudo-spherical data cannot be reused.                      |
+        //                                                                                                                |
+        // Jacobian layout                                                                                                |
+        //   Workspace Jacobians are state-major over active states only: [active_state][sample].                         |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
         const layer_count = transportLayerCountHint(scene, rtm_config);
 
@@ -388,6 +519,11 @@ pub const ProductStorage = struct {
 };
 
 pub fn transportLayerCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
+    // transportLayerCountHint -------------------------------------------------------------------------------------------|
+    // Estimate layer-buffer capacity before wavelength-specific preparation. Explicit interval grids use the             |
+    // interval division contract; ordinary scenes use layer_count * sublayer_divisions.                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     _ = rtm_config;
 
     if (scene.atmosphere.interval_grid.enabled()) {
@@ -411,6 +547,11 @@ pub fn transportLayerCountHint(scene: *const Scene, rtm_config: common.SolveConf
 }
 
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
+    // pseudoSphericalSampleCountHint ------------------------------------------------------------------------------------|
+    // Over-allocate enough pseudo-spherical support samples for the unresolved scene hint. The resolved path             |
+    // below may use fewer samples once PreparedOpticalState has the exact RTM grid.                                      |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const layer_count = transportLayerCountHint(scene, rtm_config);
     return layer_count * (pseudoSphericalSubgridDivisions(scene) + 2);
 }
@@ -419,6 +560,10 @@ pub fn resolvedTransportLayerCount(
     rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
 ) usize {
+    // resolvedTransportLayerCount ---------------------------------------------------------------------------------------|
+    // Return the exact transport-layer count from PreparedOpticalState after interval/sublayer preparation.              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     _ = rtm_config;
     return prepared.transportLayerCount();
 }
@@ -428,6 +573,11 @@ pub fn resolvedPseudoSphericalSampleCount(
     rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
 ) usize {
+    // resolvedPseudoSphericalSampleCount --------------------------------------------------------------------------------|
+    // Return the exact pseudo-spherical support count for worker scratch buffers. Shared RTM geometry carries            |
+    // explicit per-layer support counts; the fallback uses the subgrid count for every resolved layer.                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (prepared.intervalSemanticsUseReducedSharedRtmLayers() and
         prepared.shared_rtm_geometry.isValidFor(resolvedTransportLayerCount(rtm_config, prepared)))
     {
@@ -442,6 +592,11 @@ pub fn resolvedPseudoSphericalSampleCount(
 }
 
 fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
+    // pseudoSphericalSubgridDivisions -----------------------------------------------------------------------------------|
+    // Clamp the scene sublayer division count to at least one so support buffers are never sized to zero                 |
+    // for a geometric-correction route.                                                                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
@@ -451,6 +606,10 @@ pub fn validateBuffers(
     sample_count: usize,
     buffers: Buffers,
 ) Error!void {
+    // validateBuffers ---------------------------------------------------------------------------------------------------|
+    // Check that a Buffers view is internally coherent for one spectral sweep and the requested RTM route.               |
+    // This catches stale workspace slices before simulation writes into them.                                            |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     // The always-active summary buffers and the rtm_config-selected transport
     // carriers must stay shape-compatible for a single sweep.
@@ -503,6 +662,11 @@ pub fn validateBuffers(
 }
 
 pub fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) Error!void {
+    // ensureBufferCapacity ----------------------------------------------------------------------------------------------|
+    // Grow an f64 scratch/output buffer without preserving old values. Simulation fills the returned view                |
+    // before reading it.                                                                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(f64, capacity);
     freeBuffer(allocator, buffer.*);
@@ -510,6 +674,10 @@ pub fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usiz
 }
 
 fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput, capacity: usize) Error!void {
+    // ensureLayerBufferCapacity -----------------------------------------------------------------------------------------|
+    // Grow the wavelength-specific LayerInput buffer. Existing contents are scratch data and are discarded.              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(common.LayerInput, capacity);
     freeLayerBuffer(allocator, buffer.*);
@@ -521,6 +689,10 @@ fn ensureForwardResultCapacity(
     buffer: *[]Types.ForwardIntegratedSample,
     capacity: usize,
 ) Error!void {
+    // ensureForwardResultCapacity ---------------------------------------------------------------------------------------|
+    // Grow the dense forward-result staging buffer used between prefetch and nominal integration.                        |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(Types.ForwardIntegratedSample, capacity);
     freeForwardResultBuffer(allocator, buffer.*);
@@ -532,6 +704,10 @@ fn ensureSourceInterfaceBufferCapacity(
     buffer: *[]common.SourceInterfaceInput,
     capacity: usize,
 ) Error!void {
+    // ensureSourceInterfaceBufferCapacity -------------------------------------------------------------------------------|
+    // Grow the coarse source-interface buffer used by the integrated-source fallback route.                              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(common.SourceInterfaceInput, capacity);
     freeSourceInterfaceBuffer(allocator, buffer.*);
@@ -543,6 +719,10 @@ fn ensureRtmQuadratureBufferCapacity(
     buffer: *[]common.RtmQuadratureLevel,
     capacity: usize,
 ) Error!void {
+    // ensureRtmQuadratureBufferCapacity ---------------------------------------------------------------------------------|
+    // Grow the RTM-native quadrature buffer used by integrated-source evaluation.                                        |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(common.RtmQuadratureLevel, capacity);
     freeRtmQuadratureBuffer(allocator, buffer.*);
@@ -554,6 +734,10 @@ fn ensurePseudoSphericalSampleBufferCapacity(
     buffer: *[]common.PseudoSphericalSample,
     capacity: usize,
 ) Error!void {
+    // ensurePseudoSphericalSampleBufferCapacity -------------------------------------------------------------------------|
+    // Grow the pseudo-spherical support sample buffer used by geometric-correction attenuation.                          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(common.PseudoSphericalSample, capacity);
     freePseudoSphericalSampleBuffer(allocator, buffer.*);
@@ -561,6 +745,10 @@ fn ensurePseudoSphericalSampleBufferCapacity(
 }
 
 fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: usize) Error!void {
+    // ensureIndexBufferCapacity -----------------------------------------------------------------------------------------|
+    // Grow a usize index buffer, currently used for pseudo-spherical level starts.                                       |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.*.len >= capacity) return;
     const replacement = try allocator.alloc(usize, capacity);
     freeIndexBuffer(allocator, buffer.*);
@@ -568,29 +756,57 @@ fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: u
 }
 
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
+    // freeBuffer --------------------------------------------------------------------------------------------------------|
+    // Free a possibly empty f64 buffer. Empty slice sentinels are not allocator-owned.                                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
+    // freeLayerBuffer ---------------------------------------------------------------------------------------------------|
+    // Free a possibly empty LayerInput buffer.                                                                           |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freeForwardResultBuffer(allocator: Allocator, buffer: []Types.ForwardIntegratedSample) void {
+    // freeForwardResultBuffer -------------------------------------------------------------------------------------------|
+    // Free a possibly empty forward-result staging buffer.                                                               |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freeSourceInterfaceBuffer(allocator: Allocator, buffer: []common.SourceInterfaceInput) void {
+    // freeSourceInterfaceBuffer -----------------------------------------------------------------------------------------|
+    // Free a possibly empty source-interface buffer.                                                                     |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freeRtmQuadratureBuffer(allocator: Allocator, buffer: []common.RtmQuadratureLevel) void {
+    // freeRtmQuadratureBuffer -------------------------------------------------------------------------------------------|
+    // Free a possibly empty RTM quadrature buffer.                                                                       |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freePseudoSphericalSampleBuffer(allocator: Allocator, buffer: []common.PseudoSphericalSample) void {
+    // freePseudoSphericalSampleBuffer -----------------------------------------------------------------------------------|
+    // Free a possibly empty pseudo-spherical sample buffer.                                                              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn freeIndexBuffer(allocator: Allocator, buffer: []usize) void {
+    // freeIndexBuffer ---------------------------------------------------------------------------------------------------|
+    // Free a possibly empty usize index buffer.                                                                          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (buffer.len != 0) allocator.free(buffer);
 }
