@@ -6,11 +6,29 @@ const OperationalReferenceGrid = @import("../../../input/Instrument.zig").Operat
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
 // band_means.zig --------------------------------------------------------------------------------------------   |
-// Computes wavelength-band mean cross sections used during absorber preparation.                                |
+// Computes wavelength-band mean spectroscopy values used while preparing absorber state.                        |
+//                                                                                                               |
+// called by                                                                                                     |
+//   state_build/accumulation.zig when building band-level gas and O2/O2-O2 optical-depth summaries              |
+//   operational O2/O2-O2 LUT routes through weightedOperational* helpers in this file                           |
+//                                                                                                               |
+// main paths                                                                                                    |
+//   computeBandLineMeans                                                                                        |
+//     -> prepare strong and weak line state once for the effective T/p                                          |
+//     -> scan the scene spectral grid                                                                           |
+//     -> accumulate line and line-mixing sigma means                                                            |
+//                                                                                                               |
+//   weightedOperationalO2BandMeans / weightedOperationalO2O2BandMean                                            |
+//     -> evaluate operational LUTs over the same spectral grid                                                  |
+//     -> weight by column-density or pair-path factors before accumulation                                      |
 //                                                                                                               |
 // hot path                                                                                                      |
-//   Band means move repeated spectroscopy work out of layer accumulation. The returned two-field row is kept    |
-//   small because absorber setup only needs the mean line and line-mixing cross sections.                       |
+//   These functions run during optical-state preparation. Their result moves repeated spectroscopy averaging    |
+//   out of layer accumulation and wavelength-time RTM loops.                                                    |
+//                                                                                                               |
+// memory                                                                                                        |
+//   LineBandMeans is a 16 B stack/return value. Temporary strong/weak line states are owned inside              |
+//   computeBandLineMeans and deinitialized before return.                                                       |
 // ------------------------------------------------------------------------------------------------------------  |
 
 // LineBandMeans ---------------------------------------------------------------------------------------------   |
