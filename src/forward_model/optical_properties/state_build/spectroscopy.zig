@@ -9,6 +9,31 @@ const State = @import("state.zig");
 const Allocator = std.mem.Allocator;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
+// spectroscopy.zig -------------------------------------------------------------------------------------------|
+// Resolves absorber species, spectroscopy ownership, and volume-mixing ratios during optical-state setup.     |
+//                                                                                                             |
+// called by                                                                                                   |
+//   absorbers.zig builds active line/cross-section absorber lists and selects the continuum owner             |
+//   layer_spectroscopy.zig and state_optical_depth.zig evaluate prepared line and cross-section absorbers     |
+//   prepared_state.zig exposes spectroscopy lookup helpers through PreparedOpticalState                       |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   collectActiveLineAbsorbers         keeps scene absorbers using line_by_line spectroscopy                  |
+//   collectActiveCrossSectionAbsorbers keeps scene absorbers using cross-section tables or LUTs               |
+//   resolveActiveLineSpecies           chooses the active line species from scene controls, O2 LUT, or HITRAN |
+//   resolveContinuumOwnerSpecies       decides which species owns the continuum when line ownership is loose  |
+//   speciesMixingRatioAtPressure       interpolates an explicit or scene-level VMR profile at pressure        |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file only interprets scene/reference metadata. It does not prepare HITRAN sidecars, evaluate line    |
+//   shapes, fill RTM layers, or silently invent unsupported species. Unknown HITRAN gases become typed errors |
+//   where a species is required.                                                                              |
+//                                                                                                             |
+// memory                                                                                                      |
+//   collectActive* returns owned slices of small absorber descriptors. Other helpers return borrowed profile  |
+//   views, optional species, or scalar fractions; they do not retain scene pointers or allocate hidden state. |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
     var active = std.ArrayList(State.ActiveLineAbsorber).empty;
     defer active.deinit(allocator);
