@@ -3,6 +3,27 @@ const zdisamar = @import("zdisamar");
 
 const report = zdisamar.report;
 
+// o2a_plot_spectrum_cli.zig ----------------------------------------------------------------------------------|
+// Installed validation helper that writes one generated O2 A spectrum CSV for plotting.                       |
+//                                                                                                             |
+// called by                                                                                                   |
+//   build.zig installs this as zdisamar-o2a-plot-spectrum                                                     |
+//                                                                                                             |
+// main path                                                                                                   |
+//   parse --output-dir                                                                                        |
+//     -> build default public O2 A input                                                                      |
+//     -> run the resolved vendor reflectance case through zdisamar.o2a                                        |
+//     -> write generated_spectrum.csv with wavelength, irradiance, radiance, and reflectance columns          |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file is intentionally a CLI and file-output boundary. It imports the public zdisamar module instead  |
+//   of internal RTM modules, so validation exercises the same exported surface used by downstream bindings.   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   A DebugAllocator owns process args, the joined output path, and the retained reflectance case. CSV rows   |
+//   are streamed by output/json.zig rather than staged in another buffer.                                     |
+// ------------------------------------------------------------------------------------------------------------|
+
 // Config -----------------------------------------------------------------------------------------------------|
 // Parsed command-line settings for the local O2 A spectrum-plot helper.                                       |
 //                                                                                                             |

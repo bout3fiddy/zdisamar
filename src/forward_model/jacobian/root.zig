@@ -1,3 +1,31 @@
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Fixed RTM Jacobian state vocabulary and tiny vector helpers.                                                |
+//                                                                                                             |
+// called by                                                                                                   |
+//   radiative_transfer/root.zig re-exports this namespace as RadiativeTransfer.Jacobian                       |
+//   LABOS execute/layer/attenuation code reads per-layer derivative lanes by state                            |
+//   instrument-grid storage, simulation, and product cloning pack active state-major columns                  |
+//   optimal_estimation/retrieval.zig maps native RTM columns into OE state-vector columns                     |
+//   src/api/c.zig validates external state ids against this enum and mask shape                               |
+//                                                                                                             |
+// state order                                                                                                 |
+//   surface_albedo                    : direct surface term                                                   |
+//   aerosol_optical_depth             : aerosol extinction/scattering amount                                  |
+//   aerosol_layer_mid_pressure_hpa    : pressure placement of the aerosol layer                               |
+//                                                                                                             |
+// mask shape                                                                                                  |
+//   StateMask uses the low state_count bits. sanitizedMask drops unknown future bits so callers can pass      |
+//   masks through public boundaries without indexing outside Vector. activeState* helpers translate between   |
+//   sparse masks and compact active-column indexes used by workspace Jacobian buffers.                        |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   The helpers are deliberately branch-light over three fixed lanes. They sit in sample loops, LABOS         |
+//   Jacobian packing, and OE residual projection, so they avoid allocation, dynamic lookup, and string names. |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Vector is [3]f64: 24 B per value. StateMask is u8. This module owns no heap storage and no retained       |
+//   mutable state; public names live in StateNames for API/report labels only.                                |
+// ------------------------------------------------------------------------------------------------------------|
 pub const state_count: usize = 3;
 
 pub const State = enum(u8) {

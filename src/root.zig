@@ -11,6 +11,29 @@ const radiative_transfer = @import("forward_model/radiative_transfer/root.zig");
 const measurement = @import("forward_model/instrument_grid/root.zig");
 pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Public Zig module root for the O2 A forward model, diagnostics, and retrieval entry points.                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   build.zig exposes this file as the zdisamar module                                                        |
+//   src/api/c.zig owns the C/Python boundary and converts external handles into these public calls            |
+//   validation CLIs and Zig tests import zdisamar directly                                                    |
+//                                                                                                             |
+// public flow                                                                                                 |
+//   defaultO2AInput / parseO2AInputJson / renderDefaultO2AInputJson                                           |
+//     -> prepareO2A or prepare                                                                                |
+//        -> runO2A / runO2AWithSessionStorage / run                                                           |
+//           -> output tables, generated spectra, diagnostic rows, and optional OE results                     |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file is a narrow facade. It names stable public types, forwards preparation and run calls to the     |
+//   O2 A/input/forward-model modules, and keeps loading/parsing/report-writing out of the RTM compute path.   |
+//   Unit tests assert that removed framework scaffolding is not re-exposed here.                              |
+//                                                                                                             |
+// memory                                                                                                      |
+//   PreparedInput embeds the input, reference data, optical state, and product workspace owner. Deinit order  |
+//   is storage -> optical properties -> reference data so borrowed buffers are released after their users.    |
+// ------------------------------------------------------------------------------------------------------------|
 pub const Input = @import("input/Scene.zig").Scene;
 pub const O2AInput = o2a_reference.O2AInput;
 pub const ReferenceData = bundled_data.Data;
