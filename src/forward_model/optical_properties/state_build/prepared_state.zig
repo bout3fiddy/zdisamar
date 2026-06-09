@@ -53,31 +53,65 @@ const Allocator = std.mem.Allocator;
 // size: 2136 B (2.086 KiB), align: 8 B                                                                         |
 //                                                                                                              |
 // memory                                                                                                       |
-// [   0..   7] gas_optical_depth                                     : f64                                     |
-// [   8..  79] operational_o2o2_lut                                  : OperationalCrossSectionLut              |
-// [  80..  95] strong_line_states                                    : ?[]StrongLinePreparedState              |
-// [  96.. 111] spectroscopy_profile_strong_line_states               : ?[]StrongLinePreparedState              |
-// [ 112.. 127] spectroscopy_profile_weak_line_states                 : ?[]WeakLinePreparedState                |
-// [ 128.. 159] shared_rtm_geometry                                   : SharedRtmGeometry                       |
-// [ 160.. 175] continuum_points                                      : []const CrossSectionPoint               |
-// [ 176.. 191] lut_execution_entries                                 : []const []const u8                      |
-// [ 192.. 223] collision_induced_absorption                          : ?CollisionInducedAbsorptionTable        |
-// [ 224.. 239] generated_lut_assets                                  : []GeneratedLutAsset                     |
-// [ 240.. 455] spectroscopy_lines                                    : ?SpectroscopyLineList                   |
-// [ 456.. 503] spectroscopy profile altitude/pressure/temperature    : 3 slice headers                         |
-// [ 504.. 519] line_mixing_mean, column_density                      : 2 f64                                   |
-// [ 520.. 599] aerosol_fraction_control                              : FractionControl                         |
-// [ 600.. 615] spectroscopy_plan_key, effective_air_mass_factor      : u64 + f64                               |
-// [ 616.. 647] cross_section_absorbers, line_absorbers               : 2 slice headers                         |
-// [ 648.. 655] aerosol_base_optical_depth                            : f64                                     |
-// [ 656.. 727] operational_o2_lut                                    : OperationalCrossSectionLut              |
-// [ 728.. 767] optical-depth summaries and mean cross sections       : 5 f64                                   |
-// [ 768.. 799] sublayers, layers                                     : optional slice + slice                  |
-// [ 800.. 823] spectroscopy_profile_cache_key and aerosol SSA values : u64 + 2 f64                             |
-// [ 824..2031] aerosol_phase_coefficients                            : [151]f64                                |
-// [2032..2111] effective thermodynamic and path scalars              : 10 f64                                  |
-// [2112..2129] fit index, ownership flags, interval and phase enums  : u32 + flags + small enums               |
-// [2130..2135] trailing padding                                      : 6 B                                     |
+// [   0..   7] gas_optical_depth                            : f64                                              |
+// [   8..  79] operational_o2o2_lut                         : OperationalCrossSectionLut                       |
+// [  80..  95] strong_line_states                           : ?[]StrongLinePreparedState                       |
+// [  96.. 111] spectroscopy_profile_strong_line_states      : ?[]StrongLinePreparedState                       |
+// [ 112.. 127] spectroscopy_profile_weak_line_states        : ?[]WeakLinePreparedState                         |
+// [ 128.. 159] shared_rtm_geometry                          : SharedRtmGeometry                                |
+// [ 160.. 175] continuum_points                             : []const CrossSectionPoint                        |
+// [ 176.. 191] lut_execution_entries                        : []const []const u8                               |
+// [ 192.. 223] collision_induced_absorption                 : ?CollisionInducedAbsorptionTable                 |
+// [ 224.. 239] generated_lut_assets                         : []GeneratedLutAsset                              |
+// [ 240.. 455] spectroscopy_lines                           : ?SpectroscopyLineList                            |
+// [ 456.. 471] spectroscopy_profile_altitudes_km            : []f64                                            |
+// [ 472.. 487] spectroscopy_profile_pressures_hpa           : []f64                                            |
+// [ 488.. 503] spectroscopy_profile_temperatures_k          : []f64                                            |
+// [ 504.. 511] line_mixing_mean_cross_section_cm2_per_molecule : f64                                           |
+// [ 512.. 519] column_density_factor                        : f64                                              |
+// [ 520.. 599] aerosol_fraction_control                     : FractionControl                                  |
+// [ 600.. 607] spectroscopy_plan_key                        : u64                                              |
+// [ 608.. 615] effective_air_mass_factor                    : f64                                              |
+// [ 616.. 631] cross_section_absorbers                      : []PreparedCrossSectionAbsorber                   |
+// [ 632.. 647] line_absorbers                               : []PreparedLineAbsorber                           |
+// [ 648.. 655] aerosol_base_optical_depth                   : f64                                              |
+// [ 656.. 727] operational_o2_lut                           : OperationalCrossSectionLut                       |
+// [ 728.. 735] aerosol_optical_depth                        : f64                                              |
+// [ 736.. 743] total_optical_depth                          : f64                                              |
+// [ 744.. 751] depolarization_factor                        : f64                                              |
+// [ 752.. 759] mean_cross_section_cm2_per_molecule          : f64                                              |
+// [ 760.. 767] line_mean_cross_section_cm2_per_molecule     : f64                                              |
+// [ 768.. 783] sublayers                                    : ?[]PreparedSublayer                              |
+// [ 784.. 799] layers                                       : []PreparedLayer                                  |
+// [ 800.. 807] spectroscopy_profile_cache_inputs_key        : u64                                              |
+// [ 808.. 815] effective_single_scatter_albedo              : f64                                              |
+// [ 816.. 823] aerosol_single_scatter_albedo                : f64                                              |
+// [ 824..2031] aerosol_phase_coefficients                   : [151]f64                                         |
+// [2032..2039] effective_temperature_k                      : f64                                              |
+// [2040..2047] effective_pressure_hpa                       : f64                                              |
+// [2048..2055] air_column_density_factor                    : f64                                              |
+// [2056..2063] oxygen_column_density_factor                 : f64                                              |
+// [2064..2071] cia_mean_cross_section_cm5_per_molecule2    : f64                                               |
+// [2072..2079] cia_pair_path_factor_cm5                    : f64                                               |
+// [2080..2087] aerosol_reference_wavelength_nm             : f64                                               |
+// [2088..2095] aerosol_angstrom_exponent                   : f64                                               |
+// [2096..2103] cia_optical_depth                           : f64                                               |
+// [2104..2111] d_optical_depth_d_temperature               : f64                                               |
+// [2112..2115] fit_interval_index_1based                   : u32                                               |
+// [2116..2116] owns_spectroscopy_profile_strong_line_states: bool                                              |
+// [2117..2117] has_aerosol_profile_properties              : bool                                              |
+// [2118..2118] owns_spectroscopy_profile_arrays            : bool                                              |
+// [2119..2119] owns_operational_o2o2_lut                   : bool                                              |
+// [2120..2120] owns_operational_o2_lut                     : bool                                              |
+// [2121..2121] interval_semantics                          : IntervalSemantics                                 |
+// [2122..2123] continuum_owner_species                     : ?AbsorberSpecies                                  |
+// [2124..2124] aerosol_phase_support                       : PhaseSupportKind                                  |
+// [2125..2125] owns_spectroscopy_profile_weak_line_states  : bool                                              |
+// [2126..2126] owns_collision_induced_absorption           : bool                                              |
+// [2127..2127] owns_generated_lut_assets                   : bool                                              |
+// [2128..2128] owns_continuum_points                       : bool                                              |
+// [2129..2129] owns_lut_execution_entries                  : bool                                              |
+// [2130..2135] trailing padding                            : 6 B                                               |
 //                                                                                                              |
 // referenced storage                                                                                           |
 //   layers, sublayers, absorber rows, profile states, generated LUT assets, and execution strings are          |

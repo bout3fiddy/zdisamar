@@ -5,6 +5,23 @@ const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 
+// Absorber.zig -----------------------------------------------------------------------------------------------|
+// Public absorber and spectroscopy input model.                                                               |
+//                                                                                                             |
+// data                                                                                                        |
+//   Absorber names a species, profile source, optional VMR profile, and spectroscopy controls.                |
+//   Spectroscopy stores bindings plus resolved reference payloads once loaders attach concrete tables.        |
+//   LineGasControls stores simulation/retrieval knobs and chooses the active line-gas controls.               |
+//                                                                                                             |
+// validation                                                                                                  |
+//   Species strings must resolve to known O2-family species. Disabled spectroscopy cannot carry bindings,     |
+//   controls, or resolved payloads. Resolved payloads must match their active spectroscopy mode.              |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   clone duplicates names, isotope selections, bindings, and resolved reference payloads. deinitOwned walks  |
+//   the same ownership tree and releases nested resolved payloads before clearing the public header.          |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const AbsorberSpecies = enum {
     o2_o2,
     o2,
@@ -55,19 +72,52 @@ pub const SpectroscopyStage = enum {
     retrieval,
 };
 
+// ActiveLineGasControls --------------------------------------------------------------------------------------|
+// Resolved line-gas controls for the selected simulation or retrieval stage.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] isotopes           : []const u8                                                                    |
+// [16..31] threshold_line     : ?f64                                                                          |
+// [32..47] cutoff_cm1         : ?f64                                                                          |
+// [48..55] line_mixing_factor : f64                                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   isotopes points at the active isotope selection; it is borrowed from LineGasControls storage.             |
+//                                                                                                             |
+// unused bits: 0 top-level padding; optional-f64 tag slack stays inside ?f64 storage                          |
+// footprint: per instance = 56 B (0.055 KiB); total also includes referenced isotope bytes                    |
 pub const ActiveLineGasControls = struct {
     isotopes: []const u8 = &.{},
     threshold_line: ?f64 = null,
     cutoff_cm1: ?f64 = null,
     line_mixing_factor: f64 = 1.0,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// AbsorptionRepresentation -----------------------------------------------------------------------------------|
+// Pointer-sized view of the resolved absorption implementation selected by Spectroscopy.                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// active payload : one pointer to line, cross-section table, or cross-section LUT storage                     |
+// active tag     : union tag plus alignment padding                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   payload pointers are borrowed views into Spectroscopy resolved payload fields.                            |
+//                                                                                                             |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced payload storage                  |
 pub const AbsorptionRepresentation = union(enum) {
     none,
     line_abs: *const ReferenceData.SpectroscopyLineList,
     xsec_table: *const ReferenceData.CrossSectionTable,
     xsec_lut: *const OperationalCrossSectionLut,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
     if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;
@@ -82,15 +132,30 @@ pub fn resolvedAbsorberSpecies(absorber: anytype) ?AbsorberSpecies {
     return resolveAbsorberSpeciesName(absorber.species);
 }
 
-// layout(64-bit):
-//   size: 136 B, align: 8 B
-// field storage: 129 B across 9 fields; largest: factor_lm_sim=16 B, factor_lm_retr=16 B, isotopes_sim=16 B; padding: 7
-// B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: isotopes_sim, isotopes_retr carry references/descriptors; referenced storage is not included in size
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136 B (0.133 KiB); total also includes referenced storage above
+// LineGasControls --------------------------------------------------------------------------------------------|
+// Stage-specific line-gas knobs parsed from input.                                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 136 B (0.133 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] factor_lm_sim        : ?f64                                                                      |
+// [ 16.. 31] factor_lm_retr       : ?f64                                                                      |
+// [ 32.. 47] isotopes_sim         : []const u8                                                                |
+// [ 48.. 63] isotopes_retr        : []const u8                                                                |
+// [ 64.. 79] threshold_line_sim   : ?f64                                                                      |
+// [ 80.. 95] threshold_line_retr  : ?f64                                                                      |
+// [ 96..111] cutoff_sim_cm1       : ?f64                                                                      |
+// [112..127] cutoff_retr_cm1      : ?f64                                                                      |
+// [128..128] active_stage         : SpectroscopyStage                                                         |
+// [129..135] trailing padding     : 7 B                                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   isotope slices point at out-of-line bytes and are owned by cloned LineGasControls.                        |
+//                                                                                                             |
+// unused bits: 56 padding + 6 enum-storage slack; optional-f64 tag slack stays inside ?f64 storage            |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 136 B (0.133 KiB); total also includes owned isotope bytes                        |
 pub const LineGasControls = struct {
     factor_lm_sim: ?f64 = null,
     factor_lm_retr: ?f64 = null,
@@ -192,24 +257,40 @@ pub const LineGasControls = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn cloneIsotopeSelection(allocator: Allocator, isotopes: []const u8) ![]const u8 {
     if (isotopes.len == 0) return &.{};
     return try allocator.dupe(u8, isotopes);
 }
 
-// layout(64-bit):
-//   size: 832 B, align: 8 B
-//   field storage:
-//     825 B across 12 fields; largest: resolved_line_list=216 B, line_gas_controls=136 B
-//     resolved_cross_section_lut=80 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line:
-//     bindings and resolved spectroscopy payloads carry referenced storage
-//     referenced storage is not included in size
-//   cache span: 13 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 832 B (0.812 KiB); total also includes referenced storage above
+// Spectroscopy -----------------------------------------------------------------------------------------------|
+// Bindings and resolved payloads for one absorber's absorption model.                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 832 B (0.812 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 55] line_list                    : Binding                                                           |
+// [ 56..111] line_mixing                  : Binding                                                           |
+// [112..167] strong_lines                 : Binding                                                           |
+// [168..223] cia_table                    : Binding                                                           |
+// [224..279] cross_section_table          : Binding                                                           |
+// [280..335] operational_lut              : Binding                                                           |
+// [336..471] line_gas_controls            : LineGasControls                                                   |
+// [472..687] resolved_line_list           : ?SpectroscopyLineList                                             |
+// [688..719] resolved_cia_table           : ?CollisionInducedAbsorptionTable                                  |
+// [720..743] resolved_cross_section_table : ?CrossSectionTable                                                |
+// [744..823] resolved_cross_section_lut   : ?OperationalCrossSectionLut                                       |
+// [824..824] mode                         : SpectroscopyMode                                                  |
+// [825..831] trailing padding             : 7 B                                                               |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   bindings point at input names. resolved payloads carry nested out-of-line spectroscopy/table/LUT storage. |
+//                                                                                                             |
+// unused bits: 56 padding + 6 enum-storage slack; optional payload tags are inside nested optional storage    |
+// cache span: 13 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 832 B (0.812 KiB); total also includes referenced resolved payload storage        |
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
     line_list: Binding = .none,
@@ -403,24 +484,34 @@ pub const Spectroscopy = struct {
         return .none;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 960 B, align: 8 B
-// field storage: 954 B across 6 fields; largest: spectroscopy=848 B, profile_source=56 B, id=16 B; padding: 6 B (48
-// bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-// out-of-line: id, species, volume_mixing_ratio_profile_ppmv carry references/descriptors; referenced storage is not
-// included in size
-//   cache span: 15 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 960 B (0.938 KiB); total also includes referenced storage above
+// Absorber ---------------------------------------------------------------------------------------------------|
+// Public absorber header with species identity, profile binding, VMR profile, and spectroscopy state.         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 944 B (0.922 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] id                              : []const u8                                                     |
+// [ 16.. 31] species                         : []const u8                                                     |
+// [ 32.. 87] profile_source                  : Binding                                                        |
+// [ 88..103] volume_mixing_ratio_profile_ppmv: []const [2]f64                                                 |
+// [104..935] spectroscopy                    : Spectroscopy                                                   |
+// [936..937] resolved_species                : ?AbsorberSpecies                                               |
+// [938..943] trailing padding                : 6 B                                                            |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   id/species strings, VMR profile rows, profile binding names, and nested spectroscopy payloads are         |
+//   out-of-line. clone owns these copies; deinitOwned releases them.                                          |
+//                                                                                                             |
+// unused bits: 48 padding + optional enum-storage slack in resolved_species                                   |
+// cache span: 15 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 944 B (0.922 KiB); total also includes referenced absorber storage                |
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
 
-    // Typed species identity resolved from the string `species` field.
-    // Null when the species string has not been resolved against the
-    // vendor species catalogue.
     resolved_species: ?AbsorberSpecies = null,
     profile_source: Binding = .none,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
@@ -461,14 +552,22 @@ pub const Absorber = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: items=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: items carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// AbsorberSet ------------------------------------------------------------------------------------------------|
+// Owner/view header for the scene absorber list.                                                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..15] items : []const Absorber                                                                            |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   items points at out-of-line Absorber rows owned by cloned sets.                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes owned absorber rows                         |
 pub const AbsorberSet = struct {
     items: []const Absorber = &[_]Absorber{},
 
@@ -503,6 +602,7 @@ pub const AbsorberSet = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn validateIsotopeSelection(isotopes: []const u8) errors.Error!void {
     for (isotopes, 0..) |isotope, index| {
