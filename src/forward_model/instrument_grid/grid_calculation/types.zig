@@ -7,13 +7,33 @@ pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 // types.zig -------------------------------------------------------------------------------------------------------------|
-// Product data shapes for measurement-space spectra. Storage code fills borrowed views first; public API                 |
-// paths clone those views into owned products when the caller needs independent lifetime.                                |
+// Measurement-space product rows for spectra leaving the instrument-grid calculation. Simulation fills borrowed          |
+// workspace-backed views first; public API paths clone those views into owned products when the caller needs             |
+// independent lifetime.                                                                                                  |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   root.zig exposes InstrumentGridProductView for workspace-backed runs and InstrumentGridProduct for owned             |
+//   public results. simulate.zig fills the borrowed view from ProductStorage buffers. output/json.zig, O2 A              |
+//   reference metrics, and retrieval code consume the owned or borrowed rows.                                            |
 //                                                                                                                        |
 // main paths                                                                                                             |
 //   InstrumentGridProductView -> borrowed workspace-backed result                                                        |
 //   InstrumentGridProduct     -> owned public result                                                                     |
 //   clone*Jacobian            -> convert state-major workspace columns into public row-major arrays                      |
+//                                                                                                                        |
+// Jacobian layout                                                                                                        |
+//   ProductStorage keeps Jacobians as compact state-major columns: [active_state][sample]. The default public            |
+//   product expands them to [sample][all supported states] with inactive states filled as zero. Requested-state          |
+//   API paths clone only the requested columns into [sample][requested_state].                                           |
+//                                                                                                                        |
+// ownership                                                                                                              |
+//   InstrumentGridProductView borrows every slice and becomes invalid when ProductStorage is reused or freed.            |
+//   InstrumentGridProduct owns heap slices and releases them through deinit. ForwardIntegratedSample is the dense        |
+//   temporary row used between LABOS forward prefetch and nominal-channel integration.                                   |
+//                                                                                                                        |
+// public names                                                                                                           |
+//   reflectance_export_name and fitted_reflectance_export_name keep exported spectrum column labels centralized so       |
+//   output code and tests do not duplicate string literals.                                                              |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // InstrumentGridSummary -------------------------------------------------------------------------------------------------|

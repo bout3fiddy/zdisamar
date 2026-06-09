@@ -8,12 +8,26 @@ pub const Error = error{
 };
 
 // grid.zig --------------------------------------------------------------------------------------------------------------|
-// Wavelength-axis helpers for instrument-grid output samples. The rest of the module asks this file for the              |
-// nominal wavelength at an output index, whether that index comes from a uniform grid or measured channels.              |
+// Wavelength-axis helpers for instrument-grid output rows. This file turns the public uniform spectral grid and          |
+// optional measured-channel wavelength table into one addressable nominal axis for simulation.                           |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   simulate.zig builds a ResolvedAxis before wavelength sampling, summary, and product runs.                            |
+//   wavelength_sampling.zig uses sampleAt to assign nominal rows and integration support wavelengths.                    |
+//   tests cover native uniform grids, measured-channel override rows, and strict measured-wavelength ordering.           |
 //                                                                                                                        |
 // main paths                                                                                                             |
 //   SpectralGrid.sampleAt -> uniform native grid address                                                                 |
 //   ResolvedAxis.sampleAt -> explicit measured wavelength when present, otherwise uniform grid                           |
+//                                                                                                                        |
+// contract                                                                                                               |
+//   SpectralGrid is endpoint-inclusive: index 0 is start_nm and index sample_count - 1 is end_nm.                        |
+//   Measured-channel wavelengths replace the uniform formula only when the explicit table has exactly one value per      |
+//   output row and is finite, strictly increasing, and non-empty.                                                        |
+//                                                                                                                        |
+// memory                                                                                                                 |
+//   SpectralGrid is a 24 B value. ResolvedAxis is a 40 B value that borrows the optional measured-wavelength slice;      |
+//   it never owns spectral assets or product buffers.                                                                    |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // SpectralGrid ----------------------------------------------------------------------------------------------------------|
