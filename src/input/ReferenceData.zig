@@ -1,5 +1,3 @@
-// Typed reference-data root.
-
 const std = @import("std");
 const climatology = @import("reference/climatology.zig");
 const cross_section_types = @import("reference/cross_sections.zig");
@@ -10,6 +8,17 @@ const spectroscopy_types = @import("reference/spectroscopy/types.zig");
 const spectroscopy_line_list = @import("reference/spectroscopy/line_list.zig");
 
 const Allocator = std.mem.Allocator;
+
+// ReferenceData.zig -----------------------------------------------------------------------------------------|
+// Typed reference-data facade used by input loaders and forward-model preparation.                           |
+//                                                                                                            |
+// exports                                                                                                    |
+//   Re-exports concrete climatology, cross-section, CIA, Rayleigh, spectroscopy, and airmass LUT types.      |
+//                                                                                                            |
+// demo data                                                                                                  |
+//   The small in-memory rows below are deterministic fixtures for examples and smoke tests. Production       |
+//   reference assets are loaded through src/input/reference_data/.                                           |
+// -----------------------------------------------------------------------------------------------------------|
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;
 pub const ClimatologyProfile = climatology.ClimatologyProfile;
@@ -60,11 +69,51 @@ const demo_airmass_factor_points = [_]AirmassFactorPoint{
 };
 
 const demo_spectroscopy_lines = [_]SpectroscopyLine{
-    .{ .center_wavelength_nm = 429.8, .line_strength_cm2_per_molecule = 8.2e-21, .air_half_width_nm = 0.035, .temperature_exponent = 0.72, .lower_state_energy_cm1 = 112.0, .pressure_shift_nm = 0.002, .line_mixing_coefficient = 0.04 },
-    .{ .center_wavelength_nm = 434.6, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.041, .temperature_exponent = 0.69, .lower_state_energy_cm1 = 140.0, .pressure_shift_nm = 0.003, .line_mixing_coefficient = 0.07 },
-    .{ .center_wavelength_nm = 441.2, .line_strength_cm2_per_molecule = 9.7e-21, .air_half_width_nm = 0.038, .temperature_exponent = 0.74, .lower_state_energy_cm1 = 165.0, .pressure_shift_nm = 0.002, .line_mixing_coefficient = 0.05 },
-    .{ .center_wavelength_nm = 448.1, .line_strength_cm2_per_molecule = 7.6e-21, .air_half_width_nm = 0.034, .temperature_exponent = 0.77, .lower_state_energy_cm1 = 188.0, .pressure_shift_nm = 0.001, .line_mixing_coefficient = 0.03 },
-    .{ .center_wavelength_nm = 456.0, .line_strength_cm2_per_molecule = 5.4e-21, .air_half_width_nm = 0.030, .temperature_exponent = 0.81, .lower_state_energy_cm1 = 205.0, .pressure_shift_nm = 0.001, .line_mixing_coefficient = 0.02 },
+    .{
+        .center_wavelength_nm = 429.8,
+        .line_strength_cm2_per_molecule = 8.2e-21,
+        .air_half_width_nm = 0.035,
+        .temperature_exponent = 0.72,
+        .lower_state_energy_cm1 = 112.0,
+        .pressure_shift_nm = 0.002,
+        .line_mixing_coefficient = 0.04,
+    },
+    .{
+        .center_wavelength_nm = 434.6,
+        .line_strength_cm2_per_molecule = 1.15e-20,
+        .air_half_width_nm = 0.041,
+        .temperature_exponent = 0.69,
+        .lower_state_energy_cm1 = 140.0,
+        .pressure_shift_nm = 0.003,
+        .line_mixing_coefficient = 0.07,
+    },
+    .{
+        .center_wavelength_nm = 441.2,
+        .line_strength_cm2_per_molecule = 9.7e-21,
+        .air_half_width_nm = 0.038,
+        .temperature_exponent = 0.74,
+        .lower_state_energy_cm1 = 165.0,
+        .pressure_shift_nm = 0.002,
+        .line_mixing_coefficient = 0.05,
+    },
+    .{
+        .center_wavelength_nm = 448.1,
+        .line_strength_cm2_per_molecule = 7.6e-21,
+        .air_half_width_nm = 0.034,
+        .temperature_exponent = 0.77,
+        .lower_state_energy_cm1 = 188.0,
+        .pressure_shift_nm = 0.001,
+        .line_mixing_coefficient = 0.03,
+    },
+    .{
+        .center_wavelength_nm = 456.0,
+        .line_strength_cm2_per_molecule = 5.4e-21,
+        .air_half_width_nm = 0.030,
+        .temperature_exponent = 0.81,
+        .lower_state_energy_cm1 = 205.0,
+        .pressure_shift_nm = 0.001,
+        .line_mixing_coefficient = 0.02,
+    },
 };
 
 pub fn buildDemoClimatology(allocator: Allocator) !ClimatologyProfile {

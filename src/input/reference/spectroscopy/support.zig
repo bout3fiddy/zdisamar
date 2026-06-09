@@ -1,9 +1,14 @@
-// Spectroscopy line-list support helpers that are not themselves line-shape
-// physics.
-
 const std = @import("std");
 const PhysicsCore = @import("physics_core.zig");
 const Types = @import("types.zig");
+
+// support.zig -----------------------------------------------------------------------------------------------|
+// Spectroscopy line-list support helpers that are not themselves line-shape physics.                         |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   These helpers normalize vendor/raw line metadata before the line-list and strong-line evaluators use it. |
+//   They stay allocation-free and do not own spectroscopy storage.                                           |
+// -----------------------------------------------------------------------------------------------------------|
 
 pub fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {
     return if (std.math.isFinite(line.center_wavenumber_cm1))
@@ -80,10 +85,13 @@ pub fn runtimeControlsMatchLine(
     if (gas_index) |expected_gas_index| {
         if (line.gas_index != expected_gas_index) return false;
     }
+
     if (active_isotopes.len == 0) return true;
+
     for (active_isotopes) |isotope_number| {
         if (line.isotope_number == isotope_number) return true;
     }
+
     return false;
 }
 
@@ -91,9 +99,12 @@ pub fn runtimeControlsKeepStrongLineSidecars(gas_index: ?u16, active_isotopes: [
     if (gas_index) |expected_gas_index| {
         if (expected_gas_index != 7) return false;
     }
+
     if (active_isotopes.len == 0) return true;
+
     for (active_isotopes) |isotope_number| {
         if (isotope_number == 1) return true;
     }
+
     return false;
 }

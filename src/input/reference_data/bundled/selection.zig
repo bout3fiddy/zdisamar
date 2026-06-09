@@ -7,13 +7,21 @@ const assets = @import("assets.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
+// selection.zig ---------------------------------------------------------------------------------------------|
+// Chooses bundled reference assets for a typed Scene when no explicit asset binding is present.              |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   This file may load bundled input assets, but it does not parse user control files. Explicit unresolved   |
+//   bindings are rejected instead of falling back to defaults.                                               |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
     if (requestsUnresolvedCrossSectionSpectroscopy(scene)) {
         return error.UnsupportedSpectroscopyConfiguration;
     }
-    // UNITS:
-    //   The fallback table preserves the scene's spectral grid in nanometers while keeping the
-    //   continuum coefficient identically zero.
+
+    // The fallback table keeps the scene spectral grid in nanometers and leaves the continuum coefficient at
+    // exactly zero.
     return assets.zeroContinuumTable(allocator, scene.spectral_grid.start_nm, scene.spectral_grid.end_nm);
 }
 
@@ -21,10 +29,10 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
     if (try assets.cloneResolvedSpectroscopyLineList(allocator, scene)) |line_list| {
         return line_list;
     }
+
     if (assets.hasExplicitSpectroscopyBindings(scene)) {
-        // GOTCHA:
-        //   Explicit asset bindings must resolve; otherwise a missing asset would silently mask a
-        //   configuration problem if we fell back to bundled defaults here.
+
+        // Explicit asset bindings must resolve. Falling back here would hide a broken scene configuration.
         return error.UnresolvedSpectroscopyBinding;
     }
 
@@ -51,11 +59,13 @@ fn requestsLineByLineSpectroscopy(scene: *const Scene) bool {
 fn requestsUnresolvedCrossSectionSpectroscopy(scene: *const Scene) bool {
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != .cross_sections) continue;
+
         switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
             .xsec_table, .xsec_lut => continue,
             .line_abs, .none => return true,
         }
     }
+
     return false;
 }
 
@@ -66,20 +76,25 @@ pub fn loadCollisionInducedAbsorptionForScene(
     const requests_explicit_cia = assets.sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
     const generating_o2o2_lut = requests_explicit_cia and scene.lut_controls.xsec.mode == .generate;
     const has_explicit_cia_bindings = assets.hasExplicitCiaBindings(scene);
+
     if (requests_explicit_cia) {
         if (assets.resolvedCollisionInducedAbsorptionTable(scene)) |table| {
             return try table.clone(allocator);
         }
     }
+
     if (has_explicit_cia_bindings) {
-        // GOTCHA:
-        //   Explicit CIA bindings must be materialized or the scene configuration is incomplete.
+
+        // Explicit CIA bindings must be materialized or the scene configuration is incomplete.
         return error.UnresolvedCollisionInducedAbsorptionBinding;
     }
-    if (scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled() and !generating_o2o2_lut) {
-        // DECISION:
-        //   The operational LUT takes precedence over the bundled O2-O2 CIA sidecar to preserve
-        //   the runtime control path expected by the scene configuration.
+
+    const uses_operational_o2o2_lut =
+        scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled();
+    if (uses_operational_o2o2_lut and !generating_o2o2_lut) {
+
+        // The operational LUT takes precedence over the bundled O2-O2 CIA sidecar because that is the runtime
+        // control path requested by the scene.
         return null;
     }
 
