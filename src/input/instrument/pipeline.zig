@@ -3,6 +3,19 @@ const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 const line_shape = @import("line_shape.zig");
 
+// pipeline.zig -----------------------------------------------------------------------------------------------|
+// Instrument spectral-response controls shared by scene input and operational support.                        |
+//                                                                                                             |
+// data                                                                                                        |
+//   SpectralResponse holds one line-shape response request and any explicit kernel/table data.                |
+//   SpectralChannelControls wraps that response with per-channel shift, scale, offset, and stray-light        |
+//   controls used by measured-channel paths.                                                                  |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Response structs own only nested line-shape storage. deinitOwned delegates to the nested line-shape       |
+//   headers and then clears the response value.                                                               |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const BuiltinLineShapeKind = line_shape.BuiltinLineShapeKind;
 pub const InstrumentLineShape = line_shape.InstrumentLineShape;
 pub const InstrumentLineShapeTable = line_shape.InstrumentLineShapeTable;
@@ -75,14 +88,33 @@ pub const SlitIndex = enum(u8) {
     }
 };
 
-// layout(64-bit):
-//   size: 152 B, align: 8 B
-// field storage: 148 B across 12 fields; largest: instrument_line_shape_table=56 B, instrument_line_shape=40 B,
-// fwhm_nm=8 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count
+// SpectralResponse -------------------------------------------------------------------------------------------|
+// One spectral-response request plus optional explicit kernel/table data.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 152 B (0.148 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] fwhm_nm                       : f64                                                              |
+// [  8.. 15] amplitude                     : f64                                                              |
+// [ 16.. 23] scale                         : f64                                                              |
+// [ 24.. 31] phase_deg                     : f64                                                              |
+// [ 32.. 39] high_resolution_step_nm       : f64                                                              |
+// [ 40.. 47] high_resolution_half_span_nm  : f64                                                              |
+// [ 48.. 87] instrument_line_shape         : InstrumentLineShape                                              |
+// [ 88..143] instrument_line_shape_table   : InstrumentLineShapeTable                                         |
+// [144..144] explicit                      : bool                                                             |
+// [145..145] slit_index                    : SlitIndex                                                        |
+// [146..146] builtin_line_shape            : BuiltinLineShapeKind                                             |
+// [147..147] integration_mode              : IntegrationMode                                                  |
+// [148..151] trailing padding              : 4 B                                                              |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   explicit line-shape headers may own out-of-line kernel arrays.                                            |
+//                                                                                                             |
+// unused bits: 32 padding + 7 bool-storage slack + 18 enum-storage slack = 57 bits                            |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 152 B (0.148 KiB); total also includes referenced line-shape storage              |
 pub const SpectralResponse = struct {
     pub const RequestedIntegrationMode = enum {
         auto,
@@ -147,15 +179,29 @@ pub const SpectralResponse = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 192 B, align: 8 B
-// field storage: 185 B across 6 fields; largest: response=152 B, wavelength_shift_nm=8 B, multiplicative_offset=8 B;
-// padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 192 B (0.188 KiB); total = per instance * live instance count
+// SpectralChannelControls ------------------------------------------------------------------------------------|
+// Per-channel response and scalar correction controls.                                                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 192 B (0.188 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..151] response              : SpectralResponse                                                         |
+// [152..159] wavelength_shift_nm   : f64                                                                      |
+// [160..167] multiplicative_offset : f64                                                                      |
+// [168..175] additive_offset       : f64                                                                      |
+// [176..183] stray_light           : f64                                                                      |
+// [184..184] explicit              : bool                                                                     |
+// [185..191] trailing padding      : 7 B                                                                      |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   response may own nested line-shape arrays. Scalar correction controls are inline.                         |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 192 B (0.188 KiB); total also includes nested response storage                    |
 pub const SpectralChannelControls = struct {
     explicit: bool = false,
     response: SpectralResponse = .{},
@@ -176,3 +222,4 @@ pub const SpectralChannelControls = struct {
         try self.response.validate();
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
