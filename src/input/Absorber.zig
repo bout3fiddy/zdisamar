@@ -6,20 +6,27 @@ const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 
 // Absorber.zig -----------------------------------------------------------------------------------------------|
-// Public absorber and spectroscopy input model.                                                               |
+// Public absorber, spectroscopy binding, and resolved absorption payload model.                               |
 //                                                                                                             |
-// data                                                                                                        |
-//   Absorber names a species, profile source, optional VMR profile, and spectroscopy controls.                |
-//   Spectroscopy stores bindings plus resolved reference payloads once loaders attach concrete tables.        |
-//   LineGasControls stores simulation/retrieval knobs and chooses the active line-gas controls.               |
+// used by                                                                                                     |
+//   Scene stores AbsorberSet as the gas/continuum/line input surface                                          |
+//   reference_data/bundled workflows attach concrete line, CIA, cross-section, and LUT payloads               |
+//   optical_properties/state_build/absorbers.zig turns validated rows into prepared absorber state            |
+//   Scene.lutCompatibilityKey hashes active line-gas controls and spectroscopy bindings                       |
 //                                                                                                             |
-// validation                                                                                                  |
-//   Species strings must resolve to known O2-family species. Disabled spectroscopy cannot carry bindings,     |
-//   controls, or resolved payloads. Resolved payloads must match their active spectroscopy mode.              |
+// main paths                                                                                                  |
+//   resolveAbsorberSpeciesName normalizes public and vendor O2/O2-O2 names                                    |
+//   Spectroscopy.validate enforces mode-specific bindings, controls, and resolved payloads                    |
+//   LineGasControls.active chooses simulation or retrieval stage controls for prepared spectroscopy           |
+//   clone/deinitOwned duplicate and release binding names plus resolved reference payloads                    |
 //                                                                                                             |
-// ownership                                                                                                   |
-//   clone duplicates names, isotope selections, bindings, and resolved reference payloads. deinitOwned walks  |
-//   the same ownership tree and releases nested resolved payloads before clearing the public header.          |
+// boundary                                                                                                    |
+//   This file stores typed references and optional resolved payloads. It does not load files or parse assets; |
+//   loaders either attach a matching payload, reject invalid combinations, or leave inactive fields empty.    |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Absorber and Spectroscopy are public value headers over nested bindings and optional owned payloads.      |
+//   Clone deep-copies names, isotope selections, and resolved tables so prepared scenes can own their inputs. |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const AbsorberSpecies = enum {

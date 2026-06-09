@@ -10,14 +10,21 @@ const spectroscopy_line_list = @import("reference/spectroscopy/line_list.zig");
 const Allocator = std.mem.Allocator;
 
 // ReferenceData.zig -----------------------------------------------------------------------------------------|
-// Typed reference-data facade used by input loaders and forward-model preparation.                           |
+// Typed reference-data facade shared by input loaders, preparation, diagnostics, and tests.                  |
 //                                                                                                            |
-// exports                                                                                                    |
-//   Re-exports concrete climatology, cross-section, CIA, Rayleigh, spectroscopy, and airmass LUT types.      |
+// used by                                                                                                    |
+//   input/reference_data loaders return the concrete rows re-exported here                                   |
+//   optical_properties/state_build consumes climatology, CIA, cross-section, Rayleigh, and spectroscopy rows |
+//   input Absorber resolved payloads and output O2 line diagnostics refer to these public row types          |
+//   unit tests and examples use the deterministic demo builders at the bottom of this file                   |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   This file is a type/export surface, not an asset loader. Production reference files are parsed under     |
+//   src/input/reference_data/ and concrete spectroscopy math lives under src/input/reference/.               |
 //                                                                                                            |
 // demo data                                                                                                  |
-//   The small in-memory rows below are deterministic fixtures for examples and smoke tests. Production       |
-//   reference assets are loaded through src/input/reference_data/.                                           |
+//   The small in-memory rows are deterministic fixtures for examples and smoke tests. They are deliberately  |
+//   separate from validation/reference_data assets and should not be treated as scientific reference truth.  |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;

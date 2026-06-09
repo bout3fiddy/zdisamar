@@ -3,14 +3,25 @@ const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
 // Binding.zig ------------------------------------------------------------------------------------------------|
-// Input references for named assets, ingest products, and stage products.                                     |
+// Typed reference tokens for public input rows that point at assets, ingest outputs, or stage products.       |
 //                                                                                                             |
-// data                                                                                                        |
-//   NamedRef owns or borrows one name string. IngestRef stores a full ingest.output name plus slices into     |
-//   that same full_name storage. Binding is the tagged union used by public input models.                     |
+// used by                                                                                                     |
+//   Atmosphere, Absorber, Measurement, and ObservationModel store bindings instead of raw loader state        |
+//   reference-data workflows interpret active bindings and attach concrete resolved payloads elsewhere        |
+//   Scene.lutCompatibilityKey hashes binding kind/name when the binding affects generated LUT compatibility   |
 //                                                                                                             |
-// ownership                                                                                                   |
-//   clone duplicates the backing name storage. deinitOwned frees only the owning top-level string.            |
+// main paths                                                                                                  |
+//   NamedRef validates one non-empty name                                                                     |
+//   IngestRef.fromFullName splits ingest.output while keeping both slices inside full_name storage            |
+//   Binding.validate checks only the active union payload; clone/deinitOwned duplicate and release names      |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   Binding is not a loader and does not know file paths. It preserves typed intent so loaders can consume,   |
+//   reject, or document the reference at the input/reference-data boundary.                                   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   IngestRef.ingest_name and output_name borrow from full_name. Deinit frees only the owning top-level name  |
+//   allocation for asset, ingest, or stage_product payloads.                                                  |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const BindingKind = enum {

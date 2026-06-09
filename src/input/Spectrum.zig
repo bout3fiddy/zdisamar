@@ -2,13 +2,23 @@ const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
 // Spectrum.zig -----------------------------------------------------------------------------------------------|
-// Public spectral-grid bounds.                                                                                |
+// Public spectral-grid request row for nominal scene wavelengths.                                             |
 //                                                                                                             |
-// data                                                                                                        |
-//   SpectralGrid stores wavelength start/end bounds in nanometers plus the requested sample count.            |
+// used by                                                                                                     |
+//   Scene carries SpectralGrid as the fallback nominal wavelength axis                                        |
+//   wavelength_sampling.zig resolves it with optional measured wavelengths into product rows                  |
+//   instrument integration and O2 A validation use start/end/sample_count for support and shape checks        |
+//   Scene.lutCompatibilityKey records uniform-grid count or measured-wavelength hashes for LUT selection      |
 //                                                                                                             |
-// validation                                                                                                  |
-//   WavelengthRange enforces ordered positive bounds. sample_count must be non-zero.                          |
+// main path                                                                                                   |
+//   validate delegates wavelength bounds to common units and rejects zero sample_count                        |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   SpectralGrid describes a uniform nominal axis only. Explicit measured wavelength vectors live in          |
+//   ObservationModel and override these start/end values where the product path asks for effective samples.   |
+//                                                                                                             |
+// memory                                                                                                      |
+//   This is a 24 B value row with no referenced storage, so it can be copied freely in setup code.            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralGrid -----------------------------------------------------------------------------------------------|

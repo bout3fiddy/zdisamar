@@ -10,14 +10,25 @@ const pipeline = @import("instrument/pipeline.zig");
 // Instrument.zig ---------------------------------------------------------------------------------------------|
 // Public instrument input model and re-export surface for instrument support data.                            |
 //                                                                                                             |
-// data                                                                                                        |
-//   Instrument stores native sampling controls plus optional operational grids, solar spectra, line-shape     |
-//   tables, and generated O2/O2-O2 cross-section LUT headers. OperationalBandSupport is the band-local owner  |
-//   used when the same support data is carried beside a resolved O2 A band.                                   |
+// used by                                                                                                     |
+//   ObservationModel resolves scene-level and channel-level controls into SpectralResponse rows               |
+//   instrument integration builds kernels from FWHM, line-shape tables, high-resolution grids, and modes      |
+//   bundled workflows and O2 A reference builders attach operational support, solar spectra, and LUT rows     |
+//   Scene.lutCompatibilityKey hashes the effective instrument support that changes generated LUTs             |
 //                                                                                                             |
-// ownership                                                                                                   |
-//   Nested support structs own their referenced arrays after clone or preparation. OperationalBandSupport     |
-//   also owns its id string when owns_id is true. deinitOwned walks the same nested support tree.             |
+// main paths                                                                                                  |
+//   Id.parse/validate names the public instrument family                                                      |
+//   Instrument.validate checks scene-level support and nested optional data                                   |
+//   OperationalBandSupport.validate checks band-local explicit grids, line-shape tables, solar data, and LUTs |
+//   clone/deinitOwned duplicate and release nested support rows in the same ownership order                   |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file stores controls and support headers only. Runtime sampling decisions live in ObservationModel,  |
+//   forward_model/implementations/instrument, and reference-data loaders that own parsing and asset loading.  |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Instrument is a 392 B value row with nested owner/view headers. OperationalBandSupport is the band-local  |
+//   owner used when resolved O2 A inputs carry support data beside the scene.                                 |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const max_line_shape_samples = constants.max_line_shape_samples;

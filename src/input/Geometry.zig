@@ -5,16 +5,22 @@ const std = @import("std");
 const earth_radius_km = 6371.0;
 
 // Geometry.zig -----------------------------------------------------------------------------------------------|
-// Observation geometry controls and altitude-adjusted propagation cosines.                                    |
+// Observation geometry controls and altitude-adjusted propagation cosines for RTM preparation.                |
 //                                                                                                             |
-// data                                                                                                        |
-//   Geometry stores public angles in degrees, the propagation model, and optional surface altitude in km.     |
+// used by                                                                                                     |
+//   Scene validation and LUT compatibility keys store the public geometry angles                              |
+//   pseudo-spherical optical-property builders sample propagation cosines by altitude                         |
+//   spectral_forward.zig scales LABOS reflectance factors into radiance using solar cosine                    |
+//   output diagnostics and budgets use the same angle row for airmass-style summaries                         |
 //                                                                                                             |
-// hot path                                                                                                    |
-//   propagationCosineAtAltitude is sampled by pseudo-spherical support paths while building layer geometry.   |
+// main paths                                                                                                  |
+//   validate checks zenith/azimuth ranges and non-negative surface altitude                                   |
+//   solarCosineAtAltitude and viewingCosineAtAltitude share propagationCosineAtAltitude                       |
+//   plane_parallel keeps the base cosine; pseudo_spherical/spherical adjust for Earth radius and altitude     |
 //                                                                                                             |
-// numerical guard                                                                                             |
-//   A cosine floor of 0.05 keeps near-horizon paths from exploding upstream radiative-transfer path lengths.  |
+// math                                                                                                        |
+//   radius_ratio = R_earth / (R_earth + altitude). Near-horizon paths keep a cosine floor of 0.05 so path     |
+//   lengths remain bounded and parity-sensitive long slant paths do not explode numerically.                  |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Model = enum {
