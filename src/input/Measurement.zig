@@ -4,13 +4,33 @@ const SpectralWindow = @import("Bands.zig").SpectralWindow;
 const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: band=16 B, exclude=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: band, exclude carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// Measurement.zig --------------------------------------------------------------------------------------------|
+// Measurement product metadata, spectral masks, and simple error model controls.                              |
+//                                                                                                             |
+// data                                                                                                        |
+//   SpectralMask stores one band id and optional exclusion windows. ErrorModel carries covariance switches.   |
+//   Measurement stores product identity, source binding, sample count, mask, and error model.                 |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Measurement owns only nested mask exclusion rows when cloned by callers. The source binding owns its own  |
+//   copied names.                                                                                             |
+// ------------------------------------------------------------------------------------------------------------|
+
+// SpectralMask -----------------------------------------------------------------------------------------------|
+// Band selection plus exclusion windows.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] band    : []const u8                                                                               |
+// [16..31] exclude : []const SpectralWindow                                                                   |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   band points at name bytes. exclude points at out-of-line SpectralWindow rows released by deinitOwned.     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total also includes referenced mask storage                     |
 pub const SpectralMask = struct {
     band: []const u8 = "",
     exclude: []const SpectralWindow = &[_]SpectralWindow{},
@@ -31,13 +51,21 @@ pub const SpectralMask = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: floor=8 B, from_source_noise=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// ErrorModel -------------------------------------------------------------------------------------------------|
+// Simple measurement-error controls.                                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] floor             : f64                                                                             |
+// [8.. 8] from_source_noise : bool                                                                            |
+// [9..15] trailing padding  : 7 B                                                                             |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live error-model count                   |
 pub const ErrorModel = struct {
     from_source_noise: bool = false,
     floor: f64 = 0.0,
@@ -52,6 +80,7 @@ pub const ErrorModel = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const Quantity = enum {
     radiance,
@@ -72,20 +101,30 @@ pub const Quantity = enum {
     }
 };
 
-// layout(64-bit):
-//   size: 128 B, align: 8 B
-//   field storage: 125 B across 6 fields; largest: source=56 B, mask=32 B, product_name=16 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   out-of-line: product_name carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
+// Measurement ------------------------------------------------------------------------------------------------|
+// Public measurement request header.                                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 128 B (0.125 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] product_name : []const u8                                                                        |
+// [ 16.. 71] source       : Binding                                                                           |
+// [ 72..103] mask         : SpectralMask                                                                      |
+// [104..119] error_model  : ErrorModel                                                                        |
+// [120..123] sample_count : u32                                                                               |
+// [124..124] observable   : Quantity                                                                          |
+// [125..127] trailing padding : 3 B                                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   product_name and nested binding/mask fields can point at out-of-line storage.                             |
+//                                                                                                             |
+// unused bits: 24 padding + 6 enum-storage slack = 30 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 128 B (0.125 KiB); total also includes referenced measurement storage             |
 pub const Measurement = struct {
     product_name: []const u8 = "",
     observable: Quantity = .radiance,
-    // UNITS:
-    //   `sample_count` counts discrete wavelength samples on the selected measurement
-    //   grid; it is not a spectral width or resolution value.
     sample_count: u32 = 0,
     source: Binding = .none,
     mask: SpectralMask = .{},
@@ -123,3 +162,4 @@ pub const Measurement = struct {
 };
 
 pub const MeasurementVector = Measurement;
+// ------------------------------------------------------------------------------------------------------------|

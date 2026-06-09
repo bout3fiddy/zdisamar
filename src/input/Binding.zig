@@ -2,6 +2,17 @@ const std = @import("std");
 const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
+// Binding.zig ------------------------------------------------------------------------------------------------|
+// Input references for named assets, ingest products, and stage products.                                     |
+//                                                                                                             |
+// data                                                                                                        |
+//   NamedRef owns or borrows one name string. IngestRef stores a full ingest.output name plus slices into     |
+//   that same full_name storage. Binding is the tagged union used by public input models.                     |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   clone duplicates the backing name storage. deinitOwned frees only the owning top-level string.            |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const BindingKind = enum {
     none,
     atmosphere,
@@ -11,13 +22,20 @@ pub const BindingKind = enum {
     stage_product,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: name=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: name carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// NamedRef ---------------------------------------------------------------------------------------------------|
+// One named external reference.                                                                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..15] name : []const u8                                                                                   |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   name points at out-of-line string bytes. clone creates the owned copy released by deinitOwned.            |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced name bytes                       |
 pub const NamedRef = struct {
     name: []const u8,
 
@@ -33,15 +51,24 @@ pub const NamedRef = struct {
         allocator.free(self.name);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: full_name=16 B, ingest_name=16 B, output_name=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: full_name, ingest_name, output_name carry references/descriptors; referenced storage is not included in
-// size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+// IngestRef --------------------------------------------------------------------------------------------------|
+// Parsed ingest.output reference.                                                                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] full_name   : []const u8                                                                           |
+// [16..31] ingest_name : []const u8                                                                           |
+// [32..47] output_name : []const u8                                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   ingest_name and output_name are slices into full_name. deinitOwned frees only full_name.                  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 48 B (0.047 KiB); total also includes referenced name bytes                       |
 pub const IngestRef = struct {
     full_name: []const u8,
     ingest_name: []const u8,
@@ -78,7 +105,22 @@ pub const IngestRef = struct {
         allocator.free(self.full_name);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// Binding ----------------------------------------------------------------------------------------------------|
+// Tagged reference union used by public input models.                                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// active payload storage : up to IngestRef, 48 B                                                              |
+// active tag/padding     : remaining storage for BindingKind tag and alignment                                |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   asset and stage_product carry NamedRef names. ingest carries one IngestRef full_name allocation.          |
+//                                                                                                             |
+// footprint: per instance = 56 B (0.055 KiB); total also includes active referenced name bytes                |
 pub const Binding = union(BindingKind) {
     none,
     atmosphere,
@@ -141,3 +183,4 @@ pub const Binding = union(BindingKind) {
         self.* = .none;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

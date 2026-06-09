@@ -4,35 +4,59 @@ const std = @import("std");
 
 const earth_radius_km = 6371.0;
 
+// Geometry.zig -----------------------------------------------------------------------------------------------|
+// Observation geometry controls and altitude-adjusted propagation cosines.                                    |
+//                                                                                                             |
+// data                                                                                                        |
+//   Geometry stores public angles in degrees, the propagation model, and optional surface altitude in km.     |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   propagationCosineAtAltitude is sampled by pseudo-spherical support paths while building layer geometry.   |
+//                                                                                                             |
+// numerical guard                                                                                             |
+//   A cosine floor of 0.05 keeps near-horizon paths from exploding upstream radiative-transfer path lengths.  |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const Model = enum {
     plane_parallel,
     pseudo_spherical,
     spherical,
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: 33 B across 5 fields; largest: solar_zenith_deg=8 B, viewing_zenith_deg=8 B, relative_azimuth_deg=8 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// Geometry ---------------------------------------------------------------------------------------------------|
+// Public geometry header.                                                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] solar_zenith_deg     : f64                                                                         |
+// [ 8..15] viewing_zenith_deg   : f64                                                                         |
+// [16..23] relative_azimuth_deg : f64                                                                         |
+// [24..31] surface_altitude_km  : f64                                                                         |
+// [32..32] model                : Model                                                                       |
+// [33..39] trailing padding     : 7 B                                                                         |
+//                                                                                                             |
+// unused bits: 56 padding + 6 enum-storage slack = 62 bits                                                    |
+// footprint: per instance = 40 B (0.039 KiB); total = per instance * live geometry count                      |
 pub const Geometry = struct {
     model: Model = .plane_parallel,
-    // UNITS:
-    //   All angles are stored in degrees at the public model boundary.
     solar_zenith_deg: f64 = 0.0,
     viewing_zenith_deg: f64 = 0.0,
     relative_azimuth_deg: f64 = 0.0,
-    // UNITS:
-    //   Optional surface altitude is stored in kilometers so interval and
-    //   aerosol-placement preparation can preserve the reference lower boundary used by
-    //   pseudo-spherical paths.
     surface_altitude_km: f64 = 0.0,
 
     pub fn validate(self: Geometry) errors.Error!void {
-        (units.ZenithAngleDeg{ .value = self.solar_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
-        (units.ZenithAngleDeg{ .value = self.viewing_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
-        (units.AzimuthAngleDeg{ .value = self.relative_azimuth_deg }).validate() catch return errors.Error.InvalidRequest;
+        (units.ZenithAngleDeg{
+            .value = self.solar_zenith_deg,
+        }).validate() catch return errors.Error.InvalidRequest;
+        (units.ZenithAngleDeg{
+            .value = self.viewing_zenith_deg,
+        }).validate() catch return errors.Error.InvalidRequest;
+        (units.AzimuthAngleDeg{
+            .value = self.relative_azimuth_deg,
+        }).validate() catch return errors.Error.InvalidRequest;
+
         if (!std.math.isFinite(self.surface_altitude_km) or self.surface_altitude_km < 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -55,12 +79,14 @@ pub const Geometry = struct {
 
         const safe_altitude_km = @max(altitude_km, 0.0);
         const radius_ratio = earth_radius_km / (earth_radius_km + safe_altitude_km);
-        const sin_at_altitude = std.math.clamp(@sin(base_zenith_rad) * radius_ratio, -0.999999, 0.999999);
+        const sin_at_altitude = std.math.clamp(
+            @sin(base_zenith_rad) * radius_ratio,
+            -0.999999,
+            0.999999,
+        );
         const local_mu = @sqrt(@max(1.0 - (sin_at_altitude * sin_at_altitude), 0.0));
 
-        // GOTCHA:
-        //   The cosine floor is parity-sensitive for long slant paths because removing it
-        //   would let near-horizon rays explode radiative transfer path lengths upstream.
+        // Keep the cosine floor for parity-sensitive long slant paths.
         return switch (self.model) {
             .plane_parallel => @max(base_mu, 0.05),
             .pseudo_spherical => @max(local_mu, 0.05),
@@ -68,3 +94,4 @@ pub const Geometry = struct {
         };
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
