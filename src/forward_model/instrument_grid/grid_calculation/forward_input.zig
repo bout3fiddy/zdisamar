@@ -6,15 +6,27 @@ const Trace = @import("../../instrumentation/trace.zig");
 const common = @import("../../radiative_transfer/root.zig");
 
 // forward_input.zig -----------------------------------------------------------------------------------------------------|
-// Builds one LABOS ForwardInput at one high-resolution wavelength. The caller owns all mutable buffers so                |
-// this file can fill wavelength-specific optical layers without allocation in the hot prefetch loop.                     |
+// Builds one LABOS ForwardInput at one high-resolution wavelength from prepared optical state.                           |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   spectral_forward.zig for each unique high-resolution forward miss                                                    |
+//   spectral_forward.zig for each unique high-resolution forward miss before LABOS execution                             |
 //                                                                                                                        |
 // main path                                                                                                              |
-//   carrier cache -> layer optical depths -> optional RTM quadrature/source interfaces -> optional spherical             |
-//   correction grid -> radiative_transfer.ForwardInput                                                                   |
+//   prepared state + wavelength -> carrier cache -> layer optical depths -> base ForwardInput                            |
+//   -> optional RTM quadrature or source-interface fallback -> optional pseudo-spherical support grid                    |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   This runs inside the forward-prefetch worker loop. The caller supplies all mutable layer/source/quadrature           |
+//   and pseudo-spherical buffers, plus a support carrier cache and optional profile spectroscopy cache, so the           |
+//   function refreshes wavelength-specific data without allocating.                                                      |
+//                                                                                                                        |
+// boundary                                                                                                               |
+//   No file I/O, text parsing, or product assembly happens here. Explicit-interval integrated-source routes              |
+//   must use RTM-native quadrature; falling back to coarse source interfaces would change layer placement.               |
+//                                                                                                                        |
+// memory                                                                                                                 |
+//   Returned ForwardInput borrows the slices written into worker scratch storage. Those slices stay valid only           |
+//   until the next worker iteration refills the same scratch buffers.                                                    |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 pub fn configuredForwardInput(

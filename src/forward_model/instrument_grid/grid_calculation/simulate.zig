@@ -24,21 +24,30 @@ const max_summary_samples: u32 = 128;
 const profile_cache_build_chunk_size: usize = 8;
 
 // simulate.zig ----------------------------------------------------------------------------------------------------------|
-// Product-level instrument-grid coordinator. This file turns one Scene + PreparedOpticalState into output                |
-// wavelength, radiance, irradiance, reflectance, and optional Jacobian arrays.                                           |
+// Product-level instrument-grid coordinator for one Scene + PreparedOpticalState run.                                    |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   instrument_grid/root.zig for one-shot products and retained ProductStorage runs                                      |
+//   root.zig, o2a_reference, and optimal_estimation through the public simulateProduct APIs                              |
 //                                                                                                                        |
 // main path                                                                                                              |
-//   buildSimulationSetup                                                                                                 |
-//     -> resolveSimulationPlan                                                                                           |
-//     -> prefetchSimulationPlan                                                                                          |
-//     -> fillRadianceSamples                                                                                             |
-//     -> fillIrradianceSamples                                                                                           |
-//     -> assembleReflectance                                                                                             |
-//     -> processJacobianSamples                                                                                          |
+//   simulateInternal -> buildSimulationSetup -> resolveSimulationPlan -> prefetchSimulationPlan                          |
+//   -> fillRadianceSamples -> fillIrradianceSamples -> assembleReflectance -> processJacobianSamples                     |
 //                                                                                                                        |
-// ownership                                                                                                              |
-//   ProductStorage owns reusable output buffers and retained plans. One-shot calls allocate owned plan/result            |
-//   storage inside ResolvedSimulationPlan and release it before returning.                                               |
+// data flow                                                                                                              |
+//   wavelength sampling maps nominal rows to high-resolution radiance/irradiance samples                                 |
+//   forward miss plan deduplicates radiance wavelengths before LABOS prefetch                                            |
+//   dense forward results feed direct-index radiance gather; irradiance uses an exact-wavelength solar cache             |
+//   radiance and irradiance are converted to reflectance, then active Jacobian columns are postprocessed                 |
+//                                                                                                                        |
+// workspace                                                                                                              |
+//   ProductStorage owns reusable output buffers, wavelength plans, forward miss plans, forward results, profile          |
+//   spectroscopy caches, and optional worker pools. One-shot calls allocate the owned fields in                          |
+//   ResolvedSimulationPlan and release them before returning.                                                            |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   The expensive work is high-resolution forward prefetch plus nominal-row gather. Integrated instrument                |
+//   sampling skips the later five-tap slit convolution so the line shape is applied exactly once.                        |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // SimulationSetup -------------------------------------------------------------------------------------------------------|
