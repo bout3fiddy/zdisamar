@@ -268,6 +268,108 @@ const RunningSummary = struct {
     }
 };
 
+// RadianceSamplingRequest -----------------------------------------------------------------------------------------------|
+// Read-only data needed to gather prefetched LABOS misses into nominal radiance rows.                                    |
+// This value owns no arrays; wavelength and miss tables are borrowed from ResolvedSimulationPlan or ProductStorage.      |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 416 B (0.406 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0.. 79] rtm_config          : common.SolveConfig                                                                    |
+// [ 80..295] setup               : SimulationSetup                                                                       |
+// [296..343] wavelength_sampling : WavelengthSampling.WavelengthSamplingTable                                            |
+// [344..391] forward_miss_plan   : Plan.ForwardMissPlan                                                                  |
+// [392..407] forward_results     : []const SpectralEval.ForwardIntegratedSample                                          |
+// [408..415] trace_phase_timing  : ?*Storage.TracePhaseTiming                                                            |
+//                                                                                                                        |
+// out-of-line storage: all slices point at the resolved simulation plan or retained product workspace.                   |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 416 B (0.406 KiB); total excludes borrowed plan/result storage                               |
+const RadianceSamplingRequest = struct {
+    rtm_config: common.SolveConfig,
+    setup: SimulationSetup,
+    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
+    forward_miss_plan: Plan.ForwardMissPlan,
+    forward_results: []const SpectralEval.ForwardIntegratedSample,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// RadianceSampleBuffers -------------------------------------------------------------------------------------------------|
+// Borrowed output and scratch slices touched while producing calibrated radiance. Transport scratch stays                |
+// out of this view, so the radiance stage exposes only the product rows it reads or writes.                              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 72 B (0.070 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] wavelengths         : []f64                                                                                   |
+// [16..31] radiance            : []f64                                                                                   |
+// [32..47] scratch             : []f64                                                                                   |
+// [48..63] jacobian            : ?[]f64                                                                                  |
+// [64..64] jacobian_state_mask : jacobian.StateMask                                                                      |
+// [65..71] padding             : 7 B                                                                                     |
+//                                                                                                                        |
+// out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// footprint: per instance = 72 B (0.070 KiB); total excludes borrowed product buffers                                    |
+const RadianceSampleBuffers = struct {
+    wavelengths: []f64,
+    radiance: []f64,
+    scratch: []f64,
+    jacobian: ?[]f64,
+    jacobian_state_mask: jacobian.StateMask,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// IrradianceSamplingRequest ---------------------------------------------------------------------------------------------|
+// Read-only data needed to sample solar irradiance on the nominal product grid. The evaluation cache is                  |
+// borrowed and retains exact-wavelength solar samples across rows.                                                       |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 296 B (0.289 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] scene               : *const Scene                                                                          |
+// [  8.. 15] prepared            : *const OpticsPreparation.PreparedOpticalState                                         |
+// [ 16..231] setup               : SimulationSetup                                                                       |
+// [232..279] wavelength_sampling : WavelengthSampling.WavelengthSamplingTable                                            |
+// [280..287] evaluation_cache    : *SpectralEval.SpectralEvaluationCache                                                 |
+// [288..295] trace_phase_timing  : ?*Storage.TracePhaseTiming                                                            |
+//                                                                                                                        |
+// out-of-line storage: scene, prepared, sampling rows, and cache are borrowed from the caller.                           |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 296 B (0.289 KiB); total excludes borrowed scene/prepared/cache storage                      |
+const IrradianceSamplingRequest = struct {
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    setup: SimulationSetup,
+    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// IrradianceSampleBuffers -----------------------------------------------------------------------------------------------|
+// Borrowed slices touched while producing calibrated irradiance.                                                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] scratch    : []f64                                                                                            |
+// [16..31] irradiance : []f64                                                                                            |
+//                                                                                                                        |
+// out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 32 B (0.031 KiB); total excludes borrowed product buffers                                    |
+const IrradianceSampleBuffers = struct {
+    scratch: []f64,
+    irradiance: []f64,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // ProfileCacheBuildWorker -----------------------------------------------------------------------------------------------|
 // Static range assigned to a profile-spectroscopy cache worker.                                                          |
 //                                                                                                                        |
@@ -556,24 +658,36 @@ pub fn simulateInternal(
 
     var summary = RunningSummary.init();
     _ = try validateTransportBuffers(scene, rtm_config, prepared, buffers);
-    try fillRadianceSamples(
-        rtm_config,
-        setup,
-        simulation_plan.wavelength_sampling,
-        simulation_plan.forward_miss_plan,
-        simulation_plan.forward_results,
-        buffers,
-        trace_phase_timing,
-    );
-    try fillIrradianceSamples(
-        scene,
-        prepared,
-        setup,
-        simulation_plan.wavelength_sampling,
-        buffers,
-        evaluation_cache,
-        trace_phase_timing,
-    );
+    const radiance_request = RadianceSamplingRequest{
+        .rtm_config = rtm_config,
+        .setup = setup,
+        .wavelength_sampling = simulation_plan.wavelength_sampling,
+        .forward_miss_plan = simulation_plan.forward_miss_plan,
+        .forward_results = simulation_plan.forward_results,
+        .trace_phase_timing = trace_phase_timing,
+    };
+    const radiance_output = RadianceSampleBuffers{
+        .wavelengths = buffers.wavelengths,
+        .radiance = buffers.radiance,
+        .scratch = buffers.scratch,
+        .jacobian = buffers.jacobian,
+        .jacobian_state_mask = buffers.jacobian_state_mask,
+    };
+    try fillRadianceSamples(radiance_request, radiance_output);
+
+    const irradiance_request = IrradianceSamplingRequest{
+        .scene = scene,
+        .prepared = prepared,
+        .setup = setup,
+        .wavelength_sampling = simulation_plan.wavelength_sampling,
+        .evaluation_cache = evaluation_cache,
+        .trace_phase_timing = trace_phase_timing,
+    };
+    const irradiance_output = IrradianceSampleBuffers{
+        .scratch = buffers.scratch,
+        .irradiance = buffers.irradiance,
+    };
+    try fillIrradianceSamples(irradiance_request, irradiance_output);
     assembleReflectance(scene, setup.sample_count, buffers, &summary, trace_phase_timing);
     const mean_jacobian = try processJacobianSamples(
         rtm_config.derivative_state_mask,
@@ -855,13 +969,8 @@ fn validateTransportBuffers(
 }
 
 fn fillRadianceSamples(
-    rtm_config: common.SolveConfig,
-    setup: SimulationSetup,
-    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
-    forward_miss_plan: Plan.ForwardMissPlan,
-    forward_results: []const SpectralEval.ForwardIntegratedSample,
-    buffers: Storage.Buffers,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: RadianceSamplingRequest,
+    output: RadianceSampleBuffers,
 ) Storage.Error!void {
     // fillRadianceSamples -----------------------------------------------------------------------------------------------|
     // Fill output wavelengths and radiance. Radiance first gathers prefetched forward results through the                |
@@ -877,8 +986,8 @@ fn fillRadianceSamples(
     //   later slit convolution is skipped so the line shape is not applied twice.                                        |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const active_jacobians = if (buffers.jacobian != null)
-        ActiveJacobianStates.init(buffers.jacobian_state_mask)
+    const active_jacobians = if (output.jacobian != null)
+        ActiveJacobianStates.init(output.jacobian_state_mask)
     else
         ActiveJacobianStates{};
 
@@ -887,82 +996,77 @@ fn fillRadianceSamples(
         // instrumentation: trace zone: radiance cache integration ------------------------------------------------------ |
         // captures: radiance cache integration wall time                                                                 |
         // why: isolates nominal-wavelength gather work from later convolution and calibration.                           |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_cache_integration_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "radiance_cache_integration_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
         // end instrumentation: trace zone: radiance cache integration -------------------------------------------------- |
 
-        for (wavelength_sampling.rows, 0..) |plan, index| {
+        for (request.wavelength_sampling.rows, 0..) |plan, index| {
             const nominal_wavelength_nm = plan.nominal_wavelength_nm;
-            buffers.wavelengths[index] = nominal_wavelength_nm;
+            output.wavelengths[index] = nominal_wavelength_nm;
 
-            if (index >= forward_miss_plan.rows.len) return error.ShapeMismatch;
+            if (index >= request.forward_miss_plan.rows.len) return error.ShapeMismatch;
             const integrated = try SpectralEval.integratePrefetchedForwardAtNominal(
-                rtm_config,
-                forward_results,
-                forward_miss_plan.rows[index],
-                forward_miss_plan.sample_indices,
+                request.rtm_config,
+                request.forward_results,
+                request.forward_miss_plan.rows[index],
+                request.forward_miss_plan.sample_indices,
                 &plan.radiance_integration,
-                wavelength_sampling.kernel_storage,
+                request.wavelength_sampling.kernel_storage,
             );
-            buffers.scratch[index] = integrated.radiance;
-            if (buffers.jacobian) |jacobian_buffer| {
+            output.scratch[index] = integrated.radiance;
+            if (output.jacobian) |jacobian_buffer| {
                 writeJacobianSample(
                     jacobian_buffer,
                     active_jacobians,
-                    setup.sample_count,
+                    request.setup.sample_count,
                     index,
                     integrated.jacobian,
                 );
             }
         }
     }
-    if (setup.uses_integrated_radiance_sampling) {
+    if (request.setup.uses_integrated_radiance_sampling) {
 
         // Integrated sampling bypasses slit convolution because the instrument integration kernel has already
         // performed that spectral averaging.
-        @memcpy(buffers.radiance, buffers.scratch);
+        @memcpy(output.radiance, output.scratch);
     } else {
 
         // instrumentation: trace zone: radiance convolution ------------------------------------------------------------ |
         // captures: radiance slit convolution wall time                                                                  |
         // why: separates instrument-kernel cost from RTM cache integration.                                              |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_convolution_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "radiance_convolution_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_convolution");
         defer zone.end();
         // end instrumentation: trace zone: radiance convolution -------------------------------------------------------- |
 
-        try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.radiance);
+        try convolution.apply(output.scratch, request.setup.radiance_slit_kernel[0..], output.radiance);
     }
     {
 
         // instrumentation: trace zone: radiance postprocess ------------------------------------------------------------ |
         // captures: radiance channel postprocess wall time                                                               |
         // why: keeps calibration/postprocess cost visible after convolution.                                             |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "radiance_postprocess_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "radiance_postprocess_ns");
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
         defer zone.end();
         // end instrumentation: trace zone: radiance postprocess -------------------------------------------------------- |
 
         try calibration.applySignal(
-            setup.radiance_calibration,
-            buffers.radiance,
-            buffers.radiance,
+            request.setup.radiance_calibration,
+            output.radiance,
+            output.radiance,
         );
     }
 }
 
 fn fillIrradianceSamples(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    setup: SimulationSetup,
-    wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
-    buffers: Storage.Buffers,
-    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: IrradianceSamplingRequest,
+    output: IrradianceSampleBuffers,
 ) Storage.Error!void {
     // fillIrradianceSamples ---------------------------------------------------------------------------------------------|
     // Fill irradiance through the same nominal sampling contract used for radiance. Solar samples come from              |
@@ -982,55 +1086,55 @@ fn fillIrradianceSamples(
         // instrumentation: trace zone: irradiance sampling ------------------------------------------------------------- |
         // captures: irradiance sampling wall time                                                                        |
         // why: distinguishes solar irradiance interpolation/integration from radiance transport.                         |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_sampling_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "irradiance_sampling_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
         // end instrumentation: trace zone: irradiance sampling --------------------------------------------------------- |
 
-        try evaluation_cache.reserveIrradiance(irradianceCacheCapacity(wavelength_sampling));
-        for (wavelength_sampling.rows, 0..) |plan, index| {
-            buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
-                scene,
-                prepared,
+        try request.evaluation_cache.reserveIrradiance(irradianceCacheCapacity(request.wavelength_sampling));
+        for (request.wavelength_sampling.rows, 0..) |plan, index| {
+            output.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
+                request.scene,
+                request.prepared,
                 plan.irradiance_wavelength_nm,
-                setup.safe_span,
-                evaluation_cache,
+                request.setup.safe_span,
+                request.evaluation_cache,
                 &plan.irradiance_integration,
-                wavelength_sampling.kernel_storage,
+                request.wavelength_sampling.kernel_storage,
             );
         }
     }
-    if (setup.uses_integrated_irradiance_sampling) {
-        @memcpy(buffers.irradiance, buffers.scratch);
+    if (request.setup.uses_integrated_irradiance_sampling) {
+        @memcpy(output.irradiance, output.scratch);
     } else {
 
         // instrumentation: trace zone: irradiance convolution ---------------------------------------------------------- |
         // captures: irradiance slit convolution wall time                                                                |
         // why: separates solar-channel instrument-kernel cost from sampling.                                             |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_convolution_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "irradiance_convolution_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_convolution");
         defer zone.end();
         // end instrumentation: trace zone: irradiance convolution ------------------------------------------------------ |
 
-        try convolution.apply(buffers.scratch, setup.irradiance_slit_kernel[0..], buffers.irradiance);
+        try convolution.apply(output.scratch, request.setup.irradiance_slit_kernel[0..], output.irradiance);
     }
     {
 
         // instrumentation: trace zone: irradiance postprocess ---------------------------------------------------------- |
         // captures: irradiance channel postprocess wall time                                                             |
         // why: keeps solar calibration cost visible before reflectance assembly.                                         |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "irradiance_postprocess_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "irradiance_postprocess_ns");
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
         defer zone.end();
         // end instrumentation: trace zone: irradiance postprocess ------------------------------------------------------ |
 
         try calibration.applySignal(
-            setup.irradiance_calibration,
-            buffers.irradiance,
-            buffers.irradiance,
+            request.setup.irradiance_calibration,
+            output.irradiance,
+            output.irradiance,
         );
     }
 }
