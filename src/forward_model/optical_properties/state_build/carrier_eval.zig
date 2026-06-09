@@ -273,37 +273,94 @@ pub const WavelengthCarrierCache = struct {
         strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
         fallback: *SharedOpticalScalars,
     ) *const SharedOpticalScalars {
+        const row = SupportRowScalarRequest{
+            .prepared = prepared,
+            .sublayer = &sublayer,
+            .profile_cache = self.profile_cache,
+            .strong_line_state = strong_line_state,
+            .wavelength_nm = wavelength_nm,
+            .global_sublayer_index = global_sublayer_index,
+        };
+        const wavelength_constants = self.supportRowConstants();
+
         if (global_sublayer_index >= self.support_row_epochs.len or
             global_sublayer_index >= self.support_row_scalars.len)
         {
-            fallback.* = sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
-                prepared,
-                wavelength_nm,
-                sublayer,
-                global_sublayer_index,
-                strong_line_state,
-                self.profile_cache,
-            );
+            fillSharedOpticalScalarsAtSupportRow(fallback, &row, &wavelength_constants);
             return fallback;
         }
         if (self.support_row_epochs[global_sublayer_index] != self.support_row_epoch) {
-            fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+            fillSharedOpticalScalarsAtSupportRow(
                 &self.support_row_scalars[global_sublayer_index],
-                prepared,
-                wavelength_nm,
-                sublayer,
-                global_sublayer_index,
-                strong_line_state,
-                self.profile_cache,
-                self.continuum_sigma,
-                self.cia_coefficients,
-                self.rayleigh_cross_section_cm2,
-                self.particle_scales,
+                &row,
+                &wavelength_constants,
             );
             self.support_row_epochs[global_sublayer_index] = self.support_row_epoch;
         }
         return &self.support_row_scalars[global_sublayer_index];
     }
+
+    fn supportRowConstants(self: *const WavelengthCarrierCache) SupportRowWavelengthConstants {
+        return .{
+            .continuum_sigma = self.continuum_sigma,
+            .cia_coefficients = self.cia_coefficients,
+            .rayleigh_cross_section_cm2 = self.rayleigh_cross_section_cm2,
+            .particle_scales = self.particle_scales,
+        };
+    }
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
+// SupportRowScalarRequest -------------------------------------------------------------------------------------|
+// Borrowed row inputs for one support-row scalar fill. The 256 B PreparedSublayer stays outside this request.  |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 48 B (0.047 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] prepared              : *const PreparedOpticalState                                                 |
+// [ 8..15] sublayer              : *const PreparedSublayer                                                     |
+// [16..23] profile_cache         : ?*const ProfileNodeSpectroscopyCache                                        |
+// [24..31] strong_line_state     : ?*const StrongLinePreparedState                                             |
+// [32..39] wavelength_nm         : f64                                                                         |
+// [40..47] global_sublayer_index : usize                                                                       |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   prepared, sublayer, profile_cache, and strong_line_state are borrowed for the duration of one scalar fill. |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 48 B plus borrowed support-row and prepared-state storage                          |
+const SupportRowScalarRequest = struct {
+    prepared: *const State.PreparedOpticalState,
+    sublayer: *const PreparedSublayer,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    wavelength_nm: f64,
+    global_sublayer_index: usize,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
+// SupportRowWavelengthConstants -------------------------------------------------------------------------------|
+// Wavelength-local constants reused while filling support-row scalar cache misses.                             |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 80 B (0.078 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] continuum_sigma            : f64                                                                    |
+// [ 8..47] cia_coefficients           : ?CiaWavelengthCoefficients                                             |
+// [48..55] rayleigh_cross_section_cm2 : f64                                                                    |
+// [56..79] particle_scales            : ParticleWavelengthScales                                               |
+//                                                                                                              |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                   |
+// footprint: per instance = 80 B; stack value borrowed by one scalar fill                                      |
+const SupportRowWavelengthConstants = struct {
+    continuum_sigma: f64,
+    cia_coefficients: ?CiaWavelengthCoefficients,
+    rayleigh_cross_section_cm2: f64,
+    particle_scales: ParticleWavelengthScales,
 };
 // ------------------------------------------------------------------------------------------------------------ |
 
@@ -1359,10 +1416,7 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
 }
 
 fn weightedSpectroscopyEvaluationAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
+    row: *const SupportRowScalarRequest,
 ) ReferenceData.SpectroscopyEvaluation {
     // weightedSpectroscopyEvaluationAtSupportRow ------------------------------------------------------------- |
     // Density-weights active line absorbers into one spectroscopy evaluation for a support row.                |
@@ -1382,9 +1436,10 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
 
-    if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
-        const o2_evaluation = self.weightedSpectroscopyEvaluationAtWavelength(
-            wavelength_nm,
+    const sublayer = row.sublayer;
+    if (row.prepared.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
+        const o2_evaluation = row.prepared.weightedSpectroscopyEvaluationAtWavelength(
+            row.wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
         );
@@ -1396,16 +1451,16 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
         );
     }
 
-    for (self.line_absorbers) |line_absorber| {
-        if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
-        if (global_sublayer_index >= line_absorber.number_densities_cm3.len) continue;
+    for (row.prepared.line_absorbers) |line_absorber| {
+        if (row.prepared.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+        if (row.global_sublayer_index >= line_absorber.number_densities_cm3.len) continue;
 
-        const weight = line_absorber.number_densities_cm3[global_sublayer_index];
+        const weight = line_absorber.number_densities_cm3[row.global_sublayer_index];
         if (weight <= 0.0) continue;
 
-        const prepared_state = strongLineStateAt(line_absorber.strong_line_states, global_sublayer_index);
+        const prepared_state = strongLineStateAt(line_absorber.strong_line_states, row.global_sublayer_index);
         const evaluation = line_absorber.line_list.evaluateAtPrepared(
-            wavelength_nm,
+            row.wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
             prepared_state,
@@ -1479,17 +1534,23 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
     // -------------------------------------------------------------------------------------------------------  |
 
     const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
+    const row = SupportRowScalarRequest{
+        .prepared = self,
+        .sublayer = &sublayer,
+        .profile_cache = profile_cache,
+        .strong_line_state = strong_line_state,
+        .wavelength_nm = wavelength_nm,
+        .global_sublayer_index = global_sublayer_index,
+    };
+    const wavelength_constants = SupportRowWavelengthConstants{
+        .continuum_sigma = continuum_sigma,
+        .cia_coefficients = null,
+        .rayleigh_cross_section_cm2 = Rayleigh.crossSectionCm2(wavelength_nm),
+        .particle_scales = ParticleWavelengthScales.init(self, wavelength_nm),
+    };
     const scalars = sharedOpticalScalarsAtSupportRowWithScalarCache(
-        self,
-        wavelength_nm,
-        sublayer,
-        global_sublayer_index,
-        strong_line_state,
-        profile_cache,
-        continuum_sigma,
-        null,
-        Rayleigh.crossSectionCm2(wavelength_nm),
-        ParticleWavelengthScales.init(self, wavelength_nm),
+        &row,
+        &wavelength_constants,
     );
     return sharedOpticalCarrierFromScalars(scalars);
 }
@@ -1503,121 +1564,89 @@ fn sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalScalars {
     const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
+    const row = SupportRowScalarRequest{
+        .prepared = self,
+        .sublayer = &sublayer,
+        .profile_cache = profile_cache,
+        .strong_line_state = strong_line_state,
+        .wavelength_nm = wavelength_nm,
+        .global_sublayer_index = global_sublayer_index,
+    };
+    const wavelength_constants = SupportRowWavelengthConstants{
+        .continuum_sigma = continuum_sigma,
+        .cia_coefficients = null,
+        .rayleigh_cross_section_cm2 = Rayleigh.crossSectionCm2(wavelength_nm),
+        .particle_scales = ParticleWavelengthScales.init(self, wavelength_nm),
+    };
     return sharedOpticalScalarsAtSupportRowWithScalarCache(
-        self,
-        wavelength_nm,
-        sublayer,
-        global_sublayer_index,
-        strong_line_state,
-        profile_cache,
-        continuum_sigma,
-        null,
-        Rayleigh.crossSectionCm2(wavelength_nm),
-        ParticleWavelengthScales.init(self, wavelength_nm),
+        &row,
+        &wavelength_constants,
     );
 }
 
 fn sharedOpticalScalarsAtSupportRowWithScalarCache(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    continuum_sigma: f64,
-    cia_coefficients: ?CiaWavelengthCoefficients,
-    rayleigh_cross_section_cm2: f64,
-    particle_scales: ParticleWavelengthScales,
+    row: *const SupportRowScalarRequest,
+    wavelength_constants: *const SupportRowWavelengthConstants,
 ) SharedOpticalScalars {
     var scalars: SharedOpticalScalars = undefined;
-    fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+    fillSharedOpticalScalarsAtSupportRow(
         &scalars,
-        self,
-        wavelength_nm,
-        sublayer,
-        global_sublayer_index,
-        strong_line_state,
-        profile_cache,
-        continuum_sigma,
-        cia_coefficients,
-        rayleigh_cross_section_cm2,
-        particle_scales,
+        row,
+        wavelength_constants,
     );
     return scalars;
 }
 
 fn spectroscopySigmaAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    row: *const SupportRowScalarRequest,
 ) f64 {
-    if (self.line_absorbers.len != 0) {
-        return weightedSpectroscopyEvaluationAtSupportRow(
-            self,
-            wavelength_nm,
-            sublayer,
-            global_sublayer_index,
-        ).total_sigma_cm2_per_molecule;
+    if (row.prepared.line_absorbers.len != 0) {
+        return weightedSpectroscopyEvaluationAtSupportRow(row).total_sigma_cm2_per_molecule;
     }
 
-    return self.spectroscopySigmaAtAltitudeWithCache(
-        wavelength_nm,
-        sublayer.temperature_k,
-        sublayer.pressure_hpa,
-        sublayer.altitude_km,
-        strong_line_state,
-        profile_cache,
+    return row.prepared.spectroscopySigmaAtAltitudeWithCache(
+        row.wavelength_nm,
+        row.sublayer.temperature_k,
+        row.sublayer.pressure_hpa,
+        row.sublayer.altitude_km,
+        row.strong_line_state,
+        row.profile_cache,
     );
 }
 
 fn continuumDensityAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
+    row: *const SupportRowScalarRequest,
 ) f64 {
-    if (self.cross_section_absorbers.len != 0) return 0.0;
+    if (row.prepared.cross_section_absorbers.len != 0) return 0.0;
 
     return Scalar.continuumCarrierDensityAtSublayer(
-        self,
-        sublayer,
-        global_sublayer_index,
+        row.prepared,
+        row.sublayer.*,
+        row.global_sublayer_index,
     );
 }
 
 fn ciaSigmaAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    cia_coefficients: ?CiaWavelengthCoefficients,
+    row: *const SupportRowScalarRequest,
+    wavelength_constants: *const SupportRowWavelengthConstants,
 ) f64 {
-    if (cia_coefficients) |coefficients| {
-        return coefficients.sigmaAtTemperature(sublayer.temperature_k);
+    if (wavelength_constants.cia_coefficients) |coefficients| {
+        return coefficients.sigmaAtTemperature(row.sublayer.temperature_k);
     }
 
-    return self.ciaSigmaAtWavelength(
-        wavelength_nm,
-        sublayer.temperature_k,
-        sublayer.pressure_hpa,
+    return row.prepared.ciaSigmaAtWavelength(
+        row.wavelength_nm,
+        row.sublayer.temperature_k,
+        row.sublayer.pressure_hpa,
     );
 }
 
-fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
+fn fillSharedOpticalScalarsAtSupportRow(
     out: *SharedOpticalScalars,
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    continuum_sigma: f64,
-    cia_coefficients: ?CiaWavelengthCoefficients,
-    rayleigh_cross_section_cm2: f64,
-    particle_scales: ParticleWavelengthScales,
+    row: *const SupportRowScalarRequest,
+    wavelength_constants: *const SupportRowWavelengthConstants,
 ) void {
-    // fillSharedOpticalScalarsAtSupportRowWithScalarCache ---------------------------------------------------  |
+    // fillSharedOpticalScalarsAtSupportRow ------------------------------------------------------------------  |
     // Combines gas, CIA, Rayleigh, and aerosol terms into one cached scalar row.                               |
     //                                                                                                          |
     // hot path                                                                                                 |
@@ -1630,27 +1659,21 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     //   k_cia     = sigma_cia*n_pair*1e5                                                                       |
     // -------------------------------------------------------------------------------------------------------  |
 
-    const spectroscopy_sigma = spectroscopySigmaAtSupportRow(
-        self,
-        wavelength_nm,
-        sublayer,
-        global_sublayer_index,
-        strong_line_state,
-        profile_cache,
-    );
+    const sublayer = row.sublayer;
+    const spectroscopy_sigma = spectroscopySigmaAtSupportRow(row);
 
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
-    for (self.cross_section_absorbers) |cross_section_absorber| {
-        if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
+    for (row.prepared.cross_section_absorbers) |cross_section_absorber| {
+        if (row.global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
 
-        const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[global_sublayer_index];
+        const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[row.global_sublayer_index];
         if (absorber_density_cm3 <= 0.0) continue;
 
         cross_section_density_cm3 += absorber_density_cm3;
         cross_section_absorption_optical_depth_per_km +=
             cross_section_absorber.sigmaAt(
-                wavelength_nm,
+                row.wavelength_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
             ) *
@@ -1659,36 +1682,27 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
     }
 
     const line_absorber_density_cm3 = Scalar.lineSpectroscopyCarrierDensityAtSublayer(
-        self,
-        sublayer,
-        global_sublayer_index,
+        row.prepared,
+        sublayer.*,
+        row.global_sublayer_index,
     );
-    const continuum_density_cm3 = continuumDensityAtSupportRow(
-        self,
-        sublayer,
-        global_sublayer_index,
-    );
+    const continuum_density_cm3 = continuumDensityAtSupportRow(row);
     const gas_absorption_optical_depth_per_km =
-        continuum_sigma * continuum_density_cm3 * centimeters_per_kilometer +
+        wavelength_constants.continuum_sigma * continuum_density_cm3 * centimeters_per_kilometer +
         cross_section_absorption_optical_depth_per_km +
         spectroscopy_sigma * line_absorber_density_cm3 * centimeters_per_kilometer;
     const gas_scattering_optical_depth_per_km =
-        rayleigh_cross_section_cm2 *
+        wavelength_constants.rayleigh_cross_section_cm2 *
         sublayer.number_density_cm3 *
         centimeters_per_kilometer;
-    const cia_sigma_cm5_per_molecule2 = ciaSigmaAtSupportRow(
-        self,
-        wavelength_nm,
-        sublayer,
-        cia_coefficients,
-    );
+    const cia_sigma_cm5_per_molecule2 = ciaSigmaAtSupportRow(row, wavelength_constants);
     const cia_optical_depth_per_km =
         cia_sigma_cm5_per_molecule2 *
         sublayer.ciaPairDensityCm6() *
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = scaleParticleDepth(
         opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
-        particle_scales.aerosol,
+        wavelength_constants.particle_scales.aerosol,
     );
     const aerosol_scattering_optical_depth_per_km =
         aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo;
