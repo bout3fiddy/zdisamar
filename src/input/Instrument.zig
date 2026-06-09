@@ -7,6 +7,19 @@ const solar_spectrum = @import("instrument/solar_spectrum.zig");
 const cross_section_lut = @import("instrument/cross_section_lut.zig");
 const pipeline = @import("instrument/pipeline.zig");
 
+// Instrument.zig ---------------------------------------------------------------------------------------------|
+// Public instrument input model and re-export surface for instrument support data.                            |
+//                                                                                                             |
+// data                                                                                                        |
+//   Instrument stores native sampling controls plus optional operational grids, solar spectra, line-shape     |
+//   tables, and generated O2/O2-O2 cross-section LUT headers. OperationalBandSupport is the band-local owner  |
+//   used when the same support data is carried beside a resolved O2 A band.                                   |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Nested support structs own their referenced arrays after clone or preparation. OperationalBandSupport     |
+//   also owns its id string when owns_id is true. deinitOwned walks the same nested support tree.             |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const max_line_shape_samples = constants.max_line_shape_samples;
 pub const max_line_shape_nominals = constants.max_line_shape_nominals;
 pub const max_operational_refspec_temperature_coefficients = constants.max_operational_refspec_temperature_coefficients;
@@ -55,27 +68,65 @@ pub const BuiltinLineShapeKind = pipeline.BuiltinLineShapeKind;
 pub const InstrumentLineShape = pipeline.InstrumentLineShape;
 pub const InstrumentLineShapeTable = pipeline.InstrumentLineShapeTable;
 
-// layout(64-bit):
-//   size: 392 B, align: 8 B
-//   field storage: 387 B across 14 fields; largest: o2_operational_lut=72 B, o2o2_operational_lut=72 B, instrument_line_shape_table=56 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 0 bool-storage slack = 40 bits
-//   cache span: 7 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 392 B (0.383 KiB); total = per instance * live instance count
+// Instrument -------------------------------------------------------------------------------------------------|
+// Scene-level instrument controls and optional operational support headers.                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 392 B (0.383 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 23] id                              : Id                                                             |
+// [ 24.. 31] wavelength_shift_nm             : f64                                                            |
+// [ 32.. 39] instrument_line_fwhm_nm         : f64                                                            |
+// [ 40.. 47] high_resolution_step_nm         : f64                                                            |
+// [ 48.. 55] high_resolution_half_span_nm    : f64                                                            |
+// [ 56.. 95] instrument_line_shape           : InstrumentLineShape                                            |
+// [ 96..151] instrument_line_shape_table     : InstrumentLineShapeTable                                       |
+// [152..183] operational_refspec_grid        : OperationalReferenceGrid                                       |
+// [184..239] operational_solar_spectrum      : OperationalSolarSpectrum                                       |
+// [240..311] o2_operational_lut              : OperationalCrossSectionLut                                     |
+// [312..383] o2o2_operational_lut            : OperationalCrossSectionLut                                     |
+// [384..384] sampling                        : SamplingMode                                                   |
+// [385..385] builtin_line_shape              : BuiltinLineShapeKind                                           |
+// [386..391] trailing padding                : 6 B                                                            |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   id may carry a custom borrowed string. Nested support headers carry their own referenced arrays.          |
+//                                                                                                             |
+// unused bits: 48 padding + 12 enum-storage slack = 60 bits                                                   |
+// cache span: 7 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 392 B (0.383 KiB); total also includes nested support storage                     |
 pub const Instrument = struct {
     pub const SamplingMode = pipeline.SamplingMode;
     pub const SlitIndex = pipeline.SlitIndex;
     pub const SpectralResponse = pipeline.SpectralResponse;
     pub const SpectralChannelControls = pipeline.SpectralChannelControls;
 
-    // layout(64-bit):
-    //   size: 368 B, align: 8 B
-    //   field storage: 361 B across 10 fields; largest: o2_operational_lut=72 B, o2o2_operational_lut=72 B, instrument_line_shape_table=56 B; padding: 7 B (56 bits)
-    //   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-    //   out-of-line: id carry references/descriptors; referenced storage is not included in size
-    //   cache span: 6 cache line(s) at 64 B per line
-    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-    //   footprint: per instance = 368 B (0.359 KiB); total also includes referenced storage above
+    // OperationalBandSupport ---------------------------------------------------------------------------------|
+    // Band-local operational support bundle retained beside a resolved band.                                  |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 368 B (0.359 KiB), align: 8 B                                                                     |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [  0.. 15] id                           : []const u8                                                    |
+    // [ 16.. 23] high_resolution_step_nm      : f64                                                           |
+    // [ 24.. 31] high_resolution_half_span_nm : f64                                                           |
+    // [ 32.. 71] instrument_line_shape        : InstrumentLineShape                                           |
+    // [ 72..127] instrument_line_shape_table  : InstrumentLineShapeTable                                      |
+    // [128..159] operational_refspec_grid     : OperationalReferenceGrid                                      |
+    // [160..215] operational_solar_spectrum   : OperationalSolarSpectrum                                      |
+    // [216..287] o2_operational_lut           : OperationalCrossSectionLut                                    |
+    // [288..359] o2o2_operational_lut         : OperationalCrossSectionLut                                    |
+    // [360..360] owns_id                      : bool                                                          |
+    // [361..367] trailing padding             : 7 B                                                           |
+    //                                                                                                         |
+    // referenced storage                                                                                      |
+    //   id is owned only when owns_id is true. Nested support headers carry their own referenced arrays.      |
+    //                                                                                                         |
+    // unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                |
+    // cache span: 6 cache lines at 64 B per line                                                              |
+    // footprint: per instance = 368 B (0.359 KiB); total also includes nested support storage                 |
     pub const OperationalBandSupport = struct {
         id: []const u8 = "",
         owns_id: bool = false,
@@ -106,12 +157,16 @@ pub const Instrument = struct {
             if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
                 return errors.Error.InvalidRequest;
             }
+
             if (!self.enabled()) return;
             if (self.id.len == 0) return errors.Error.InvalidRequest;
+
             try self.instrument_line_shape.validate();
             try self.instrument_line_shape_table.validate();
+
             try self.operational_refspec_grid.validate();
             try self.operational_solar_spectrum.validate();
+
             try self.o2_operational_lut.validate();
             try self.o2o2_operational_lut.validate();
         }
@@ -179,6 +234,7 @@ pub const Instrument = struct {
             self.* = .{};
         }
     };
+    // --------------------------------------------------------------------------------------------------------|
 
     id: Id = .generic,
     sampling: pipeline.SamplingMode = .native,
@@ -222,3 +278,4 @@ pub const Instrument = struct {
         self.o2o2_operational_lut.deinitOwned(allocator);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

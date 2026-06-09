@@ -2,13 +2,33 @@ const std = @import("std");
 const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: wavelengths_nm=16 B, weights=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelengths_nm, weights carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// reference_grid.zig -----------------------------------------------------------------------------------------|
+// Operational and adaptive wavelength-grid controls for instrument sampling.                                  |
+//                                                                                                             |
+// data                                                                                                        |
+//   OperationalReferenceGrid is a small header over weighted wavelength samples. AdaptiveReferenceGrid stores |
+//   integer controls used by the adaptive instrument-grid builder.                                            |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   OperationalReferenceGrid.clone duplicates wavelength and weight arrays; deinitOwned releases those owned  |
+//   arrays. AdaptiveReferenceGrid is an inline value with no referenced storage.                              |
+// ------------------------------------------------------------------------------------------------------------|
+
+// OperationalReferenceGrid -----------------------------------------------------------------------------------|
+// Weighted support wavelength grid.                                                                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm : []const f64                                                                       |
+// [16..31] weights        : []const f64                                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   wavelengths_nm and weights point at borrowed parser slices or arrays owned by clone.                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total also includes referenced wavelength and weight arrays     |
 pub const OperationalReferenceGrid = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     weights: []const f64 = &[_]f64{},
@@ -26,16 +46,19 @@ pub const OperationalReferenceGrid = struct {
 
         var previous_wavelength: ?f64 = null;
         var weight_sum: f64 = 0.0;
+
         for (self.wavelengths_nm, self.weights) |wavelength_nm, weight| {
             if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(weight) or weight < 0.0) {
                 return errors.Error.InvalidRequest;
             }
+
             if (previous_wavelength) |previous| {
                 if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
             }
             previous_wavelength = wavelength_nm;
             weight_sum += weight;
         }
+
         if (weight_sum <= 0.0 or !std.math.isFinite(weight_sum)) return errors.Error.InvalidRequest;
     }
 
@@ -52,7 +75,13 @@ pub const OperationalReferenceGrid = struct {
 
         var weighted_spacing_sum: f64 = 0.0;
         var pair_weight_sum: f64 = 0.0;
-        for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.weights[0 .. self.weights.len - 1], self.weights[1..]) |left_nm, right_nm, left_weight, right_weight| {
+
+        for (
+            self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1],
+            self.wavelengths_nm[1..],
+            self.weights[0 .. self.weights.len - 1],
+            self.weights[1..],
+        ) |left_nm, right_nm, left_weight, right_weight| {
             const pair_weight = 0.5 * (left_weight + right_weight);
             weighted_spacing_sum += pair_weight * (right_nm - left_nm);
             pair_weight_sum += pair_weight;
@@ -68,13 +97,21 @@ pub const OperationalReferenceGrid = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 6 B, align: 2 B
-//   field storage: points_per_fwhm=2 B, strong_line_min_divisions=2 B, strong_line_max_divisions=2 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count
+// AdaptiveReferenceGrid --------------------------------------------------------------------------------------|
+// Adaptive high-resolution grid controls used around strong lines.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 6 B (0.006 KiB), align: 2 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..1] points_per_fwhm           : u16                                                                      |
+// [2..3] strong_line_min_divisions : u16                                                                      |
+// [4..5] strong_line_max_divisions : u16                                                                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count                       |
 pub const AdaptiveReferenceGrid = struct {
     points_per_fwhm: u16 = 0,
     strong_line_min_divisions: u16 = 0,
@@ -97,3 +134,4 @@ pub const AdaptiveReferenceGrid = struct {
         }
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
