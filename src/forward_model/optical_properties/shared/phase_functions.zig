@@ -2,6 +2,30 @@ const std = @import("std");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 
+// phase_functions.zig ---------------------------------------------------------------------------------------  |
+// Builds Rayleigh, aerosol, and mixed phase-coefficient rows for optical state and LABOS transport.            |
+//                                                                                                              |
+// called by                                                                                                    |
+//   radiative_transfer/root.zig re-exports phase_coefficient_count and LayerPhase                              |
+//   state_build/context.zig prepares aerosol HG coefficients from Scene controls                               |
+//   shared_carrier.zig, carrier_eval.zig, rtm_quadrature.zig, and forward_layers.zig store PhaseMixture rows   |
+//   LABOS phase_basis.zig reads the final coefficient arrays and max retained phase index                      |
+//                                                                                                              |
+// main paths                                                                                                   |
+//   phaseCoefficientsFromCompact expands short input rows into the fixed [151] coefficient layout              |
+//   hgPhaseCoefficients builds truncated Henyey-Greenstein aerosol coefficients                                |
+//   PhaseMixture stores gas/aerosol mixture weights plus a borrowed aerosol coefficient pointer                |
+//   weightedPhaseCoefficient reads one mixed coefficient without materializing the full row                    |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Carrier and layer-accumulation paths keep mixture weights plus a pointer to prepared aerosol coefficients  |
+//   instead of copying [151]f64 into every layer or carrier row. LABOS materializes coefficients only where    |
+//   its basis and layer math need them.                                                                        |
+//                                                                                                              |
+// memory                                                                                                       |
+//   The full phase row is [151]f64. PhaseMixture is a 24 B borrowed view over shared prepared coefficients.    |
+// ------------------------------------------------------------------------------------------------------------ |
+
 pub const compact_phase_coefficient_count: usize = 4;
 pub const vendor_hg_max_phase_index: usize = 150;
 pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
@@ -14,14 +38,6 @@ pub fn zeroPhaseCoefficients() [phase_coefficient_count]f64 {
 }
 
 const default_phase_mixture_coefficients = zeroPhaseCoefficients();
-
-// phase_functions.zig ---------------------------------------------------------------------------------------  |
-// Builds compact Rayleigh/aerosol phase-coefficient mixtures for layer and RTM inputs.                         |
-//                                                                                                              |
-// hot path                                                                                                     |
-//   Carrier and layer-accumulation paths store weights plus a pointer to prepared aerosol coefficients rather  |
-//   than copying full coefficient arrays into every row.                                                       |
-// ------------------------------------------------------------------------------------------------------------ |
 
 // PhaseMixture ----------------------------------------------------------------------------------------------  |
 // Encoded phase-coefficient mixture for rows that are a gas/aerosol blend.                                     |

@@ -6,13 +6,29 @@ const Allocator = std.mem.Allocator;
 // particle_profiles.zig -------------------------------------------------------------------------------------   |
 // Builds aerosol optical-depth distributions over prepared layer and sublayer grids.                            |
 //                                                                                                               |
+// called by                                                                                                     |
+//   vertical_grid.zig exposes the prepared layer/sublayer grid slices                                           |
+//   layer_accumulation.zig builds profile aerosol properties during optical-state preparation                   |
+//   forward_layers.zig, carrier_eval.zig, and state_scalar.zig read the prepared particle distribution          |
+//                                                                                                               |
+// main paths                                                                                                    |
+//   buildAerosolSublayerDistribution                                                                            |
+//     -> choose explicit-interval placement or altitude-bound placement from Scene controls                     |
+//     -> allocate one optical-depth weight per prepared sublayer                                                |
+//                                                                                                               |
+//   buildIntervalMatchedDistribution                                                                            |
+//     -> put all aerosol depth on sublayers belonging to one explicit interval                                  |
+//                                                                                                               |
+//   buildFiniteLayerSublayerDistribution                                                                        |
+//     -> distribute aerosol depth by vertical overlap with an altitude interval                                 |
+//                                                                                                               |
 // hot path                                                                                                      |
 //   Layer accumulation and carrier evaluation read the prepared distribution repeatedly at wavelength time.     |
 //   This file keeps placement work in setup and stores only per-sublayer weights for the hot reads.             |
 //                                                                                                               |
 // memory                                                                                                        |
-//   PreparedVerticalGrid borrows the vertical-grid arrays prepared by state_build. Distribution builders        |
-//   allocate only the returned []f64 weights.                                                                   |
+//   PreparedVerticalGrid borrows vertical-grid arrays from state_build. Distribution builders allocate only     |
+//   the returned []f64 weights; callers own and free those weights with the prepared optical state.             |
 // ------------------------------------------------------------------------------------------------------------  |
 
 // PreparedVerticalGrid --------------------------------------------------------------------------------------   |
