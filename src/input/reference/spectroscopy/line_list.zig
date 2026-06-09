@@ -667,6 +667,21 @@ pub fn attachStrongLineSidecars(
 }
 
 pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.Allocator) !void {
+    // buildStrongLineMatchIndex --------------------------------------------------------------------------    |
+    // Build the per-line pointer into the O2 strong-line sidecar table.                                       |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   absorbers.zig and reference-data tests call this after sidecars/runtime controls are attached.        |
+    //   Prepared line-state setup then reuses the match slice instead of searching sidecars per wavelength.   |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm by pointer and writes a   |
+    //   compact ?u16 match row with the same index order as self.lines.                                       |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   match when abs(line center - strong-line center) <= strong_line_tolerance_nm                          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (self.strong_line_match_by_line) |matches| {
         allocator.free(matches);
         self.strong_line_match_by_line = null;
@@ -1076,6 +1091,20 @@ pub fn shouldExcludeWeakLine(
 }
 
 pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
+    // validateStrongLinePartition ----------------------------------------------------------------------      |
+    // Reject a vendor O2 strong-line partition that exposes candidates but matches none of them.              |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   attachStrongLineSidecars and buildStrongLineMatchIndex call this before prepared state is built.      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Setup-only scan over SpectroscopyLine rows. It reads vendor metadata and center wavelength by pointer.|
+    //   The result protects later strong-line state reuse; there is no wavelength-time allocation.            |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   at least one vendor strong-line candidate must match a sidecar center within tolerance                |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!usesVendorStrongLinePartition(self.*)) return;
 
     const strong_lines = self.strong_lines orelse return;
@@ -1110,6 +1139,17 @@ pub fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Types.A
 }
 
 fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
+    // detectVendorStrongLinePartition -----------------------------------------------------------------       |
+    // Detect whether attached sidecars correspond to the vendor O2 A strong-line partition.                   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   attachStrongLineSidecars uses this once to choose vendor partition handling before validation.        |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Reads gas_index and vendor metadata from wide line rows by pointer during setup only.                 |
+    //   A gas-index side column would not remove wavelength-time work; this decides retained metadata mode.   |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!self.hasStrongLineSidecars()) return false;
 
     if (self.runtime_controls.gas_index) |gas_index| {

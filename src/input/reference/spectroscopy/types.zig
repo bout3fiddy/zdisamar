@@ -295,6 +295,21 @@ pub const SpectroscopyRuntimeControls = struct {
     }
 
     pub fn thresholdStrength(self: SpectroscopyRuntimeControls, lines: []const SpectroscopyLine) ?f64 {
+        // SpectroscopyRuntimeControls.thresholdStrength ---------------------------------------------------   |
+        // Return the absolute line-strength cutoff for threshold_line_scale.                                  |
+        //                                                                                                     |
+        // call path                                                                                           |
+        //   adaptive_plan uses this during interval-plan setup before collecting strong-line centers.         |
+        //   line_list filtering uses the same value before prepared weak-line windows are built.              |
+        //                                                                                                     |
+        // memory                                                                                              |
+        //   Setup scans read only line_strength_cm2_per_molecule from 104 B SpectroscopyLine rows by pointer. |
+        //   The row stays whole because wavelength-time evaluation consumes the full line fields.             |
+        //                                                                                                     |
+        // math                                                                                                |
+        //   cutoff = max(line_strength_cm2_per_molecule) * threshold_line_scale                               |
+        // --------------------------------------------------------------------------------------------------- |
+
         const scale = self.threshold_line_scale orelse return null;
         if (lines.len == 0) return null;
 
