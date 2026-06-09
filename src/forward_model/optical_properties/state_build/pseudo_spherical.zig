@@ -12,21 +12,29 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 const PreparedOpticalState = State.PreparedOpticalState;
 
 // pseudo_spherical.zig --------------------------------------------------------------------------------------|
-// Builds pseudo-spherical attenuation samples for source-function RTM routes.                                |
+// Builds pseudo-spherical attenuation samples for curved direct-beam paths in source-function RTM routes.    |
 //                                                                                                            |
 // called by                                                                                                  |
-//   forward input construction when transport needs altitude-resolved attenuation along curved paths.        |
+//   forward_input.configuredForwardInput when RTM controls request spherical correction.                     |
+//   LABOS attenuation builders later read the attached PseudoSphericalGrid from ForwardInput.                |
 //                                                                                                            |
 // main paths                                                                                                 |
-//   shared-grid route : reuse cached shared RTM geometry and already-filled LayerInput optical depths.       |
-//   wavelength route  : evaluate prepared sublayers at the requested wavelength with a spectroscopy cache.   |
+//   shared-layer route : reuse cached SharedRtmGeometry plus already-filled LayerInput optical depths.       |
+//   wavelength route   : evaluate support rows at one wavelength with a ProfileNodeSpectroscopyCache.        |
+//   carrier route      : reuse WavelengthCarrierCache when forward_input already built one.                  |
+//                                                                                                            |
+// row handoff                                                                                                |
+//   LayerInput optical_depth is used only after forward_layers has filled the same layer order for LABOS.    |
+//   Shared geometry supplies level altitudes and support spans; output arrays are caller-owned scratch rows. |
+//   PseudoSphericalSample stores only altitude, thickness, and optical depth for attenuation lookup.         |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs per wavelength for integrated-source solves. The shared-grid route reads only optical depth from    |
-//   LayerInput because the same row was just prepared for LABOS transport.                                   |
+//   Runs per integrated-source wavelength when spherical correction is enabled; no allocation or file I/O.   |
+//   The narrow LayerInput scan is pointer-based; splitting an optical-depth column would add ownership.      |
 //                                                                                                            |
-// memory                                                                                                     |
-//   Output slices are caller-provided. Interval support rows borrow prepared sublayers and strong-line state.|
+// math                                                                                                       |
+//   sample optical_depth = k_ext(lambda, z_i) * dz_i.                                                        |
+//   shared midpoint route uses the layer optical depth already integrated for the transport layer.           |
 // -----------------------------------------------------------------------------------------------------------|
 
 // PseudoSphericalInterval -----------------------------------------------------------------------------------|
@@ -60,14 +68,20 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     level_altitudes_km: []f64,
 ) bool {
     // fillSharedPseudoSphericalGridFromLayerInputs --------------------------------------------------------- |
-    // Build a pseudo-spherical attenuation grid from already-filled transport layer inputs.                  |
+    // Build a pseudo-spherical attenuation grid from already-filled transport LayerInput rows.               |
     //                                                                                                        |
     // hot path                                                                                               |
-    // called when shared RTM geometry is already available and layer optical depths are already known.       |
+    //   Called after shared RTM geometry and layer optical depths are available for this wavelength.         |
+    //   The output is an attenuation grid for LABOS direct-beam attenuation, not a new layer model.          |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   layer_inputs has the same order as SharedRtmGeometry.layers and the ForwardInput layer slice.        |
+    //   This route reads only LayerInput.optical_depth because geometry carries altitude and thickness.      |
+    //   output samples, level starts, and level altitudes are caller-owned worker scratch arrays.            |
     //                                                                                                        |
     // memory                                                                                                 |
-    // This loop reads only LayerInput.optical_depth from the wide row. Keep the row whole because the        |
-    // caller just filled the same LayerInput array for LABOS transport.                                      |
+    //   The LayerInput scan uses pointer capture; no 176 B transport row is copied.                          |
+    //   A separate optical-depth column would have to be kept in lockstep with the transport slice.          |
     // -------------------------------------------------------------------------------------------------------|
 
     const geometry = shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len) orelse return false;
