@@ -16,18 +16,33 @@ const profile_line_state_chunk_size: usize = 2;
 const max_profile_spectroscopy_cache_nodes: usize = 64;
 
 // absorbers.zig ---------------------------------------------------------------------------------------------    |
-// Builds the active absorber state used by optical-property preparation.                                         |
+// Absorber preparation stage for optical-property state construction.                                            |
+//                                                                                                                |
+// called by                                                                                                      |
+//   root.prepare after Context.init and before layer_accumulation.populate.                                      |
 //                                                                                                                |
 // main path                                                                                                      |
-//   scene absorbers -> active line/cross-section absorber descriptors -> prepared line/profile state caches      |
+//   Scene absorber controls -> active line/cross-section descriptors                                             |
+//   reference line list -> runtime filtering, strong-line match index, and optional per-species line lists       |
+//   cross-section table/LUT sources -> cloned prepared absorber rows                                             |
+//   profile T/P nodes -> weak/strong prepared line states, loaded from ProfileStateCache when available          |
+//   resolved species/continuum metadata -> scalar fields consumed by layer_spectroscopy.zig                      |
 //                                                                                                                |
 // hot path                                                                                                       |
-//   Profile line-state preparation can split profile nodes across workers. Worker structs borrow profile         |
-//   arrays and write into caller-owned prepared-state slices.                                                    |
+//   This stage runs once per prepared scene so wavelength-time carrier evaluation does not repeat absorber       |
+//   selection, line-list filtering, strong-line partitioning, or profile-node state setup. Profile line-state    |
+//   preparation can split profile nodes across workers; worker rows borrow profile arrays and write into         |
+//   caller-owned prepared-state slices.                                                                          |
+//                                                                                                                |
+// limits                                                                                                         |
+//   Single-list profile spectroscopy without an operational O2 LUT accepts at most                               |
+//   max_profile_spectroscopy_cache_nodes profile nodes so the downstream profile cache stays bounded.            |
 //                                                                                                                |
 // memory                                                                                                         |
-//   AbsorberBuildState owns prepared absorber arrays and optional spectroscopy line-list storage. Deinit         |
-//   releases only the owned prefixes tracked by the count fields.                                                |
+//   AbsorberBuildState owns the active descriptor slices, cloned prepared absorber rows, density columns,        |
+//   optional line-state arrays, and any line-list storage moved out of Context. Deinit releases only initialized |
+//   prefixes tracked by the count fields; Finalize.assemble later transfers surviving ownership into             |
+//   PreparedOpticalState.                                                                                        |
 // ------------------------------------------------------------------------------------------------------------   |
 
 // ProfileLineStateWorker ------------------------------------------------------------------------------------    |

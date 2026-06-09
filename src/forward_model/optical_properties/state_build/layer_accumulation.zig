@@ -30,18 +30,41 @@ const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
 // layer_accumulation.zig ------------------------------------------------------------------------------------    |
-// Builds layer-integrated optical properties from prepared sublayer rows.                                        |
+// Layer and support-row accumulation stage for PreparedOpticalState.                                             |
 //                                                                                                                |
-// main path                                                                                                      |
-//   scene/context + prepared absorber state -> per-sublayer terms -> layer totals and mean properties            |
+// called by                                                                                                      |
+//   accumulation.zig after Context.init and Absorbers.build; Finalize.assemble later moves the filled rows.      |
+//                                                                                                                |
+// main paths                                                                                                     |
+//   normal grid           : populate each sublayer, accumulate its parent layer, and write PreparedLayer rows.   |
+//   DISAMAR parity grid   : populate all shared support rows first, then reduce those rows into transport        |
+//                           layers with the DISAMAR support-row placement kept intact.                           |
+//   aerosol input         : scalar aerosol controls build a distribution; profile aerosol layers build explicit  |
+//                           per-sublayer particle properties and an equivalent HG phase row.                     |
+//   spectroscopy/CIA      : midpoint profile spectroscopy and collision-complex caches avoid repeated setup      |
+//                           while each support row is filled.                                                    |
+//                                                                                                                |
+// outputs                                                                                                        |
+//   Writes context.sublayers, context.layers, context.aerosol_phase_coefficients, absorber density columns,      |
+//   and the LayerAccumulation totals returned to accumulation.zig as PreparedMeans inputs.                       |
 //                                                                                                                |
 // hot path                                                                                                       |
-//   Parity support-row construction can split work across worker rows. LayerAccumulation keeps the running       |
-//   totals compact so the main accumulation pass streams f64 counters without heap traffic.                      |
+//   Runs once per optical-state refresh before repeated wavelength solves. DISAMAR-parity support-row fill can   |
+//   split independent support rows across worker chunks. LayerAccumulation is a compact f64 total row, and       |
+//   CollisionComplexProfileCache keeps the 64-node spline second-derivative table inline so per-row CIA sampling |
+//   does not rebuild spline scratch.                                                                             |
+//                                                                                                                |
+// math                                                                                                           |
+//   column = number_density * path_cm                                                                            |
+//   tau_gas = sigma_cont*N_cont + sigma_line*N_line + sigma_xs*N_xs + tau_rayleigh                               |
+//   tau_cia = sigma_cia * collision_pair_density * path_cm                                                       |
+//   tau_aerosol uses scalar/profile placement at the reference wavelength; wavelength scaling happens later in   |
+//   carrier_eval.zig.                                                                                            |
 //                                                                                                                |
 // memory                                                                                                         |
-//   CollisionComplexProfileCache keeps two fixed 64-node spline arrays inline. ParitySupportRowWorker            |
-//   borrows context, absorber, cache, queue, and error-state storage while owning only its total row value.      |
+//   Context owns the output layer/support-row arrays during this stage. Worker rows borrow context, absorber,    |
+//   cache, queue, aerosol, and error-state storage, and keep only private LayerAccumulation totals before the    |
+//   final merge.                                                                                                 |
 // ------------------------------------------------------------------------------------------------------------   |
 
 const AerosolSublayerProperties = struct {
