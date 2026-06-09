@@ -273,38 +273,80 @@ const ParitySupportRowErrorState = struct {
 };
 // ------------------------------------------------------------------------------------------------------------   |
 
-// ParitySupportRowWorker ------------------------------------------------------------------------------------    |
-// Worker row used by parallel parity support-row accumulation.                                                   |
+// LayerAccumulationRequest ----------------------------------------------------------------------------------    |
+// Borrowed inputs shared by layer and parity support-row accumulation. This value owns no arrays; Context and    |
+// AbsorberBuildState keep ownership of output rows, absorber density columns, and spectroscopy caches.           |
 //                                                                                                                |
 // layout(64-bit)                                                                                                 |
-// size: 272 B (0.266 KiB), align: 8 B                                                                            |
+// size: 96 B (0.094 KiB), align: 8 B                                                                             |
 //                                                                                                                |
 // memory                                                                                                         |
-// [  0.. 15] allocator                  : Allocator                                                              |
-// [ 16.. 23] context                    : *PreparationContext                                                    |
-// [ 24.. 31] absorbers                  : *AbsorberBuildState                                                    |
-// [ 32.. 39] profile_spectroscopy_cache : ?*const ProfileSpectroscopyCache                                       |
-// [ 40.. 47] collision_complex_cache    : *const CollisionComplexProfileCache                                    |
-// [ 48..111] aerosol_sublayers          : AerosolSublayers                                                       |
-// [112..119] queue                      : *ChunkQueue                                                            |
-// [120..127] error_state                : *ParitySupportRowErrorState                                            |
-// [128..135] worker_index               : usize                                                                  |
-// [136..271] totals                     : LayerAccumulation                                                      |
+// [ 0.. 7] context                    : *PreparationContext                                                      |
+// [ 8..15] absorbers                  : *AbsorberBuildState                                                      |
+// [16..23] profile_spectroscopy_cache : ?*const ProfileSpectroscopyCache                                         |
+// [24..31] collision_complex_cache    : *const CollisionComplexProfileCache                                      |
+// [32..95] aerosol_sublayers          : AerosolSublayers                                                         |
 //                                                                                                                |
 // out-of-line                                                                                                    |
-//   context, absorbers, caches, queue, and error-state storage are borrowed. AerosolSublayers may reference      |
-//   either the scalar distribution slice or profile property rows.                                               |
+//   all fields borrow setup data prepared by populate(); no heap storage moves through this view.                |
 //                                                                                                                |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
-// cache span: 5 cache lines at 64 B per line                                                                     |
-// footprint: per instance = 272 B plus borrowed storage                                                          |
-const ParitySupportRowWorker = struct {
-    allocator: Allocator,
+// cache span: 2 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 96 B plus borrowed storage                                                           |
+const LayerAccumulationRequest = struct {
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     collision_complex_cache: *const CollisionComplexProfileCache,
     aerosol_sublayers: AerosolSublayers,
+};
+// ------------------------------------------------------------------------------------------------------------   |
+
+// SublayerTarget --------------------------------------------------------------------------------------------    |
+// Row indexes and physical layer thickness for one output support row.                                           |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 32 B (0.031 KiB), align: 8 B                                                                             |
+//                                                                                                                |
+// memory                                                                                                         |
+// [ 0.. 7] layer_thickness_km  : f64                                                                             |
+// [ 8..15] parent_layer_index  : usize                                                                           |
+// [16..23] sublayer_index      : usize                                                                           |
+// [24..31] write_index         : usize                                                                           |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// footprint: per instance = 32 B; stack value for one support row                                                |
+const SublayerTarget = struct {
+    layer_thickness_km: f64,
+    parent_layer_index: usize,
+    sublayer_index: usize,
+    write_index: usize,
+};
+// ------------------------------------------------------------------------------------------------------------   |
+
+// ParitySupportRowWorker ------------------------------------------------------------------------------------    |
+// Worker row used by parallel parity support-row accumulation.                                                   |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 184 B (0.180 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0.. 15] allocator    : Allocator                                                                            |
+// [ 16.. 23] request      : *const LayerAccumulationRequest                                                      |
+// [ 24.. 31] queue        : *ChunkQueue                                                                          |
+// [ 32.. 39] error_state  : *ParitySupportRowErrorState                                                          |
+// [ 40.. 47] worker_index : usize                                                                                |
+// [ 48..183] totals       : LayerAccumulation                                                                    |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   request, queue, and error-state storage are borrowed. Each worker owns only its private totals row.          |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 3 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 184 B plus borrowed request/queue/error storage                                      |
+const ParitySupportRowWorker = struct {
+    allocator: Allocator,
+    request: *const LayerAccumulationRequest,
     queue: *work_partition.ChunkQueue,
     error_state: *ParitySupportRowErrorState,
     worker_index: usize,
@@ -581,28 +623,27 @@ pub fn populate(
     else
         null;
     const collision_complex_cache = try CollisionComplexProfileCache.init(context);
+    const accumulation_request = LayerAccumulationRequest{
+        .context = context,
+        .absorbers = absorbers,
+        .profile_spectroscopy_cache = profile_spectroscopy_cache_ptr,
+        .collision_complex_cache = &collision_complex_cache,
+        .aerosol_sublayers = aerosol_sublayers,
+    };
 
     if (usesDisamarParitySupportGrid(context)) {
         seedParitySupportRowLayerIndices(context);
         if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
             try populateParitySupportRowsParallel(
                 allocator,
-                context,
-                absorbers,
-                profile_spectroscopy_cache_ptr,
-                &collision_complex_cache,
+                &accumulation_request,
                 &totals,
-                aerosol_sublayers,
             );
         } else {
             try populateParitySupportRows(
                 allocator,
-                context,
-                absorbers,
-                profile_spectroscopy_cache_ptr,
-                &collision_complex_cache,
+                &accumulation_request,
                 &totals,
-                aerosol_sublayers,
             );
         }
         for (context.layers, 0..) |*layer, index| {
@@ -618,12 +659,8 @@ pub fn populate(
     for (context.layers, 0..) |*layer, index| {
         try populateLayer(
             allocator,
-            context,
-            absorbers,
-            profile_spectroscopy_cache_ptr,
-            &collision_complex_cache,
+            &accumulation_request,
             &totals,
-            aerosol_sublayers,
             layer,
             index,
         );
@@ -757,17 +794,6 @@ fn profileSpectralScalingMatches(
     );
 }
 
-fn profileScatteringAtMidpoint(context: *const Context, property: *const AerosolSublayerProperties) f64 {
-    if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
-    const optical_depth = ParticleProfiles.scaleOpticalDepth(
-        property.optical_depth,
-        property.reference_wavelength_nm,
-        property.angstrom_exponent,
-        context.midpoint_nm,
-    );
-    return optical_depth * property.single_scatter_albedo;
-}
-
 fn profileMeanSingleScatterAlbedo(
     context: *const Context,
     aerosol_sublayers: []const AerosolSublayerProperties,
@@ -801,7 +827,16 @@ fn profileEquivalentPhaseCoefficients(
     var asymmetry_sum: f64 = 0.0;
 
     for (aerosol_sublayers) |*property| {
-        const sublayer_scattering = profileScatteringAtMidpoint(context, property);
+        if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) continue;
+
+        const scaled_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            property.optical_depth,
+            property.reference_wavelength_nm,
+            property.angstrom_exponent,
+            context.midpoint_nm,
+        );
+        const sublayer_scattering = scaled_optical_depth * property.single_scatter_albedo;
+
         if (sublayer_scattering <= 0.0) continue;
         scattering += sublayer_scattering;
 
@@ -820,25 +855,17 @@ fn profileEquivalentPhaseCoefficients(
 
 fn populateParitySupportRows(
     allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
-    collision_complex_cache: *const CollisionComplexProfileCache,
+    request: *const LayerAccumulationRequest,
     totals: *LayerAccumulation,
-    aerosol_sublayers: AerosolSublayers,
 ) !void {
-    for (0..context.sublayers.len) |write_index| {
-        const current_layer_index: usize = @intCast(context.sublayers[write_index].parent_layer_index);
+    for (0..request.context.sublayers.len) |write_index| {
+        const current_layer_index: usize = @intCast(request.context.sublayers[write_index].parent_layer_index);
         try populateParitySupportRow(
             allocator,
-            context,
-            absorbers,
-            profile_spectroscopy_cache,
-            collision_complex_cache,
+            request,
             totals,
-            aerosol_sublayers,
             current_layer_index,
-            @intCast(context.sublayers[write_index].sublayer_index),
+            @intCast(request.context.sublayers[write_index].sublayer_index),
             write_index,
         );
     }
@@ -846,12 +873,8 @@ fn populateParitySupportRows(
 
 fn populateParitySupportRowsParallel(
     allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
-    collision_complex_cache: *const CollisionComplexProfileCache,
+    request: *const LayerAccumulationRequest,
     totals: *LayerAccumulation,
-    aerosol_sublayers: AerosolSublayers,
 ) !void {
     // populateParitySupportRowsParallel -----------------------------------------------------------------------  |
     // Fills independent parity support rows used by later wavelength carrier caching.                            |
@@ -865,21 +888,17 @@ fn populateParitySupportRowsParallel(
     //   reduceParityLayer                                                                                        |
     // ---------------------------------------------------------------------------------------------------------  |
 
-    const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
+    const worker_count = preferredParitySupportRowWorkerCount(request.context.sublayers.len);
     if (worker_count == 1) {
         return populateParitySupportRows(
             allocator,
-            context,
-            absorbers,
-            profile_spectroscopy_cache,
-            collision_complex_cache,
+            request,
             totals,
-            aerosol_sublayers,
         );
     }
 
     var error_state = ParitySupportRowErrorState{};
-    var queue = work_partition.ChunkQueue.init(context.sublayers.len, parity_support_row_chunk_size);
+    var queue = work_partition.ChunkQueue.init(request.context.sublayers.len, parity_support_row_chunk_size);
     var worker_buffer: [work_partition.max_workers]ParitySupportRowWorker = undefined;
     var thread_buffer: [work_partition.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
@@ -889,11 +908,7 @@ fn populateParitySupportRowsParallel(
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
             .allocator = allocator,
-            .context = context,
-            .absorbers = absorbers,
-            .profile_spectroscopy_cache = profile_spectroscopy_cache,
-            .collision_complex_cache = collision_complex_cache,
-            .aerosol_sublayers = aerosol_sublayers,
+            .request = request,
             .queue = &queue,
             .error_state = &error_state,
             .worker_index = worker_index,
@@ -959,17 +974,14 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                 //   Parent-layer ownership is seeded into the support-row
                 //   output buffer before fanout. Workers then load the row-local
                 //   indexes directly instead of scanning layer starts.
-                const current_layer_index: usize = @intCast(worker.context.sublayers[write_index].parent_layer_index);
+                const context = worker.request.context;
+                const current_layer_index: usize = @intCast(context.sublayers[write_index].parent_layer_index);
                 populateParitySupportRow(
                     worker.allocator,
-                    worker.context,
-                    worker.absorbers,
-                    worker.profile_spectroscopy_cache,
-                    worker.collision_complex_cache,
+                    worker.request,
                     &worker.totals,
-                    worker.aerosol_sublayers,
                     current_layer_index,
-                    @intCast(worker.context.sublayers[write_index].sublayer_index),
+                    @intCast(context.sublayers[write_index].sublayer_index),
                     write_index,
                 ) catch |err| {
                     worker.error_state.store(err);
@@ -982,16 +994,13 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
 
 fn populateParitySupportRow(
     allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
-    collision_complex_cache: *const CollisionComplexProfileCache,
+    request: *const LayerAccumulationRequest,
     totals: *LayerAccumulation,
-    aerosol_sublayers: AerosolSublayers,
     current_layer_index: usize,
     current_sublayer_index: usize,
     write_index: usize,
 ) !void {
+    const context = request.context;
     const layer_thickness_km = @max(
         context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
             context.vertical_grid.layer_bottom_altitudes_km[current_layer_index],
@@ -1000,16 +1009,14 @@ fn populateParitySupportRow(
     var ignored_layer_sums: LayerSums = .{};
     try populateSublayer(
         allocator,
-        context,
-        absorbers,
-        profile_spectroscopy_cache,
-        collision_complex_cache,
+        request,
         totals,
-        aerosol_sublayers,
-        layer_thickness_km,
-        current_layer_index,
-        current_sublayer_index,
-        write_index,
+        .{
+            .layer_thickness_km = layer_thickness_km,
+            .parent_layer_index = current_layer_index,
+            .sublayer_index = current_sublayer_index,
+            .write_index = write_index,
+        },
         &ignored_layer_sums,
     );
 }
@@ -1181,12 +1188,8 @@ fn reduceParityLayer(
 
 fn populateLayer(
     allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
-    collision_complex_cache: *const CollisionComplexProfileCache,
+    request: *const LayerAccumulationRequest,
     totals: *LayerAccumulation,
-    aerosol_sublayers: AerosolSublayers,
     layer: *State.PreparedLayer,
     index: usize,
 ) !void {
@@ -1206,6 +1209,7 @@ fn populateLayer(
     //   omega0    = tau_sca / max(tau_layer, eps)                                                                |
     // ---------------------------------------------------------------------------------------------------------  |
 
+    const context = request.context;
     const geometry = layerGeometry(context, index);
     var layer_sums: LayerSums = .{};
 
@@ -1213,16 +1217,14 @@ fn populateLayer(
         const write_index = @as(usize, geometry.sublayer_start_index) + sublayer_index;
         try populateSublayer(
             allocator,
-            context,
-            absorbers,
-            profile_spectroscopy_cache,
-            collision_complex_cache,
+            request,
             totals,
-            aerosol_sublayers,
-            geometry.thickness_km,
-            index,
-            sublayer_index,
-            write_index,
+            .{
+                .layer_thickness_km = geometry.thickness_km,
+                .parent_layer_index = index,
+                .sublayer_index = sublayer_index,
+                .write_index = write_index,
+            },
             &layer_sums,
         );
     }
@@ -1281,7 +1283,7 @@ fn populateLayer(
         .pressure_hpa = pressure,
         .temperature_k = temperature,
         .number_density_cm3 = density,
-        .continuum_cross_section_cm2_per_molecule = absorbers.mean_sigma,
+        .continuum_cross_section_cm2_per_molecule = request.absorbers.mean_sigma,
         .line_cross_section_cm2_per_molecule = layer_sums.meanLineSigma(geometry.sublayer_count),
         .line_mixing_cross_section_cm2_per_molecule = layer_sums.meanLineMixing(geometry.sublayer_count),
         .cia_optical_depth = layer_sums.cia_optical_depth,
@@ -1307,16 +1309,9 @@ fn populateLayer(
 
 fn populateSublayer(
     allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
-    collision_complex_cache: *const CollisionComplexProfileCache,
+    request: *const LayerAccumulationRequest,
     totals: *LayerAccumulation,
-    aerosol_sublayers: AerosolSublayers,
-    layer_thickness_km: f64,
-    parent_layer_index: usize,
-    sublayer_index: usize,
-    write_index: usize,
+    target: SublayerTarget,
     layer_sums: *LayerSums,
 ) !void {
     // populateSublayer ----------------------------------------------------------------------------------------  |
@@ -1336,6 +1331,9 @@ fn populateSublayer(
     //   tau_rayleigh = sigma_rayleigh * N_air                                                                    |
     // ---------------------------------------------------------------------------------------------------------  |
 
+    const context = request.context;
+    const absorbers = request.absorbers;
+    const write_index = target.write_index;
     const top_altitude_km = context.vertical_grid.sublayer_top_altitudes_km[write_index];
     const bottom_altitude_km = context.vertical_grid.sublayer_bottom_altitudes_km[write_index];
     const top_pressure_hpa = context.vertical_grid.sublayer_top_pressures_hpa[write_index];
@@ -1382,7 +1380,7 @@ fn populateSublayer(
         @max(support_weight_km, 0.0) * centimeters_per_kilometer
     else
         @max(support_weight_km, 1.0e-9) * centimeters_per_kilometer;
-    const sublayer_weight = support_weight_km / layer_thickness_km;
+    const sublayer_weight = support_weight_km / target.layer_thickness_km;
     const oxygen_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
         context.scene,
         .o2,
@@ -1428,7 +1426,7 @@ fn populateSublayer(
     const spectroscopy_eval = choose_spectroscopy_eval: {
         break :choose_spectroscopy_eval if (absorbers.owned_line_absorbers.len == 0 and
             absorbers.strong_line_states == null and
-            profile_spectroscopy_cache != null)
+            request.profile_spectroscopy_cache != null)
             LayerSpectroscopy.resolveCachedSingleLineEvaluation(
                 context,
                 absorbers,
@@ -1437,7 +1435,7 @@ fn populateSublayer(
                 pressure,
                 temperature,
                 &absorber_density_cm3,
-                profile_spectroscopy_cache.?,
+                request.profile_spectroscopy_cache.?,
             )
         else
             try LayerSpectroscopy.resolveSpectroscopyEvaluation(
@@ -1451,7 +1449,7 @@ fn populateSublayer(
                 oxygen_mixing_ratio,
                 sublayer_path_length_cm,
                 &absorber_density_cm3,
-                profile_spectroscopy_cache,
+                request.profile_spectroscopy_cache,
             );
     };
 
@@ -1497,7 +1495,7 @@ fn populateSublayer(
     };
 
     const cia_pair_density_cm6 = collisionComplexPairDensityCm6(
-        collision_complex_cache,
+        request.collision_complex_cache,
         altitude_km,
         density,
         o2_density_cm3,
@@ -1523,7 +1521,7 @@ fn populateSublayer(
     // math: tau_aerosol(lambda_ref) is already distributed onto the prepared
     // sublayer grid. Single-layer cases use the existing placement logic;
     // aerosol-profile cases write the pressure-overlap profile directly.
-    const aerosol_property = aerosol_sublayers.propertyAt(write_index);
+    const aerosol_property = request.aerosol_sublayers.propertyAt(write_index);
     const aerosol_base_optical_depth = aerosol_property.base_optical_depth;
     const aerosol_optical_depth = aerosol_property.optical_depth;
     const sublayer_aerosol_fraction = if (aerosol_base_optical_depth > 0.0)
@@ -1543,8 +1541,8 @@ fn populateSublayer(
     };
 
     context.sublayers[write_index] = .{
-        .parent_layer_index = @intCast(parent_layer_index),
-        .sublayer_index = @intCast(sublayer_index),
+        .parent_layer_index = @intCast(target.parent_layer_index),
+        .sublayer_index = @intCast(target.sublayer_index),
         .global_sublayer_index = @intCast(write_index),
         .altitude_km = altitude_km,
         .pressure_hpa = pressure,
