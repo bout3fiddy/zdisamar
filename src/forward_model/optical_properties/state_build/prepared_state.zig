@@ -11,42 +11,70 @@ const Types = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
 
-// prepared_state.zig -----------------------------------------------------------------------------------------|
-// PreparedOpticalState lifecycle and read helpers.                                                            |
-//                                                                                                             |
-// built by                                                                                                    |
-//   finalize.zig after context setup, absorber preparation, and layer accumulation finish.                    |
-//                                                                                                             |
-// used by                                                                                                     |
-//   optical-depth evaluation, forward-layer construction, shared RTM geometry, and diagnostics.               |
-//                                                                                                             |
-// important state                                                                                             |
-//   layers and sublayers hold the prepared vertical model.                                                    |
-//   absorber rows hold spectroscopy/cross-section data and density columns.                                   |
-//   ownership flags say whether referenced tables, profile arrays, LUT assets, and line states are borrowed   |
-//   or owned by this final state.                                                                             |
-//                                                                                                             |
-// memory                                                                                                      |
-//   PreparedOpticalState is a wide header over out-of-line rows. Deinit must follow the same ownership flags  |
-//   that finalize.zig sets when moving buffers out of the preparation structs.                                |
-// ------------------------------------------------------------------------------------------------------------|
+// prepared_state.zig ----------------------------------------------------------------------------------------- |
+// PreparedOpticalState lifecycle and read helpers.                                                             |
+//                                                                                                              |
+// built by                                                                                                     |
+//   finalize.zig after context setup, absorber preparation, and layer accumulation finish.                     |
+//                                                                                                              |
+// used by                                                                                                      |
+//   optical-depth evaluation, forward-layer construction, shared RTM geometry, and diagnostics.                |
+//                                                                                                              |
+// important state                                                                                              |
+//   layers and sublayers hold the prepared vertical model.                                                     |
+//   absorber rows hold spectroscopy/cross-section data and density columns.                                    |
+//   ownership flags say whether referenced tables, profile arrays, LUT assets, and line states are borrowed    |
+//   or owned by this final state.                                                                              |
+//                                                                                                              |
+// memory                                                                                                       |
+//   PreparedOpticalState is a wide header over out-of-line rows. Deinit must follow the same ownership flags   |
+//   that finalize.zig sets when moving buffers out of the preparation structs.                                 |
+// ------------------------------------------------------------------------------------------------------------ |
 
-// PreparedOpticalState ---------------------------------------------------------------------------------------|
-// Final optical-property state returned to transport and diagnostics.                                         |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 2136 B (2.086 KiB), align: 8 B                                                                        |
-//                                                                                                             |
-// memory                                                                                                      |
-// inline: aerosol_phase_coefficients : [151]f64 = 1208 B                                                      |
-// inline: spectroscopy_lines        : ?SpectroscopyLineList = 216 B                                           |
-// inline: scalar fields, flags, ownership markers, cache keys, and slice/table headers                        |
-// out-of-line: continuum points, spectroscopy profile arrays, absorber arrays, line states, LUT assets,       |
-//              generated LUT assets, and execution-entry strings                                              |
-//                                                                                                             |
-// unused bits: 56 padding + 63 bool-storage slack = 119 bits                                                  |
-// cache span: 34 cache lines at 64 B per line                                                                 |
-// footprint: per instance = 2136 B (2.086 KiB); total also includes referenced storage above                  |
+// PreparedOpticalState --------------------------------------------------------------------------------------- |
+// Final optical-property state returned to transport and diagnostics.                                          |
+//                                                                                                              |
+// This is a wide owner/view header over prepared optical-property rows. Zig reorders regular struct fields,    |
+// so the memory map below is compiler-measured storage order, not source order.                                |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 2136 B (2.086 KiB), align: 8 B                                                                         |
+//                                                                                                              |
+// memory                                                                                                       |
+// [   0..   7] gas_optical_depth                                     : f64                                     |
+// [   8..  79] operational_o2o2_lut                                  : OperationalCrossSectionLut              |
+// [  80..  95] strong_line_states                                    : ?[]StrongLinePreparedState              |
+// [  96.. 111] spectroscopy_profile_strong_line_states               : ?[]StrongLinePreparedState              |
+// [ 112.. 127] spectroscopy_profile_weak_line_states                 : ?[]WeakLinePreparedState                |
+// [ 128.. 159] shared_rtm_geometry                                   : SharedRtmGeometry                       |
+// [ 160.. 175] continuum_points                                      : []const CrossSectionPoint               |
+// [ 176.. 191] lut_execution_entries                                 : []const []const u8                      |
+// [ 192.. 223] collision_induced_absorption                          : ?CollisionInducedAbsorptionTable        |
+// [ 224.. 239] generated_lut_assets                                  : []GeneratedLutAsset                     |
+// [ 240.. 455] spectroscopy_lines                                    : ?SpectroscopyLineList                   |
+// [ 456.. 503] spectroscopy profile altitude/pressure/temperature    : 3 slice headers                         |
+// [ 504.. 519] line_mixing_mean, column_density                      : 2 f64                                   |
+// [ 520.. 599] aerosol_fraction_control                              : FractionControl                         |
+// [ 600.. 615] spectroscopy_plan_key, effective_air_mass_factor      : u64 + f64                               |
+// [ 616.. 647] cross_section_absorbers, line_absorbers               : 2 slice headers                         |
+// [ 648.. 655] aerosol_base_optical_depth                            : f64                                     |
+// [ 656.. 727] operational_o2_lut                                    : OperationalCrossSectionLut              |
+// [ 728.. 767] aerosol/gas totals and mean cross sections            : 5 f64                                   |
+// [ 768.. 799] sublayers, layers                                     : optional slice + slice                  |
+// [ 800.. 823] spectroscopy_profile_cache_key and aerosol SSA values : u64 + 2 f64                             |
+// [ 824..2031] aerosol_phase_coefficients                            : [151]f64                                |
+// [2032..2111] effective thermodynamic and path scalars              : 10 f64                                  |
+// [2112..2129] fit index, ownership flags, interval and phase enums  : u32 + flags + small enums               |
+// [2130..2135] trailing padding                                      : 6 B                                     |
+//                                                                                                              |
+// referenced storage                                                                                           |
+//   layers, sublayers, absorber rows, profile states, generated LUT assets, and execution strings are          |
+//   out-of-line. The owns_* flags decide whether deinit releases each buffer or treats it as borrowed.         |
+//   operational LUT structs are inline headers; their table storage is retained out-of-line by those headers.  |
+//                                                                                                              |
+// unused bits: 48 padding + 70 bool-storage slack = 118 bits                                                   |
+// cache span: 34 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 2136 B (2.086 KiB); total also includes referenced storage above                   |
 pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
@@ -108,10 +136,10 @@ pub const PreparedOpticalState = struct {
     owns_lut_execution_entries: bool = false,
 
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
-        // PreparedOpticalState.deinit ----------------------------------------------------------------------- |
-        // Release owned prepared optical-property storage. Borrowed tables and profile arrays stay with       |
-        // their owner when the corresponding owns_* flag is false.                                            |
-        // --------------------------------------------------------------------------------------------------- |
+        // PreparedOpticalState.deinit -----------------------------------------------------------------------  |
+        // Release owned prepared optical-property storage. Borrowed tables and profile arrays stay with        |
+        // their owner when the corresponding owns_* flag is false.                                             |
+        // ---------------------------------------------------------------------------------------------------  |
 
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
@@ -230,13 +258,13 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn intervalSemanticsUseReducedSharedRtmLayers(self: *const PreparedOpticalState) bool {
-        // PreparedOpticalState.intervalSemanticsUseReducedSharedRtmLayers ----------------------------------- |
-        // Detect the DISAMAR interval mode where several support rows collapse into fewer RTM layers.         |
-        //                                                                                                     |
-        // hot path                                                                                            |
-        // This loop reads only sublayer_count from each wide PreparedLayer row. It stays here because this    |
-        // is a rare cache-validity decision, not the repeated per-wavelength carrier evaluation loop.         |
-        // --------------------------------------------------------------------------------------------------- |
+        // PreparedOpticalState.intervalSemanticsUseReducedSharedRtmLayers -----------------------------------  |
+        // Detect the DISAMAR interval mode where several support rows collapse into fewer RTM layers.          |
+        //                                                                                                      |
+        // hot path                                                                                             |
+        // This loop reads only sublayer_count from each wide PreparedLayer row. It stays here because this     |
+        // is a rare cache-validity decision, not the repeated per-wavelength carrier evaluation loop.          |
+        // ---------------------------------------------------------------------------------------------------  |
 
         if (self.interval_semantics == .none) return false;
         const sublayers = self.sublayers orelse return false;
@@ -258,12 +286,12 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn resolvedAerosolSingleScatterAlbedo(self: *const PreparedOpticalState) f64 {
-        // PreparedOpticalState.resolvedAerosolSingleScatterAlbedo ------------------------------------------- |
-        // Return the effective aerosol SSA in physical [0, 1] bounds.                                         |
-        //                                                                                                     |
-        // math                                                                                                |
-        // explicit aerosol SSA wins when present; otherwise the mixed effective SSA is used.                  |
-        // --------------------------------------------------------------------------------------------------- |
+        // PreparedOpticalState.resolvedAerosolSingleScatterAlbedo -------------------------------------------  |
+        // Return the effective aerosol SSA in physical [0, 1] bounds.                                          |
+        //                                                                                                      |
+        // math                                                                                                 |
+        // explicit aerosol SSA wins when present; otherwise the mixed effective SSA is used.                   |
+        // ---------------------------------------------------------------------------------------------------  |
 
         return std.math.clamp(
             if (self.aerosol_single_scatter_albedo >= 0.0)
@@ -560,7 +588,7 @@ pub const PreparedOpticalState = struct {
         );
     }
 };
-// ------------------------------------------------------------------------------------------------------------|
+// ------------------------------------------------------------------------------------------------------------ |
 
 fn updateSpectroscopyCacheInputs(
     hash: *std.hash.Wyhash,

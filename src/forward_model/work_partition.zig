@@ -70,12 +70,18 @@ const std = @import("std");
 pub const max_workers: usize = 64;
 pub const worker_limit_env = "ZDISAMAR_WORKER_LIMIT";
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: start=8 B, end=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// Range ----------------------------------------------------------------------------------------------------- |
+// Half-open item range owned by one worker or one queue claim.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] start : usize                                                                                      |
+// [ 8..15] end   : usize                                                                                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B; stack return value                                                          |
 pub const Range = struct {
     start: usize,
     end: usize,
@@ -84,13 +90,22 @@ pub const Range = struct {
         return self.end - self.start;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: mutex=16 B, next_index=8 B, item_count=8 B, chunk_size=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// ChunkQueue ------------------------------------------------------------------------------------------------ |
+// Mutex-protected dynamic chunk dispenser for variable-cost worker loops.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] mutex      : Thread.Mutex                                                                          |
+// [16..23] next_index : usize                                                                                 |
+// [24..31] item_count : usize                                                                                 |
+// [32..39] chunk_size : usize                                                                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B; one queue per dynamic worker group                                          |
 pub const ChunkQueue = struct {
     mutex: std.Thread.Mutex = .{},
     next_index: usize = 0,
@@ -105,13 +120,18 @@ pub const ChunkQueue = struct {
         };
     }
 
-    // hot path:
-    //   when: variable-cost workers claim chunks for wavelength sampling or support-row setup
-    //   work: hands out the next contiguous item range under a short mutex
-    //   data: next index, item count, chunk size, returned range
-    //   math: start = next_index; end = min(start + chunk_size, item_count)
-    //   follow: wavelengthSamplingWorkerMain and profile/support-row worker loops
     pub fn next(self: *ChunkQueue) ?Range {
+        // ChunkQueue.next --------------------------------------------------------------------------------    |
+        // Hands out the next contiguous item range under a short mutex.                                       |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   Variable-cost workers claim chunks for wavelength sampling or support-row setup.                  |
+        //                                                                                                     |
+        // math                                                                                                |
+        //   start = next_index                                                                                |
+        //   end   = min(start + chunk_size, item_count)                                                       |
+        // ------------------------------------------------------------------------------------------------    |
+
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.next_index >= self.item_count) return null;
@@ -122,14 +142,21 @@ pub const ChunkQueue = struct {
         return .{ .start = start, .end = end };
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: forward prefetch assigns known expensive misses to workers
-//   work: computes deterministic ownership range for one worker
-//   data: item count, worker count, worker index
-//   math: start = floor(worker_index * item_count / worker_count); end = floor((worker_index + 1) * item_count / worker_count)
-//   follow: spectral_forward.prefetchForwardSamples worker setup
 pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) Range {
+    // staticRange ------------------------------------------------------------------------------------------- |
+    // Computes deterministic ownership range for one worker.                                                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Forward prefetch assigns known expensive misses up front, so startup timing must not decide which     |
+    //   worker drains the work.                                                                               |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   start = floor(worker_index * item_count / worker_count)                                               |
+    //   end   = floor((worker_index + 1) * item_count / worker_count)                                         |
+    // ------------------------------------------------------------------------------------------------------- |
+
     std.debug.assert(worker_count != 0);
     std.debug.assert(worker_index < worker_count);
     return .{
@@ -160,13 +187,17 @@ pub fn rangesAreBalanced(item_count: usize, worker_count: usize) bool {
     return max_count - min_count <= 1;
 }
 
-// hot path:
-//   when: sampling and forward-prefetch schedulers choose worker count for a batch
-//   work: resolves CPU count and configured worker limit into an item-count-based worker count
-//   data: item count, minimum items per worker, CPU count, worker-limit environment value
-//   math: workers = min(max_workers, min(available_workers, max(1, floor(item_count / min_items_per_worker))))
-//   follow: preferredWorkerCountForCpuCount and caller chunk/range ownership
 pub fn preferredWorkerCount(item_count: usize, min_items_per_worker: usize) usize {
+    // preferredWorkerCount ---------------------------------------------------------------------------------- |
+    // Resolves CPU count and configured worker limit into a batch worker count.                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Sampling and forward-prefetch schedulers call this before creating worker-owned ranges or queues.     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   workers = min(max_workers, available_workers, max(1, item_count / min_items_per_worker))              |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const cpu_count = std.Thread.getCpuCount() catch 1;
     return preferredWorkerCountForCpuCount(
         item_count,

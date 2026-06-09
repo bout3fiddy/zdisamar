@@ -14,17 +14,25 @@ pub const Error = error{
     InstrumentKernelRealizationFailed,
 };
 
-// layout(64-bit):
-//   size: 20512 B, align: 8 B
-//   field storage: plan=20504 B, ready=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   cache span: 321 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 20512 B (20.0 KiB); total = per instance * live instance count
+// AdaptiveKernelCache --------------------------------------------------------------------------------------- |
+// Cached adaptive interval plan for one nominal wavelength route.                                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 20512 B (20.031 KiB), align: 8 B                                                                      |
+//                                                                                                             |
+// memory                                                                                                      |
+// [    0..20503] plan    : AdaptiveIntervalPlan                                                               |
+// [20504..20504] ready   : bool                                                                               |
+// [20505..20511] padding : 7 B                                                                                |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// cache span: 321 cache lines at 64 B per line                                                                |
+// footprint: per instance = 20512 B; caller-owned cache row                                                   |
 pub const AdaptiveKernelCache = struct {
     ready: bool = false,
     plan: adaptive_plan.AdaptiveIntervalPlan = .{},
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralChannel) bool {
     const response = scene.observation_model.resolvedChannelControls(channel).response;
@@ -68,13 +76,15 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     cached_adaptive_kernel: ?*const AdaptiveKernelCache,
     kernel: *IntegrationKernel,
 ) Error!void {
-
-    // hot path:
-    //   when: wavelength sampling builds radiance/irradiance integration kernels per nominal wavelength
-    //   work: chooses table, fixed line-shape, adaptive, or default integration samples
-    //   reads: channel response controls, adaptive cache, offsets/weights kernel storage
-    //   follow: adaptive_plan builders and response_support.spectralResponseWeight
-    //   math: kernel approximates integral y(lambda_i) = sum_j w_ij y(lambda_i + delta_ij), with sum_j w_ij = 1
+    // integrationForWavelengthWithAdaptiveCacheChecked ------------------------------------------------------ |
+    // Builds radiance/irradiance integration offsets and weights for one nominal wavelength.                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Chooses table, fixed line-shape, adaptive, or default integration samples for wavelength sampling.    |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   y(lambda_i) = sum_j w_ij * y(lambda_i + delta_ij), with sum_j w_ij = 1                                |
+    // ------------------------------------------------------------------------------------------------------- |
 
     response_support.resetKernel(kernel);
     const response = scene.observation_model.resolvedChannelControls(channel).response;
@@ -290,12 +300,13 @@ pub fn prepareAdaptiveKernelCache(
     channel: SpectralChannel,
     cache: *AdaptiveKernelCache,
 ) bool {
-
-    // hot path:
-    //   when: wavelength sampling can reuse adaptive instrument grids across nominal wavelengths
-    //   work: prepares strong-line-aware support data for adaptive kernel construction
-    //   reads: scene response controls, prepared spectroscopy state, adaptive cache storage
-    //   follow: adaptive_plan interval construction
+    // prepareAdaptiveKernelCache ---------------------------------------------------------------------------- |
+    // Prepares strong-line-aware adaptive support data for reuse across nominal wavelengths.                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Wavelength sampling calls this when adaptive instrument grids can reuse an interval plan. The cache   |
+    //   stores the 20 KiB plan so per-wavelength kernel construction only emits samples and weights.          |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const response = scene.observation_model.resolvedChannelControls(channel).response;
     cache.* = .{};

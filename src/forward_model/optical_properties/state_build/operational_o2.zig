@@ -1,18 +1,27 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
+// operational_o2.zig ----------------------------------------------------------------------------------------- |
+// Adapts the operational O2 lookup table to the spectroscopy evaluation shape used by state builders.          |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Support-row spectroscopy calls this for one wavelength and thermodynamic state before carrier rows reuse   |
+//   the resulting sigma and temperature derivative.                                                            |
+// ------------------------------------------------------------------------------------------------------------ |
+
 pub fn operationalO2EvaluationAtWavelength(
     operational_o2_lut: OperationalCrossSectionLut,
     wavelength_nm: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 ) ReferenceData.SpectroscopyEvaluation {
-
-    // hot path:
-    //   when: support-row spectroscopy uses the operational O2 LUT rtm_config
-    //   work: evaluates LUT sigma and temperature derivative for one wavelength/thermodynamic state
-    //   reads: operational O2 LUT, wavelength, temperature, pressure
-    //   follow: cross_section_lut_eval.evaluate and carrier_eval support-row spectroscopy fields
+    // operationalO2EvaluationAtWavelength -------------------------------------------------------------------- |
+    // Evaluates LUT sigma and temperature derivative for one wavelength/thermodynamic state.                   |
+    //                                                                                                          |
+    // calls                                                                                                    |
+    //   OperationalCrossSectionLut.sigmaAt                                                                     |
+    //   OperationalCrossSectionLut.dSigmaDTemperatureAt                                                        |
+    // -------------------------------------------------------------------------------------------------------- |
 
     const sigma = operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
     return .{
