@@ -3,8 +3,21 @@ const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");
 
 // basis.zig -------------------------------------------------------------------------------------------------|
-// Private LABOS basis facade. Re-exports fixed-size types, matrix kernels, and Plm/phase helpers used by     |
-// the sibling LABOS implementation files. No runtime work happens in this file.                              |
+// Private LABOS basis facade for stream constants, dense matrix kernels, and Fourier phase-basis helpers.    |
+//                                                                                                            |
+// used by                                                                                                    |
+//   layers.zig, orders.zig, reflectance.zig, attenuation.zig, and workspace.zig import this as basis         |
+//   labos tests reach the same aliases through src/internal.zig                                              |
+//                                                                                                            |
+// exports                                                                                                    |
+//   types.zig       : fixed stream limits, Mat/Vec rows, LayerRT/UD field rows, and Geometry                 |
+//   matrix.zig      : small dense multiply, q-series, and scale/add kernels                                  |
+//   phase_basis.zig : Fourier PLM basis rows and Z+/Z- phase-kernel builders                                 |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   This file is a compile-time alias map, not an object, wrapper, or runtime dispatch table. It keeps the   |
+//   hot LABOS implementation files on one short import name while the actual layout and math comments stay   |
+//   beside the owning code in types.zig, matrix.zig, and phase_basis.zig.                                    |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const max_gauss = types.max_gauss;

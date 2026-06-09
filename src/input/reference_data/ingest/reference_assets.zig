@@ -4,11 +4,26 @@ const loaded_asset = @import("reference_assets_loaded_asset.zig");
 const types = @import("reference_assets_types.zig");
 
 // reference_assets.zig --------------------------------------------------------------------------------------|
-// Load bundled, embedded, and external reference-data assets into owned numeric tables.                      |
+// Manifest-driven reference-data asset loader for bundled, embedded, and external numeric tables.            |
 //                                                                                                            |
-// data                                                                                                       |
-//   BundleManifest mirrors the JSON manifest schema. LoadedAsset owns duplicated metadata strings and parsed |
-//   numeric table storage after hash validation.                                                             |
+// used by                                                                                                    |
+//   bundled/assets.zig loads retained O2 A climatology, spectroscopy, CIA, and LUT sidecars                  |
+//   o2a_reference/run.zig loads external vendor assets from parsed reference cases                           |
+//   ingest tests verify manifest lookup, hash checks, column schemas, and typed LoadedAsset conversion       |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   loadBundleAsset         : read JSON manifest -> select asset row -> read bytes -> hash -> parse table    |
+//   loadEmbeddedBundleAsset : parse embedded manifest -> find embedded bytes -> same validation path         |
+//   loadExternalAsset       : read caller-provided file -> choose schema from asset_format/kind -> parse     |
+//   initLoadedAsset         : duplicate provenance strings and hand owned numeric rows to LoadedAsset        |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   File I/O, JSON parsing, CSV/HITRAN parsing, and hash validation live here in the input layer. Forward    |
+//   model code receives typed ReferenceData rows and never calls this loader path directly.                  |
+//                                                                                                            |
+// memory                                                                                                     |
+//   Bundle manifests borrow strings from a short-lived JSON arena. LoadedAsset owns duplicated metadata,     |
+//   column-name strings, and numeric table storage; callers must deinit the returned LoadedAsset.            |
 // -----------------------------------------------------------------------------------------------------------|
 
 const manifest = struct {

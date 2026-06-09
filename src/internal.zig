@@ -1,8 +1,19 @@
 // internal.zig -----------------------------------------------------------------------------------------------|
-// Internal import router for tests, validation helpers, and instrumentation probes.                           |
+// Test-only import router for non-public source modules that need focused unit coverage.                      |
 //                                                                                                             |
-// The structs below are namespace-only wrappers. They intentionally carry no runtime state, so this file uses |
-// a file-level note instead of repeating 0 B layout boxes for each namespace.                                 |
+// used by                                                                                                     |
+//   tests/unit/internal_root.zig pulls this file into the unit-test graph                                     |
+//   source-path unit tests import private preparation, instrument-grid, spectroscopy, and LABOS helpers       |
+//   validation tests use selected internal rows without widening the public zdisamar API                      |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   Product code should not depend on this router. Public callers use src/root.zig; this file keeps tests     |
+//   close to private helpers while preserving the narrower public input -> RTM -> output surface.             |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   The nested structs below are namespace-only wrappers around @import aliases. They carry no runtime state, |
+//   allocation, or dispatch layer, so this file uses one file-level note instead of repeating 0 B layout      |
+//   boxes for each namespace.                                                                                 |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const scene = @import("input/Scene.zig");
