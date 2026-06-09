@@ -18,15 +18,25 @@ pub const RadiativeTransferPerformanceThresholds = transport_common.RadiativeTra
 pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
 // types.zig ------------------------------------------------------------------------------------------------- |
-// Typed O2 A reference-case records after parsing but before forward-model preparation.                       |
+// Parsed O2 A reference-case schema used before runtime preparation.                                          |
 //                                                                                                             |
 // used by                                                                                                     |
-//   run.zig and metrics.zig build Scene, loaded reference assets, and retained validation products from these |
-//   records.                                                                                                  |
+//   root.zig parses and validates these records; run.zig turns them into loaded assets, Scene, solve config,  |
+//   and PreparedOpticalState; metrics.zig keeps the public validation wrappers typed against the same rows.   |
+//                                                                                                             |
+// record groups                                                                                               |
+//   Metadata and ExternalAsset identify fixed/reference files. GeometrySpec, AtmosphereSpec, AerosolSpec,     |
+//   ObservationSpec, LineGasSpec, CiaSpec, and RadiativeTransferControls hold the model controls consumed     |
+//   by run.zig. LoadedVendorO2AInputs is the post-load owner bundle reused by retrieval sessions.             |
+//                                                                                                             |
+// contract                                                                                                    |
+//   These rows are not the product model. They preserve vendor/reference inputs until run.zig can either      |
+//   consume each control into Scene/PreparationInputs/SolveConfig or reject unsupported combinations.         |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Small value rows stay inline. Asset ids, paths, intervals, profiles, and spectra are slice headers over   |
-//   storage owned by the parser, loader, or prepared runtime case.                                            |
+//   Small numeric/control rows stay inline. Asset ids, paths, intervals, profiles, measured wavelengths, and  |
+//   spectra are slice headers over parser-owned storage until load/prepare functions duplicate or borrow them.|
+//   LoadedVendorO2AInputs owns loaded profile, cross-section, line-list, CIA, LUT, reference, and solar rows. |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // ReferenceSample ------------------------------------------------------------------------------------------- |

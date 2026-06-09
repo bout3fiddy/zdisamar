@@ -2,12 +2,26 @@ const std = @import("std");
 const Types = @import("types.zig");
 
 // physics_core.zig ------------------------------------------------------------------------------------------ |
-// Weak-line spectroscopy helpers and shared line-shape math.                                                  |
+// Weak-line spectroscopy math and shared line-window helpers.                                                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   line_list.zig uses sorted-window helpers, weak-line contribution paths, and prepared weak-line rows.      |
+//   strong_lines.zig shares complexProbabilityFunction for O2 line-mixing contributions.                      |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   line list sorted by center wavelength -> lower/upper bounds for one wavelength window                     |
+//   SpectroscopyLine + T/P -> WeakLinePreparedLineState for repeated wavelength evaluation                    |
+//   wavelength + prepared line state -> Voigt/CPF contribution with vendor cutoff checks                      |
+//   wavelength + raw line -> one-shot weak-line contribution when no prepared state is available              |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Prepared weak-line evaluation calls complexProbabilityFunction for each relevant line and wavelength.     |
-//   Setup paths prepare temperature/pressure-dependent line constants so repeated evaluation reads compact    |
-//   WeakLinePreparedLineState rows.                                                                           |
+//   Prepared weak-line evaluation calls complexProbabilityFunction for each relevant line in the current      |
+//   wavelength window. Setup paths prepare temperature/pressure-dependent line constants so repeated          |
+//   evaluation streams compact WeakLinePreparedLineState rows instead of recomputing line-shape constants.    |
+//                                                                                                             |
+// math                                                                                                        |
+//   wavelength_nm -> wavenumber_cm1 uses 1.0e7 / wavelength_nm. Weak-line sigma combines HITRAN strength      |
+//   scaling, Doppler/Lorentz widths, pressure shift, stimulated emission, and the CPF real term.              |
 //                                                                                                             |
 // memory                                                                                                      |
 //   The small structs below are stack values. Prepared weak-line arrays are owned by WeakLinePreparedState in |

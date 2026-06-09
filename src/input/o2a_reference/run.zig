@@ -38,19 +38,27 @@ pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
 pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
 // run.zig --------------------------------------------------------------------------------------------------- |
-// Loads resolved O2 A reference cases and turns them into runtime Scene and optical-state objects.            |
+// O2 A reference runtime assembly for validation, benchmarks, and retrieval sessions.                         |
+//                                                                                                             |
+// called by                                                                                                   |
+//   o2a_reference/root.zig facade functions, metrics.zig wrappers, validation tests, and retrieval setup.     |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   resolved case -> reference assets -> Scene -> PreparedOpticalState -> optional instrument-grid product    |
+//   resolved case -> external/fixed assets -> LoadedVendorO2AInputs -> Scene -> PreparedOpticalState          |
+//   full reflectance case -> runtime case -> instrument-grid product -> metrics/validation                    |
 //   reused inputs -> Scene refresh -> PreparedOpticalState refresh -> retrieval evaluation                    |
+//   session refresh -> borrowed static tables, weak-cutoff cache, and optional borrowed profile preparation   |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Native retrieval paths reuse loaded inputs, weak-line cutoff grids, and one-time solar rewindowing        |
 //   so repeated state evaluations rebuild only the scene and optical state needed for that candidate.         |
+//   Trace zones split input loading, scene construction, optical preparation, weak-cutoff installation,       |
+//   solar rewindowing, and solve-config setup so benchmark traces show which setup cost moved.                |
 //                                                                                                             |
 // memory                                                                                                      |
-//   PreparedRuntime* structs are owner/view headers over Scene, PreparedOpticalState, and reference slices.   |
-//   deinit order releases nested product/prepared/scene storage before clearing the header.                   |
+//   LoadedVendorO2AInputs owns loaded profile, line-list, CIA, LUT, reference, and solar rows. PreparedRuntime|
+//   structs are owner/view headers over Scene, PreparedOpticalState, solve config, product, and reference     |
+//   slices. Deinit order releases nested product/prepared/scene storage before clearing each header.          |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // PreparedRuntimeCase --------------------------------------------------------------------------------------- |
