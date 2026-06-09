@@ -1,38 +1,63 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+// airmass_phase.zig ------------------------------------------------------------------------------------------|
+// Reference airmass support for absorber preparation.                                                         |
+//                                                                                                             |
+// data                                                                                                        |
+//   AirmassFactorPoint stores one angular support row.                                                        |
+//   AirmassFactorLut owns the row storage returned by the reference-data loader.                              |
+//                                                                                                             |
+// used by                                                                                                     |
+//   O2 A state preparation resolves an airmass factor for the scene geometry before spectroscopy state is     |
+//   prepared. Some call sites only need to know that the support exists.                                      |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   nearest scans the small LUT for one preparation geometry. spectralProfileFromOpticalDepth builds an       |
+//   airmass-shaped spectral profile when only optical-depth proxy samples are available.                      |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const PhaseSupportKind = enum {
     none,
     analytic_hg,
 };
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: solar_zenith_deg=8 B, view_zenith_deg=8 B, relative_azimuth_deg=8 B, airmass_factor=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
+// AirmassFactorPoint -----------------------------------------------------------------------------------------|
+// One angular support row for nearest-neighbor scene lookup.                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] solar_zenith_deg       : f64                                                                       |
+// [ 8..15] view_zenith_deg        : f64                                                                       |
+// [16..23] relative_azimuth_deg   : f64                                                                       |
+// [24..31] airmass_factor         : f64                                                                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total = per instance * live row count                           |
 pub const AirmassFactorPoint = struct {
     solar_zenith_deg: f64,
     view_zenith_deg: f64,
     relative_azimuth_deg: f64,
     airmass_factor: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: wavelength_nm=8 B, extinction_scale=8 B, single_scatter_albedo=8 B, phase_coefficients=32 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: phase_coefficients:[4]f64=32 B
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total = per instance * live instance count
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: points=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: points carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// AirmassFactorLut -------------------------------------------------------------------------------------------|
+// Owner header for airmass support rows.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] points : []AirmassFactorPoint                                                                      |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   points stores out-of-line AirmassFactorPoint rows and is released by deinit.                              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes owned point rows                            |
 pub const AirmassFactorLut = struct {
     points: []AirmassFactorPoint,
 
@@ -41,12 +66,21 @@ pub const AirmassFactorLut = struct {
         self.* = undefined;
     }
 
-    // hot path:
-    //   when: absorber preparation resolves the reference airmass factor for spectroscopy state
-    //   work: scans LUT points and returns the nearest angular support value
-    //   data: solar/view/relative azimuth angles and LUT point array
-    //   follow: absorbers.build profile state preparation
-    pub fn nearest(self: AirmassFactorLut, solar_zenith_deg: f64, view_zenith_deg: f64, relative_azimuth_deg: f64) f64 {
+    pub fn nearest(
+        self: AirmassFactorLut,
+        solar_zenith_deg: f64,
+        view_zenith_deg: f64,
+        relative_azimuth_deg: f64,
+    ) f64 {
+        // AirmassFactorLut.nearest ---------------------------------------------------------------------------|
+        // Resolve the nearest angular support row for one scene geometry.                                     |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : once while absorber preparation resolves the spectroscopy-state airmass support        |
+        //   work     : linear scan over LUT points                                                            |
+        //   memory   : reads each compact 32-byte point once                                                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.points.len == 0) return 1.0;
 
         var best_distance = std.math.inf(f64);
@@ -68,18 +102,23 @@ pub const AirmassFactorLut = struct {
         return true;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: reference support builds an airmass-like spectral profile from optical-depth proxies
-//   work: normalizes proxy samples, applies wavelength tilt, and restores requested mean
-//   data: wavelength array, optical-depth proxy array, output profile
-//   follow: callers that materialize reference-band support profiles
 pub fn spectralProfileFromOpticalDepth(
     allocator: Allocator,
     wavelengths_nm: []const f64,
     mean_airmass_factor: f64,
     optical_depth_proxy: []const f64,
 ) ![]f64 {
+    // spectralProfileFromOpticalDepth ------------------------------------------------------------------------|
+    // Build an airmass-shaped spectral profile from optical-depth proxy samples.                              |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : when reference support materializes band profiles                                          |
+    //   work     : normalize proxy samples, apply a weak wavelength tilt, then restore the requested mean     |
+    //   memory   : writes one f64 profile sample per input wavelength                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (wavelengths_nm.len != optical_depth_proxy.len) return error.ShapeMismatch;
 
     const profile = try allocator.alloc(f64, wavelengths_nm.len);
@@ -88,7 +127,8 @@ pub fn spectralProfileFromOpticalDepth(
 
     var proxy_sum: f64 = 0.0;
     for (optical_depth_proxy) |value| proxy_sum += @max(value, 0.0);
-    const proxy_mean = proxy_sum / @max(@as(f64, @floatFromInt(optical_depth_proxy.len)), 1.0e-9);
+    const proxy_mean =
+        proxy_sum / @max(@as(f64, @floatFromInt(optical_depth_proxy.len)), 1.0e-9);
     const safe_mean_airmass = if (std.math.isFinite(mean_airmass_factor) and mean_airmass_factor > 0.0)
         mean_airmass_factor
     else
@@ -99,8 +139,8 @@ pub fn spectralProfileFromOpticalDepth(
     for (profile, wavelengths_nm, optical_depth_proxy) |*slot, wavelength_nm, proxy| {
         const normalized_proxy = if (proxy_mean > 0.0) @max(proxy, 0.0) / proxy_mean else 1.0;
         const coordinate = (wavelength_nm - midpoint_nm) / half_span_nm;
-        // DECISION:
-        //   Keep a weak wavelength tilt so the profile is not numerically flat before the mean is restored.
+
+        // Keep a weak wavelength tilt so the profile is not numerically flat before the mean is restored.
         const geometric_tilt = 1.0 + 0.05 * coordinate;
         slot.* = safe_mean_airmass * normalized_proxy * geometric_tilt;
     }

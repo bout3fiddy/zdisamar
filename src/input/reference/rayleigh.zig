@@ -1,5 +1,19 @@
 const std = @import("std");
 
+// rayleigh.zig -----------------------------------------------------------------------------------------------|
+// Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth paths.                             |
+//                                                                                                             |
+// data                                                                                                        |
+//   Constants are reference dry-air composition fractions and the Loschmidt number in cm^-3.                  |
+//                                                                                                             |
+// main path                                                                                                   |
+//   crossSectionCm2 computes wavelength-dependent Rayleigh cross section from refractive index and King       |
+//   factor terms. scatteringOpticalDepthForColumn multiplies that cross section by the air column density.    |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   crossSectionCm2 is sampled for support rows and diagnostics when gas scattering is included.              |
+// ------------------------------------------------------------------------------------------------------------|
+
 const fraction_n2 = 78.084;
 const fraction_o2 = 20.946;
 const fraction_ar = 0.934;
@@ -41,12 +55,16 @@ pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
     return 6.0 * (king_factor_air - 1.0) / (3.0 + 7.0 * king_factor_air);
 }
 
-// hot path:
-//   when: support-row carrier or budget evaluation computes gas scattering
-//   work: evaluates Rayleigh cross section from wavelength-dependent refractive index and King factor
-//   data: wavelength, refractive-index terms, depolarization/King factors
-//   follow: phase_functions.combinePhaseCoefficients and layer accumulation gas scattering
 pub fn crossSectionCm2(wavelength_nm: f64) f64 {
+    // crossSectionCm2 ----------------------------------------------------------------------------------------|
+    // Evaluate dry-air Rayleigh cross section for one wavelength.                                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : support-row carrier or budget evaluation computes gas scattering                           |
+    //   work     : refractive index, King factor, wavelength^-4 scaling                                       |
+    //   memory   : scalar-only                                                                                |
+    // --------------------------------------------------------------------------------------------------------|
+
     const safe_wavelength_nm = @max(wavelength_nm, 1.0);
     const refractive_index = refractiveIndexDryAir(safe_wavelength_nm);
     const numerator = 24.0 * std.math.pi * std.math.pi * std.math.pi;

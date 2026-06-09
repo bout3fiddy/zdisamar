@@ -26,9 +26,18 @@ const Allocator = std.mem.Allocator;
 //   ownership flags say whether referenced tables, profile arrays, LUT assets, and line states are borrowed    |
 //   or owned by this final state.                                                                              |
 //                                                                                                              |
-// memory                                                                                                       |
-//   PreparedOpticalState is a wide header over out-of-line rows. Deinit must follow the same ownership flags   |
-//   that finalize.zig sets when moving buffers out of the preparation structs.                                 |
+// hot reads                                                                                                    |
+//   RTM and diagnostics repeatedly read layers, sublayers, aerosol phase coefficients, spectroscopy handles,   |
+//   and scalar optical-depth summaries from this header. Per-wavelength spectroscopy work is delegated to      |
+//   state_spectroscopy.zig; this file keeps the final state boundary and cache keys in one place.              |
+//                                                                                                              |
+// layout                                                                                                       |
+//   PreparedOpticalState is a wide header over out-of-line rows. The inline [151]f64 aerosol phase array       |
+//   dominates the header footprint; slices and optional slices are only 16-byte headers here.                  |
+//                                                                                                              |
+// ownership                                                                                                    |
+//   Deinit must follow the same owns_* flags that finalize.zig sets when moving buffers out of preparation     |
+//   structs. Borrowed rows stay untouched; owned rows release nested storage before their row slice is freed.  |
 // ------------------------------------------------------------------------------------------------------------ |
 
 // PreparedOpticalState --------------------------------------------------------------------------------------- |
@@ -36,6 +45,9 @@ const Allocator = std.mem.Allocator;
 //                                                                                                              |
 // This is a wide owner/view header over prepared optical-property rows. Zig reorders regular struct fields,    |
 // so the memory map below is compiler-measured storage order, not source order.                                |
+//                                                                                                              |
+// measured with                                                                                                |
+//   @sizeOf, @alignOf, and @offsetOf for the current 64-bit Zig target.                                        |
 //                                                                                                              |
 // layout(64-bit)                                                                                               |
 // size: 2136 B (2.086 KiB), align: 8 B                                                                         |
@@ -59,7 +71,7 @@ const Allocator = std.mem.Allocator;
 // [ 616.. 647] cross_section_absorbers, line_absorbers               : 2 slice headers                         |
 // [ 648.. 655] aerosol_base_optical_depth                            : f64                                     |
 // [ 656.. 727] operational_o2_lut                                    : OperationalCrossSectionLut              |
-// [ 728.. 767] aerosol/gas totals and mean cross sections            : 5 f64                                   |
+// [ 728.. 767] optical-depth summaries and mean cross sections       : 5 f64                                   |
 // [ 768.. 799] sublayers, layers                                     : optional slice + slice                  |
 // [ 800.. 823] spectroscopy_profile_cache_key and aerosol SSA values : u64 + 2 f64                             |
 // [ 824..2031] aerosol_phase_coefficients                            : [151]f64                                |

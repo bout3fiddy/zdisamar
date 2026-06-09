@@ -5,26 +5,58 @@ const Allocator = std.mem.Allocator;
 
 const max_spline_window_points: usize = 256;
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: wavelength_nm=8 B, a0=8 B, a1=8 B, a2=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
+// cia.zig ----------------------------------------------------------------------------------------------------|
+// O2-O2 collision-induced absorption table sampling.                                                          |
+//                                                                                                             |
+// data                                                                                                        |
+//   CollisionInducedAbsorptionPoint stores one wavelength row with three temperature-polynomial coefficients. |
+//   CollisionInducedAbsorptionTable owns the row storage and the scalar unit-conversion factor.               |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   sigmaAt and dSigmaDTemperatureAt sample coefficients for each wavelength that includes CIA absorption.    |
+//   interpolateCoefficients uses a local spline window when enough nearby points are available.               |
+//                                                                                                             |
+// units                                                                                                       |
+//   scale_factor_cm5_per_molecule2 converts the table coefficients into cm5 per molecule^2.                   |
+// ------------------------------------------------------------------------------------------------------------|
+
+// CollisionInducedAbsorptionPoint ----------------------------------------------------------------------------|
+// One CIA coefficient row.                                                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wavelength_nm : f64                                                                                |
+// [ 8..15] a0            : f64                                                                                |
+// [16..23] a1            : f64                                                                                |
+// [24..31] a2            : f64                                                                                |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total = per instance * live point count                         |
 pub const CollisionInducedAbsorptionPoint = struct {
     wavelength_nm: f64,
     a0: f64,
     a1: f64,
     a2: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: scale_factor_cm5_per_molecule2=8 B, points=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: points carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+// CollisionInducedAbsorptionTable ----------------------------------------------------------------------------|
+// Owner header for CIA coefficient rows.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] scale_factor_cm5_per_molecule2 : f64                                                               |
+// [ 8..23] points                         : []const CollisionInducedAbsorptionPoint                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   points stores out-of-line CIA coefficient rows and is released by deinit.                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); total also includes owned point rows                            |
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
     points: []const CollisionInducedAbsorptionPoint,
@@ -41,12 +73,16 @@ pub const CollisionInducedAbsorptionTable = struct {
         };
     }
 
-    // hot path:
-    //   when: support-row carrier evaluation includes O2-O2 CIA absorption
-    //   work: interpolates CIA coefficients and evaluates temperature polynomial sigma
-    //   data: CIA coefficient points, wavelength, temperature, scale factor
-    //   follow: interpolateCoefficients and collisionComplexPairDensityCm6
     pub fn sigmaAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
+        // CollisionInducedAbsorptionTable.sigmaAt ------------------------------------------------------------|
+        // Evaluate CIA sigma for one wavelength and temperature.                                              |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : support-row carrier evaluation when O2-O2 CIA absorption is enabled                    |
+        //   work     : interpolate coefficients and evaluate a quadratic temperature polynomial               |
+        //   memory   : reads a small coefficient window, then returns one scalar                              |
+        // ----------------------------------------------------------------------------------------------------|
+
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
         const raw_sigma = coefficients.a0 +
@@ -55,7 +91,11 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
     }
 
-    pub fn dSigmaDTemperatureAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
+    pub fn dSigmaDTemperatureAt(
+        self: CollisionInducedAbsorptionTable,
+        wavelength_nm: f64,
+        temperature_k: f64,
+    ) f64 {
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
         const raw_sigma = coefficients.a0 +
@@ -84,12 +124,19 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.sigmaAt((start_nm + end_nm) * 0.5, temperature_k);
     }
 
-    // hot path:
-    //   when: CIA sigma or dSigmaDTemperature samples the table for a wavelength
-    //   work: brackets CIA points and interpolates coefficient triplets
-    //   data: CIA wavelength points, spline window, coefficient fields a0/a1/a2
-    //   follow: sampleCoefficientSpline and lowerBoundPointIndex
-    pub fn interpolateCoefficients(self: CollisionInducedAbsorptionTable, wavelength_nm: f64) CollisionInducedAbsorptionPoint {
+    pub fn interpolateCoefficients(
+        self: CollisionInducedAbsorptionTable,
+        wavelength_nm: f64,
+    ) CollisionInducedAbsorptionPoint {
+        // CollisionInducedAbsorptionTable.interpolateCoefficients --------------------------------------------|
+        // Bracket the CIA table and interpolate the a0/a1/a2 coefficient triplet.                             |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : sigma and temperature-derivative samples for CIA wavelengths                           |
+        //   work     : lower-bound search, bounded spline window, or two-point linear fallback                |
+        //   memory   : stack window arrays are capped by max_spline_window_points                             |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.points.len == 0) {
             return .{
                 .wavelength_nm = wavelength_nm,
@@ -98,11 +145,15 @@ pub const CollisionInducedAbsorptionTable = struct {
                 .a2 = 0.0,
             };
         }
+
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
-        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) return self.points[self.points.len - 1];
+        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) {
+            return self.points[self.points.len - 1];
+        }
 
         const right_index = lowerBoundPointIndex(self.points, wavelength_nm);
         const window = splineWindow(self.points.len, right_index);
+
         if (window.count >= 3) {
             const points = self.points[window.start .. window.start + window.count];
             return .{
@@ -115,16 +166,22 @@ pub const CollisionInducedAbsorptionTable = struct {
         return interpolateCoefficientsLinear(self.points[right_index - 1], self.points[right_index], wavelength_nm);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 const CoefficientKind = enum { a0, a1, a2 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: start=8 B, count=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: count=8 B
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// SplineWindow -----------------------------------------------------------------------------------------------|
+// Bounded coefficient-window descriptor for stack spline sampling.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] start : usize                                                                                       |
+// [8..15] count : usize                                                                                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per stack/local value count                             |
 const SplineWindow = struct {
     start: usize,
     count: usize,
@@ -140,16 +197,20 @@ fn splineWindow(point_count: usize, right_index: usize) SplineWindow {
     return .{ .start = start, .count = count };
 }
 
-// hot path:
-//   when: CIA interpolation uses the local spline window for coefficient smoothing
-//   work: copies point coordinates into stack arrays and samples endpoint-secant spline
-//   data: CIA spline window points, coefficient selector, stack x/y arrays
-//   follow: spline.sampleEndpointSecant and window size
 fn sampleCoefficientSpline(
     points: []const CollisionInducedAbsorptionPoint,
     wavelength_nm: f64,
     coefficient_kind: CoefficientKind,
 ) f64 {
+    // sampleCoefficientSpline --------------------------------------------------------------------------------|
+    // Copy one coefficient window into stack arrays and sample the endpoint-secant spline.                    |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : CIA coefficient interpolation when the local window has at least three points              |
+    //   work     : copy wavelength and one selected coefficient field, then call spline.sampleEndpointSecant  |
+    //   memory   : x and y stack arrays are capped at max_spline_window_points f64 values each                |
+    // --------------------------------------------------------------------------------------------------------|
+
     var x: [max_spline_window_points]f64 = undefined;
     var y: [max_spline_window_points]f64 = undefined;
     for (points, 0..) |point, index| {
@@ -193,11 +254,6 @@ fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelen
     return low;
 }
 
-// hot path:
-//   when: output or preprocessing builds effective CIA sigma over instrument samples
-//   work: evaluates sigma at sample wavelengths and removes weighted polynomial baseline
-//   data: wavelength sample array, weights, sigma scratch array, polynomial order
-//   follow: cross_sections.differentialVector and weighted sampling order
 pub fn effectiveSigmaAtSamples(
     allocator: Allocator,
     table: CollisionInducedAbsorptionTable,
@@ -206,6 +262,16 @@ pub fn effectiveSigmaAtSamples(
     weights: []const f64,
     polynomial_order: u32,
 ) ![]f64 {
+    // effectiveSigmaAtSamples --------------------------------------------------------------------------------|
+    // Build a differential CIA sigma vector over instrument samples.                                          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : output or preprocessing evaluates effective CIA over sample wavelengths                    |
+    //   work     : evaluate sigma for each sample, then remove a weighted polynomial baseline                 |
+    //   memory   : sigma scratch is one f64 per wavelength before cross_sections.differentialVector owns      |
+    //              the returned result                                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (wavelengths_nm.len != weights.len) return error.ShapeMismatch;
 
     const sigma = try allocator.alloc(f64, wavelengths_nm.len);
