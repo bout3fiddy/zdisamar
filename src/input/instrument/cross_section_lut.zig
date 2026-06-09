@@ -9,14 +9,46 @@ const Allocator = std.mem.Allocator;
 const max_operational_refspec_temperature_coefficients = constants.max_operational_refspec_temperature_coefficients;
 const max_operational_refspec_pressure_coefficients = constants.max_operational_refspec_pressure_coefficients;
 
-// layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 66 B across 8 fields; largest: wavelengths_nm=16 B, coefficients=16 B, min_temperature_k=8 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   out-of-line: wavelengths_nm, coefficients carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 72 B (0.070 KiB); total also includes referenced storage above
+// cross_section_lut.zig --------------------------------------------------------------------------------------|
+// Operational pressure/temperature cross-section LUT preparation and evaluation.                              |
+//                                                                                                             |
+// data                                                                                                        |
+//   OperationalCrossSectionLut is a header over wavelength planes and Legendre coefficient storage.           |
+//   buildLutFromSource samples a source line list, cross-section table, or CIA table into coefficient planes. |
+//   evaluateLut rebuilds the pressure/temperature basis for one support row and interpolates between          |
+//   wavelength planes.                                                                                        |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Support-row optical-property evaluation repeatedly calls sigmaAt and dSigmaDTemperatureAt. The small      |
+//   basis arrays stay on the stack; coefficient and wavelength data stay out-of-line behind this header.      |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   clone and buildFromSource allocate wavelength and coefficient arrays. deinitOwned releases those arrays.  |
+// ------------------------------------------------------------------------------------------------------------|
+
+// OperationalCrossSectionLut ---------------------------------------------------------------------------------|
+// Header for one operational cross-section lookup table.                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm                : []const f64                                                        |
+// [16..31] coefficients                  : []const f64                                                        |
+// [32..39] min_temperature_k             : f64                                                                |
+// [40..47] max_temperature_k             : f64                                                                |
+// [48..55] min_pressure_hpa              : f64                                                                |
+// [56..63] max_pressure_hpa              : f64                                                                |
+// [64..64] temperature_coefficient_count : u8                                                                 |
+// [65..65] pressure_coefficient_count    : u8                                                                 |
+// [66..71] trailing padding              : 6 B                                                                |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   wavelengths_nm and coefficients point at borrowed parser slices or arrays owned by clone/buildFromSource. |
+//                                                                                                             |
+// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 72 B (0.070 KiB); referenced wavelength/coefficient arrays are out-of-line.       |
 pub const OperationalCrossSectionLut = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     coefficients: []const f64 = &[_]f64{},
@@ -120,41 +152,54 @@ pub const OperationalCrossSectionLut = struct {
         self.* = .{};
     }
 
-    // hot path:
-    //   when: operational cross-section LUT consumers need sigma at a support row
-    //   work: delegates to the shared LUT evaluator and returns sigma
-    //   data: LUT coefficient storage, wavelength, temperature, pressure
-    //   follow: cross_section_lut_eval.evaluate
     pub fn sigmaAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
         temperature_k: f64,
         pressure_hpa: f64,
     ) f64 {
+        // OperationalCrossSectionLut.sigmaAt -----------------------------------------------------------------|
+        // Returns sigma from the shared LUT evaluator for one support row.                                    |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : support-row cross-section evaluation                                                   |
+        //   reads    : coefficient storage, wavelength, temperature, pressure                                 |
+        //   output   : sigma                                                                                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         return evaluateLut(@This(), self, wavelength_nm, temperature_k, pressure_hpa).sigma;
     }
 
-    // hot path:
-    //   when: operational cross-section LUT consumers need temperature derivative at a support row
-    //   work: delegates to the shared LUT evaluator and returns dSigma/dT
-    //   data: LUT coefficient storage, wavelength, temperature, pressure
-    //   follow: cross_section_lut_eval.evaluate
     pub fn dSigmaDTemperatureAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
         temperature_k: f64,
         pressure_hpa: f64,
     ) f64 {
+        // OperationalCrossSectionLut.dSigmaDTemperatureAt ----------------------------------------------------|
+        // Returns dSigma/dT from the shared LUT evaluator for one support row.                                |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : support-row cross-section derivative evaluation                                        |
+        //   reads    : coefficient storage, wavelength, temperature, pressure                                 |
+        //   output   : dSigma/dT                                                                              |
+        // ----------------------------------------------------------------------------------------------------|
+
         return evaluateLut(@This(), self, wavelength_nm, temperature_k, pressure_hpa).d_sigma_d_temperature;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: each operational cross-section LUT evaluation builds pressure/temperature basis values
-//   work: fills Legendre recurrence values for one scaled coordinate
-//   data: basis output slice and scaled coordinate
-//   follow: cross_section_lut_eval.evaluateAtIndex
 fn fillLegendreValues(values: []f64, scaled_coordinate: f64) void {
+    // fillLegendreValues -------------------------------------------------------------------------------------|
+    // Fills Legendre recurrence values for one scaled coordinate.                                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : each pressure/temperature basis build during LUT evaluation                                |
+    //   writes   : caller-owned basis output slice                                                            |
+    //   reads    : scaled coordinate                                                                          |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (values.len == 0) return;
     values[0] = 1.0;
     if (values.len == 1) return;
@@ -169,11 +214,6 @@ fn fillLegendreValues(values: []f64, scaled_coordinate: f64) void {
     }
 }
 
-// hot path:
-//   when: operational cross-section LUT evaluation needs dSigma/dT
-//   work: fills derivative basis values for the temperature coordinate
-//   data: derivative output slice, Legendre values, scaled coordinate, temperature bounds
-//   follow: cross_section_lut_eval.evaluate derivative bracket samples
 fn fillLegendreTemperatureDerivative(
     derivative_values: []f64,
     legendre_values: []const f64,
@@ -182,6 +222,15 @@ fn fillLegendreTemperatureDerivative(
     minimum_temperature_k: f64,
     maximum_temperature_k: f64,
 ) void {
+    // fillLegendreTemperatureDerivative ----------------------------------------------------------------------|
+    // Fills derivative basis values for the temperature coordinate.                                           |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : each dSigma/dT LUT evaluation                                                              |
+    //   reads    : Legendre values, scaled coordinate, temperature bounds                                     |
+    //   writes   : caller-owned derivative basis slice                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     @memset(derivative_values, 0.0);
     if (derivative_values.len <= 1) return;
 
@@ -248,7 +297,10 @@ fn buildLutFromSource(
     defer allocator.free(legendre_lnp);
     const samples = try allocator.alloc(f64, wavelengths_nm.len * temperature_grid_count * pressure_grid_count);
     defer allocator.free(samples);
-    const coefficients = try allocator.alloc(f64, wavelengths_nm.len * temperature_coefficient_count * pressure_coefficient_count);
+    const coefficients = try allocator.alloc(
+        f64,
+        wavelengths_nm.len * temperature_coefficient_count * pressure_coefficient_count,
+    );
     errdefer allocator.free(coefficients);
 
     try gauss_legendre.fillNodesAndWeights(
@@ -292,6 +344,7 @@ fn buildLutFromSource(
         for (0..pressure_grid_count) |pressure_index| {
             var prepared_line_state: ?ReferenceData.StrongLinePreparedState = null;
             defer if (prepared_line_state) |*state| state.deinit(allocator);
+
             if (source == .line_list) {
                 prepared_line_state = try source.line_list.prepareStrongLineState(
                     allocator,
@@ -299,21 +352,24 @@ fn buildLutFromSource(
                     pressures_hpa[pressure_index],
                 );
             }
+
+            const prepared_state = if (prepared_line_state) |*state| state else null;
+
             for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
-                samples[
-                    sampleIndex(
-                        temperature_index,
-                        pressure_index,
-                        wavelength_index,
-                        pressure_grid_count,
-                        wavelengths_nm.len,
-                    )
-                ] = sampleSigmaAtSource(
+                const sample_offset = sampleIndex(
+                    temperature_index,
+                    pressure_index,
+                    wavelength_index,
+                    pressure_grid_count,
+                    wavelengths_nm.len,
+                );
+
+                samples[sample_offset] = sampleSigmaAtSource(
                     source,
                     wavelength_nm,
                     temperatures_k[temperature_index],
                     pressures_hpa[pressure_index],
-                    if (prepared_line_state) |*state| state else null,
+                    prepared_state,
                 );
             }
         }
@@ -433,22 +489,24 @@ fn coefficientIndex(
         temperature_coefficient_index;
 }
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: sigma=8 B, d_sigma_d_temperature=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// Evaluation -------------------------------------------------------------------------------------------------|
+// One LUT evaluation result.                                                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] sigma                 : f64                                                                        |
+// [ 8..15] d_sigma_d_temperature : f64                                                                        |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); stack or return value                                           |
 const Evaluation = struct {
     sigma: f64,
     d_sigma_d_temperature: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: support-row carrier evaluation samples an operational cross-section LUT
-//   work: evaluates temperature/pressure Legendre basis, brackets wavelength, and interpolates sigma plus dT
-//   data: LUT coefficients, wavelength grid, temperature/pressure basis arrays
-//   follow: evaluateAtIndex and wavelengthBracket
 fn evaluateLut(
     comptime LutType: type,
     self: *const LutType,
@@ -456,6 +514,16 @@ fn evaluateLut(
     temperature_k: f64,
     pressure_hpa: f64,
 ) Evaluation {
+    // evaluateLut --------------------------------------------------------------------------------------------|
+    // Evaluates one operational cross-section LUT at wavelength, temperature, and pressure.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : support-row carrier evaluation                                                             |
+    //   reads    : coefficient storage, wavelength grid, temperature/pressure bounds                          |
+    //   stack    : bounded Legendre basis arrays                                                              |
+    //   calls    : wavelengthBracket, evaluateAtIndex                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (!self.enabled()) {
         return .{
             .sigma = 0.0,
@@ -463,9 +531,9 @@ fn evaluateLut(
         };
     }
 
-    var legendre_lnT = [_]f64{0.0} ** @import("constants.zig").max_operational_refspec_temperature_coefficients;
-    var legendre_lnp = [_]f64{0.0} ** @import("constants.zig").max_operational_refspec_pressure_coefficients;
-    var derivative_legendre_lnT = [_]f64{0.0} ** @import("constants.zig").max_operational_refspec_temperature_coefficients;
+    var legendre_lnT = [_]f64{0.0} ** max_operational_refspec_temperature_coefficients;
+    var legendre_lnp = [_]f64{0.0} ** max_operational_refspec_pressure_coefficients;
+    var derivative_legendre_lnT = [_]f64{0.0} ** max_operational_refspec_temperature_coefficients;
 
     const scaled_lnT = scaledLogCoordinate(
         temperature_k,
@@ -490,40 +558,50 @@ fn evaluateLut(
     );
 
     const bracket = wavelengthBracket(LutType, self, wavelength_nm);
+    const temperature_basis = legendre_lnT[0..@as(usize, self.temperature_coefficient_count)];
+    const pressure_basis = legendre_lnp[0..@as(usize, self.pressure_coefficient_count)];
+    const derivative_temperature_basis =
+        derivative_legendre_lnT[0..@as(usize, self.temperature_coefficient_count)];
+
     const left_sigma = evaluateAtIndex(
         LutType,
         self,
         bracket.left_index,
-        legendre_lnT[0..@as(usize, self.temperature_coefficient_count)],
-        legendre_lnp[0..@as(usize, self.pressure_coefficient_count)],
+        temperature_basis,
+        pressure_basis,
     );
-    const right_sigma = if (bracket.left_index == bracket.right_index)
-        left_sigma
-    else
-        evaluateAtIndex(
+
+    const right_sigma = choose_right_sigma: {
+        if (bracket.left_index == bracket.right_index) break :choose_right_sigma left_sigma;
+
+        break :choose_right_sigma evaluateAtIndex(
             LutType,
             self,
             bracket.right_index,
-            legendre_lnT[0..@as(usize, self.temperature_coefficient_count)],
-            legendre_lnp[0..@as(usize, self.pressure_coefficient_count)],
+            temperature_basis,
+            pressure_basis,
         );
+    };
+
     const left_derivative = evaluateAtIndex(
         LutType,
         self,
         bracket.left_index,
-        derivative_legendre_lnT[0..@as(usize, self.temperature_coefficient_count)],
-        legendre_lnp[0..@as(usize, self.pressure_coefficient_count)],
+        derivative_temperature_basis,
+        pressure_basis,
     );
-    const right_derivative = if (bracket.left_index == bracket.right_index)
-        left_derivative
-    else
-        evaluateAtIndex(
+
+    const right_derivative = choose_right_derivative: {
+        if (bracket.left_index == bracket.right_index) break :choose_right_derivative left_derivative;
+
+        break :choose_right_derivative evaluateAtIndex(
             LutType,
             self,
             bracket.right_index,
-            derivative_legendre_lnT[0..@as(usize, self.temperature_coefficient_count)],
-            legendre_lnp[0..@as(usize, self.pressure_coefficient_count)],
+            derivative_temperature_basis,
+            pressure_basis,
         );
+    };
 
     return .{
         .sigma = @max(
@@ -534,11 +612,6 @@ fn evaluateLut(
     };
 }
 
-// hot path:
-//   when: LUT evaluation samples the left and right wavelength brackets
-//   work: reduces pressure and temperature coefficient products into one sigma value
-//   data: flattened coefficient grid, Legendre pressure values, Legendre temperature values
-//   follow: coefficientAt offset order and LutType coefficient strides
 fn evaluateAtIndex(
     comptime LutType: type,
     self: *const LutType,
@@ -546,6 +619,15 @@ fn evaluateAtIndex(
     legendre_lnT: []const f64,
     legendre_lnp: []const f64,
 ) f64 {
+    // evaluateAtIndex ----------------------------------------------------------------------------------------|
+    // Reduces pressure and temperature coefficient products into one sigma value.                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : left and right wavelength bracket samples                                                  |
+    //   reads    : flattened coefficient grid and Legendre basis slices                                       |
+    //   math     : sum coefficient[wavelength, pressure, temperature] * T_basis * p_basis                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     var sigma: f64 = 0.0;
     for (0..self.pressure_coefficient_count) |pressure_index| {
         for (0..self.temperature_coefficient_count) |temperature_index| {
@@ -584,28 +666,43 @@ fn scaledLogCoordinate(
     minimum: f64,
     maximum: f64,
 ) f64 {
-    if (!(minimum > 0.0) or !(maximum > 0.0)) return 0.0;
+    const has_valid_bounds = minimum > 0.0 and maximum > 0.0;
+    if (!has_valid_bounds) return 0.0;
+
     const ln_max = @log(maximum);
     const ln_min = @log(minimum);
     const scale = ln_max - ln_min;
+
     if (scale == 0.0) return 0.0;
-    const safe_value = if (value > 0.0) value else minimum;
+
+    const safe_value = choose_safe_value: {
+        if (value > 0.0) break :choose_safe_value value;
+        break :choose_safe_value minimum;
+    };
+
     return -((ln_max + ln_min) / scale) + (2.0 * @log(safe_value) / scale);
 }
 
-// hot path:
-//   when: each LUT evaluation maps wavelength to adjacent coefficient planes
-//   work: finds the bracketing LUT wavelengths and interpolation weight
-//   data: wavelength grid, target wavelength, bracket indexes
-//   follow: caller access order across repeated support-row wavelengths
-// layout(64-bit):
-//   anonymous return struct: size 24 B, align 8 B; padding 0 B (0 bits)
-//   footprint: per returned value = 24 B (0.023 KiB)
 fn wavelengthBracket(
     comptime LutType: type,
     self: *const LutType,
     wavelength_nm: f64,
 ) struct { left_index: usize, right_index: usize, weight: f64 } {
+    // wavelengthBracket --------------------------------------------------------------------------------------|
+    // Finds adjacent coefficient planes and the interpolation weight for one wavelength.                      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : each LUT evaluation                                                                        |
+    //   reads    : wavelength grid and target wavelength                                                      |
+    //   output   : bracket indexes and interpolation weight                                                   |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // anonymous return struct: size 24 B (0.023 KiB), align: 8 B                                              |
+    // [ 0.. 7] left_index  : usize                                                                            |
+    // [ 8..15] right_index : usize                                                                            |
+    // [16..23] weight      : f64                                                                              |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (self.wavelengths_nm.len == 0) {
         return .{
             .left_index = 0,
@@ -621,13 +718,19 @@ fn wavelengthBracket(
         };
     }
 
-    for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], 0..) |left_nm, right_nm, index| {
+    for (
+        self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1],
+        self.wavelengths_nm[1..],
+        0..,
+    ) |left_nm, right_nm, index| {
         if (wavelength_nm <= right_nm) {
             const span = right_nm - left_nm;
+            const weight = if (span == 0.0) 0.0 else (wavelength_nm - left_nm) / span;
+
             return .{
                 .left_index = index,
                 .right_index = index + 1,
-                .weight = if (span == 0.0) 0.0 else (wavelength_nm - left_nm) / span,
+                .weight = weight,
             };
         }
     }
