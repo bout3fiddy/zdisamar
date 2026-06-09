@@ -14,24 +14,36 @@ const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 const centimeters_per_kilometer = 1.0e5;
 
 // carrier_eval.zig ------------------------------------------------------------------------------------------- |
-// Evaluates wavelength-local optical carriers from prepared support rows.                                      |
+// Wavelength-local carrier evaluation for prepared optical rows.                                               |
 //                                                                                                              |
 // called by                                                                                                    |
-//   shared_carrier, rtm_quadrature, source_interfaces, pseudo_spherical, and optical-depth builders.           |
+//   forward_input.zig through forward_layers, shared_carrier, source_interfaces, rtm_quadrature,               |
+//   pseudo_spherical, and direct optical-depth helpers.                                                        |
 //                                                                                                              |
-// main path                                                                                                    |
-//   support row -> gas absorption/scattering, CIA, aerosol depth, and phase-weighted carrier rows              |
-//   level row   -> boundary or active carriers for shared RTM geometry                                         |
-//   altitude    -> interpolated carriers for routes that do not land on a prepared support row                 |
+// main paths                                                                                                   |
+//   support row       -> gas absorption/scattering, CIA, aerosol depth, and cached scalar carrier rows         |
+//   shared RTM level  -> boundary/active carriers with above/below particle scattering and phase rows          |
+//   arbitrary altitude -> interpolated thermodynamic/particle state for pseudo-spherical and source routes     |
+//   carrier-cache path -> reuse per-wavelength scalar rows after WavelengthCarrierCache.init                   |
+//   direct path        -> evaluate the same rows with only a profile spectroscopy cache                        |
 //                                                                                                              |
 // hot path                                                                                                     |
-//   WavelengthCarrierCache stores wavelength constants and epoch-tagged scalar rows so repeated boundary,      |
-//   source-interface, and quadrature passes do not re-evaluate the same support row.                           |
+//   Runs for each high-resolution wavelength sample. WavelengthCarrierCache precomputes continuum sigma, CIA   |
+//   coefficients, Rayleigh cross section/P2, and aerosol wavelength scales, then tags support-row scalar rows  |
+//   with an epoch so forward-layer, boundary, source-interface, and quadrature passes do not recompute the     |
+//   same gas/CIA/Rayleigh/aerosol scalars.                                                                     |
+//                                                                                                              |
+// math                                                                                                         |
+//   k_abs_gas = sigma_cont*n_cont*1e5 + sigma_line*n_line*1e5 + sigma_xs*n_xs*1e5                              |
+//   k_sca_gas = sigma_R*n_air*1e5                                                                              |
+//   k_cia     = sigma_cia*n_pair*1e5                                                                           |
+//   aerosol optical depth is Angstrom-scaled at wavelength time, after layer_accumulation has placed the       |
+//   reference-wavelength particle depth on the support grid.                                                   |
 //                                                                                                              |
 // memory                                                                                                       |
-//   SharedOpticalScalars and SharedOpticalCarrier are compact 40 B value rows. SupportRowScalarCache owns      |
-//   the dense epoch/scalar arrays. WavelengthCarrierCache borrows those arrays plus the spectroscopy cache     |
-//   for one high-resolution wavelength.                                                                        |
+//   SharedOpticalScalars and SharedOpticalCarrier are compact 40 B value rows. SupportRowScalarCache owns one  |
+//   epoch byte and one scalar row per support row in worker scratch. WavelengthCarrierCache borrows those      |
+//   arrays plus the profile spectroscopy cache for one wavelength and owns no out-of-line storage.             |
 // ------------------------------------------------------------------------------------------------------------ |
 
 // SharedOpticalScalars --------------------------------------------------------------------------------------- |
