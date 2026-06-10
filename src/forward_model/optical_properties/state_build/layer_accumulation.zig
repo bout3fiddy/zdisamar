@@ -1528,34 +1528,63 @@ fn populateSublayer(
         cross_section_absorber.column_density_factor += absorber_density * sublayer_path_length_cm;
     }
 
+    const line_spectroscopy_owned_lines = if (absorbers.owned_lines) |*line_list| line_list else null;
+    const active_line_profile_ppmv = choose_active_line_profile: {
+        if (absorbers.single_active_line_absorber) |line_absorber| {
+            break :choose_active_line_profile line_absorber.volume_mixing_ratio_profile_ppmv;
+        }
+
+        break :choose_active_line_profile &.{};
+    };
+
     const spectroscopy_eval = choose_spectroscopy_eval: {
-        break :choose_spectroscopy_eval if (absorbers.owned_line_absorbers.len == 0 and
+        const can_use_cached_single_line =
+            absorbers.owned_line_absorbers.len == 0 and
             absorbers.strong_line_states == null and
-            request.profile_spectroscopy_cache != null)
-            LayerSpectroscopy.resolveCachedSingleLineEvaluation(
-                context,
-                absorbers,
-                write_index,
-                density,
-                pressure,
-                temperature,
-                &absorber_density_cm3,
-                request.profile_spectroscopy_cache.?,
-            )
-        else
-            try LayerSpectroscopy.resolveSpectroscopyEvaluation(
-                allocator,
-                context,
-                absorbers,
-                write_index,
-                density,
-                pressure,
-                temperature,
-                oxygen_mixing_ratio,
-                sublayer_path_length_cm,
-                &absorber_density_cm3,
-                request.profile_spectroscopy_cache,
-            );
+            request.profile_spectroscopy_cache != null;
+
+        if (can_use_cached_single_line) {
+            const line_request = LayerSpectroscopy.CachedSingleLineRequest{
+                .scene = context.scene,
+                .operational_o2_lut = &context.operational_o2_lut,
+                .midpoint_nm = context.midpoint_nm,
+                .sublayer_mid_altitudes_km = context.vertical_grid.sublayer_mid_altitudes_km,
+                .owned_lines = line_spectroscopy_owned_lines,
+                .active_line_species = absorbers.active_line_species,
+                .active_line_profile_ppmv = active_line_profile_ppmv,
+                .write_index = write_index,
+                .density = density,
+                .pressure = pressure,
+                .temperature = temperature,
+                .absorber_density_cm3 = &absorber_density_cm3,
+                .profile_cache = request.profile_spectroscopy_cache.?,
+            };
+            break :choose_spectroscopy_eval LayerSpectroscopy.resolveCachedSingleLineEvaluation(&line_request);
+        }
+
+        const line_request = LayerSpectroscopy.LineSpectroscopyRequest{
+            .allocator = allocator,
+            .scene = context.scene,
+            .operational_o2_lut = &context.operational_o2_lut,
+            .midpoint_nm = context.midpoint_nm,
+            .sublayer_mid_altitudes_km = context.vertical_grid.sublayer_mid_altitudes_km,
+            .active_line_absorbers = absorbers.active_line_absorbers,
+            .owned_line_absorbers = absorbers.owned_line_absorbers,
+            .owned_lines = line_spectroscopy_owned_lines,
+            .strong_line_states = absorbers.strong_line_states,
+            .strong_line_state_count = &absorbers.strong_line_state_count,
+            .active_line_species = absorbers.active_line_species,
+            .active_line_profile_ppmv = active_line_profile_ppmv,
+            .write_index = write_index,
+            .density = density,
+            .pressure = pressure,
+            .temperature = temperature,
+            .oxygen_mixing_ratio = oxygen_mixing_ratio,
+            .sublayer_path_length_cm = sublayer_path_length_cm,
+            .absorber_density_cm3 = &absorber_density_cm3,
+            .profile_cache = request.profile_spectroscopy_cache,
+        };
+        break :choose_spectroscopy_eval try LayerSpectroscopy.resolveSpectroscopyEvaluation(&line_request);
     };
 
     const o2_density_cm3 = density * oxygen_mixing_ratio;

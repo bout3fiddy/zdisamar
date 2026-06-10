@@ -1,4 +1,7 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
+const AbsorberModel = @import("../../../input/Absorber.zig");
+const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
+const Scene = @import("../../../input/Scene.zig").Scene;
 const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
@@ -43,6 +46,8 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 //   ProfileSpectroscopyCache is a stack/local value with fixed 64-node columns and borrowed altitude storage. |
 //   Worker rows borrow the cache, context, line list, wavelength window, and queue; this file does not own    |
 //   the final prepared slices moved into PreparedOpticalState.                                                |
+//   LineSpectroscopyRequest borrows only the support-row spectroscopy route needed by the line helpers so     |
+//   broad setup owners do not travel deeper than the public boundary.                                         |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ProfileCacheValueRequest -----------------------------------------------------------------------------------|
@@ -98,6 +103,109 @@ const ProfileCacheValueWorker = struct {
     request: *const ProfileCacheValueRequest,
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
+};
+
+// LineSpectroscopyRequest ------------------------------------------------------------------------------------|
+// Borrowed route for one support-row line spectroscopy evaluation.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 208 B (0.203 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] allocator                 : Allocator                                                            |
+// [ 16.. 23] scene                     : *const Scene                                                         |
+// [ 24.. 31] operational_o2_lut        : *const OperationalCrossSectionLut                                    |
+// [ 32.. 39] midpoint_nm               : f64                                                                  |
+// [ 40.. 55] sublayer_mid_altitudes_km : []const f64                                                          |
+// [ 56.. 71] active_line_absorbers     : []const ActiveLineAbsorber                                           |
+// [ 72.. 87] owned_line_absorbers      : []PreparedLineAbsorber                                               |
+// [ 88.. 95] owned_lines               : ?*SpectroscopyLineList                                               |
+// [ 96..111] strong_line_states        : ?[]StrongLinePreparedState                                           |
+// [112..119] strong_line_state_count   : *usize                                                               |
+// [120..135] active_line_profile_ppmv  : []const [2]f64                                                       |
+// [136..143] write_index               : usize                                                                |
+// [144..151] density                   : f64                                                                  |
+// [152..159] pressure                  : f64                                                                  |
+// [160..167] temperature               : f64                                                                  |
+// [168..175] oxygen_mixing_ratio       : f64                                                                  |
+// [176..183] sublayer_path_length_cm   : f64                                                                  |
+// [184..191] absorber_density_cm3      : *f64                                                                 |
+// [192..199] profile_cache             : ?*const ProfileSpectroscopyCache                                     |
+// [200..200] active_line_species       : ?AbsorberSpecies                                                     |
+// [201..207] trailing padding          : 7 B                                                                  |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   Scene, LUT, absorber rows, line-list state, active VMR profile, density output, and profile cache are     |
+//   borrowed from the caller-owned preparation context and absorber build state.                              |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per support row = 208 B plus borrowed absorber, scene, LUT, and cache storage                    |
+pub const LineSpectroscopyRequest = struct {
+    allocator: Allocator,
+    scene: *const Scene,
+    operational_o2_lut: *const OperationalCrossSectionLut,
+    midpoint_nm: f64,
+    sublayer_mid_altitudes_km: []const f64,
+    active_line_absorbers: []const State.ActiveLineAbsorber,
+    owned_line_absorbers: []State.PreparedLineAbsorber,
+    owned_lines: ?*ReferenceData.SpectroscopyLineList,
+    strong_line_states: ?[]ReferenceData.StrongLinePreparedState,
+    strong_line_state_count: *usize,
+    active_line_species: ?AbsorberModel.AbsorberSpecies,
+    active_line_profile_ppmv: []const [2]f64,
+    write_index: usize,
+    density: f64,
+    pressure: f64,
+    temperature: f64,
+    oxygen_mixing_ratio: f64,
+    sublayer_path_length_cm: f64,
+    absorber_density_cm3: *f64,
+    profile_cache: ?*const ProfileSpectroscopyCache,
+};
+
+// CachedSingleLineRequest ------------------------------------------------------------------------------------|
+// Borrowed route for the cache-only single-line path that cannot allocate.                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 120 B (0.117 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] scene                     : *const Scene                                                         |
+// [  8.. 15] operational_o2_lut        : *const OperationalCrossSectionLut                                    |
+// [ 16.. 23] midpoint_nm               : f64                                                                  |
+// [ 24.. 39] sublayer_mid_altitudes_km : []const f64                                                          |
+// [ 40.. 47] owned_lines               : ?*const SpectroscopyLineList                                         |
+// [ 48.. 63] active_line_profile_ppmv  : []const [2]f64                                                       |
+// [ 64.. 71] write_index               : usize                                                                |
+// [ 72.. 79] density                   : f64                                                                  |
+// [ 80.. 87] pressure                  : f64                                                                  |
+// [ 88.. 95] temperature               : f64                                                                  |
+// [ 96..103] absorber_density_cm3      : *f64                                                                 |
+// [104..111] profile_cache             : *const ProfileSpectroscopyCache                                      |
+// [112..112] active_line_species       : ?AbsorberSpecies                                                     |
+// [113..119] trailing padding          : 7 B                                                                  |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   All pointed-to storage is borrowed; this route deliberately omits allocator and mutable line-state rows.  |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per cached support row = 120 B plus borrowed scene, LUT, active profile, line list, and cache    |
+pub const CachedSingleLineRequest = struct {
+    scene: *const Scene,
+    operational_o2_lut: *const OperationalCrossSectionLut,
+    midpoint_nm: f64,
+    sublayer_mid_altitudes_km: []const f64,
+    owned_lines: ?*const ReferenceData.SpectroscopyLineList,
+    active_line_species: ?AbsorberModel.AbsorberSpecies,
+    active_line_profile_ppmv: []const [2]f64,
+    write_index: usize,
+    density: f64,
+    pressure: f64,
+    temperature: f64,
+    absorber_density_cm3: *f64,
+    profile_cache: *const ProfileSpectroscopyCache,
 };
 
 // ProfileSpectroscopyCache -----------------------------------------------------------------------------------|
@@ -465,14 +573,7 @@ pub fn continuumCarrierDensity(
 }
 
 pub fn resolveCachedSingleLineEvaluation(
-    context: *const Context,
-    absorbers: *const Absorbers.AbsorberBuildState,
-    write_index: usize,
-    density: f64,
-    pressure: f64,
-    temperature: f64,
-    absorber_density_cm3: *f64,
-    profile_cache: *const ProfileSpectroscopyCache,
+    request: *const CachedSingleLineRequest,
 ) ReferenceData.SpectroscopyEvaluation {
     // resolveCachedSingleLineEvaluation --------------------------------------------------------------------- |
     // Resolve single-line spectroscopy while layer preparation already owns a profile spectroscopy cache.     |
@@ -481,36 +582,36 @@ pub fn resolveCachedSingleLineEvaluation(
     // support-row preparation calls this when one retained line list is active.                               |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const absorber_mixing_ratio = activeLineMixingRatio(context, absorbers, pressure);
-    absorber_density_cm3.* = density * absorber_mixing_ratio;
+    const absorber_mixing_ratio = activeLineMixingRatioFromRoute(
+        request.scene,
+        request.active_line_species,
+        request.active_line_profile_ppmv,
+        request.pressure,
+    );
+    request.absorber_density_cm3.* = request.density * absorber_mixing_ratio;
 
-    if (context.operational_o2_lut.enabled()) {
-        return operationalO2EvaluationAtContext(context, temperature, pressure);
+    if (request.operational_o2_lut.enabled()) {
+        return operationalO2EvaluationFromRoute(
+            request.operational_o2_lut,
+            request.midpoint_nm,
+            request.temperature,
+            request.pressure,
+        );
     }
 
-    if (absorbers.owned_lines) |line_list| {
-        const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
-        if (profile_cache.evaluationAtAltitude(altitude_km)) |evaluation| {
+    if (request.owned_lines) |line_list| {
+        const altitude_km = request.sublayer_mid_altitudes_km[request.write_index];
+        if (request.profile_cache.evaluationAtAltitude(altitude_km)) |evaluation| {
             return evaluation;
         }
-        return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
+        return line_list.evaluateAt(request.midpoint_nm, request.temperature, request.pressure);
     }
 
     return zeroSpectroscopyEvaluation();
 }
 
 pub fn resolveSpectroscopyEvaluation(
-    allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    write_index: usize,
-    density: f64,
-    pressure: f64,
-    temperature: f64,
-    oxygen_mixing_ratio: f64,
-    sublayer_path_length_cm: f64,
-    absorber_density_cm3: *f64,
-    profile_cache: ?*const ProfileSpectroscopyCache,
+    request: *const LineSpectroscopyRequest,
 ) !ReferenceData.SpectroscopyEvaluation {
     // resolveSpectroscopyEvaluation ------------------------------------------------------------------------- |
     // Resolve spectroscopy for one support row through prepared active absorbers or the single-line route.    |
@@ -522,44 +623,14 @@ pub fn resolveSpectroscopyEvaluation(
     // active line absorbers are density-weighted: sigma_bar = sum(sigma_species * n_species) / sum(n).        |
     // ------------------------------------------------------------------------------------------------------- |
 
-    if (absorbers.owned_line_absorbers.len != 0) {
-        return resolvePreparedLineEvaluation(
-            allocator,
-            context,
-            absorbers,
-            write_index,
-            density,
-            pressure,
-            temperature,
-            oxygen_mixing_ratio,
-            sublayer_path_length_cm,
-            absorber_density_cm3,
-        );
+    if (request.owned_line_absorbers.len != 0) {
+        return resolvePreparedLineEvaluationFromRequest(request);
     }
-    return resolveSingleLineEvaluation(
-        allocator,
-        context,
-        absorbers,
-        write_index,
-        density,
-        pressure,
-        temperature,
-        absorber_density_cm3,
-        profile_cache,
-    );
+    return resolveSingleLineEvaluationFromRequest(request);
 }
 
-fn resolvePreparedLineEvaluation(
-    allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    write_index: usize,
-    density: f64,
-    pressure: f64,
-    temperature: f64,
-    oxygen_mixing_ratio: f64,
-    sublayer_path_length_cm: f64,
-    absorber_density_cm3: *f64,
+fn resolvePreparedLineEvaluationFromRequest(
+    request: *const LineSpectroscopyRequest,
 ) !ReferenceData.SpectroscopyEvaluation {
     var spectroscopy_weight: f64 = 0.0;
     var weighted: ReferenceData.SpectroscopyEvaluation = .{
@@ -569,15 +640,15 @@ fn resolvePreparedLineEvaluation(
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
 
-    if (context.operational_o2_lut.enabled()) {
-        const o2_density_cm3 = density * oxygen_mixing_ratio;
-        absorber_density_cm3.* += o2_density_cm3;
+    if (request.operational_o2_lut.enabled()) {
+        const o2_density_cm3 = request.density * request.oxygen_mixing_ratio;
+        request.absorber_density_cm3.* += o2_density_cm3;
         if (o2_density_cm3 > 0.0) {
             const o2_eval = Spectroscopy.operationalO2EvaluationAtWavelength(
-                context.operational_o2_lut,
-                context.midpoint_nm,
-                temperature,
-                pressure,
+                request.operational_o2_lut.*,
+                request.midpoint_nm,
+                request.temperature,
+                request.pressure,
             );
             spectroscopy_weight += o2_density_cm3;
             weighted.weak_line_sigma_cm2_per_molecule +=
@@ -595,34 +666,34 @@ fn resolvePreparedLineEvaluation(
         }
     }
 
-    for (absorbers.owned_line_absorbers, absorbers.active_line_absorbers) |*line_absorber, active_absorber| {
-        const operational_o2_owns_species = context.operational_o2_lut.enabled() and line_absorber.species == .o2;
+    for (request.owned_line_absorbers, request.active_line_absorbers) |*line_absorber, active_absorber| {
+        const operational_o2_owns_species = request.operational_o2_lut.enabled() and line_absorber.species == .o2;
         if (operational_o2_owns_species) {
-            line_absorber.number_densities_cm3[write_index] = 0.0;
+            line_absorber.number_densities_cm3[request.write_index] = 0.0;
             continue;
         }
 
         // route: use the active absorber's VMR profile for this pressure level.
         const absorber_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
-            context.scene,
+            request.scene,
             line_absorber.species,
             active_absorber.volume_mixing_ratio_profile_ppmv,
-            pressure,
+            request.pressure,
             if (line_absorber.species == .o2) oxygen_volume_mixing_ratio else null,
         ) orelse return error.InvalidRequest;
 
-        const density_cm3 = density * absorber_mixing_ratio;
-        line_absorber.number_densities_cm3[write_index] = density_cm3;
-        absorber_density_cm3.* += density_cm3;
+        const density_cm3 = request.density * absorber_mixing_ratio;
+        line_absorber.number_densities_cm3[request.write_index] = density_cm3;
+        request.absorber_density_cm3.* += density_cm3;
         if (density_cm3 <= 0.0) continue;
 
         const evaluation = try evaluatePreparedLineAbsorber(
-            allocator,
+            request.allocator,
             line_absorber,
-            write_index,
-            context.midpoint_nm,
-            temperature,
-            pressure,
+            request.write_index,
+            request.midpoint_nm,
+            request.temperature,
+            request.pressure,
         );
         spectroscopy_weight += density_cm3;
         weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * density_cm3;
@@ -632,7 +703,7 @@ fn resolvePreparedLineEvaluation(
         weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * density_cm3;
         weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
             evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * density_cm3;
-        line_absorber.column_density_factor += density_cm3 * sublayer_path_length_cm;
+        line_absorber.column_density_factor += density_cm3 * request.sublayer_path_length_cm;
     }
 
     if (spectroscopy_weight <= 0.0) {
@@ -702,16 +773,8 @@ fn evaluatePreparedLineAbsorber(
     return evaluation;
 }
 
-fn resolveSingleLineEvaluation(
-    allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    write_index: usize,
-    density: f64,
-    pressure: f64,
-    temperature: f64,
-    absorber_density_cm3: *f64,
-    profile_cache: ?*const ProfileSpectroscopyCache,
+fn resolveSingleLineEvaluationFromRequest(
+    request: *const LineSpectroscopyRequest,
 ) !ReferenceData.SpectroscopyEvaluation {
     // resolveSingleLineEvaluation --------------------------------------------------------------------------- |
     // Resolve one retained line-list route for layer preparation.                                             |
@@ -720,89 +783,105 @@ fn resolveSingleLineEvaluation(
     // used when no prepared active-line absorber array is present.                                            |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const absorber_mixing_ratio = activeLineMixingRatio(context, absorbers, pressure);
-    absorber_density_cm3.* = density * absorber_mixing_ratio;
+    const absorber_mixing_ratio = activeLineMixingRatioFromRoute(
+        request.scene,
+        request.active_line_species,
+        request.active_line_profile_ppmv,
+        request.pressure,
+    );
+    request.absorber_density_cm3.* = request.density * absorber_mixing_ratio;
 
-    if (context.operational_o2_lut.enabled()) {
-        return operationalO2EvaluationAtContext(context, temperature, pressure);
+    if (request.operational_o2_lut.enabled()) {
+        return operationalO2EvaluationFromRoute(
+            request.operational_o2_lut,
+            request.midpoint_nm,
+            request.temperature,
+            request.pressure,
+        );
     }
 
-    if (absorbers.owned_lines) |*line_list| {
-        if (profile_cache) |cache| {
-            const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
+    if (request.owned_lines) |line_list| {
+        if (request.profile_cache) |cache| {
+            const altitude_km = request.sublayer_mid_altitudes_km[request.write_index];
             if (cache.evaluationAtAltitude(altitude_km)) |evaluation| return evaluation;
         }
 
-        if (absorbers.strong_line_states) |states| {
-            states[write_index] = (try line_list.prepareStrongLineState(
-                allocator,
-                temperature,
-                pressure,
+        if (request.strong_line_states) |states| {
+            states[request.write_index] = (try line_list.prepareStrongLineState(
+                request.allocator,
+                request.temperature,
+                request.pressure,
             )).?;
-            absorbers.strong_line_state_count += 1;
+            request.strong_line_state_count.* += 1;
 
             var evaluation = line_list.evaluateAtPrepared(
-                context.midpoint_nm,
-                temperature,
-                pressure,
-                &states[write_index],
+                request.midpoint_nm,
+                request.temperature,
+                request.pressure,
+                &states[request.write_index],
             );
-            const upper = line_list.evaluateAt(context.midpoint_nm, temperature + 0.5, pressure);
-            const lower = line_list.evaluateAt(context.midpoint_nm, @max(temperature - 0.5, 150.0), pressure);
+            const upper = line_list.evaluateAt(
+                request.midpoint_nm,
+                request.temperature + 0.5,
+                request.pressure,
+            );
+            const lower = line_list.evaluateAt(
+                request.midpoint_nm,
+                @max(request.temperature - 0.5, 150.0),
+                request.pressure,
+            );
 
             evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
                 (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / 1.0;
             return evaluation;
         }
 
-        return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
+        return line_list.evaluateAt(request.midpoint_nm, request.temperature, request.pressure);
     }
 
     return zeroSpectroscopyEvaluation();
 }
 
-fn activeLineMixingRatio(
-    context: *const Context,
-    absorbers: *const Absorbers.AbsorberBuildState,
+fn activeLineMixingRatioFromRoute(
+    scene: *const Scene,
+    active_species: ?AbsorberModel.AbsorberSpecies,
+    volume_mixing_ratio_profile: []const [2]f64,
     pressure: f64,
 ) f64 {
-    // activeLineMixingRatio --------------------------------------------------------------------------------- |
+    // activeLineMixingRatioFromRoute ------------------------------------------------------------------------ |
     // Resolve the active single-line species mixing ratio at pressure, falling back to O2.                    |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const active_species = absorbers.active_line_species orelse return oxygen_volume_mixing_ratio;
-    const volume_mixing_ratio_profile = if (absorbers.single_active_line_absorber) |line_absorber|
-        line_absorber.volume_mixing_ratio_profile_ppmv
-    else
-        &.{};
+    const species = active_species orelse return oxygen_volume_mixing_ratio;
 
     return Spectroscopy.speciesMixingRatioAtPressure(
-        context.scene,
-        active_species,
+        scene,
+        species,
         volume_mixing_ratio_profile,
         pressure,
-        if (active_species == .o2) oxygen_volume_mixing_ratio else null,
+        if (species == .o2) oxygen_volume_mixing_ratio else null,
     ) orelse oxygen_volume_mixing_ratio;
 }
 
-fn operationalO2EvaluationAtContext(
-    context: *const Context,
+fn operationalO2EvaluationFromRoute(
+    operational_o2_lut: *const OperationalCrossSectionLut,
+    midpoint_nm: f64,
     temperature: f64,
     pressure: f64,
 ) ReferenceData.SpectroscopyEvaluation {
-    // operationalO2EvaluationAtContext ---------------------------------------------------------------------- |
+    // operationalO2EvaluationFromRoute ---------------------------------------------------------------------- |
     // Build the standard operational O2 evaluation at the preparation midpoint wavelength.                    |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
+    const sigma = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure);
     return .{
         .weak_line_sigma_cm2_per_molecule = sigma,
         .strong_line_sigma_cm2_per_molecule = 0.0,
         .line_sigma_cm2_per_molecule = sigma,
         .line_mixing_sigma_cm2_per_molecule = 0.0,
         .total_sigma_cm2_per_molecule = sigma,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
-            context.midpoint_nm,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(
+            midpoint_nm,
             temperature,
             pressure,
         ),
