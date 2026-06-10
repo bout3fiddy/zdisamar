@@ -1,17 +1,26 @@
 const std = @import("std");
 
 // rayleigh.zig -----------------------------------------------------------------------------------------------|
-// Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth paths.                             |
+// Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth and phase-function paths.          |
 //                                                                                                             |
-// data                                                                                                        |
-//   Constants are reference dry-air composition fractions and the Loschmidt number in cm^-3.                  |
+// called by                                                                                                   |
+//   layer_accumulation.zig and carrier_eval.zig convert air columns into gas-scattering optical depth.        |
+//   state_optical_depth.zig and atmospheric_budget.zig sample scalar gas-scattering summaries.                |
+//   phase_functions.zig converts air depolarization into the Rayleigh l=2 phase coefficient used by LABOS.    |
 //                                                                                                             |
-// main path                                                                                                   |
-//   crossSectionCm2 computes wavelength-dependent Rayleigh cross section from refractive index and King       |
-//   factor terms. scatteringOpticalDepthForColumn multiplies that cross section by the air column density.    |
+// main paths                                                                                                  |
+//   refractiveIndexDryAir        -> Edlen-style dry-air refractivity at one wavelength                        |
+//   depolarizationFactorAir      -> air King-factor mixture -> depolarization factor                          |
+//   crossSectionCm2              -> wavelength^-4 Rayleigh cross section in cm2 per molecule                  |
+//   scatteringOpticalDepthForColumn -> cross section * air column density                                     |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   crossSectionCm2 is sampled for support rows and diagnostics when gas scattering is included.              |
+//   crossSectionCm2 is sampled for support rows, carrier caches, and diagnostics when gas scattering is       |
+//   included. All helpers are scalar and allocation-free.                                                     |
+//                                                                                                             |
+// numbers                                                                                                     |
+//   Composition fractions are dry-air percent values. reference_number_density_cm3 is the Loschmidt number    |
+//   in cm^-3 used by the Rayleigh cross-section normalization.                                                |
 // ------------------------------------------------------------------------------------------------------------|
 
 const fraction_n2 = 78.084;
@@ -41,6 +50,11 @@ fn kingFactorAir(wavelength_nm: f64) f64 {
 }
 
 pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
+    // refractiveIndexDryAir ----------------------------------------------------------------------------------|
+    // Return dry-air refractive index for wavelength_nm. The formula uses inverse microns and returns         |
+    // n = 1 + refractivity * 1e-8.                                                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
     const refractivity =
@@ -51,6 +65,11 @@ pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
 }
 
 pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
+    // depolarizationFactorAir --------------------------------------------------------------------------------|
+    // Convert the dry-air King-factor mixture into the scalar depolarization factor consumed by Rayleigh      |
+    // phase-coefficient construction.                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     const king_factor_air = kingFactorAir(wavelength_nm);
     return 6.0 * (king_factor_air - 1.0) / (3.0 + 7.0 * king_factor_air);
 }
@@ -83,5 +102,10 @@ pub fn scatteringOpticalDepthForColumn(
     wavelength_nm: f64,
     air_column_density_cm2: f64,
 ) f64 {
+    // scatteringOpticalDepthForColumn ------------------------------------------------------------------------|
+    // Convert an air column density into Rayleigh scattering optical depth at one wavelength. Negative        |
+    // columns are clamped away because callers use this during setup reductions, not as an input validator.   |
+    // --------------------------------------------------------------------------------------------------------|
+
     return crossSectionCm2(wavelength_nm) * @max(air_column_density_cm2, 0.0);
 }

@@ -6,19 +6,28 @@ const Allocator = std.mem.Allocator;
 const max_spline_profile_rows: usize = 256;
 
 // climatology.zig --------------------------------------------------------------------------------------------|
-// Climatology profile storage and pressure/altitude interpolation.                                            |
+// Vertical climatology profile storage, pressure-grid densification, and pressure/altitude interpolation.     |
 //                                                                                                             |
-// data                                                                                                        |
-//   ClimatologyPoint stores one vertical support row. ClimatologyProfile owns the row slice produced by the   |
-//   reference-data loader or by densifyVendorPressureGrid.                                                    |
+// called by                                                                                                   |
+//   o2a_reference/run.zig loads vendor profiles and densifies the pressure grid for fixed O2 A cases.         |
+//   vertical_grid.zig maps retrieval intervals and support levels between pressure and altitude.              |
+//   context.zig copies spectroscopy profile arrays from these rows before optical-state preparation.          |
+//   layer_accumulation.zig and tests sample pressure/temperature/density when building prepared layers.       |
 //                                                                                                             |
-// main path                                                                                                   |
+// main paths                                                                                                  |
 //   densifyVendorPressureGrid inserts pressure-grid support levels, computes hydrostatic altitude estimates,  |
 //   and returns a new owned profile used by optical-state vertical preparation.                               |
+//   interpolation routes sample density, temperature, pressure, and altitude in altitude or log-pressure      |
+//   coordinates. Spline routes fall back to linear/log-linear paths when the row count is outside the stack   |
+//   window cap or spline sampling fails.                                                                      |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   pressure and temperature interpolation are called repeatedly while building dense support grids. Spline   |
-//   paths use fixed stack arrays capped by max_spline_profile_rows.                                           |
+//   Interpolation runs repeatedly while building dense support grids and prepared layer rows. Spline paths    |
+//   copy at most max_spline_profile_rows values into fixed stack arrays and do not allocate.                  |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   ClimatologyProfile owns out-of-line ClimatologyPoint rows. densifyVendorPressureGrid returns a new owned  |
+//   profile and leaves the source profile unchanged.                                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ClimatologyPoint -------------------------------------------------------------------------------------------|
@@ -217,12 +226,22 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn meanNumberDensity(self: ClimatologyProfile) f64 {
+        // ClimatologyProfile.meanNumberDensity ---------------------------------------------------------------|
+        // Return the arithmetic mean of profile air-number-density rows. Used as a scalar summary, not as a   |
+        // hydrostatic integration path.                                                                       |
+        // ----------------------------------------------------------------------------------------------------|
+
         var total: f64 = 0.0;
         for (self.rows) |row| total += row.air_number_density_cm3;
         return if (self.rows.len == 0) 0.0 else total / @as(f64, @floatFromInt(self.rows.len));
     }
 
     pub fn interpolateDensity(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolateDensity --------------------------------------------------------------|
+        // Linearly sample air number density by altitude. Values outside the profile clamp to the nearest     |
+        // endpoint because callers use this as reference support, not as a request validator.                 |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].air_number_density_cm3;
 
@@ -241,6 +260,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolateTemperature(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolateTemperature ----------------------------------------------------------|
+        // Linearly sample temperature by altitude with endpoint clamping. Spline callers use this as their    |
+        // small-row-count and failure fallback.                                                               |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].temperature_k;
 
@@ -258,6 +282,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolateTemperatureSpline(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolateTemperatureSpline ----------------------------------------------------|
+        // Sample temperature by altitude using endpoint-secant spline when the profile fits in stack arrays.  |
+        // Falls back to linear altitude interpolation for tiny/oversized profiles or spline failure.          |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
             return self.interpolateTemperature(altitude_km);
@@ -281,6 +310,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolateTemperatureForPressureLogLinear(self: ClimatologyProfile, pressure_hpa: f64) f64 {
+        // ClimatologyProfile.interpolateTemperatureForPressureLogLinear --------------------------------------|
+        // Sample temperature in log-pressure space. Profiles may be stored with pressure descending or        |
+        // ascending, so the segment check handles both orders before interpolating between adjacent rows.     |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
 
         const safe_pressure_hpa = @max(pressure_hpa, 1.0e-9);
@@ -370,6 +404,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolatePressure(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolatePressure -------------------------------------------------------------|
+        // Linearly sample pressure by altitude. Most vertical-grid callers prefer the log-pressure variant,   |
+        // but this path is useful for direct scalar summaries and simple tests.                               |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
 
@@ -387,6 +426,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolatePressureLogLinear(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolatePressureLogLinear ----------------------------------------------------|
+        // Sample pressure by altitude after interpolating log(pressure). This keeps pressure positive and     |
+        // matches the exponential shape expected by atmosphere support rows.                                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
 
@@ -407,6 +451,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolatePressureLogSpline(self: ClimatologyProfile, altitude_km: f64) f64 {
+        // ClimatologyProfile.interpolatePressureLogSpline ----------------------------------------------------|
+        // Sample pressure by altitude with endpoint-secant spline over log-pressure values. The stack arrays  |
+        // are bounded by max_spline_profile_rows; otherwise this falls back to log-linear interpolation.      |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
             return self.interpolatePressureLogLinear(altitude_km);
@@ -431,10 +480,19 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn maxAltitude(self: ClimatologyProfile) f64 {
+        // ClimatologyProfile.maxAltitude ---------------------------------------------------------------------|
+        // Return the top profile altitude, or zero for an empty profile.                                      |
+        // ----------------------------------------------------------------------------------------------------|
+
         return if (self.rows.len == 0) 0.0 else self.rows[self.rows.len - 1].altitude_km;
     }
 
     pub fn interpolateAltitudeForPressure(self: ClimatologyProfile, pressure_hpa: f64) f64 {
+        // ClimatologyProfile.interpolateAltitudeForPressure --------------------------------------------------|
+        // Sample altitude in log-pressure space. This is the non-spline pressure-to-altitude route used when  |
+        // the profile is too small or too large for stack-spline interpolation.                               |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
 
         const safe_pressure_hpa = @max(pressure_hpa, 1.0e-9);
@@ -472,6 +530,11 @@ pub const ClimatologyProfile = struct {
     }
 
     pub fn interpolateAltitudeForPressureSpline(self: ClimatologyProfile, pressure_hpa: f64) f64 {
+        // ClimatologyProfile.interpolateAltitudeForPressureSpline --------------------------------------------|
+        // Sample altitude by pressure using endpoint-secant spline over log-pressure. Vertical-grid setup     |
+        // uses this for interval placement when enough profile rows are available.                            |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
             return self.interpolateAltitudeForPressure(pressure_hpa);
