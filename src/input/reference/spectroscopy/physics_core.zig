@@ -45,23 +45,6 @@ pub const ComplexProbability = struct {
     wi: f64,
 };
 
-// VoigtProfile ---------------------------------------------------------------------------------------------- |
-// Real and imaginary Voigt profile terms for the scalar weak-line path.                                       |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 16 B (0.016 KiB), align: 8 B                                                                          |
-//                                                                                                             |
-// memory                                                                                                      |
-// [ 0.. 7] real : f64                                                                                         |
-// [ 8..15] imag : f64                                                                                         |
-//                                                                                                             |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// footprint: per instance = 16 B; usually stack returned                                                      |
-pub const VoigtProfile = struct {
-    real: f64,
-    imag: f64,
-};
-
 // WeakLineVoigtState ---------------------------------------------------------------------------------------- |
 // Scalar weak-line Voigt state before conversion into the compact prepared-row form.                          |
 //                                                                                                             |
@@ -95,53 +78,6 @@ pub const WeakLineWavelengthState = struct {
     evaluation_wavenumber_cm1: f64,
     cutoff_grid_index: ?usize,
 };
-
-pub fn clonePreparedStrongLineState(
-    allocator: Types.Allocator,
-    state: anytype,
-) !Types.StrongLinePreparedState {
-    const population_t = try allocator.dupe(f64, state.population_t[0..state.line_count]);
-    errdefer allocator.free(population_t);
-    const dipole_t = try allocator.dupe(f64, state.dipole_t[0..state.line_count]);
-    errdefer allocator.free(dipole_t);
-    const mod_sig_cm1 = try allocator.dupe(f64, state.mod_sig_cm1[0..state.line_count]);
-    errdefer allocator.free(mod_sig_cm1);
-    const half_width_cm1_at_t = try allocator.dupe(f64, state.half_width_cm1_at_t[0..state.line_count]);
-    errdefer allocator.free(half_width_cm1_at_t);
-    const line_mixing_coefficients = try allocator.dupe(f64, state.line_mixing_coefficients[0..state.line_count]);
-
-    return .{
-        .line_count = state.line_count,
-        .sig_moy_cm1 = state.sig_moy_cm1,
-        .population_t = population_t,
-        .dipole_t = dipole_t,
-        .mod_sig_cm1 = mod_sig_cm1,
-        .half_width_cm1_at_t = half_width_cm1_at_t,
-        .line_mixing_coefficients = line_mixing_coefficients,
-    };
-}
-
-pub fn voigtProfile(wavelength_nm: f64, center_nm: f64, doppler_hwhm_nm: f64, lorentz_hwhm_nm: f64) VoigtProfile {
-    const safe_doppler_hwhm_nm = @max(doppler_hwhm_nm, 1.0e-6);
-    const cte = @sqrt(@log(2.0)) / safe_doppler_hwhm_nm;
-    const cte1 = cte / @sqrt(std.math.pi);
-    const cpf = complexProbabilityFunction(
-        (center_nm - wavelength_nm) * cte,
-        @max(lorentz_hwhm_nm, 1.0e-6) * cte,
-    );
-    return .{
-        .real = cte1 * cpf.wr,
-        .imag = cte1 * cpf.wi,
-    };
-}
-
-pub fn linesSortedAscending(lines: []const Types.SpectroscopyLine) bool {
-    if (lines.len < 2) return true;
-    for (lines[0 .. lines.len - 1], lines[1..]) |left, right| {
-        if (left.center_wavelength_nm > right.center_wavelength_nm) return false;
-    }
-    return true;
-}
 
 pub fn lowerBoundLineIndex(lines: []const Types.SpectroscopyLine, wavelength_nm: f64) usize {
     var low: usize = 0;
@@ -508,46 +444,6 @@ pub fn weakLineContributionWithWavelengthState(
         reference_temperature_k,
     );
     const line_sigma = @max(state.prefactor * state.cpf.wr, 0.0);
-    return .{
-        .weak_line_sigma_cm2_per_molecule = line_sigma,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = line_sigma,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = line_sigma,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
-}
-
-pub fn weakLineContributionPrepared(
-    wavelength_state: WeakLineWavelengthState,
-    prepared_line: Types.WeakLinePreparedLineState,
-    safe_temperature: f64,
-    safe_pressure: f64,
-    runtime_controls: Types.SpectroscopyRuntimeControls,
-) Types.SpectroscopyEvaluation {
-    if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) {
-        return .{
-            .weak_line_sigma_cm2_per_molecule = 0.0,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = 0.0,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = 0.0,
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-        };
-    }
-    const cpf = complexProbabilityFunction(
-        (prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1) * prepared_line.cte,
-        prepared_line.line_shape_y,
-    );
-    const stimulated_emission_scale = wavelength_state.evaluation_wavenumber_cm1 *
-        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / safe_temperature));
-    const prefactor = prepared_line.prefactor_base *
-        stimulated_emission_scale *
-        safe_temperature *
-        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
-        safe_pressure /
-        1013.25;
-    const line_sigma = @max(prefactor * cpf.wr, 0.0);
     return .{
         .weak_line_sigma_cm2_per_molecule = line_sigma,
         .strong_line_sigma_cm2_per_molecule = 0.0,
