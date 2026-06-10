@@ -16,14 +16,14 @@ const phase_basis = @import("phase_basis.zig");
 //   matrix.zig      : small dense multiply, q-series, and scale/add kernels.                                 |
 //   phase_basis.zig : Fourier PLM basis rows and Z+/Z- phase-kernel builders.                                |
 //                                                                                                            |
-// why keep it                                                                                                |
-//   Hot LABOS files share the same terms: Mat, Vec, LayerRT, UDField, FourierPlmBasis, and Z rows. One       |
-//   alias map keeps signatures short and makes those names read as one LABOS vocabulary. Removing it would   |
-//   scatter the owner-file split through every transport loop without reducing runtime work.                 |
+// alias contract                                                                                             |
+//   Hot LABOS files share the same terms: Mat, Vec, LayerRT, UDField, FourierPlmBasis, and Z rows. This map  |
+//   keeps those names as one LABOS vocabulary while the owner files stay split by storage, matrix kernels,   |
+//   and phase-basis construction.                                                                            |
 //                                                                                                            |
-// runtime shape                                                                                              |
-//   This is resolved at compile time. It allocates no storage, owns no buffers, dispatches no calls, and has |
-//   no hidden state. The public root facade decides which of these aliases leave the LABOS package.          |
+// memory and runtime                                                                                         |
+//   The aliases are resolved at compile time. This file allocates no storage, owns no buffers, dispatches no |
+//   calls, and has no hidden state. The public root facade decides which aliases leave the LABOS package.    |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const max_gauss = types.max_gauss;
