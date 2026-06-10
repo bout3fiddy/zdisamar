@@ -105,9 +105,9 @@ pub fn configuredForwardInput(
     var has_rtm_quadrature = false;
     if (rtm_config.rtm_controls.integrate_source_function) {
 
-        // The integrated-source route first tries the RTM-native quadrature table. When explicit interval
-        // semantics are active, falling back to coarse source interfaces would silently change the layer
-        // placement, so missing quadrature is rejected below.
+        // The integrated-source route first tries the RTM-native quadrature table. Explicit interval semantics
+        // require RTM-native quadrature because coarse source interfaces use a different vertical placement.
+        // Missing quadrature is rejected below.
         {
 
             // instrumentation: trace zone: RTM quadrature ---------------------------------------------------------------|
@@ -169,8 +169,8 @@ pub fn configuredForwardInput(
     if (rtm_config.rtm_controls.use_spherical_correction) {
 
         // Pseudo-spherical samples are attached only for the geometric-correction route. Explicit shared-grid
-        // cases rebuild the dense wavelength-specific attenuation contract from the RTM subgrid instead of
-        // reusing midpoint-style layer surrogates.
+        // cases rebuild the dense wavelength-specific attenuation contract from the RTM subgrid so attenuation
+        // follows RTM level placement.
         const has_pseudo_spherical_grid = has_grid: {
 
             // instrumentation: trace zone: pseudo-spherical grid --------------------------------------------------------|

@@ -17,8 +17,8 @@ const Trace = @import("../instrumentation/trace.zig");
 //                                                                                                             |
 // public surface                                                                                              |
 //   PreparationInputs and BorrowedProfilePreparation are setup contracts. PreparedLayer, PreparedSublayer,    |
-//   OpticalDepthBreakdown, and PreparedOpticalState are re-exported so callers use one preparation facade     |
-//   instead of importing the state_build file split directly.                                                 |
+//   OpticalDepthBreakdown, and PreparedOpticalState are re-exported through this facade so callers have one   |
+//   preparation entry point for the state_build split.                                                        |
 //                                                                                                             |
 // prepare route                                                                                               |
 //   Scene + PreparationInputs                                                                                 |

@@ -12,7 +12,8 @@ const State = @import("state.zig");
 //   state_optical_depth.zig uses accumulateBreakdown when a wavelength-level scalar total walks prepared      |
 //   layers. forward_layers.zig uses the same accumulator for shared-geometry, reduced-support, sublayer, and  |
 //   ordinary layer routes, then uses layerInputFromEvaluated for rows that go directly into LABOS. Tests in   |
-//   forward_layers_test.zig build expected LayerInput rows through this file instead of repeating the map.    |
+//   forward_layers_test.zig build expected LayerInput rows through this file so the transport-field map stays |
+//   in one implementation.                                                                                    |
 //                                                                                                             |
 // row handoff                                                                                                 |
 //   OpticalDepthBreakdown stores the five prepared optical-depth components: gas absorption, gas scattering,  |
@@ -27,8 +28,8 @@ const State = @import("state.zig");
 //   field list, and the LayerInput conversion only writes fixed-size values.                                  |
 //                                                                                                             |
 // Jacobian boundary                                                                                           |
-//   This file initializes RTM Jacobian lanes to zero because the plain EvaluatedLayer row is a value result,  |
-//   not a derivative carrier. forward_layers.zig attaches aerosol derivative lanes after conversion when the  |
+//   This file initializes RTM Jacobian lanes to zero because plain EvaluatedLayer rows carry optical-depth    |
+//   and phase values only. forward_layers.zig attaches aerosol derivative lanes after conversion when the     |
 //   selected derivative route requests them.                                                                  |
 // ------------------------------------------------------------------------------------------------------------|
 

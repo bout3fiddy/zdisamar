@@ -31,7 +31,7 @@ const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 //   reduced support rows : use existing PreparedSublayer rows and their path_length_cm weights. Boundary     |
 //                          support rows define layer edges, so the active reduction skips first/last rows.   |
 //   Gauss subgrid        : build temporary altitude/weight rows for RTM quadrature and evaluate carriers     |
-//                          at the quadrature altitudes instead of at prepared support rows.                  |
+//                          on those quadrature rows.                                                         |
 //   carrier cache        : reuse WavelengthCarrierCache scalar rows when the caller has already evaluated    |
 //                          this wavelength across support rows.                                              |
 //                                                                                                            |
@@ -41,8 +41,8 @@ const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 //   PseudoSphericalSample      : direct-beam attenuation sample for pseudo-spherical paths.                  |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs inside wavelength and shared-support loops. Strong-line state lookup is centralized so each carrier |
-//   loop pays one bounded optional-slice check instead of repeating the same guard in several places.        |
+//   Runs inside wavelength and shared-support loops. Strong-line state lookup is centralized behind one      |
+//   bounded optional-slice check used by each carrier loop.                                                  |
 //   Pointer/slice views keep 256 B PreparedSublayer rows in PreparedOpticalState-owned storage.              |
 //                                                                                                            |
 // memory                                                                                                     |

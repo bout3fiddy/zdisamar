@@ -11,9 +11,9 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 //   line absorbers for support-row, profile-node, and altitude carrier routes.                                 |
 //                                                                                                              |
 // mapping                                                                                                      |
-//   OperationalCrossSectionLut.sigmaAt becomes weak_line_sigma, line_sigma, and total_sigma. Strong-line and   |
-//   line-mixing fields are zero because the LUT is already the operational cross-section product, not a split  |
-//   HITRAN weak/strong-line decomposition. d_sigma_d_temperature comes from the same LUT.                      |
+//   OperationalCrossSectionLut.sigmaAt fills weak_line_sigma, line_sigma, and total_sigma. Strong-line and     |
+//   line-mixing fields stay zero because the LUT is the complete operational O2 cross-section value for this   |
+//   thermodynamic sample. d_sigma_d_temperature comes from the same LUT.                                       |
 //                                                                                                              |
 // hot path                                                                                                     |
 //   Runs at wavelength time for each O2 operational thermodynamic sample. Keep this as one borrowed-LUT value  |

@@ -18,9 +18,8 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 //   weightedPhaseCoefficient reads one mixed coefficient without materializing the full row                    |
 //                                                                                                              |
 // hot path                                                                                                     |
-//   Carrier and layer-accumulation paths keep mixture weights plus a pointer to prepared aerosol coefficients  |
-//   instead of copying [151]f64 into every layer or carrier row. LABOS materializes coefficients only where    |
-//   its basis and layer math need them.                                                                        |
+//   Carrier and layer-accumulation paths keep mixture weights plus a borrowed pointer to prepared aerosol      |
+//   coefficients. LABOS expands the [151]f64 row only where its basis and layer math consume it.               |
 //                                                                                                              |
 // memory                                                                                                       |
 //   The full phase row is [151]f64. PhaseMixture is a 24 B borrowed view over shared prepared coefficients.    |
