@@ -7,18 +7,34 @@ pub const Matrix = [max_state_count][max_state_count]f64;
 pub const Vector = [max_state_count]f64;
 
 // algebra.zig -----------------------------------------------------------------------------------------------|
-// Tiny fixed-size linear algebra for native optimal estimation.                                              |
+// Fixed-size state-space algebra for native O2 A optimal estimation.                                         |
 //                                                                                                            |
-// caller                                                                                                     |
-//   retrieval.zig uses these helpers inside each OE iteration and prepared-correction solve.                 |
+// called by                                                                                                  |
+//   retrieval.zig is the only product caller. It uses these routines in runPreparedO2ACore,                  |
+//   correctPreparedO2A, and the tiny pressure-profile spline fallback in buildPressureProfile.               |
 //                                                                                                            |
-// shape                                                                                                      |
-//   max_state_count=3 keeps Vector and Matrix as stack values. The routines accept state_count so callers    |
-//   can use the leading 1..3 rows/columns without heap allocation or dynamic matrix storage.                 |
+// state-space storage                                                                                        |
+//   Vector is [3]f64 and Matrix is [3][3]f64. Callers pass state_count and use only the leading rows and     |
+//   columns, so the one-, two-, and three-state retrieval paths share stack storage and avoid allocators.    |
+//                                                                                                            |
+// retrieval math                                                                                             |
+//   accumulateNormalSystem builds G = sqrt(Sa) * Jt * Se^-1 * J * sqrt(Sa) and b = sqrt(Sa) * Jt *           |
+//   Se^-1 * residual. solveStep diagonalizes that symmetric G, solves the Rodgers transformed update in      |
+//   eigenvector space, rotates the step back to physical state space, and later inverts the posterior        |
+//   precision for covariance and averaging-kernel output.                                                    |
+//                                                                                                            |
+// pressure-profile use                                                                                       |
+//   endpointSplineSecondDerivatives reuses Matrix/Vector only when the pressure profile has <=3 samples.     |
+//   Larger profiles take the dynamic tridiagonal path in retrieval.zig so this file stays a tiny solver.     |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   jacobiEigenSymmetric and invertSymmetric run once per OE update. The small fixed arrays keep the loops   |
-//   predictable; readability edits here should not introduce heap storage or generic dynamic containers.     |
+//   jacobiEigenSymmetric runs once per OE iteration. choleskyLowerDiagonal runs once per start, and          |
+//   invertSymmetric runs when output covariance is retained. Keep these as fixed arrays unless               |
+//   max_state_count grows and the benchmark evidence says the small dense shape is no longer right.          |
+//                                                                                                            |
+// numbers                                                                                                    |
+//   eigen_tolerance is the Jacobi off-diagonal stop threshold. invertSymmetric rejects pivots at 1.0e-24.    |
+//   Vector is 24 B and Matrix is 72 B on 64-bit targets; neither carries heap references or padding.         |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn zeroVector() Vector {
