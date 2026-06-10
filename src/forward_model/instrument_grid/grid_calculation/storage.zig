@@ -387,6 +387,67 @@ const JacobianBufferOwners = struct {
     values: *[]f64,
 };
 
+// ForwardResultBufferOwner ----------------------------------------------------------------------------------------------|
+// Mutable owner slot for dense high-resolution forward-result staging rows.                                              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 8 B (0.008 KiB), align: 8 B                                                                                      |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [0..7] values : *[]Types.ForwardIntegratedSample                                                                       |
+//                                                                                                                        |
+// referenced storage: values points at a ProductStorage slice slot; this row owns no backing arrays.                     |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 8 B (0.008 KiB); no out-of-line storage                                                      |
+const ForwardResultBufferOwner = struct {
+    values: *[]Types.ForwardIntegratedSample,
+};
+
+// RetainedPlanOwners ----------------------------------------------------------------------------------------------------|
+// Mutable owner slots for retained wavelength plans and spectral evaluation cache state.                                 |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] evaluation_cache             : *?Cache.SpectralEvaluationCache                                                |
+// [ 8..15] wavelength_sampling          : *Plan.OwnedWavelengthSampling                                                  |
+// [16..23] forward_miss_plan            : *Plan.OwnedForwardMissPlan                                                     |
+// [24..31] profile_spectroscopy_caches  : *[]SpectroscopyState.ProfileNodeSpectroscopyCache                              |
+//                                                                                                                        |
+// referenced storage: every field points at a ProductStorage owner slot; this row owns no backing arrays.                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 32 B (0.031 KiB); no out-of-line storage                                                     |
+const RetainedPlanOwners = struct {
+    evaluation_cache: *?Cache.SpectralEvaluationCache,
+    wavelength_sampling: *Plan.OwnedWavelengthSampling,
+    forward_miss_plan: *Plan.OwnedForwardMissPlan,
+    profile_spectroscopy_caches: *[]SpectroscopyState.ProfileNodeSpectroscopyCache,
+};
+
+// PrefetchPoolOwner -----------------------------------------------------------------------------------------------------|
+// Mutable owner slots for the optional retained forward-prefetch thread pool.                                            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] pool           : *std.Thread.Pool                                                                             |
+// [ 8..15] worker_threads : *usize                                                                                       |
+// [16..23] valid          : *bool                                                                                        |
+//                                                                                                                        |
+// referenced storage: fields point at ProductStorage slots; shared_forward_prefetch_pool is borrowed and not owned.      |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const PrefetchPoolOwner = struct {
+    pool: *std.Thread.Pool,
+    worker_threads: *usize,
+    valid: *bool,
+};
+
 // instrumentation: trace phase timing -----------------------------------------------------------------------------------|
 // captures: coarse product-simulation phase timings for trace-harness JSON summaries                                     |
 // why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones.             |
@@ -535,27 +596,49 @@ pub const ProductStorage = struct {
         // and are not deinitialized here.                                                                                |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        if (self.forward_prefetch_pool_valid) {
-            self.forward_prefetch_pool.deinit();
-        }
-        freeBuffer(allocator, self.wavelengths);
-        freeBuffer(allocator, self.radiance);
-        freeBuffer(allocator, self.irradiance);
-        freeBuffer(allocator, self.reflectance);
-        freeBuffer(allocator, self.scratch);
-        freeBuffer(allocator, self.scratch_aux);
-        freeForwardResultBuffer(allocator, self.forward_results);
-        freeLayerBuffer(allocator, self.layer_inputs);
-        freeSourceInterfaceBuffer(allocator, self.source_interfaces);
-        freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
-        freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
-        freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
-        freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
-        freeBuffer(allocator, self.jacobian);
-        if (self.evaluation_cache) |*cache| cache.deinit();
-        self.wavelength_sampling.deinit(allocator);
-        self.forward_miss_plan.deinit(allocator);
-        allocator.free(self.profile_spectroscopy_caches);
+        const product_buffers = ProductSampleBufferOwners{
+            .wavelengths = &self.wavelengths,
+            .radiance = &self.radiance,
+            .irradiance = &self.irradiance,
+            .reflectance = &self.reflectance,
+            .scratch = &self.scratch,
+            .scratch_aux = &self.scratch_aux,
+        };
+        const transport_buffers = TransportBufferOwners{
+            .layer_inputs = &self.layer_inputs,
+            .source_interfaces = &self.source_interfaces,
+            .rtm_quadrature_levels = &self.rtm_quadrature_levels,
+        };
+        const pseudo_spherical_buffers = PseudoSphericalBufferOwners{
+            .samples = &self.pseudo_spherical_samples,
+            .level_starts = &self.pseudo_spherical_level_starts,
+            .level_altitudes = &self.pseudo_spherical_level_altitudes,
+        };
+        const jacobian_buffers = JacobianBufferOwners{
+            .values = &self.jacobian,
+        };
+        const forward_results = ForwardResultBufferOwner{
+            .values = &self.forward_results,
+        };
+        const retained_plans = RetainedPlanOwners{
+            .evaluation_cache = &self.evaluation_cache,
+            .wavelength_sampling = &self.wavelength_sampling,
+            .forward_miss_plan = &self.forward_miss_plan,
+            .profile_spectroscopy_caches = &self.profile_spectroscopy_caches,
+        };
+        const prefetch_pool = PrefetchPoolOwner{
+            .pool = &self.forward_prefetch_pool,
+            .worker_threads = &self.forward_prefetch_pool_worker_threads,
+            .valid = &self.forward_prefetch_pool_valid,
+        };
+
+        releasePrefetchPool(&prefetch_pool);
+        releaseProductSampleBuffers(allocator, &product_buffers);
+        releaseForwardResults(allocator, &forward_results);
+        releaseTransportBuffers(allocator, &transport_buffers);
+        releasePseudoSphericalBuffers(allocator, &pseudo_spherical_buffers);
+        releaseJacobianBuffers(allocator, &jacobian_buffers);
+        releaseRetainedPlans(allocator, &retained_plans);
         self.* = .{};
     }
 
@@ -897,6 +980,114 @@ fn ensureJacobianBuffers(
         owners.values,
         requirements.sample_count * requirements.active_jacobian_count,
     );
+}
+
+fn releaseProductSampleBuffers(
+    allocator: Allocator,
+    owners: *const ProductSampleBufferOwners,
+) void {
+    // releaseProductSampleBuffers ---------------------------------------------------------------------------------------|
+    // Release sample-sized product rows owned by ProductStorage.                                                         |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    freeBuffer(allocator, owners.wavelengths.*);
+    freeBuffer(allocator, owners.radiance.*);
+    freeBuffer(allocator, owners.irradiance.*);
+    freeBuffer(allocator, owners.reflectance.*);
+    freeBuffer(allocator, owners.scratch.*);
+    freeBuffer(allocator, owners.scratch_aux.*);
+    owners.wavelengths.* = &.{};
+    owners.radiance.* = &.{};
+    owners.irradiance.* = &.{};
+    owners.reflectance.* = &.{};
+    owners.scratch.* = &.{};
+    owners.scratch_aux.* = &.{};
+}
+
+fn releaseForwardResults(
+    allocator: Allocator,
+    owner: *const ForwardResultBufferOwner,
+) void {
+    // releaseForwardResults ---------------------------------------------------------------------------------------------|
+    // Release dense high-resolution forward-result staging rows.                                                         |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    freeForwardResultBuffer(allocator, owner.values.*);
+    owner.values.* = &.{};
+}
+
+fn releaseTransportBuffers(
+    allocator: Allocator,
+    owners: *const TransportBufferOwners,
+) void {
+    // releaseTransportBuffers -------------------------------------------------------------------------------------------|
+    // Release transport-route buffers owned by ProductStorage.                                                           |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    freeLayerBuffer(allocator, owners.layer_inputs.*);
+    freeSourceInterfaceBuffer(allocator, owners.source_interfaces.*);
+    freeRtmQuadratureBuffer(allocator, owners.rtm_quadrature_levels.*);
+    owners.layer_inputs.* = &.{};
+    owners.source_interfaces.* = &.{};
+    owners.rtm_quadrature_levels.* = &.{};
+}
+
+fn releasePseudoSphericalBuffers(
+    allocator: Allocator,
+    owners: *const PseudoSphericalBufferOwners,
+) void {
+    // releasePseudoSphericalBuffers -------------------------------------------------------------------------------------|
+    // Release the geometric-correction support rows as one group.                                                        |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    freePseudoSphericalSampleBuffer(allocator, owners.samples.*);
+    freeIndexBuffer(allocator, owners.level_starts.*);
+    freeBuffer(allocator, owners.level_altitudes.*);
+    owners.samples.* = &.{};
+    owners.level_starts.* = &.{};
+    owners.level_altitudes.* = &.{};
+}
+
+fn releaseJacobianBuffers(
+    allocator: Allocator,
+    owners: *const JacobianBufferOwners,
+) void {
+    // releaseJacobianBuffers --------------------------------------------------------------------------------------------|
+    // Release optional state-major Jacobian output rows.                                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    freeBuffer(allocator, owners.values.*);
+    owners.values.* = &.{};
+}
+
+fn releaseRetainedPlans(
+    allocator: Allocator,
+    owners: *const RetainedPlanOwners,
+) void {
+    // releaseRetainedPlans ----------------------------------------------------------------------------------------------|
+    // Release retained wavelength plans, profile spectroscopy rows, and the reusable irradiance cache.                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (owners.evaluation_cache.*) |*cache| cache.deinit();
+    owners.wavelength_sampling.deinit(allocator);
+    owners.forward_miss_plan.deinit(allocator);
+    allocator.free(owners.profile_spectroscopy_caches.*);
+    owners.evaluation_cache.* = null;
+    owners.wavelength_sampling.* = .{};
+    owners.forward_miss_plan.* = .{};
+    owners.profile_spectroscopy_caches.* = &.{};
+}
+
+fn releasePrefetchPool(owner: *const PrefetchPoolOwner) void {
+    // releasePrefetchPool -----------------------------------------------------------------------------------------------|
+    // Release the retained helper thread pool when ProductStorage owns it. Shared pools are borrowed elsewhere.          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (owner.valid.*) {
+        owner.pool.deinit();
+    }
+    owner.worker_threads.* = 0;
+    owner.valid.* = false;
 }
 
 pub fn transportLayerCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
