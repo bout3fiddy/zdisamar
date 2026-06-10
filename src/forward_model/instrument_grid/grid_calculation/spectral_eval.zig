@@ -45,11 +45,32 @@ pub const preferredForwardWorkerCount = spectral_forward.preferredForwardWorkerC
 
 pub const SpectralEvaluationCache = cache_module.SpectralEvaluationCache;
 
-fn irradianceAtWavelength(
+// IrradianceLookupRequest -----------------------------------------------------------------------------------------------|
+// Borrowed inputs for exact-wavelength solar irradiance lookup and per-run caching.                                      |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene     : *const Scene                                                                                      |
+// [ 8..15] prepared  : *const OpticsPreparation.PreparedOpticalState                                                     |
+// [16..23] safe_span : f64                                                                                               |
+// [24..31] cache     : *SpectralEvaluationCache                                                                          |
+//                                                                                                                        |
+// referenced storage: scene, prepared, and cache are borrowed; the cache owns its retained hash map storage.             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 32 B (0.031 KiB); no out-of-line storage                                                     |
+const IrradianceLookupRequest = struct {
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    wavelength_nm: f64,
     safe_span: f64,
+    cache: *SpectralEvaluationCache,
+};
+
+fn irradianceAtWavelength(
+    request: *const IrradianceLookupRequest,
+    wavelength_nm: f64,
 ) f64 {
     // irradianceAtWavelength --------------------------------------------------------------------------------------------|
     // Resolve solar irradiance at one wavelength through the compatibility helper. prepared and safe_span are            |
@@ -57,9 +78,9 @@ fn irradianceAtWavelength(
     // the integration loop contract.                                                                                     |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    _ = prepared;
-    _ = safe_span;
-    return solar_compat.irradianceAtWavelength(scene, wavelength_nm);
+    _ = request.prepared;
+    _ = request.safe_span;
+    return solar_compat.irradianceAtWavelength(request.scene, wavelength_nm);
 }
 
 pub fn integratePrefetchedForwardAtNominal(
@@ -150,19 +171,22 @@ pub fn integrateIrradianceAtNominal(
     //   instead of LABOS transport.                                                                                      |
     // -------------------------------------------------------------------------------------------------------------------|
 
+    const lookup_request = IrradianceLookupRequest{
+        .scene = scene,
+        .prepared = prepared,
+        .safe_span = safe_span,
+        .cache = cache,
+    };
     if (!integration.enabled()) {
-        return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
+        return cachedIrradianceAtWavelength(&lookup_request, nominal_wavelength_nm);
     }
 
     var irradiance_sum: f64 = 0.0;
     const samples = integration.samples(kernel_storage);
     for (samples.offsets_nm, samples.weights) |offset_nm, weight| {
         irradiance_sum += weight * try cachedIrradianceAtWavelength(
-            scene,
-            prepared,
+            &lookup_request,
             nominal_wavelength_nm + offset_nm,
-            safe_span,
-            cache,
         );
     }
     return irradiance_sum;
@@ -205,11 +229,8 @@ pub fn prefetchForwardSamples(
 }
 
 fn cachedIrradianceAtWavelength(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
+    request: *const IrradianceLookupRequest,
     wavelength_nm: f64,
-    safe_span: f64,
-    cache: *SpectralEvaluationCache,
 ) Error!f64 {
     // cachedIrradianceAtWavelength --------------------------------------------------------------------------------------|
     // Return solar irradiance at one exact wavelength, caching by the f64 bit pattern. Operational DISAMAR               |
@@ -217,18 +238,18 @@ fn cachedIrradianceAtWavelength(
     // -------------------------------------------------------------------------------------------------------------------|
 
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
-    if (cache.irradiance.get(key)) |cached| return cached;
+    if (request.cache.irradiance.get(key)) |cached| return cached;
 
-    const response = scene.observation_model.resolvedChannelControls(.irradiance).response;
-    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    const response = request.scene.observation_model.resolvedChannelControls(.irradiance).response;
+    const operational_band_support = request.scene.observation_model.primaryOperationalBandSupport();
     const value = choose_value: {
         break :choose_value if (response.integration_mode == .disamar_hr_grid and
             operational_band_support.operational_solar_spectrum.enabled())
             operational_band_support.operational_solar_spectrum.interpolateIrradianceWithinBounds(wavelength_nm) orelse
-                irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span)
+                irradianceAtWavelength(request, wavelength_nm)
         else
-            irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+            irradianceAtWavelength(request, wavelength_nm);
     };
-    try cache.irradiance.put(key, value);
+    try request.cache.irradiance.put(key, value);
     return value;
 }
