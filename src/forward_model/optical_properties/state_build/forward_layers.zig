@@ -1,5 +1,6 @@
 const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
+const SpectralGrid = @import("../../../input/Spectrum.zig").SpectralGrid;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
@@ -28,6 +29,7 @@ const centimeters_per_kilometer = 1.0e5;
 //   shared route : reduce cached shared RTM support rows into one LayerInput per transport layer.            |
 //   direct route : evaluate prepared layers or sublayers when shared geometry is not active.                 |
 //   cache route  : reuse ProfileNodeSpectroscopyCache or WavelengthCarrierCache across the wavelength work.  |
+//   scalar view  : copy the few Scene and PreparedOpticalState scalars needed by ForwardInput.               |
 //                                                                                                            |
 // row handoff                                                                                                |
 //   LayerInput is the transport row: optical-depth pieces, Jacobian vectors, mu values, and phase mix.       |
@@ -107,11 +109,83 @@ pub const ForwardLayerCarrierRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------|
 
-fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
+// ForwardInputScalars ---------------------------------------------------------------------------------------|
+// RTM scalar handoff copied out of Scene and PreparedOpticalState before the optical-depth request is built. |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 64 B (0.063 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] wavelength_nm                   : f64                                                             |
+// [ 8..15] spectral_weight                 : f64                                                             |
+// [16..23] air_mass_factor                 : f64                                                             |
+// [24..31] mu0                             : f64                                                             |
+// [32..39] muv                             : f64                                                             |
+// [40..47] relative_azimuth_rad            : f64                                                             |
+// [48..55] surface_albedo                  : f64                                                             |
+// [56..63] fallback_single_scatter_albedo  : f64                                                             |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   No referenced storage. This is a compact value row for the final ForwardInput handoff.                   |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 64 B; stack or caller-owned row                                                  |
+pub const ForwardInputScalars = struct {
+    wavelength_nm: f64,
+    spectral_weight: f64,
+    air_mass_factor: f64,
+    mu0: f64,
+    muv: f64,
+    relative_azimuth_rad: f64,
+    surface_albedo: f64,
+    fallback_single_scatter_albedo: f64,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// ForwardInputOpticalDepthRequest ---------------------------------------------------------------------------|
+// Narrow request for the final optical-depth totals to radiative_transfer.ForwardInput conversion.           |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 120 B (0.117 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 63] scalars        : ForwardInputScalars                                                            |
+// [ 64..103] optical_depths : OpticalDepthBreakdown                                                          |
+// [104..119] layers         : []const LayerInput                                                             |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   layers borrows caller-owned transport rows. scalars and optical_depths are inline value rows.            |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 120 B plus borrowed layer storage                                                |
+pub const ForwardInputOpticalDepthRequest = struct {
+    scalars: ForwardInputScalars,
+    optical_depths: OpticalDepthBreakdown,
+    layers: []const transport_common.LayerInput,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+pub fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
     const transport_dphi_deg = @mod(180.0 - relative_azimuth_deg, 360.0);
 
     // LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
     return std.math.degreesToRadians(transport_dphi_deg);
+}
+
+pub fn forwardInputSpectralWeight(spectral_grid: SpectralGrid) f64 {
+    // forwardInputSpectralWeight ----------------------------------------------------------------------------|
+    // Convert the public nominal wavelength grid into the scalar dlambda value carried by ForwardInput.      |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const span_nm = spectral_grid.end_nm - spectral_grid.start_nm;
+    const spectral_weight = if (spectral_grid.sample_count <= 1)
+        @max(span_nm, 1.0e-6)
+    else
+        span_nm / @as(f64, @floatFromInt(spectral_grid.sample_count - 1));
+
+    return @max(spectral_weight, 1.0e-6);
 }
 
 pub fn toForwardInputWithLayers(
@@ -185,49 +259,53 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
     };
 
     const resolved_layers = if (layer_inputs) |owned_layers| owned_layers else &.{};
-    return forwardInputFromOpticalDepths(
-        prepared,
-        scene,
-        wavelength_nm,
-        optical_depths,
-        resolved_layers,
-    );
+    const input_scalars = ForwardInputScalars{
+        .wavelength_nm = wavelength_nm,
+        .spectral_weight = forwardInputSpectralWeight(scene.spectral_grid),
+        .air_mass_factor = prepared.effective_air_mass_factor,
+        .mu0 = scene.geometry.solarCosineAtAltitude(0.0),
+        .muv = scene.geometry.viewingCosineAtAltitude(0.0),
+        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
+        .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
+        .fallback_single_scatter_albedo = prepared.effective_single_scatter_albedo,
+    };
+    const input_request = ForwardInputOpticalDepthRequest{
+        .scalars = input_scalars,
+        .optical_depths = optical_depths,
+        .layers = resolved_layers,
+    };
+    return forwardInputFromOpticalDepths(&input_request);
 }
 
 pub fn forwardInputFromOpticalDepths(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    optical_depths: OpticalDepthBreakdown,
-    layers: []transport_common.LayerInput,
+    request: *const ForwardInputOpticalDepthRequest,
 ) transport_common.ForwardInput {
-    // forwardInputFromOpticalDepths ------------------------------------------------------------------------ |
-    // Copy scalar optical-depth totals, geometry, surface, spectral weight, and optional layer slice into    |
-    // the RTM public input row. This is the last optical-preparation step before radiative_transfer/root.zig.|
+    // forwardInputFromOpticalDepths -------------------------------------------------------------------------|
+    // Copy scalar optical-depth totals and optional layer rows into the RTM public input row. This is the    |
+    // last optical-preparation step before radiative_transfer/root.zig.                                      |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Consumes a narrow value request: scalar geometry/surface fields, wavelength-local optical depths,    |
+    //   and the borrowed LayerInput slice. It no longer receives full Scene or PreparedOpticalState headers. |
     // -------------------------------------------------------------------------------------------------------|
 
-    const mu0 = scene.geometry.solarCosineAtAltitude(0.0);
-    const muv = scene.geometry.viewingCosineAtAltitude(0.0);
-    const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
-    const spectral_weight = if (scene.spectral_grid.sample_count <= 1)
-        @max(span_nm, 1.0e-6)
-    else
-        span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
+    const optical_depths = request.optical_depths;
+    const scalars = request.scalars;
 
     // Scalar forward input carries tau_ext, omega0, mu0/muv, and spectral quadrature weight dlambda.
     const single_scatter_albedo = if (optical_depths.totalOpticalDepth() > 0.0)
         optical_depths.singleScatterAlbedo()
     else
-        prepared.effective_single_scatter_albedo;
+        scalars.fallback_single_scatter_albedo;
 
     return .{
-        .wavelength_nm = wavelength_nm,
-        .spectral_weight = @max(spectral_weight, 1.0e-6),
-        .air_mass_factor = prepared.effective_air_mass_factor,
-        .mu0 = mu0,
-        .muv = muv,
-        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
-        .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
+        .wavelength_nm = scalars.wavelength_nm,
+        .spectral_weight = scalars.spectral_weight,
+        .air_mass_factor = scalars.air_mass_factor,
+        .mu0 = scalars.mu0,
+        .muv = scalars.muv,
+        .relative_azimuth_rad = scalars.relative_azimuth_rad,
+        .surface_albedo = scalars.surface_albedo,
         .gas_absorption_optical_depth = optical_depths.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = optical_depths.gas_scattering_optical_depth,
         .cia_optical_depth = optical_depths.cia_optical_depth,
@@ -235,7 +313,7 @@ pub fn forwardInputFromOpticalDepths(
         .aerosol_scattering_optical_depth = optical_depths.aerosol_scattering_optical_depth,
         .optical_depth = optical_depths.totalOpticalDepth(),
         .single_scatter_albedo = single_scatter_albedo,
-        .layers = layers,
+        .layers = request.layers,
     };
 }
 

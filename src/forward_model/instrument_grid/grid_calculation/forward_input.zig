@@ -1,3 +1,4 @@
+const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
@@ -145,12 +146,27 @@ pub fn configuredForwardInput(
         );
     };
 
+    const input_scalars = OpticsPreparation.forward_layers.ForwardInputScalars{
+        .wavelength_nm = request.wavelength_nm,
+        .spectral_weight = OpticsPreparation.forward_layers.forwardInputSpectralWeight(
+            request.scene.spectral_grid,
+        ),
+        .air_mass_factor = request.prepared.effective_air_mass_factor,
+        .mu0 = request.scene.geometry.solarCosineAtAltitude(0.0),
+        .muv = request.scene.geometry.viewingCosineAtAltitude(0.0),
+        .relative_azimuth_rad = OpticsPreparation.forward_layers.transportAzimuthDifferenceRad(
+            request.scene.geometry.relative_azimuth_deg,
+        ),
+        .surface_albedo = std.math.clamp(request.scene.surface.albedo, 0.0, 1.0),
+        .fallback_single_scatter_albedo = request.prepared.effective_single_scatter_albedo,
+    };
+    const input_request = OpticsPreparation.forward_layers.ForwardInputOpticalDepthRequest{
+        .scalars = input_scalars,
+        .optical_depths = optical_depths,
+        .layers = scratch.layer_inputs,
+    };
     var input = OpticsPreparation.forward_layers.forwardInputFromOpticalDepths(
-        request.prepared,
-        request.scene,
-        request.wavelength_nm,
-        optical_depths,
-        scratch.layer_inputs,
+        &input_request,
     );
 
     var has_rtm_quadrature = false;
