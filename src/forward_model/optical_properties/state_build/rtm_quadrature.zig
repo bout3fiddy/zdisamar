@@ -35,6 +35,68 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //   fallback quadrature rescales raw weighted k_sca so its sum matches layer scattering optical depth.       |
 // -----------------------------------------------------------------------------------------------------------|
 
+// RtmQuadratureSpectroscopyRequest --------------------------------------------------------------------------|
+// Borrowed inputs and caller-owned output rows for one wavelength RTM quadrature fill without carrier cache. |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 64 B (0.062 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared          : *const PreparedOpticalState                                                   |
+// [ 8..23] layer_inputs      : []const LayerInput                                                            |
+// [24..39] rtm_levels        : []RtmQuadratureLevel                                                          |
+// [40..47] profile_cache     : ?*const ProfileNodeSpectroscopyCache                                          |
+// [48..55] wavelength_nm     : f64                                                                           |
+// [56..56] compute_jacobian  : bool                                                                          |
+// [57..63] padding           : 7 B                                                                           |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared and profile_cache are borrowed. layer_inputs is borrowed; rtm_levels is caller-owned output.    |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 64 B plus borrowed input and caller-owned output storage                         |
+pub const RtmQuadratureSpectroscopyRequest = struct {
+    prepared: *const PreparedOpticalState,
+    layer_inputs: []const transport_common.LayerInput,
+    rtm_levels: []transport_common.RtmQuadratureLevel,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    wavelength_nm: f64,
+    compute_jacobian: bool,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// RtmQuadratureCarrierRequest -------------------------------------------------------------------------------|
+// Borrowed inputs and caller-owned output rows for one wavelength RTM quadrature fill with carrier cache.    |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 64 B (0.062 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared          : *const PreparedOpticalState                                                   |
+// [ 8..23] layer_inputs      : []const LayerInput                                                            |
+// [24..39] rtm_levels        : []RtmQuadratureLevel                                                          |
+// [40..47] wavelength_cache  : *WavelengthCarrierCache                                                       |
+// [48..55] wavelength_nm     : f64                                                                           |
+// [56..56] compute_jacobian  : bool                                                                          |
+// [57..63] padding           : 7 B                                                                           |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared and wavelength_cache are borrowed. layer_inputs is borrowed; rtm_levels is caller-owned output. |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 64 B plus borrowed input and caller-owned output storage                         |
+pub const RtmQuadratureCarrierRequest = struct {
+    prepared: *const PreparedOpticalState,
+    layer_inputs: []const transport_common.LayerInput,
+    rtm_levels: []transport_common.RtmQuadratureLevel,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    wavelength_nm: f64,
+    compute_jacobian: bool,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 fn fillAerosolSourceJacobian(
     self: *const PreparedOpticalState,
     rtm_level: *transport_common.RtmQuadratureLevel,
@@ -135,23 +197,19 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
     rtm_levels: []transport_common.RtmQuadratureLevel,
 ) bool {
     var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
-        self,
-        wavelength_nm,
-        layer_inputs,
-        rtm_levels,
-        &profile_cache,
-        true,
-    );
+    const request = RtmQuadratureSpectroscopyRequest{
+        .prepared = self,
+        .layer_inputs = layer_inputs,
+        .rtm_levels = rtm_levels,
+        .profile_cache = &profile_cache,
+        .wavelength_nm = wavelength_nm,
+        .compute_jacobian = true,
+    };
+    return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(&request);
 }
 
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []const transport_common.LayerInput,
-    rtm_levels: []transport_common.RtmQuadratureLevel,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    compute_jacobian: bool,
+    request: *const RtmQuadratureSpectroscopyRequest,
 ) bool {
     // fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache -------------------------------------------|
     // Fill RTM quadrature levels when only the profile spectroscopy cache is available.                      |
@@ -178,25 +236,25 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     //   fillAerosolSourceJacobian                                                                            |
     // -------------------------------------------------------------------------------------------------------|
 
-    const sublayers = self.sublayers orelse return false;
-    if (rtm_levels.len != layer_inputs.len + 1) return false;
+    const sublayers = request.prepared.sublayers orelse return false;
+    if (request.rtm_levels.len != request.layer_inputs.len + 1) return false;
 
-    if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
-        if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
-            for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
+    if (shared_geometry.usesSharedRtmGrid(request.prepared, request.layer_inputs.len)) {
+        if (shared_geometry.cachedSharedRtmGeometry(request.prepared, request.layer_inputs.len)) |geometry| {
+            for (request.rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
                 carrier_eval.fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
-                    self,
-                    wavelength_nm,
+                    request.prepared,
+                    request.wavelength_nm,
                     sublayers,
-                    if (self.strong_line_states) |states| states else null,
+                    if (request.prepared.strong_line_states) |states| states else null,
                     level_geometry,
-                    profile_cache,
+                    request.profile_cache,
                     rtm_level,
-                    compute_jacobian,
+                    request.compute_jacobian,
                 );
-                if (compute_jacobian) {
+                if (request.compute_jacobian) {
                     fillAerosolSourceJacobian(
-                        self,
+                        request.prepared,
                         rtm_level,
                         rtm_level.aerosol_ksca_above_per_km,
                     );
@@ -207,7 +265,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             // carrier sampled at that coarse RTM level. This route does not renormalize the source
             // quadrature back to the sublayer-integrated layer scattering totals.
             var has_active_quadrature = false;
-            for (rtm_levels) |*rtm_level| {
+            for (request.rtm_levels) |*rtm_level| {
                 if (rtm_level.weightedScattering() > 0.0) {
                     has_active_quadrature = true;
                     break;
@@ -216,7 +274,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             return has_active_quadrature;
         }
 
-        for (rtm_levels) |*rtm_level| {
+        for (request.rtm_levels) |*rtm_level| {
             rtm_level.* = .{
                 .altitude_km = 0.0,
                 .weight = 0.0,
@@ -226,10 +284,10 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
         return false;
     }
 
-    if (layer_inputs.len != sublayers.len) return false;
+    if (request.layer_inputs.len != sublayers.len) return false;
 
-    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
-    for (rtm_levels, 0..) |*rtm_level, level| {
+    const rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(request.wavelength_nm);
+    for (request.rtm_levels, 0..) |*rtm_level, level| {
         rtm_level.* = .{
             .altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, level),
             .weight = 0.0,
@@ -239,26 +297,26 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     }
 
     var has_active_quadrature = false;
-    const layers: []const State.PreparedLayer = self.layers;
+    const layers: []const State.PreparedLayer = request.prepared.layers;
     for (layers) |*layer| {
         const start: usize = @intCast(layer.sublayer_start_index);
         const count: usize = @intCast(layer.sublayer_count);
         if (count == 0) continue;
         const stop = start + count;
-        if (stop >= rtm_levels.len) return false;
+        if (stop >= request.rtm_levels.len) return false;
 
         const active_count = if (count > 0) count - 1 else 0;
         if (active_count == 0) continue;
         const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
-        const lower_altitude_km = rtm_levels[start].altitude_km;
-        const upper_altitude_km = rtm_levels[stop].altitude_km;
+        const lower_altitude_km = request.rtm_levels[start].altitude_km;
+        const upper_altitude_km = request.rtm_levels[stop].altitude_km;
         const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
 
         var total_span_km: f64 = 0.0;
         var total_scattering: f64 = 0.0;
         for (start..stop) |row| {
             total_span_km += @max(sublayers[row].path_length_cm / 1.0e5, 0.0);
-            total_scattering += @max(layer_inputs[row].scattering_optical_depth, 0.0);
+            total_scattering += @max(request.layer_inputs[row].scattering_optical_depth, 0.0);
         }
         if (total_span_km <= 0.0) continue;
 
@@ -268,36 +326,36 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
             const node_altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
             const carrier = carrier_eval.quadratureCarrierAtAltitudeWithSpectroscopyCache(
-                self,
-                wavelength_nm,
+                request.prepared,
+                request.wavelength_nm,
                 sublayers[start..stop],
-                if (self.strong_line_states) |states| states[start..stop] else null,
+                if (request.prepared.strong_line_states) |states| states[start..stop] else null,
                 node_altitude_km,
-                profile_cache,
+                request.profile_cache,
             );
-            rtm_levels[level].altitude_km = node_altitude_km;
-            rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;
-            rtm_levels[level].ksca = carrier.ksca;
-            rtm_levels[level].aerosol_ksca_above_per_km = carrier.aerosol_scattering_optical_depth_per_km;
-            rtm_levels[level].aerosol_ksca_below_per_km = rtm_levels[level].aerosol_ksca_above_per_km;
-            rtm_levels[level].setPhaseMixture(
+            request.rtm_levels[level].altitude_km = node_altitude_km;
+            request.rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;
+            request.rtm_levels[level].ksca = carrier.ksca;
+            request.rtm_levels[level].aerosol_ksca_above_per_km = carrier.aerosol_scattering_optical_depth_per_km;
+            request.rtm_levels[level].aerosol_ksca_below_per_km = request.rtm_levels[level].aerosol_ksca_above_per_km;
+            request.rtm_levels[level].setPhaseMixture(
                 rayleigh_phase_coefficient2,
                 carrier.gas_scattering_optical_depth_per_km,
                 carrier.aerosol_scattering_optical_depth_per_km,
             );
-            if (compute_jacobian) {
+            if (request.compute_jacobian) {
                 fillAerosolSourceJacobian(
-                    self,
-                    &rtm_levels[level],
+                    request.prepared,
+                    &request.rtm_levels[level],
                     carrier.aerosol_scattering_optical_depth_per_km,
                 );
             }
-            raw_scattering_sum += rtm_levels[level].weightedScattering();
+            raw_scattering_sum += request.rtm_levels[level].weightedScattering();
         }
 
         if (total_scattering <= 0.0) {
             for (start + 1..stop) |level| {
-                rtm_levels[level].ksca = 0.0;
+                request.rtm_levels[level].ksca = 0.0;
             }
             continue;
         }
@@ -305,16 +363,16 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
         if (raw_scattering_sum > 0.0) {
             const scale = total_scattering / raw_scattering_sum;
             for (start + 1..stop) |level| {
-                rtm_levels[level].ksca *= scale;
-                rtm_levels[level].aerosol_ksca_above_per_km *= scale;
-                rtm_levels[level].aerosol_ksca_below_per_km *= scale;
-                if (compute_jacobian) rtm_levels[level].aerosol_ksca_jacobian *= scale;
+                request.rtm_levels[level].ksca *= scale;
+                request.rtm_levels[level].aerosol_ksca_above_per_km *= scale;
+                request.rtm_levels[level].aerosol_ksca_below_per_km *= scale;
+                if (request.compute_jacobian) request.rtm_levels[level].aerosol_ksca_jacobian *= scale;
             }
             has_active_quadrature = true;
         } else {
             for (start + 1..stop) |level| {
-                rtm_levels[level].weight = 0.0;
-                rtm_levels[level].ksca = 0.0;
+                request.rtm_levels[level].weight = 0.0;
+                request.rtm_levels[level].ksca = 0.0;
             }
         }
     }
@@ -323,12 +381,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 }
 
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []const transport_common.LayerInput,
-    rtm_levels: []transport_common.RtmQuadratureLevel,
-    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
-    compute_jacobian: bool,
+    request: *const RtmQuadratureCarrierRequest,
 ) bool {
     // fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache ------------------------------------------------|
     // Fill RTM quadrature levels for a cached wavelength solve.                                              |
@@ -347,22 +400,26 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     // fillSharedAerosolSourceJacobianFromLayers                                                              |
     // -------------------------------------------------------------------------------------------------------|
 
-    const sublayers = self.sublayers orelse return false;
-    if (rtm_levels.len != layer_inputs.len + 1) return false;
+    const sublayers = request.prepared.sublayers orelse return false;
+    if (request.rtm_levels.len != request.layer_inputs.len + 1) return false;
 
-    if (!shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
-        return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
-            self,
-            wavelength_nm,
-            layer_inputs,
-            rtm_levels,
-            wavelength_cache.profile_cache,
-            compute_jacobian,
-        );
+    if (!shared_geometry.usesSharedRtmGrid(request.prepared, request.layer_inputs.len)) {
+        const spectroscopy_request = RtmQuadratureSpectroscopyRequest{
+            .prepared = request.prepared,
+            .layer_inputs = request.layer_inputs,
+            .rtm_levels = request.rtm_levels,
+            .profile_cache = request.wavelength_cache.profile_cache,
+            .wavelength_nm = request.wavelength_nm,
+            .compute_jacobian = request.compute_jacobian,
+        };
+        return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(&spectroscopy_request);
     }
 
-    const geometry = shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len) orelse {
-        for (rtm_levels) |*rtm_level| {
+    const geometry = shared_geometry.cachedSharedRtmGeometry(
+        request.prepared,
+        request.layer_inputs.len,
+    ) orelse {
+        for (request.rtm_levels) |*rtm_level| {
             rtm_level.* = .{
                 .altitude_km = 0.0,
                 .weight = 0.0,
@@ -372,29 +429,35 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
         return false;
     };
 
-    for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
+    for (request.rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
         carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache(
-            self,
-            wavelength_nm,
+            request.prepared,
+            request.wavelength_nm,
             sublayers,
-            if (self.strong_line_states) |states| states else null,
+            if (request.prepared.strong_line_states) |states| states else null,
             level_geometry,
-            wavelength_cache,
+            request.wavelength_cache,
             rtm_level,
-            compute_jacobian,
+            request.compute_jacobian,
         );
-        if (compute_jacobian) {
+        if (request.compute_jacobian) {
             fillAerosolSourceJacobian(
-                self,
+                request.prepared,
                 rtm_level,
                 rtm_level.aerosol_ksca_above_per_km,
             );
         }
     }
-    if (compute_jacobian) fillSharedAerosolSourceJacobianFromLayers(self, layer_inputs, rtm_levels);
+    if (request.compute_jacobian) {
+        fillSharedAerosolSourceJacobianFromLayers(
+            request.prepared,
+            request.layer_inputs,
+            request.rtm_levels,
+        );
+    }
 
     var has_active_quadrature = false;
-    for (rtm_levels) |*rtm_level| {
+    for (request.rtm_levels) |*rtm_level| {
         if (rtm_level.weightedScattering() > 0.0) {
             has_active_quadrature = true;
             break;

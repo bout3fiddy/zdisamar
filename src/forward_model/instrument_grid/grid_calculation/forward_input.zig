@@ -165,16 +165,18 @@ pub fn configuredForwardInput(
             defer zone.end();
             // end instrumentation: trace zone: RTM quadrature -----------------------------------------------------------|
 
-            const fill_rtm_quadrature =
-                OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache;
-            has_rtm_quadrature = fill_rtm_quadrature(
-                request.prepared,
-                request.wavelength_nm,
-                input.layers,
-                scratch.rtm_quadrature_levels[0 .. input.layers.len + 1],
-                &wavelength_cache,
-                compute_jacobian,
-            );
+            const rtm_quadrature_request = OpticsPreparation.rtm_quadrature.RtmQuadratureCarrierRequest{
+                .prepared = request.prepared,
+                .layer_inputs = input.layers,
+                .rtm_levels = scratch.rtm_quadrature_levels[0 .. input.layers.len + 1],
+                .wavelength_cache = &wavelength_cache,
+                .wavelength_nm = request.wavelength_nm,
+                .compute_jacobian = compute_jacobian,
+            };
+            has_rtm_quadrature =
+                OpticsPreparation.rtm_quadrature.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
+                    &rtm_quadrature_request,
+                );
         }
 
         if (has_rtm_quadrature) {
