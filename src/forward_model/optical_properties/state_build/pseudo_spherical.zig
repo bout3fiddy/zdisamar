@@ -59,6 +59,74 @@ const PseudoSphericalInterval = struct {
 };
 // -----------------------------------------------------------------------------------------------------------|
 
+// PseudoSphericalSpectroscopyRequest ------------------------------------------------------------------------|
+// Borrowed input and caller-owned output rows for one wavelength pseudo-spherical fill without carrier cache.|
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 88 B (0.086 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared            : *const PreparedOpticalState                                                 |
+// [ 8..15] scene               : *const Scene                                                                |
+// [16..31] attenuation_samples : []PseudoSphericalSample                                                     |
+// [32..47] level_sample_starts : []usize                                                                     |
+// [48..63] level_altitudes_km  : []f64                                                                       |
+// [64..71] profile_cache       : ?*const ProfileNodeSpectroscopyCache                                        |
+// [72..79] wavelength_nm       : f64                                                                         |
+// [80..87] solver_layer_count  : usize                                                                       |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, and profile_cache are borrowed. Output slices are caller-owned worker scratch rows.     |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 88 B plus borrowed input and caller-owned output storage                         |
+pub const PseudoSphericalSpectroscopyRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    level_sample_starts: []usize,
+    level_altitudes_km: []f64,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    wavelength_nm: f64,
+    solver_layer_count: usize,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// PseudoSphericalCarrierRequest -----------------------------------------------------------------------------|
+// Borrowed input and caller-owned output rows for one wavelength pseudo-spherical fill with carrier cache.   |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 88 B (0.086 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared            : *const PreparedOpticalState                                                 |
+// [ 8..15] scene               : *const Scene                                                                |
+// [16..31] attenuation_samples : []PseudoSphericalSample                                                     |
+// [32..47] level_sample_starts : []usize                                                                     |
+// [48..63] level_altitudes_km  : []f64                                                                       |
+// [64..71] wavelength_cache    : *WavelengthCarrierCache                                                     |
+// [72..79] wavelength_nm       : f64                                                                         |
+// [80..87] solver_layer_count  : usize                                                                       |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, and wavelength_cache are borrowed. Output slices are caller-owned worker scratch rows.  |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 88 B plus borrowed input and caller-owned output storage                         |
+pub const PseudoSphericalCarrierRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    level_sample_starts: []usize,
+    level_altitudes_km: []f64,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    wavelength_nm: f64,
+    solver_layer_count: usize,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -149,27 +217,21 @@ pub fn fillPseudoSphericalGridAtWavelength(
     level_altitudes_km: []f64,
 ) bool {
     var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        solver_layer_count,
-        attenuation_samples,
-        level_sample_starts,
-        level_altitudes_km,
-        &profile_cache,
-    );
+    const request = PseudoSphericalSpectroscopyRequest{
+        .prepared = self,
+        .scene = scene,
+        .attenuation_samples = attenuation_samples,
+        .level_sample_starts = level_sample_starts,
+        .level_altitudes_km = level_altitudes_km,
+        .profile_cache = &profile_cache,
+        .wavelength_nm = wavelength_nm,
+        .solver_layer_count = solver_layer_count,
+    };
+    return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(&request);
 }
 
 pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    solver_layer_count: usize,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    level_sample_starts: []usize,
-    level_altitudes_km: []f64,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    request: *const PseudoSphericalSpectroscopyRequest,
 ) bool {
     // fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache --------------------------------------------- |
     // Build pseudo-spherical attenuation samples without a wavelength carrier cache.                         |
@@ -187,73 +249,74 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     // carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache                                       |
     // -------------------------------------------------------------------------------------------------------|
 
-    const sublayers = self.sublayers orelse return false;
-    const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
-    const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
-        level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
+    const sublayers = request.prepared.sublayers orelse return false;
+    const subgrid_divisions = @max(@as(usize, request.scene.atmosphere.sublayer_divisions), 1);
+    const sample_count = request.solver_layer_count * subgrid_divisions;
+    if (request.attenuation_samples.len < sample_count or
+        request.level_sample_starts.len != request.solver_layer_count + 1 or
+        request.level_altitudes_km.len != request.solver_layer_count + 1)
     {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    if (request.solver_layer_count != sublayers.len and request.solver_layer_count != request.prepared.layers.len) {
         return false;
     }
-    if (shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
-        if (shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count)) |geometry| {
-            for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
+    if (shared_geometry.usesSharedRtmGrid(request.prepared, request.solver_layer_count)) {
+        if (shared_geometry.cachedSharedRtmGeometry(request.prepared, request.solver_layer_count)) |geometry| {
+            for (request.level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
                 altitude_km.* = level_geometry.altitude_km;
             }
 
             var sample_index: usize = 0;
             for (geometry.layers, 0..) |layer_geometry, layer_index| {
-                level_sample_starts[layer_index] = sample_index;
+                request.level_sample_starts[layer_index] = sample_index;
                 const support_start_index: usize = @intCast(layer_geometry.support_start_index);
                 const support_count: usize = @intCast(layer_geometry.support_count);
                 const support = shared_geometry.sharedSupportSlices(
-                    self,
+                    request.prepared,
                     sublayers,
                     support_start_index,
                     support_count,
                 );
                 sample_index = shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRows(
-                    self,
-                    wavelength_nm,
+                    request.prepared,
+                    request.wavelength_nm,
                     support.sublayers,
                     support.strong_line_states,
-                    attenuation_samples,
+                    request.attenuation_samples,
                     sample_index,
-                    profile_cache,
+                    request.profile_cache,
                 );
             }
 
-            level_sample_starts[solver_layer_count] = sample_index;
+            request.level_sample_starts[request.solver_layer_count] = sample_index;
             return true;
         }
         return false;
     }
 
     var sample_index: usize = 0;
-    if (solver_layer_count == sublayers.len) {
-        level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
-        for (1..solver_layer_count + 1) |ilevel| {
-            level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, ilevel);
+    if (request.solver_layer_count == sublayers.len) {
+        request.level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
+        for (1..request.solver_layer_count + 1) |ilevel| {
+            request.level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, ilevel);
         }
     } else {
-        level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
-        for (1..solver_layer_count) |ilevel| {
-            const layer = &self.layers[ilevel];
+        request.level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
+        for (1..request.solver_layer_count) |ilevel| {
+            const layer = &request.prepared.layers[ilevel];
             const start_index: usize = @intCast(layer.sublayer_start_index);
-            level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, start_index);
+            request.level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, start_index);
         }
-        level_altitudes_km[solver_layer_count] = shared_geometry.levelAltitudeFromSublayers(sublayers, sublayers.len);
+        request.level_altitudes_km[request.solver_layer_count] =
+            shared_geometry.levelAltitudeFromSublayers(sublayers, sublayers.len);
     }
 
-    for (0..solver_layer_count) |solver_level| {
+    for (0..request.solver_layer_count) |solver_level| {
         const interval = choose_interval: {
-            if (solver_layer_count == sublayers.len) {
-                const strong_line_state = if (self.strong_line_states) |states|
+            if (request.solver_layer_count == sublayers.len) {
+                const strong_line_state = if (request.prepared.strong_line_states) |states|
                     states[solver_level .. solver_level + 1]
                 else
                     null;
@@ -266,13 +329,13 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                 };
             }
 
-            const layer = &self.layers[solver_level];
+            const layer = &request.prepared.layers[solver_level];
             const start: usize = @intCast(layer.sublayer_start_index);
             const count: usize = @intCast(layer.sublayer_count);
             if (count == 0) return false;
 
             const stop = start + count;
-            const strong_line_state = if (self.strong_line_states) |states|
+            const strong_line_state = if (request.prepared.strong_line_states) |states|
                 states[start..stop]
             else
                 null;
@@ -287,25 +350,25 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
         const altitude_span_km = @max(interval.upper_altitude_km - interval.lower_altitude_km, 0.0);
         const active_count = subgrid_divisions - 1;
 
-        level_sample_starts[solver_level] = sample_index;
+        request.level_sample_starts[solver_level] = sample_index;
         if (active_count == 0) {
             const sample_altitude_km = if (altitude_span_km > 0.0)
                 interval.lower_altitude_km + 0.5 * altitude_span_km
             else
                 interval.lower_altitude_km;
             const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
-                .prepared = self,
+                .prepared = request.prepared,
                 .support_sublayers = interval.support_sublayers,
                 .strong_line_states = interval.strong_line_states,
-                .profile_cache = profile_cache,
-                .wavelength_nm = wavelength_nm,
+                .profile_cache = request.profile_cache,
+                .wavelength_nm = request.wavelength_nm,
                 .altitude_km = sample_altitude_km,
             };
             const optical_depth =
                 carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
                     &altitude_request,
                 ).totalOpticalDepthPerKm() * altitude_span_km;
-            attenuation_samples[sample_index] = .{
+            request.attenuation_samples[sample_index] = .{
                 .altitude_km = sample_altitude_km,
                 .thickness_km = altitude_span_km,
                 .optical_depth = optical_depth,
@@ -314,7 +377,7 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             continue;
         }
 
-        attenuation_samples[sample_index] = .{
+        request.attenuation_samples[sample_index] = .{
             .altitude_km = interval.lower_altitude_km,
             .thickness_km = 0.0,
             .optical_depth = 0.0,
@@ -323,7 +386,7 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
 
         if (altitude_span_km <= 0.0) {
             for (0..active_count) |_| {
-                attenuation_samples[sample_index] = .{
+                request.attenuation_samples[sample_index] = .{
                     .altitude_km = interval.lower_altitude_km,
                     .thickness_km = 0.0,
                     .optical_depth = 0.0,
@@ -339,18 +402,18 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             const node_altitude_km = interval.lower_altitude_km + normalized_position * altitude_span_km;
             const weight_km = 0.5 * rule.weights[node_index] * altitude_span_km;
             const altitude_request = carrier_eval.SharedAltitudeCarrierRequest{
-                .prepared = self,
+                .prepared = request.prepared,
                 .support_sublayers = interval.support_sublayers,
                 .strong_line_states = interval.strong_line_states,
-                .profile_cache = profile_cache,
-                .wavelength_nm = wavelength_nm,
+                .profile_cache = request.profile_cache,
+                .wavelength_nm = request.wavelength_nm,
                 .altitude_km = node_altitude_km,
             };
             const optical_depth =
                 carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
                     &altitude_request,
                 ).totalOpticalDepthPerKm() * weight_km;
-            attenuation_samples[sample_index] = .{
+            request.attenuation_samples[sample_index] = .{
                 .altitude_km = node_altitude_km,
                 .thickness_km = weight_km,
                 .optical_depth = optical_depth,
@@ -359,19 +422,12 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
         }
     }
 
-    level_sample_starts[solver_layer_count] = sample_index;
+    request.level_sample_starts[request.solver_layer_count] = sample_index;
     return true;
 }
 
 pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    solver_layer_count: usize,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    level_sample_starts: []usize,
-    level_altitudes_km: []f64,
-    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+    request: *const PseudoSphericalCarrierRequest,
 ) bool {
     // fillPseudoSphericalGridAtWavelengthWithCarrierCache ---------------------------------------------------|
     // Build pseudo-spherical attenuation samples for a cached wavelength solve.                              |
@@ -387,59 +443,63 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     // fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache fallback                                      |
     // -------------------------------------------------------------------------------------------------------|
 
-    const sublayers = self.sublayers orelse return false;
-    const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
-    const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
-        level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
+    const sublayers = request.prepared.sublayers orelse return false;
+    const subgrid_divisions = @max(@as(usize, request.scene.atmosphere.sublayer_divisions), 1);
+    const sample_count = request.solver_layer_count * subgrid_divisions;
+    if (request.attenuation_samples.len < sample_count or
+        request.level_sample_starts.len != request.solver_layer_count + 1 or
+        request.level_altitudes_km.len != request.solver_layer_count + 1)
     {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    if (request.solver_layer_count != sublayers.len and request.solver_layer_count != request.prepared.layers.len) {
         return false;
     }
-    if (!shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
-        return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
-            self,
-            scene,
-            wavelength_nm,
-            solver_layer_count,
-            attenuation_samples,
-            level_sample_starts,
-            level_altitudes_km,
-            wavelength_cache.profile_cache,
-        );
+    if (!shared_geometry.usesSharedRtmGrid(request.prepared, request.solver_layer_count)) {
+        const spectroscopy_request = PseudoSphericalSpectroscopyRequest{
+            .prepared = request.prepared,
+            .scene = request.scene,
+            .attenuation_samples = request.attenuation_samples,
+            .level_sample_starts = request.level_sample_starts,
+            .level_altitudes_km = request.level_altitudes_km,
+            .profile_cache = request.wavelength_cache.profile_cache,
+            .wavelength_nm = request.wavelength_nm,
+            .solver_layer_count = request.solver_layer_count,
+        };
+        return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(&spectroscopy_request);
     }
 
-    const geometry = shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count) orelse return false;
-    for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
+    const geometry = shared_geometry.cachedSharedRtmGeometry(
+        request.prepared,
+        request.solver_layer_count,
+    ) orelse return false;
+    for (request.level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
         altitude_km.* = level_geometry.altitude_km;
     }
 
     var sample_index: usize = 0;
     for (geometry.layers, 0..) |layer_geometry, layer_index| {
-        level_sample_starts[layer_index] = sample_index;
+        request.level_sample_starts[layer_index] = sample_index;
         const support_start_index: usize = @intCast(layer_geometry.support_start_index);
         const support_count: usize = @intCast(layer_geometry.support_count);
         const support = shared_geometry.sharedSupportSlices(
-            self,
+            request.prepared,
             sublayers,
             support_start_index,
             support_count,
         );
         sample_index = shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
-            self,
-            wavelength_nm,
+            request.prepared,
+            request.wavelength_nm,
             support.sublayers,
             support.strong_line_states,
-            attenuation_samples,
+            request.attenuation_samples,
             sample_index,
-            wavelength_cache,
+            request.wavelength_cache,
         );
     }
 
-    level_sample_starts[solver_layer_count] = sample_index;
+    request.level_sample_starts[request.solver_layer_count] = sample_index;
     return true;
 }

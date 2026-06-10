@@ -228,15 +228,18 @@ pub fn configuredForwardInput(
             defer zone.end();
             // end instrumentation: trace zone: pseudo-spherical grid ----------------------------------------------------|
 
+            const pseudo_spherical_request = OpticsPreparation.pseudo_spherical.PseudoSphericalCarrierRequest{
+                .prepared = request.prepared,
+                .scene = request.scene,
+                .attenuation_samples = scratch.pseudo_spherical_samples,
+                .level_sample_starts = scratch.pseudo_spherical_level_starts,
+                .level_altitudes_km = scratch.pseudo_spherical_level_altitudes,
+                .wavelength_cache = &wavelength_cache,
+                .wavelength_nm = request.wavelength_nm,
+                .solver_layer_count = input.layers.len,
+            };
             break :has_grid OpticsPreparation.pseudo_spherical.fillPseudoSphericalGridAtWavelengthWithCarrierCache(
-                request.prepared,
-                request.scene,
-                request.wavelength_nm,
-                input.layers.len,
-                scratch.pseudo_spherical_samples,
-                scratch.pseudo_spherical_level_starts,
-                scratch.pseudo_spherical_level_altitudes,
-                &wavelength_cache,
+                &pseudo_spherical_request,
             );
         };
 
