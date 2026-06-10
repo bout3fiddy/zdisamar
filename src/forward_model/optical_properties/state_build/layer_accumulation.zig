@@ -3,11 +3,13 @@ const AerosolModel = @import("../../../input/Aerosol.zig");
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
+const Scene = @import("../../../input/Scene.zig").Scene;
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const LayerSpectroscopy = @import("layer_spectroscopy.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
+const VerticalGrid = @import("vertical_grid.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Trace = @import("../../instrumentation/trace.zig");
@@ -627,10 +629,16 @@ pub fn populate(
     //   phase rows use HG(g) before gas/aerosol mixing                                                           |
     // ---------------------------------------------------------------------------------------------------------  |
 
+    const scene = context.scene;
+    const midpoint_nm = context.midpoint_nm;
+    const layers = context.layers;
+    const sublayers = context.sublayers;
+    const disamar_support_grid = usesDisamarParitySupportGrid(scene);
+
     var totals: LayerAccumulation = .{
         .base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(
-            context.scene,
-            context.midpoint_nm,
+            scene,
+            midpoint_nm,
         ),
     };
 
@@ -642,7 +650,7 @@ pub fn populate(
     var profile_spectroscopy_cache = try LayerSpectroscopy.ProfileSpectroscopyCache.init(
         context,
         absorbers,
-        context.midpoint_nm,
+        midpoint_nm,
     );
     const profile_spectroscopy_cache_ptr = if (profile_spectroscopy_cache.node_count != 0)
         &profile_spectroscopy_cache
@@ -657,9 +665,9 @@ pub fn populate(
         .aerosol_sublayers = aerosol_sublayers,
     };
 
-    if (usesDisamarParitySupportGrid(context)) {
-        seedParitySupportRowLayerIndices(context);
-        if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
+    if (disamar_support_grid) {
+        seedParitySupportRowLayerIndices(layers, sublayers);
+        if (canParallelPopulateParitySupportRows(sublayers.len, absorbers, profile_spectroscopy_cache_ptr)) {
             const parity_totals = try populateParitySupportRowsParallel(
                 allocator,
                 &accumulation_request,
@@ -672,9 +680,11 @@ pub fn populate(
             );
             mergeLayerAccumulationTotals(&totals, parity_totals);
         }
-        for (context.layers, 0..) |*layer, index| {
+        for (layers, 0..) |*layer, index| {
             reduceParityLayer(
-                context,
+                scene,
+                &context.vertical_grid,
+                sublayers,
                 layer,
                 index,
             );
@@ -682,7 +692,7 @@ pub fn populate(
         return totals;
     }
 
-    for (context.layers, 0..) |*layer, index| {
+    for (layers, 0..) |*layer, index| {
         const layer_totals = try populateLayer(
             allocator,
             &accumulation_request,
@@ -1096,11 +1106,11 @@ fn populateParitySupportRow(
 }
 
 fn canParallelPopulateParitySupportRows(
-    context: *const Context,
+    row_count: usize,
     absorbers: *const Absorbers.AbsorberBuildState,
     profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
 ) bool {
-    return context.sublayers.len >= min_parallel_parity_support_row_count and
+    return row_count >= min_parallel_parity_support_row_count and
         profile_spectroscopy_cache != null and
         absorbers.owned_cross_section_absorbers.len == 0 and
         absorbers.owned_line_absorbers.len == 0 and
@@ -1111,18 +1121,21 @@ fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
     return work_partition.preferredWorkerCount(row_count, min_parallel_parity_support_row_count);
 }
 
-fn seedParitySupportRowLayerIndices(context: *Context) void {
-    if (context.layers.len == 0) return;
+fn seedParitySupportRowLayerIndices(
+    layers: []const State.PreparedLayer,
+    sublayers: []State.PreparedSublayer,
+) void {
+    if (layers.len == 0) return;
     var layer_index: usize = 0;
-    for (0..context.sublayers.len) |write_index| {
-        while (layer_index + 1 < context.layers.len and
-            write_index >= @as(usize, @intCast(context.layers[layer_index + 1].sublayer_start_index)))
+    for (0..sublayers.len) |write_index| {
+        while (layer_index + 1 < layers.len and
+            write_index >= @as(usize, @intCast(layers[layer_index + 1].sublayer_start_index)))
         {
             layer_index += 1;
         }
-        const layer_start_index = @as(usize, @intCast(context.layers[layer_index].sublayer_start_index));
-        context.sublayers[write_index].parent_layer_index = @intCast(layer_index);
-        context.sublayers[write_index].sublayer_index = @intCast(if (write_index >= layer_start_index)
+        const layer_start_index = @as(usize, @intCast(layers[layer_index].sublayer_start_index));
+        sublayers[write_index].parent_layer_index = @intCast(layer_index);
+        sublayers[write_index].sublayer_index = @intCast(if (write_index >= layer_start_index)
             write_index - layer_start_index
         else
             0);
@@ -1150,23 +1163,25 @@ fn mergeLayerAccumulationTotals(total: *LayerAccumulation, local: LayerAccumulat
 }
 
 fn reduceParityLayer(
-    context: *Context,
+    scene: *const Scene,
+    vertical_grid: *const VerticalGrid.OwnedVerticalGrid,
+    sublayers: []const State.PreparedSublayer,
     layer: *State.PreparedLayer,
     index: usize,
 ) void {
 
     // math: parity layer totals sum interior support rows; tau = tau_gas + tau_cia + tau_aerosol, omega0 = tau_sca /
     // max(tau_abs + tau_sca, eps).
-    const layer_top_altitude_km = context.vertical_grid.layer_top_altitudes_km[index];
-    const layer_bottom_altitude_km = context.vertical_grid.layer_bottom_altitudes_km[index];
-    const layer_top_pressure_hpa = context.vertical_grid.layer_top_pressures_hpa[index];
-    const layer_bottom_pressure_hpa = context.vertical_grid.layer_bottom_pressures_hpa[index];
-    const layer_sublayer_start_index = context.vertical_grid.layer_sublayer_starts[index];
-    const layer_sublayer_count = context.vertical_grid.layer_sublayer_counts[index];
-    const layer_interval_index_1based = context.vertical_grid.layer_interval_indices_1based[index];
+    const layer_top_altitude_km = vertical_grid.layer_top_altitudes_km[index];
+    const layer_bottom_altitude_km = vertical_grid.layer_bottom_altitudes_km[index];
+    const layer_top_pressure_hpa = vertical_grid.layer_top_pressures_hpa[index];
+    const layer_bottom_pressure_hpa = vertical_grid.layer_bottom_pressures_hpa[index];
+    const layer_sublayer_start_index = vertical_grid.layer_sublayer_starts[index];
+    const layer_sublayer_count = vertical_grid.layer_sublayer_counts[index];
+    const layer_interval_index_1based = vertical_grid.layer_interval_indices_1based[index];
     const start_index: usize = @intCast(layer_sublayer_start_index);
     const count: usize = @intCast(layer_sublayer_count);
-    const support_rows = context.sublayers[start_index .. start_index + count];
+    const support_rows = sublayers[start_index .. start_index + count];
     const lower_boundary = support_rows[0];
 
     var layer_line_sigma_sum: f64 = 0.0;
@@ -1212,7 +1227,7 @@ fn reduceParityLayer(
     const absorption = @max(optical_depth - scattering, 1.0e-9);
     const layer_single_scatter_albedo = scattering / @max(scattering + absorption, 1.0e-9);
     const depolarization = PhaseFunctions.computeLayerDepolarization(
-        context.scene,
+        scene,
         gas_scattering,
         aerosol_scattering,
     );
@@ -1425,7 +1440,7 @@ fn populateSublayer(
     const top_pressure_hpa = context.vertical_grid.sublayer_top_pressures_hpa[write_index];
     const bottom_pressure_hpa = context.vertical_grid.sublayer_bottom_pressures_hpa[write_index];
     const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
-    const disamar_support_grid = usesDisamarParitySupportGrid(context);
+    const disamar_support_grid = usesDisamarParitySupportGrid(context.scene);
 
     const parity_support_state = if (disamar_support_grid)
         paritySupportThermodynamicsFromProfile(context.profile, altitude_km)
@@ -1457,15 +1472,19 @@ fn populateSublayer(
         density = context.profile.interpolateDensity(altitude_km);
     }
 
-    const support_weight_km = if (disamar_support_grid)
-        context.vertical_grid.sublayer_support_weights_km[write_index]
-    else
-        @max(top_altitude_km - bottom_altitude_km, 0.0);
-
-    const sublayer_path_length_cm = if (usesDisamarParitySupportGrid(context))
-        @max(support_weight_km, 0.0) * centimeters_per_kilometer
-    else
-        @max(support_weight_km, 1.0e-9) * centimeters_per_kilometer;
+    const support_weight_km, const sublayer_path_length_cm = if (disamar_support_grid) support: {
+        const support_weight = context.vertical_grid.sublayer_support_weights_km[write_index];
+        break :support .{
+            support_weight,
+            @max(support_weight, 0.0) * centimeters_per_kilometer,
+        };
+    } else support: {
+        const support_weight = @max(top_altitude_km - bottom_altitude_km, 0.0);
+        break :support .{
+            support_weight,
+            @max(support_weight, 1.0e-9) * centimeters_per_kilometer,
+        };
+    };
     const sublayer_weight = support_weight_km / target.layer_thickness_km;
     const oxygen_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
         context.scene,
@@ -1706,11 +1725,11 @@ fn layerGeometry(context: *const Context, index: usize) LayerGeometry {
     };
 }
 
-fn usesDisamarParitySupportGrid(context: *const Context) bool {
+fn usesDisamarParitySupportGrid(scene: *const Scene) bool {
     const radiance_integration_mode =
-        context.scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode;
+        scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode;
     const irradiance_integration_mode =
-        context.scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode;
+        scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode;
 
     return radiance_integration_mode == .disamar_hr_grid or
         irradiance_integration_mode == .disamar_hr_grid;
