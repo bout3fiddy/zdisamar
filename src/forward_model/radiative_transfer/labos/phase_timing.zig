@@ -7,32 +7,35 @@ const build_options = @import("build_options");
 // end migration note: Zig 0.15.2 phase clock ----------------------------------------------------------------|
 
 // phase_timing.zig ------------------------------------------------------------------------------------------|
-// Opt-in LABOS phase timers for the trace executable. Product and test builds still compile the hooks away.  |
+// Opt-in LABOS phase timers for the trace executable. Product, test, telemetry, and perturbation builds keep |
+// the same source calls, but comptime enabled=false turns the timing state into zero-size types and makes    |
+// start/finish/count return before any clock read, counter write, or worker merge.                           |
 //                                                                                                            |
-// call path                                                                                                  |
-//   build.zig sets enable_trace_phase_timing=false for the library, tests, telemetry, and perturbation       |
-//   executables. The bottleneck trace executable sets it true.                                               |
+// build route                                                                                                |
+//   build.zig sets enable_trace_phase_timing=false for normal artifacts. The bottleneck trace executable is  |
+//   the route that sets it true and asks ProductStorage to retain a TracePhaseTiming sink for one run.       |
 //                                                                                                            |
-//   storage.zig owns the outer TracePhaseTiming sink for one product run. spectral_forward.zig gives each    |
-//   worker a LABOS Timing row, attaches it through Workspace.trace_phase, and merges worker rows after the   |
-//   forward-miss batch. The trace CLI writes the fields into labos_phase_timing JSON.                        |
+// attachment route                                                                                           |
+//   storage.zig owns the outer TracePhaseTiming row. spectral_forward.zig allocates one LABOS Timing row per |
+//   forward worker, attaches it through ForwardSampleScratch.labos_workspace.trace_phase, and merges worker  |
+//   rows into TracePhaseTiming.labos after the forward-miss batch. The trace CLI writes those fields into    |
+//   labos_phase_timing JSON.                                                                                 |
 //                                                                                                            |
-// timed regions                                                                                              |
-//   execute, attenuation fill, Fourier loop, Plm basis, layer matrix build, scattering-order phases, and     |
-//   reflectance integration measure elapsed wall time.                                                       |
-//                                                                                                            |
-// counted events                                                                                             |
-//   fixed-doubling steps and q/RD/TU/TD skip-or-retain counters show how often the fixed 12x10 kernels avoid |
-//   or keep expensive matrix work.                                                                           |
+// called from                                                                                                |
+//   execute.zig times whole LABOS solves, attenuation fill, Fourier loops, PLM basis, RT layer build, and    |
+//   reflectance integration. layers.zig times fixed 12x10 layer-doubling phases and counts skip/retain       |
+//   decisions. orders.zig times source setup, local source passes, transport, and accumulation.              |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   start/finish/count sit inside LABOS transport loops. In disabled builds, comptime enabled=false makes    |
-//   them return before touching clocks or counters. In trace builds, each worker writes only its own Timing  |
-//   row; cross-worker aggregation happens after the worker batch.                                            |
+//   The call sites sit inside high-resolution wavelength, Fourier, layer-doubling, and scattering-order      |
+//   loops. In trace builds, each worker writes only its own Timing row, so the loop path does not take locks;|
+//   cross-worker aggregation happens once after workers finish. Counter updates saturate so long traces      |
+//   cannot wrap elapsed-time or event totals.                                                                |
 //                                                                                                            |
 // memory                                                                                                     |
-//   Timing is 376 B in the trace build: 19 Counter rows plus 9 Count rows. WorkspaceState is 0 B normally    |
-//   and one 8 B Timing pointer in the trace build. Counter updates saturate so a long trace cannot wrap.     |
+//   Timing is 376 B in the trace build: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState |
+//   is 0 B normally and one 8 B optional Timing pointer in the trace build. Active is a borrowed 8 B pointer |
+//   handle threaded through LABOS calls; no timing type owns heap storage.                                   |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const enabled: bool = enabled_by_build: {
