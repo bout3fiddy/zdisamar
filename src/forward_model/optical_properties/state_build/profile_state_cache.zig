@@ -31,6 +31,22 @@ const Allocator = std.mem.Allocator;
 //   arrays. Shapes must match temperatures, pressures, weak outputs, and strong outputs before cloning.       |
 // ------------------------------------------------------------------------------------------------------------|
 
+// Entry ------------------------------------------------------------------------------------------------------|
+// Retained strong/weak line-state cache entry for one profile-state key.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key           : u64                                                                                |
+// [ 8..23] strong_states : []StrongLinePreparedState                                                          |
+// [24..39] weak_states   : []WeakLinePreparedState                                                            |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   strong_states and weak_states own cloned profile-level prepared-state rows.                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B (0.039 KiB); one retained optional entry plus state rows                     |
 const Entry = struct {
     key: u64,
     strong_states: []ReferenceData.StrongLinePreparedState,
@@ -44,6 +60,7 @@ const Entry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 var mutex = std.Thread.Mutex{};
 var cached_entry: ?Entry = null;

@@ -653,6 +653,22 @@ fn sceneFromResolvedO2A(
     };
 }
 
+// ScalarAerosolView ------------------------------------------------------------------------------------------|
+// Stack value used while reducing an O2 A aerosol specification into scalar scene controls.                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] optical_depth          : f64                                                                       |
+// [ 8..15] single_scatter_albedo  : f64                                                                       |
+// [16..23] asymmetry_factor       : f64                                                                       |
+// [24..31] angstrom_exponent      : f64                                                                       |
+// [32..39] reference_wavelength_nm: f64                                                                       |
+// [40..79] placement              : IntervalPlacement                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 80 B (0.078 KiB); stack return value                                              |
 const ScalarAerosolView = struct {
     optical_depth: f64,
     single_scatter_albedo: f64,
@@ -661,6 +677,7 @@ const ScalarAerosolView = struct {
     reference_wavelength_nm: f64,
     placement: AtmosphereModel.IntervalPlacement,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
     if (aerosol.profile.len == 1) {

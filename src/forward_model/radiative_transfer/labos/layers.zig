@@ -1350,11 +1350,26 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     }
 }
 
+// LayerDoublingDecision --------------------------------------------------------------------------------------|
+// Small return row for the layer-doubling branch chosen from optical depth and effective scattering depth.    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] start_optical_depth : f64                                                                          |
+// [ 8..15] doubling_count      : usize                                                                        |
+// [16..16] uses_doubling       : bool                                                                         |
+// [17..23] trailing padding     : 7 B                                                                         |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// footprint: per instance = 24 B (0.023 KiB); stack return value                                              |
 pub const LayerDoublingDecision = struct {
     start_optical_depth: f64,
     doubling_count: usize,
     uses_doubling: bool,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn classifyLayerDoubling(
     scattering: common.ScatteringMode,

@@ -36,6 +36,21 @@ const AirmassFactorLut = ReferenceData.AirmassFactorLut;
 //   One mutex protects one optional entry per asset family. Replacing an entry deinitializes the old clone.   |
 // ------------------------------------------------------------------------------------------------------------|
 
+// LineListEntry ----------------------------------------------------------------------------------------------|
+// Retained O2 line-list cache entry keyed by resolved line-list controls.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 216 B (0.211 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] key       : u64                                                                                  |
+// [  8..215] line_list : SpectroscopyLineList                                                                 |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   line_list owns cloned line, sidecar, and prepared-state arrays through its nested headers.                |
+//                                                                                                             |
+// unused bits: 0 padding + nested storage slack is documented by SpectroscopyLineList                         |
+// footprint: per instance = 216 B (0.211 KiB); one retained optional entry plus referenced storage            |
 const LineListEntry = struct {
     key: u64,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -45,7 +60,23 @@ const LineListEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// ProfileEntry -----------------------------------------------------------------------------------------------|
+// Retained atmosphere-profile cache entry.                                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key     : u64                                                                                      |
+// [ 8..23] profile : ClimatologyProfile                                                                       |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   profile owns cloned level arrays through its nested slice headers.                                        |
+//                                                                                                             |
+// unused bits: 0 padding + nested storage slack is documented by ClimatologyProfile                           |
+// footprint: per instance = 24 B (0.023 KiB); one retained optional entry plus referenced storage             |
 const ProfileEntry = struct {
     key: u64,
     profile: ClimatologyProfile,
@@ -55,7 +86,23 @@ const ProfileEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// CiaEntry ---------------------------------------------------------------------------------------------------|
+// Retained collision-induced absorption table cache entry.                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key   : u64                                                                                        |
+// [ 8..31] table : CollisionInducedAbsorptionTable                                                            |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   table owns cloned temperature and cross-section arrays through its nested headers.                        |
+//                                                                                                             |
+// unused bits: 0 padding + nested storage slack is documented by CollisionInducedAbsorptionTable              |
+// footprint: per instance = 32 B (0.031 KiB); one retained optional entry plus referenced storage             |
 const CiaEntry = struct {
     key: u64,
     table: CollisionInducedAbsorptionTable,
@@ -65,7 +112,23 @@ const CiaEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// AirmassLutEntry --------------------------------------------------------------------------------------------|
+// Retained airmass LUT cache entry.                                                                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key : u64                                                                                          |
+// [ 8..23] lut : AirmassFactorLut                                                                             |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   lut owns cloned wavelength and factor arrays through its nested slice headers.                            |
+//                                                                                                             |
+// unused bits: 0 padding + nested storage slack is documented by AirmassFactorLut                             |
+// footprint: per instance = 24 B (0.023 KiB); one retained optional entry plus referenced storage             |
 const AirmassLutEntry = struct {
     key: u64,
     lut: AirmassFactorLut,
@@ -75,7 +138,23 @@ const AirmassLutEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// ReferenceEntry ---------------------------------------------------------------------------------------------|
+// Retained reference-spectrum sample cache entry.                                                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key     : u64                                                                                      |
+// [ 8..23] samples : []ReferenceSample                                                                        |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   samples owns the cloned reference-spectrum rows.                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); one retained optional entry plus sample rows                    |
 const ReferenceEntry = struct {
     key: u64,
     samples: []ReferenceSample,
@@ -85,7 +164,23 @@ const ReferenceEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
+// SolarEntry -------------------------------------------------------------------------------------------------|
+// Retained solar-spectrum sample cache entry.                                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key     : u64                                                                                      |
+// [ 8..23] samples : []SolarSpectrumSample                                                                    |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   samples owns the cloned solar-spectrum rows.                                                              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); one retained optional entry plus sample rows                    |
 const SolarEntry = struct {
     key: u64,
     samples: []SolarSpectrumSample,
@@ -95,6 +190,7 @@ const SolarEntry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 var mutex = std.Thread.Mutex{};
 var cached_line_list: ?LineListEntry = null;
