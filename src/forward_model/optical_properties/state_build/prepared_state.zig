@@ -7,6 +7,7 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
+const hashing = @import("../../../common/hashing.zig");
 const Types = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
@@ -372,11 +373,11 @@ pub const PreparedOpticalState = struct {
         // ----------------------------------------------------------------------------------------------------|
 
         var hash = std.hash.Wyhash.init(0x4f32_4132_7370_6c6e);
-        updateInt(&hash, self.spectroscopy_lines != null);
+        hashing.updateInt(&hash, self.spectroscopy_lines != null);
         if (self.spectroscopy_lines) |line_list| {
             updateLineListPlanInputs(&hash, line_list);
         }
-        updateInt(&hash, self.line_absorbers.len);
+        hashing.updateInt(&hash, self.line_absorbers.len);
         for (self.line_absorbers) |line_absorber| {
             updateLineListPlanInputs(&hash, line_absorber.line_list);
         }
@@ -393,9 +394,9 @@ pub const PreparedOpticalState = struct {
         // ----------------------------------------------------------------------------------------------------|
 
         var hash = std.hash.Wyhash.init(0x4f32_4132_7370_726f);
-        updateFloatSlice(&hash, self.spectroscopy_profile_altitudes_km);
-        updateFloatSlice(&hash, self.spectroscopy_profile_pressures_hpa);
-        updateFloatSlice(&hash, self.spectroscopy_profile_temperatures_k);
+        hashing.updateFloatSlice(&hash, self.spectroscopy_profile_altitudes_km);
+        hashing.updateFloatSlice(&hash, self.spectroscopy_profile_pressures_hpa);
+        hashing.updateFloatSlice(&hash, self.spectroscopy_profile_temperatures_k);
         updateSpectroscopyCacheInputs(&hash, self);
         return hash.final();
     }
@@ -496,9 +497,9 @@ fn updateSpectroscopyCacheInputs(
     //   LUT enabled state, and same prepared strong/weak line-state payloads.                                 |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateInt(hash, prepared.spectroscopy_lines != null);
+    hashing.updateInt(hash, prepared.spectroscopy_lines != null);
     if (prepared.spectroscopy_lines) |line_list| updateFullLineListInputs(hash, line_list);
-    updateInt(hash, prepared.operational_o2_lut.enabled());
+    hashing.updateInt(hash, prepared.operational_o2_lut.enabled());
     updateStrongLinePreparedStates(hash, prepared.spectroscopy_profile_strong_line_states);
     updateWeakLinePreparedStates(hash, prepared.spectroscopy_profile_weak_line_states);
 }
@@ -509,17 +510,17 @@ fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void 
     // These rows are owned or borrowed by PreparedOpticalState; this helper only reads them.                  |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateInt(hash, states != null);
+    hashing.updateInt(hash, states != null);
     if (states) |resolved| {
-        updateInt(hash, resolved.len);
+        hashing.updateInt(hash, resolved.len);
         for (resolved) |state| {
-            updateInt(hash, state.line_count);
-            updateFloat(hash, state.sig_moy_cm1);
-            updateFloatSlice(hash, state.population_t);
-            updateFloatSlice(hash, state.dipole_t);
-            updateFloatSlice(hash, state.mod_sig_cm1);
-            updateFloatSlice(hash, state.half_width_cm1_at_t);
-            updateFloatSlice(hash, state.line_mixing_coefficients);
+            hashing.updateInt(hash, state.line_count);
+            hashing.updateFloat(hash, state.sig_moy_cm1);
+            hashing.updateFloatSlice(hash, state.population_t);
+            hashing.updateFloatSlice(hash, state.dipole_t);
+            hashing.updateFloatSlice(hash, state.mod_sig_cm1);
+            hashing.updateFloatSlice(hash, state.half_width_cm1_at_t);
+            hashing.updateFloatSlice(hash, state.line_mixing_coefficients);
         }
     }
 }
@@ -530,19 +531,19 @@ fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
     // This protects profile-node caches from reusing line-shape work after weak-line preparation changes.     |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateInt(hash, states != null);
+    hashing.updateInt(hash, states != null);
     if (states) |resolved| {
-        updateInt(hash, resolved.len);
+        hashing.updateInt(hash, resolved.len);
         for (resolved) |state| {
-            updateInt(hash, state.line_count);
-            updateFloat(hash, state.safe_temperature);
-            updateFloat(hash, state.safe_pressure);
-            updateInt(hash, state.lines.len);
+            hashing.updateInt(hash, state.line_count);
+            hashing.updateFloat(hash, state.safe_temperature);
+            hashing.updateFloat(hash, state.safe_pressure);
+            hashing.updateInt(hash, state.lines.len);
             for (state.lines) |line| {
-                updateFloat(hash, line.shifted_center_wavenumber_cm1);
-                updateFloat(hash, line.cte);
-                updateFloat(hash, line.line_shape_y);
-                updateFloat(hash, line.prefactor_base);
+                hashing.updateFloat(hash, line.shifted_center_wavenumber_cm1);
+                hashing.updateFloat(hash, line.cte);
+                hashing.updateFloat(hash, line.line_shape_y);
+                hashing.updateFloat(hash, line.prefactor_base);
             }
         }
     }
@@ -555,11 +556,11 @@ fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
     // planning does not need pressure broadening, partition metadata, or line-mixing payloads.                |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
-    updateInt(hash, line_list.lines.len);
+    hashing.updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
+    hashing.updateInt(hash, line_list.lines.len);
     for (line_list.lines) |line| {
-        updateFloat(hash, line.center_wavelength_nm);
-        updateFloat(hash, line.line_strength_cm2_per_molecule);
+        hashing.updateFloat(hash, line.center_wavelength_nm);
+        hashing.updateFloat(hash, line.line_strength_cm2_per_molecule);
     }
 }
 
@@ -573,58 +574,58 @@ fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
     //   same physical spectroscopy inputs, not only the same wavelength-plan shape.                           |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateFloat(hash, line_list.strong_line_tolerance_nm);
-    updateInt(hash, line_list.lines_sorted_ascending);
-    updateInt(hash, line_list.preserve_anchor_weak_lines);
-    updateInt(hash, line_list.vendor_strong_line_partition);
-    updateOptionalIntSlice(hash, line_list.strong_line_match_by_line);
+    hashing.updateFloat(hash, line_list.strong_line_tolerance_nm);
+    hashing.updateInt(hash, line_list.lines_sorted_ascending);
+    hashing.updateInt(hash, line_list.preserve_anchor_weak_lines);
+    hashing.updateInt(hash, line_list.vendor_strong_line_partition);
+    hashing.updateOptionalIntSlice(hash, line_list.strong_line_match_by_line);
     updateFullRuntimeControls(hash, line_list.runtime_controls);
 
-    updateInt(hash, line_list.lines.len);
+    hashing.updateInt(hash, line_list.lines.len);
     for (line_list.lines) |line| {
-        updateInt(hash, line.gas_index);
-        updateInt(hash, line.isotope_number);
-        updateFloat(hash, line.abundance_fraction);
-        updateInt(hash, line.vendor_filter_metadata_from_source);
-        updateFloat(hash, line.center_wavelength_nm);
-        updateFloat(hash, line.center_wavenumber_cm1);
-        updateFloat(hash, line.line_strength_cm2_per_molecule);
-        updateFloat(hash, line.air_half_width_nm);
-        updateFloat(hash, line.air_half_width_cm1);
-        updateFloat(hash, line.temperature_exponent);
-        updateFloat(hash, line.lower_state_energy_cm1);
-        updateFloat(hash, line.pressure_shift_nm);
-        updateFloat(hash, line.pressure_shift_cm1);
-        updateFloat(hash, line.line_mixing_coefficient);
-        updateOptionalInt(hash, line.branch_ic1);
-        updateOptionalInt(hash, line.branch_ic2);
-        updateOptionalInt(hash, line.rotational_nf);
+        hashing.updateInt(hash, line.gas_index);
+        hashing.updateInt(hash, line.isotope_number);
+        hashing.updateFloat(hash, line.abundance_fraction);
+        hashing.updateInt(hash, line.vendor_filter_metadata_from_source);
+        hashing.updateFloat(hash, line.center_wavelength_nm);
+        hashing.updateFloat(hash, line.center_wavenumber_cm1);
+        hashing.updateFloat(hash, line.line_strength_cm2_per_molecule);
+        hashing.updateFloat(hash, line.air_half_width_nm);
+        hashing.updateFloat(hash, line.air_half_width_cm1);
+        hashing.updateFloat(hash, line.temperature_exponent);
+        hashing.updateFloat(hash, line.lower_state_energy_cm1);
+        hashing.updateFloat(hash, line.pressure_shift_nm);
+        hashing.updateFloat(hash, line.pressure_shift_cm1);
+        hashing.updateFloat(hash, line.line_mixing_coefficient);
+        hashing.updateOptionalInt(hash, line.branch_ic1);
+        hashing.updateOptionalInt(hash, line.branch_ic2);
+        hashing.updateOptionalInt(hash, line.rotational_nf);
     }
 
-    updateInt(hash, line_list.strong_lines != null);
+    hashing.updateInt(hash, line_list.strong_lines != null);
     if (line_list.strong_lines) |strong_lines| {
-        updateInt(hash, strong_lines.len);
+        hashing.updateInt(hash, strong_lines.len);
         for (strong_lines) |line| {
-            updateFloat(hash, line.center_wavenumber_cm1);
-            updateFloat(hash, line.center_wavelength_nm);
-            updateFloat(hash, line.population_t0);
-            updateFloat(hash, line.dipole_ratio);
-            updateFloat(hash, line.dipole_t0);
-            updateFloat(hash, line.lower_state_energy_cm1);
-            updateFloat(hash, line.air_half_width_cm1);
-            updateFloat(hash, line.air_half_width_nm);
-            updateFloat(hash, line.temperature_exponent);
-            updateFloat(hash, line.pressure_shift_cm1);
-            updateFloat(hash, line.pressure_shift_nm);
-            updateInt(hash, line.rotational_index_m1);
+            hashing.updateFloat(hash, line.center_wavenumber_cm1);
+            hashing.updateFloat(hash, line.center_wavelength_nm);
+            hashing.updateFloat(hash, line.population_t0);
+            hashing.updateFloat(hash, line.dipole_ratio);
+            hashing.updateFloat(hash, line.dipole_t0);
+            hashing.updateFloat(hash, line.lower_state_energy_cm1);
+            hashing.updateFloat(hash, line.air_half_width_cm1);
+            hashing.updateFloat(hash, line.air_half_width_nm);
+            hashing.updateFloat(hash, line.temperature_exponent);
+            hashing.updateFloat(hash, line.pressure_shift_cm1);
+            hashing.updateFloat(hash, line.pressure_shift_nm);
+            hashing.updateInt(hash, line.rotational_index_m1);
         }
     }
 
-    updateInt(hash, line_list.relaxation_matrix != null);
+    hashing.updateInt(hash, line_list.relaxation_matrix != null);
     if (line_list.relaxation_matrix) |matrix| {
-        updateInt(hash, matrix.line_count);
-        updateFloatSlice(hash, matrix.wt0);
-        updateFloatSlice(hash, matrix.bw);
+        hashing.updateInt(hash, matrix.line_count);
+        hashing.updateFloatSlice(hash, matrix.wt0);
+        hashing.updateFloatSlice(hash, matrix.bw);
     }
 }
 
@@ -635,45 +636,12 @@ fn updateFullRuntimeControls(hash: *std.hash.Wyhash, controls: anytype) void {
     // without changing the profile arrays.                                                                    |
     // --------------------------------------------------------------------------------------------------------|
 
-    updateOptionalInt(hash, controls.gas_index);
-    updateInt(hash, controls.active_isotopes.len);
+    hashing.updateOptionalInt(hash, controls.gas_index);
+    hashing.updateInt(hash, controls.active_isotopes.len);
     hash.update(controls.active_isotopes);
-    updateOptionalFloat(hash, controls.threshold_line_scale);
-    updateOptionalFloat(hash, controls.cutoff_cm1);
-    updateFloatSlice(hash, controls.cutoff_grid_wavelengths_nm);
-    updateFloatSlice(hash, controls.cutoff_grid_wavenumbers_cm1);
-    updateFloat(hash, controls.line_mixing_factor);
-}
-
-fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateInt(hash, resolved);
-}
-
-fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |item| updateOptionalInt(hash, item);
-    }
-}
-
-fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateFloat(hash, resolved);
-}
-
-fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
-    updateInt(hash, values.len);
-    hash.update(std.mem.sliceAsBytes(values));
-}
-
-fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
+    hashing.updateOptionalFloat(hash, controls.threshold_line_scale);
+    hashing.updateOptionalFloat(hash, controls.cutoff_cm1);
+    hashing.updateFloatSlice(hash, controls.cutoff_grid_wavelengths_nm);
+    hashing.updateFloatSlice(hash, controls.cutoff_grid_wavenumbers_cm1);
+    hashing.updateFloat(hash, controls.line_mixing_factor);
 }

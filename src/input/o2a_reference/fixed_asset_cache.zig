@@ -1,5 +1,6 @@
 const std = @import("std");
 const ReferenceData = @import("../../input/ReferenceData.zig");
+const hashing = @import("../../common/hashing.zig");
 const reference_types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
@@ -327,10 +328,10 @@ fn lineListKey(spec: LineGasSpec) u64 {
     updateAsset(&hash, spec.line_list_asset);
     updateAsset(&hash, spec.line_mixing_asset);
     updateAsset(&hash, spec.strong_lines_asset);
-    updateOptionalFloat(&hash, spec.line_mixing_factor);
+    hashing.updateOptionalFloat(&hash, spec.line_mixing_factor);
     hash.update(spec.isotopes_sim);
-    updateOptionalFloat(&hash, spec.threshold_line_sim);
-    updateOptionalFloat(&hash, spec.cutoff_sim_cm1);
+    hashing.updateOptionalFloat(&hash, spec.threshold_line_sim);
+    hashing.updateOptionalFloat(&hash, spec.cutoff_sim_cm1);
     return hash.final();
 }
 
@@ -355,19 +356,4 @@ fn updateAsset(hash: *std.hash.Wyhash, asset: reference_types.ExternalAsset) voi
     hash.update(&.{0});
     hash.update(asset.format);
     hash.update(&.{0});
-}
-
-fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |payload| updateFloat(hash, payload);
-}
-
-fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
 }

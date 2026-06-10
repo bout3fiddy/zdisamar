@@ -1,6 +1,7 @@
 const std = @import("std");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const SpectroscopyTypes = @import("../../../input/reference/spectroscopy/types.zig");
+const hashing = @import("../../../common/hashing.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -209,76 +210,56 @@ fn computeKey(
     pressures_hpa: []const f64,
 ) u64 {
     var hash = std.hash.Wyhash.init(0);
-    updateInt(&hash, temperatures_k.len);
+    hashing.updateInt(&hash, temperatures_k.len);
     hash.update(std.mem.sliceAsBytes(temperatures_k));
     hash.update(std.mem.sliceAsBytes(pressures_hpa));
 
-    updateInt(&hash, line_list.lines.len);
+    hashing.updateInt(&hash, line_list.lines.len);
     for (line_list.lines) |line| {
-        updateInt(&hash, line.gas_index);
-        updateInt(&hash, line.isotope_number);
-        updateFloat(&hash, line.center_wavelength_nm);
-        updateFloat(&hash, line.center_wavenumber_cm1);
-        updateFloat(&hash, line.line_strength_cm2_per_molecule);
-        updateFloat(&hash, line.air_half_width_cm1);
-        updateFloat(&hash, line.temperature_exponent);
-        updateFloat(&hash, line.lower_state_energy_cm1);
-        updateFloat(&hash, line.pressure_shift_cm1);
-        updateInt(&hash, line.branch_ic1 orelse 0);
-        updateInt(&hash, line.branch_ic2 orelse 0);
-        updateInt(&hash, line.rotational_nf orelse 0);
+        hashing.updateInt(&hash, line.gas_index);
+        hashing.updateInt(&hash, line.isotope_number);
+        hashing.updateFloat(&hash, line.center_wavelength_nm);
+        hashing.updateFloat(&hash, line.center_wavenumber_cm1);
+        hashing.updateFloat(&hash, line.line_strength_cm2_per_molecule);
+        hashing.updateFloat(&hash, line.air_half_width_cm1);
+        hashing.updateFloat(&hash, line.temperature_exponent);
+        hashing.updateFloat(&hash, line.lower_state_energy_cm1);
+        hashing.updateFloat(&hash, line.pressure_shift_cm1);
+        hashing.updateInt(&hash, line.branch_ic1 orelse 0);
+        hashing.updateInt(&hash, line.branch_ic2 orelse 0);
+        hashing.updateInt(&hash, line.rotational_nf orelse 0);
     }
 
     if (line_list.strong_lines) |strong_lines| {
-        updateInt(&hash, strong_lines.len);
+        hashing.updateInt(&hash, strong_lines.len);
         for (strong_lines) |line| {
-            updateFloat(&hash, line.center_wavenumber_cm1);
-            updateFloat(&hash, line.population_t0);
-            updateFloat(&hash, line.dipole_ratio);
-            updateFloat(&hash, line.dipole_t0);
-            updateFloat(&hash, line.lower_state_energy_cm1);
-            updateFloat(&hash, line.air_half_width_cm1);
-            updateFloat(&hash, line.temperature_exponent);
-            updateFloat(&hash, line.pressure_shift_cm1);
-            updateInt(&hash, line.rotational_index_m1);
+            hashing.updateFloat(&hash, line.center_wavenumber_cm1);
+            hashing.updateFloat(&hash, line.population_t0);
+            hashing.updateFloat(&hash, line.dipole_ratio);
+            hashing.updateFloat(&hash, line.dipole_t0);
+            hashing.updateFloat(&hash, line.lower_state_energy_cm1);
+            hashing.updateFloat(&hash, line.air_half_width_cm1);
+            hashing.updateFloat(&hash, line.temperature_exponent);
+            hashing.updateFloat(&hash, line.pressure_shift_cm1);
+            hashing.updateInt(&hash, line.rotational_index_m1);
         }
     } else {
-        updateInt(&hash, @as(usize, 0));
+        hashing.updateInt(&hash, @as(usize, 0));
     }
 
     if (line_list.relaxation_matrix) |matrix| {
-        updateInt(&hash, matrix.line_count);
+        hashing.updateInt(&hash, matrix.line_count);
         hash.update(std.mem.sliceAsBytes(matrix.wt0));
         hash.update(std.mem.sliceAsBytes(matrix.bw));
     } else {
-        updateInt(&hash, @as(usize, 0));
+        hashing.updateInt(&hash, @as(usize, 0));
     }
 
     const controls = line_list.runtime_controls;
-    updateOptionalInt(&hash, controls.gas_index);
+    hashing.updateOptionalInt(&hash, controls.gas_index);
     hash.update(controls.active_isotopes);
-    updateOptionalFloat(&hash, controls.threshold_line_scale);
-    updateOptionalFloat(&hash, controls.cutoff_cm1);
-    updateFloat(&hash, controls.line_mixing_factor);
+    hashing.updateOptionalFloat(&hash, controls.threshold_line_scale);
+    hashing.updateOptionalFloat(&hash, controls.cutoff_cm1);
+    hashing.updateFloat(&hash, controls.line_mixing_factor);
     return hash.final();
-}
-
-fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |payload| updateFloat(hash, payload);
-}
-
-fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |payload| updateInt(hash, payload);
-}
-
-fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
 }

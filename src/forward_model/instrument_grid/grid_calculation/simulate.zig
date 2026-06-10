@@ -17,6 +17,7 @@ const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
 const Trace = @import("../../instrumentation/trace.zig");
+const hashing = @import("../../../common/hashing.zig");
 const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
@@ -1236,18 +1237,18 @@ fn wavelengthPlanKey(
     // -------------------------------------------------------------------------------------------------------------------|
 
     var hash = std.hash.Wyhash.init(0x4f32_4132_7761_7665);
-    updateFloat(&hash, scene.spectral_grid.start_nm);
-    updateFloat(&hash, scene.spectral_grid.end_nm);
-    updateInt(&hash, scene.spectral_grid.sample_count);
-    updateInt(&hash, @intFromEnum(scene.observation_model.sampling));
-    updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
-    updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
+    hashing.updateFloat(&hash, scene.spectral_grid.start_nm);
+    hashing.updateFloat(&hash, scene.spectral_grid.end_nm);
+    hashing.updateInt(&hash, scene.spectral_grid.sample_count);
+    hashing.updateInt(&hash, @intFromEnum(scene.observation_model.sampling));
+    hashing.updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
+    hashing.updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
     updateAdaptiveReferenceGrid(&hash, scene.observation_model.adaptive_reference_grid);
     const spectroscopy_plan_key = if (prepared.spectroscopy_plan_key != 0)
         prepared.spectroscopy_plan_key
     else
         prepared.computeSpectroscopyPlanKey();
-    updateInt(&hash, spectroscopy_plan_key);
+    hashing.updateInt(&hash, spectroscopy_plan_key);
     updateChannelControls(&hash, scene, .radiance);
     updateChannelControls(&hash, scene, .irradiance);
     return hash.final();
@@ -1263,15 +1264,15 @@ fn profileSpectroscopyCacheKey(
     // -------------------------------------------------------------------------------------------------------------------|
 
     var hash = std.hash.Wyhash.init(0x4f32_4132_7072_6f66);
-    updateInt(&hash, forward_misses.len);
+    hashing.updateInt(&hash, forward_misses.len);
     for (forward_misses) |miss| {
-        updateFloat(&hash, miss.wavelength_nm);
+        hashing.updateFloat(&hash, miss.wavelength_nm);
     }
     const spectroscopy_profile_key = if (prepared.spectroscopy_profile_cache_inputs_key != 0)
         prepared.spectroscopy_profile_cache_inputs_key
     else
         prepared.computeSpectroscopyProfileCacheInputsKey();
-    updateInt(&hash, spectroscopy_profile_key);
+    hashing.updateInt(&hash, spectroscopy_profile_key);
     return hash.final();
 }
 
@@ -1282,20 +1283,20 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
     // -------------------------------------------------------------------------------------------------------------------|
 
     const controls = scene.observation_model.resolvedChannelControls(channel);
-    updateInt(hash, @intFromEnum(channel));
-    updateFloat(hash, controls.wavelength_shift_nm);
+    hashing.updateInt(hash, @intFromEnum(channel));
+    hashing.updateFloat(hash, controls.wavelength_shift_nm);
     const response = controls.response;
-    updateInt(hash, response.explicit);
-    updateInt(hash, @intFromEnum(response.slit_index));
-    updateFloat(hash, response.fwhm_nm);
-    updateFloat(hash, response.amplitude);
-    updateFloat(hash, response.scale);
-    updateFloat(hash, response.phase_deg);
-    updateInt(hash, @intFromEnum(response.builtin_line_shape));
-    updateInt(hash, @intFromEnum(response.integration_mode));
-    updateFloat(hash, response.high_resolution_step_nm);
-    updateFloat(hash, response.high_resolution_half_span_nm);
-    updateInt(hash, response.instrument_line_shape.sample_count);
+    hashing.updateInt(hash, response.explicit);
+    hashing.updateInt(hash, @intFromEnum(response.slit_index));
+    hashing.updateFloat(hash, response.fwhm_nm);
+    hashing.updateFloat(hash, response.amplitude);
+    hashing.updateFloat(hash, response.scale);
+    hashing.updateFloat(hash, response.phase_deg);
+    hashing.updateInt(hash, @intFromEnum(response.builtin_line_shape));
+    hashing.updateInt(hash, @intFromEnum(response.integration_mode));
+    hashing.updateFloat(hash, response.high_resolution_step_nm);
+    hashing.updateFloat(hash, response.high_resolution_half_span_nm);
+    hashing.updateInt(hash, response.instrument_line_shape.sample_count);
     const line_shape_sample_count = response.instrument_line_shape.sample_count;
     const line_shape_offset_count = @min(
         response.instrument_line_shape.offsets_nm.len,
@@ -1305,10 +1306,10 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
         response.instrument_line_shape.weights.len,
         line_shape_sample_count,
     );
-    updateFloatSlice(hash, response.instrument_line_shape.offsets_nm[0..line_shape_offset_count]);
-    updateFloatSlice(hash, response.instrument_line_shape.weights[0..line_shape_weight_count]);
-    updateInt(hash, response.instrument_line_shape_table.nominal_count);
-    updateInt(hash, response.instrument_line_shape_table.sample_count);
+    hashing.updateFloatSlice(hash, response.instrument_line_shape.offsets_nm[0..line_shape_offset_count]);
+    hashing.updateFloatSlice(hash, response.instrument_line_shape.weights[0..line_shape_weight_count]);
+    hashing.updateInt(hash, response.instrument_line_shape_table.nominal_count);
+    hashing.updateInt(hash, response.instrument_line_shape_table.sample_count);
     const table_nominal_count = @min(
         response.instrument_line_shape_table.nominal_wavelengths_nm.len,
         response.instrument_line_shape_table.nominal_count,
@@ -1317,11 +1318,11 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
         response.instrument_line_shape_table.offsets_nm.len,
         response.instrument_line_shape_table.sample_count,
     );
-    updateFloatSlice(
+    hashing.updateFloatSlice(
         hash,
         response.instrument_line_shape_table.nominal_wavelengths_nm[0..table_nominal_count],
     );
-    updateFloatSlice(
+    hashing.updateFloatSlice(
         hash,
         response.instrument_line_shape_table.offsets_nm[0..table_offset_count],
     );
@@ -1330,7 +1331,7 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
         @as(usize, response.instrument_line_shape_table.nominal_count) *
             @as(usize, response.instrument_line_shape_table.sample_count),
     );
-    updateFloatSlice(hash, response.instrument_line_shape_table.weights[0..table_weight_count]);
+    hashing.updateFloatSlice(hash, response.instrument_line_shape_table.weights[0..table_weight_count]);
 }
 
 fn updateAdaptiveReferenceGrid(
@@ -1341,36 +1342,9 @@ fn updateAdaptiveReferenceGrid(
     // Add adaptive-grid controls that can change integration sample offsets around strong spectral lines.                |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    updateInt(hash, adaptive.points_per_fwhm);
-    updateInt(hash, adaptive.strong_line_min_divisions);
-    updateInt(hash, adaptive.strong_line_max_divisions);
-}
-
-fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
-    // updateFloatSlice --------------------------------------------------------------------------------------------------|
-    // Add a float slice length and raw f64 bytes to a plan hash. The length keeps prefix-equal slices distinct.          |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    updateInt(hash, values.len);
-    hash.update(std.mem.sliceAsBytes(values));
-}
-
-fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    // updateFloat -------------------------------------------------------------------------------------------------------|
-    // Add one f64 value to a plan hash using its exact bit pattern.                                                      |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    // updateInt ---------------------------------------------------------------------------------------------------------|
-    // Add one integer or enum backing value to a plan hash.                                                              |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
+    hashing.updateInt(hash, adaptive.points_per_fwhm);
+    hashing.updateInt(hash, adaptive.strong_line_min_divisions);
+    hashing.updateInt(hash, adaptive.strong_line_max_divisions);
 }
 
 fn jacobianColumn(buffer: []f64, sample_count: usize, active_index: usize) []f64 {
