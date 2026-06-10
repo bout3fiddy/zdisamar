@@ -23,6 +23,16 @@ const sink = @import("perturbation_sensitivity_sink");
 //   Disabled builds preserve physics and branch behavior exactly. Enabled perturbation runs are deliberately    |
 //   allowed to change scalar values or branch decisions for ablation evidence, but the sink stays outside this  |
 //   production-facing facade.                                                                                   |
+//                                                                                                               |
+// hot path                                                                                                      |
+//   LABOS calls scalar/decision inside Fourier, layer-doubling, and scattering-order loops. The channel is      |
+//   comptime, so disabled builds return the baseline before any sink call. Enabled runs pass one compact Coord  |
+//   by value plus the baseline scalar or branch decision to the external sweep sink.                            |
+//                                                                                                               |
+// memory                                                                                                        |
+//   Channel is the stable u8 hook id written to the sink. Coord is a five-field i32 row so each hook can name   |
+//   only the local indices it has; -1 marks unused coordinates and avoids separate optional fields in the hot   |
+//   instrumentation call. This facade owns no buffers and retains no sweep state.                               |
 // --------------------------------------------------------------------------------------------------------------|
 pub const requested: bool = requested_by_build: {
     if (!@hasDecl(build_options, "enable_perturbation_sensitivity")) break :requested_by_build false;
@@ -47,7 +57,25 @@ pub const Channel = enum(u8) {
     aerosol_pressure_tangent = 9,
 };
 
-// Compact hook coordinates. Negative indices mean "not applicable".
+// Coord --------------------------------------------------------------------------------------------------------|
+// Compact hook coordinates passed from LABOS hot decisions to the perturbation sink.                            |
+//                                                                                                               |
+// layout(64-bit)                                                                                                |
+// size: 20 B (0.020 KiB), align: 4 B                                                                            |
+//                                                                                                               |
+// memory                                                                                                        |
+// [ 0.. 3] layer_index   : i32                                                                                  |
+// [ 4.. 7] fourier_index : i32                                                                                  |
+// [ 8..11] order_index   : i32                                                                                  |
+// [12..15] state_index   : i32                                                                                  |
+// [16..19] branch        : i32                                                                                  |
+//                                                                                                               |
+// encoding                                                                                                      |
+//   -1 means the coordinate does not apply at this hook. Callers fill only the axes that identify the local     |
+//   perturbation decision being tested.                                                                         |
+//                                                                                                               |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                        |
+// footprint: per instance = 20 B (0.020 KiB); passed by value to one scalar/decision hook                       |
 pub const Coord = struct {
     layer_index: i32 = -1,
     fourier_index: i32 = -1,
@@ -55,8 +83,17 @@ pub const Coord = struct {
     state_index: i32 = -1,
     branch: i32 = -1,
 };
+// --------------------------------------------------------------------------------------------------------------|
 
 pub inline fn scalar(comptime channel: Channel, coord: Coord, baseline: f64) f64 {
+    // scalar ---------------------------------------------------------------------------------------------------|
+    // Return the baseline value unless the perturbation sweep sink is compiled in and active.                   |
+    //                                                                                                           |
+    // hot path                                                                                                  |
+    //   channel is comptime, and disabled builds return before touching the sink. Enabled builds pass Coord     |
+    //   fields as plain integers to keep the sink ABI narrow and allocation-free.                               |
+    // ----------------------------------------------------------------------------------------------------------|
+
     if (comptime !enabled) return baseline;
     return sink.scalar(
         @intFromEnum(channel),
@@ -70,6 +107,14 @@ pub inline fn scalar(comptime channel: Channel, coord: Coord, baseline: f64) f64
 }
 
 pub inline fn decision(comptime channel: Channel, coord: Coord, baseline: bool) bool {
+    // decision -------------------------------------------------------------------------------------------------|
+    // Return the baseline branch unless an active perturbation sweep overrides this hook.                       |
+    //                                                                                                           |
+    // hot path                                                                                                  |
+    //   Used around LABOS threshold and convergence decisions. The normal product/test build compiles this to   |
+    //   the baseline branch so perturbation scaffolding does not enter transport math.                          |
+    // ----------------------------------------------------------------------------------------------------------|
+
     if (comptime !enabled) return baseline;
     return sink.decision(
         @intFromEnum(channel),
