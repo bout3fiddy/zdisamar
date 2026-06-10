@@ -46,8 +46,9 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //                                                                                                             |
 // hot path                                                                                                    |
 //   These helpers run during setup, not inside per-wavelength RTM kernels. The only wide-row scan reads       |
-//   PreparedLineAbsorber.species from 280 B rows while choosing the continuum owner; keeping species beside   |
-//   the prepared line payload avoids a parallel column that every owner/deinit path would need to maintain.   |
+//   PreparedLineAbsorber.species at [272..272] from 280 B rows while choosing the continuum owner; keeping    |
+//   species beside the prepared line payload avoids a parallel column that every owner/deinit path would need |
+//   to maintain.                                                                                              |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
@@ -138,7 +139,7 @@ pub fn resolveContinuumOwnerSpecies(
     //   otherwise O2 is preferred if one prepared line absorber is O2.                                        |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The fallback scan reads only PreparedLineAbsorber.species at byte 272 of each 280 B row. Pointer      |
+    //   The fallback scan reads only PreparedLineAbsorber.species at [272..272] of each 280 B row. Pointer    |
     //   capture avoids copying the row, and this setup-time choice is not repeated per wavelength. A side     |
     //   species column would add ownership/deinit surface for one rare ambiguous-continuum decision.          |
     // --------------------------------------------------------------------------------------------------------|
