@@ -71,20 +71,33 @@ const PreparedMeansRequest = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedMeans ----------------------------------------------------------------------------------------------|
-// Scalar and band means copied into PreparedOpticalState during final assembly.                               |
+// Scalar and band means copied into PreparedOpticalState during final assembly. This is the compact summary   |
+// row produced after layer accumulation has filled the retained layer/sublayer arrays.                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 152 B (0.148 KiB), align: 8 B                                                                         |
 //                                                                                                             |
-// memory inside the struct                                                                                    |
+// memory                                                                                                      |
 // [  0..  7] cross_section_mean_cm2_per_molecule      : f64                                                   |
 // [  8.. 23] line_means                               : BandMeans.LineBandMeans                               |
 // [ 24.. 31] cia_mean_cross_section_cm5_per_molecule2 : f64                                                   |
-// [ 32.. 63] effective airmass, SSA, temperature, pressure: 4 x f64                                           |
-// [ 64.. 95] air, oxygen, gas column, and CIA pair factors: 4 x f64                                           |
-// [ 96..135] gas/CIA/aerosol optical depths and temperature derivative: 5 x f64                               |
-// [136..151] total_optical_depth and depolarization_factor: 2 x f64                                           |
+// [ 32.. 39] effective_air_mass_factor                : f64                                                   |
+// [ 40.. 47] effective_single_scatter_albedo          : f64                                                   |
+// [ 48.. 55] effective_temperature_k                  : f64                                                   |
+// [ 56.. 63] effective_pressure_hpa                   : f64                                                   |
+// [ 64.. 71] air_column_density_factor                : f64                                                   |
+// [ 72.. 79] oxygen_column_density_factor             : f64                                                   |
+// [ 80.. 87] column_density_factor                    : f64                                                   |
+// [ 88.. 95] cia_pair_path_factor_cm5                 : f64                                                   |
+// [ 96..103] gas_optical_depth                        : f64                                                   |
+// [104..111] cia_optical_depth                        : f64                                                   |
+// [112..119] aerosol_optical_depth                    : f64                                                   |
+// [120..127] aerosol_base_optical_depth               : f64                                                   |
+// [128..135] d_optical_depth_d_temperature            : f64                                                   |
+// [136..143] total_optical_depth                      : f64                                                   |
+// [144..151] depolarization_factor                    : f64                                                   |
 //                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 3 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 152 B (0.148 KiB); total = per instance * live instance count                     |
 // ------------------------------------------------------------------------------------------------------------|
