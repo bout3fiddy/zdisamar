@@ -1269,17 +1269,17 @@ fn prefetchSimulationPlan(
             request.simulation_plan.owned_forward_results = results;
         }
 
-        try SpectralEval.prefetchForwardSamples(
-            allocator,
-            request.scene,
-            request.rtm_config.*,
-            request.prepared,
-            request.simulation_plan.forward_miss_plan.misses,
-            request.simulation_plan.profile_spectroscopy_caches,
-            results,
-            thread_pool,
-            request.trace_phase_timing,
-        );
+        const forward_prefetch_request = SpectralEval.ForwardPrefetchRequest{
+            .scene = request.scene,
+            .rtm_config = request.rtm_config.*,
+            .prepared = request.prepared,
+            .misses = request.simulation_plan.forward_miss_plan.misses,
+            .profile_spectroscopy_caches = request.simulation_plan.profile_spectroscopy_caches,
+            .results = results,
+            .thread_pool = thread_pool,
+            .trace_phase_timing = request.trace_phase_timing,
+        };
+        try SpectralEval.prefetchForwardSamples(allocator, &forward_prefetch_request);
 
         request.simulation_plan.forward_results = results;
     }

@@ -84,6 +84,38 @@ const trace_worker_labos_timing_default = TracePrefetchRoute.worker_labos_timing
 const trace_single_labos_timing_default = TracePrefetchRoute.single_labos_timing_empty;
 const trace_labos_timing_storage_default: TraceLabosTimingStorage = undefined;
 
+// ForwardPrefetchRequest ------------------------------------------------------------------------------------------------|
+// Borrowed batch inputs and output rows for high-resolution forward prefetch.                                            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 160 B (0.156 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] scene                       : *const Scene                                                                  |
+// [  8.. 87] rtm_config                  : common.SolveConfig                                                            |
+// [ 88.. 95] prepared                    : *const OpticsPreparation.PreparedOpticalState                                 |
+// [ 96..111] misses                      : []const ForwardCacheMiss                                                      |
+// [112..127] profile_spectroscopy_caches : []const SpectroscopyState.ProfileNodeSpectroscopyCache                        |
+// [128..143] results                     : []ForwardIntegratedSample                                                     |
+// [144..151] thread_pool                 : ?*std.Thread.Pool                                                             |
+// [152..159] trace_phase_timing          : ?*Storage.TracePhaseTiming                                                    |
+//                                                                                                                        |
+// out-of-line storage: scene, prepared, misses, profile caches, results, pool, and timing sink are borrowed.             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 3 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 160 B (0.156 KiB); total excludes borrowed batch rows and runtime handles                    |
+pub const ForwardPrefetchRequest = struct {
+    scene: *const Scene,
+    rtm_config: common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    misses: []const ForwardCacheMiss,
+    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    results: []ForwardIntegratedSample,
+    thread_pool: ?*std.Thread.Pool,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // ForwardScratchRequirementsRequest -------------------------------------------------------------------------------------|
 // Borrowed inputs used once per prefetch batch to size worker-local scratch buffers.                                     |
 //                                                                                                                        |
@@ -696,14 +728,7 @@ fn nextForwardPrefetchChunk(worker: *ForwardPrefetchWorker) ?work_partition.Rang
 
 pub fn prefetchForwardSamples(
     allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    misses: []const ForwardCacheMiss,
-    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    results: []ForwardIntegratedSample,
-    thread_pool: ?*std.Thread.Pool,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: *const ForwardPrefetchRequest,
 ) Error!void {
     // prefetchForwardSamples --------------------------------------------------------------------------------------------|
     // Schedule all high-resolution forward misses across the selected worker route. Single-worker runs avoid             |
@@ -714,8 +739,9 @@ pub fn prefetchForwardSamples(
     //   batch after joined workers return.                                                                               |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    if (misses.len == 0) return;
-    const preferred_worker_count = preferredForwardWorkerCount(misses.len);
+    if (request.misses.len == 0) return;
+    if (request.results.len != request.misses.len) return error.ShapeMismatch;
+    const preferred_worker_count = preferredForwardWorkerCount(request.misses.len);
     const worker_count = preferred_worker_count;
 
     // instrumentation: trace counter: forward worker count ------------------------------------------------------------- |
@@ -727,14 +753,14 @@ pub fn prefetchForwardSamples(
     // instrumentation: trace counter: high-resolution misses ----------------------------------------------------------- |
     // captures: unique high-resolution cache misses                                                                      |
     // why: distinguishes fewer computations from cheaper computation per miss.                                           |
-    Trace.plotU("high_resolution_misses", @intCast(misses.len));
+    Trace.plotU("high_resolution_misses", @intCast(request.misses.len));
     // end instrumentation: trace counter: high-resolution misses ------------------------------------------------------- |
 
     const telemetry_context = Telemetry.currentContext();
     const scratch_requirements_request = ForwardScratchRequirementsRequest{
-        .scene = scene,
-        .rtm_config = &rtm_config,
-        .prepared = prepared,
+        .scene = request.scene,
+        .rtm_config = &request.rtm_config,
+        .prepared = request.prepared,
     };
     const scratch_requirements = ForwardScratchRequirements.fromRequest(&scratch_requirements_request);
 
@@ -743,13 +769,13 @@ pub fn prefetchForwardSamples(
         var scratch: ForwardSampleScratch = undefined;
         try scratch.initInto(allocator, scratch_requirements);
 
-        attachSingleTraceLabosTiming(trace_phase_timing, &scratch, &labos_phase_timing);
+        attachSingleTraceLabosTiming(request.trace_phase_timing, &scratch, &labos_phase_timing);
         defer clearTraceLabosTiming(&scratch);
         defer scratch.deinit(allocator);
 
-        for (misses, results, 0..) |miss, *result, miss_index| {
-            const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
-                &profile_spectroscopy_caches[miss_index]
+        for (request.misses, request.results, 0..) |miss, *result, miss_index| {
+            const profile_spectroscopy_cache = if (request.profile_spectroscopy_caches.len == request.misses.len)
+                &request.profile_spectroscopy_caches[miss_index]
             else
                 null;
 
@@ -761,22 +787,22 @@ pub fn prefetchForwardSamples(
                     miss.wavelength_nm,
                 ));
                 defer Telemetry.setContext(previous_context);
-                const request = ForwardInput.ForwardSampleRequest{
-                    .scene = scene,
-                    .rtm_config = rtm_config,
-                    .prepared = prepared,
+                const sample_request = ForwardInput.ForwardSampleRequest{
+                    .scene = request.scene,
+                    .rtm_config = request.rtm_config,
+                    .prepared = request.prepared,
                     .wavelength_nm = miss.wavelength_nm,
                 };
                 break :result_value try computeForwardSampleAtWavelengthWithScratch(
                     allocator,
-                    request,
+                    sample_request,
                     scratch.forwardInputScratch(profile_spectroscopy_cache),
                     &scratch.labos_workspace,
                 );
             };
         }
         if (comptime Storage.trace_phase_timing_enabled) {
-            mergeLabosPhaseTiming(trace_phase_timing, &.{labos_phase_timing});
+            mergeLabosPhaseTiming(request.trace_phase_timing, &.{labos_phase_timing});
         }
         return;
     }
@@ -784,36 +810,36 @@ pub fn prefetchForwardSamples(
     std.debug.assert(worker_count <= work_partition.max_workers);
     var error_state = ForwardPrefetchErrorState{};
     var labos_phase_timing_storage: TraceLabosTimingStorage = trace_labos_timing_storage_default;
-    initializeTraceLabosTimingStorage(trace_phase_timing, worker_count, &labos_phase_timing_storage);
+    initializeTraceLabosTimingStorage(request.trace_phase_timing, worker_count, &labos_phase_timing_storage);
 
     var worker_storage: [work_partition.max_workers]ForwardPrefetchWorker = undefined;
     const workers = worker_storage[0..worker_count];
 
     for (0..worker_count) |worker_index| {
-        const range = work_partition.staticRange(misses.len, worker_count, worker_index);
+        const range = work_partition.staticRange(request.misses.len, worker_count, worker_index);
         workers[worker_index] = .{
-            .scene = scene,
-            .rtm_config = rtm_config,
-            .prepared = prepared,
+            .scene = request.scene,
+            .rtm_config = request.rtm_config,
+            .prepared = request.prepared,
             .scratch_requirements = &scratch_requirements,
-            .misses = misses,
-            .profile_spectroscopy_caches = profile_spectroscopy_caches,
-            .results = results,
+            .misses = request.misses,
+            .profile_spectroscopy_caches = request.profile_spectroscopy_caches,
+            .results = request.results,
             .error_state = &error_state,
             .start_index = range.start,
             .end_index = range.end,
             .worker_index = worker_index,
             .telemetry_context = telemetry_context,
             .labos_phase_timing = traceWorkerLabosTiming(
-                trace_phase_timing,
+                request.trace_phase_timing,
                 &labos_phase_timing_storage,
                 worker_index,
             ),
         };
     }
 
-    if (thread_pool) |pool| {
-        var queue = work_partition.ChunkQueue.init(misses.len, forward_prefetch_pooled_chunk_size);
+    if (request.thread_pool) |pool| {
+        var queue = work_partition.ChunkQueue.init(request.misses.len, forward_prefetch_pooled_chunk_size);
         for (workers) |*worker| worker.queue = &queue;
         var wait_group = std.Thread.WaitGroup{};
 
@@ -824,7 +850,7 @@ pub fn prefetchForwardSamples(
 
         wait_group.wait();
         if (comptime Storage.trace_phase_timing_enabled) {
-            mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+            mergeLabosPhaseTiming(request.trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
         }
         if (error_state.err) |err| return err;
         return;
@@ -849,7 +875,7 @@ pub fn prefetchForwardSamples(
     prefetchForwardWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
     if (comptime Storage.trace_phase_timing_enabled) {
-        mergeLabosPhaseTiming(trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
+        mergeLabosPhaseTiming(request.trace_phase_timing, labos_phase_timing_storage[0..worker_count]);
     }
     if (error_state.err) |err| return err;
 }

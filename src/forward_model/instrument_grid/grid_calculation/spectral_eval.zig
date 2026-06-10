@@ -41,6 +41,7 @@ const Error = Storage.Error;
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
 pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
+pub const ForwardPrefetchRequest = spectral_forward.ForwardPrefetchRequest;
 pub const preferredForwardWorkerCount = spectral_forward.preferredForwardWorkerCount;
 
 pub const SpectralEvaluationCache = cache_module.SpectralEvaluationCache;
@@ -194,14 +195,7 @@ pub fn integrateIrradianceAtNominal(
 
 pub fn prefetchForwardSamples(
     allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    misses: []const ForwardCacheMiss,
-    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
-    results: []ForwardIntegratedSample,
-    thread_pool: ?*std.Thread.Pool,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: *const ForwardPrefetchRequest,
 ) Error!void {
     // prefetchForwardSamples ------------------------------------------------------------------------------------------- |
     // Compute every unique high-resolution forward miss into a dense result array before nominal-row                     |
@@ -212,19 +206,12 @@ pub fn prefetchForwardSamples(
     //   each nominal row, so later integration does not touch the miss hash map.                                         |
     // ------------------------------------------------------------------------------------------------------------------ |
 
-    if (misses.len == 0) return;
-    if (results.len != misses.len) return error.ShapeMismatch;
+    if (request.misses.len == 0) return;
+    if (request.results.len != request.misses.len) return error.ShapeMismatch;
 
     try spectral_forward.prefetchForwardSamples(
         allocator,
-        scene,
-        rtm_config,
-        prepared,
-        misses,
-        profile_spectroscopy_caches,
-        results,
-        thread_pool,
-        trace_phase_timing,
+        request,
     );
 }
 
