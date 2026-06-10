@@ -321,8 +321,8 @@ const ActiveJacobianStates = struct {
     count: usize = 0,
     states: [jacobian.state_count]jacobian.State = undefined,
 
-    fn init(mask: jacobian.StateMask) ActiveJacobianStates {
-        // ActiveJacobianStates.init -------------------------------------------------------------------------------------|
+    fn fromMask(mask: jacobian.StateMask) ActiveJacobianStates {
+        // ActiveJacobianStates.fromMask ---------------------------------------------------------------------------------|
         // Convert the active-state bit mask into a compact ordered array used by state-major Jacobian buffers.           |
         // ---------------------------------------------------------------------------------------------------------------|
 
@@ -441,30 +441,45 @@ const RadianceSamplingRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------------------|
 
-// RadianceSampleBuffers -------------------------------------------------------------------------------------------------|
-// Borrowed output and scratch slices touched while producing calibrated radiance. Transport scratch stays                |
-// out of this view, so the radiance stage exposes only the product rows it reads or writes.                              |
+// RadianceRows ----------------------------------------------------------------------------------------------------------|
+// Borrowed scalar rows touched while producing calibrated radiance. The raw row uses product scratch until               |
+// optional convolution copies into the final radiance row.                                                               |
 //                                                                                                                        |
 // layout(64-bit)                                                                                                         |
-// size: 72 B (0.070 KiB), align: 8 B                                                                                     |
+// size: 48 B (0.047 KiB), align: 8 B                                                                                     |
 //                                                                                                                        |
 // memory                                                                                                                 |
-// [ 0..15] wavelengths         : []f64                                                                                   |
-// [16..31] radiance            : []f64                                                                                   |
-// [32..47] scratch             : []f64                                                                                   |
-// [48..63] jacobian            : ?[]f64                                                                                  |
-// [64..64] jacobian_state_mask : jacobian.StateMask                                                                      |
-// [65..71] padding             : 7 B                                                                                     |
+// [ 0..15] wavelengths  : []f64                                                                                          |
+// [16..31] raw_radiance : []f64                                                                                          |
+// [32..47] radiance     : []f64                                                                                          |
 //                                                                                                                        |
 // out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
-// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
-// footprint: per instance = 72 B (0.070 KiB); total excludes borrowed product buffers                                    |
-const RadianceSampleBuffers = struct {
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 48 B (0.047 KiB); total excludes borrowed product buffers                                    |
+const RadianceRows = struct {
     wavelengths: []f64,
+    raw_radiance: []f64,
     radiance: []f64,
-    scratch: []f64,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// RadianceDerivativeRows ------------------------------------------------------------------------------------------------|
+// Optional state-major derivative rows touched while gathering radiance Jacobians.                                       |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] jacobian   : ?[]f64                                                                                           |
+// [16..16] state_mask : jacobian.StateMask                                                                               |
+// [17..23] padding    : 7 B                                                                                              |
+//                                                                                                                        |
+// out-of-line storage: jacobian borrows ProductStorage backing arrays when derivative output is enabled.                 |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// footprint: per instance = 24 B (0.023 KiB); total excludes borrowed derivative rows                                    |
+const RadianceDerivativeRows = struct {
     jacobian: ?[]f64,
-    jacobian_state_mask: jacobian.StateMask,
+    state_mask: jacobian.StateMask,
 };
 // -----------------------------------------------------------------------------------------------------------------------|
 
@@ -943,14 +958,16 @@ pub fn simulateInternal(
         .forward_results = simulation_plan.forward_results,
         .trace_phase_timing = trace_phase_timing,
     };
-    const radiance_output = RadianceSampleBuffers{
+    const radiance_rows = RadianceRows{
         .wavelengths = buffers.wavelengths,
+        .raw_radiance = buffers.scratch,
         .radiance = buffers.radiance,
-        .scratch = buffers.scratch,
-        .jacobian = buffers.jacobian,
-        .jacobian_state_mask = buffers.jacobian_state_mask,
     };
-    try fillRadianceSamples(radiance_request, radiance_output);
+    const radiance_derivative_rows = RadianceDerivativeRows{
+        .jacobian = buffers.jacobian,
+        .state_mask = buffers.jacobian_state_mask,
+    };
+    try fillRadianceSamples(radiance_request, radiance_rows, radiance_derivative_rows);
 
     const irradiance_request = IrradianceSamplingRequest{
         .scene = scene,
@@ -1253,7 +1270,8 @@ fn validateTransportBuffers(
 
 fn fillRadianceSamples(
     request: RadianceSamplingRequest,
-    output: RadianceSampleBuffers,
+    rows: RadianceRows,
+    derivative_rows: RadianceDerivativeRows,
 ) Storage.Error!void {
     // fillRadianceSamples -----------------------------------------------------------------------------------------------|
     // Fill output wavelengths and radiance. Radiance first gathers prefetched forward results through the                |
@@ -1269,8 +1287,8 @@ fn fillRadianceSamples(
     //   later slit convolution is skipped so the line shape is not applied twice.                                        |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const active_jacobians = if (output.jacobian != null)
-        ActiveJacobianStates.init(output.jacobian_state_mask)
+    const active_jacobians = if (derivative_rows.jacobian != null)
+        ActiveJacobianStates.fromMask(derivative_rows.state_mask)
     else
         ActiveJacobianStates{};
 
@@ -1287,7 +1305,7 @@ fn fillRadianceSamples(
 
         for (request.wavelength_sampling.rows, 0..) |plan, index| {
             const nominal_wavelength_nm = plan.nominal_wavelength_nm;
-            output.wavelengths[index] = nominal_wavelength_nm;
+            rows.wavelengths[index] = nominal_wavelength_nm;
 
             if (index >= request.forward_miss_plan.rows.len) return error.ShapeMismatch;
             const integrated = try SpectralEval.integratePrefetchedForwardAtNominal(
@@ -1298,8 +1316,8 @@ fn fillRadianceSamples(
                 &plan.radiance_integration,
                 request.wavelength_sampling.kernel_storage,
             );
-            output.scratch[index] = integrated.radiance;
-            if (output.jacobian) |jacobian_buffer| {
+            rows.raw_radiance[index] = integrated.radiance;
+            if (derivative_rows.jacobian) |jacobian_buffer| {
                 writeJacobianSample(
                     jacobian_buffer,
                     active_jacobians,
@@ -1314,7 +1332,7 @@ fn fillRadianceSamples(
 
         // Integrated sampling bypasses slit convolution because the instrument integration kernel has already
         // performed that spectral averaging.
-        @memcpy(output.radiance, output.scratch);
+        @memcpy(rows.radiance, rows.raw_radiance);
     } else {
 
         // instrumentation: trace zone: radiance convolution ------------------------------------------------------------ |
@@ -1326,7 +1344,7 @@ fn fillRadianceSamples(
         defer zone.end();
         // end instrumentation: trace zone: radiance convolution -------------------------------------------------------- |
 
-        try convolution.apply(output.scratch, request.setup.radiance_slit_kernel[0..], output.radiance);
+        try convolution.apply(rows.raw_radiance, request.setup.radiance_slit_kernel[0..], rows.radiance);
     }
     {
 
@@ -1341,8 +1359,8 @@ fn fillRadianceSamples(
 
         try calibration.applySignal(
             request.setup.radiance_calibration,
-            output.radiance,
-            output.radiance,
+            rows.radiance,
+            rows.radiance,
         );
     }
 }
@@ -1537,7 +1555,7 @@ fn processJacobianSamples(
             defer zone.end();
             // end instrumentation: trace zone: Jacobian processing ----------------------------------------------------- |
 
-            const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
+            const active_jacobians = ActiveJacobianStates.fromMask(buffers.jacobian_state_mask);
             if (active_jacobians.count == 0 or
                 jacobian_buffer.len != request.setup.sample_count * active_jacobians.count)
             {
