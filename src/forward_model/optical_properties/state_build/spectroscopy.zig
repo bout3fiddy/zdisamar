@@ -10,28 +10,44 @@ const Allocator = std.mem.Allocator;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
 // spectroscopy.zig -------------------------------------------------------------------------------------------|
-// Resolves absorber species, spectroscopy ownership, and volume-mixing ratios during optical-state setup.     |
+// Resolves absorber spectroscopy metadata while Context is still turning a Scene into prepared optical rows.  |
+// This is the species/ownership front door: it decides which absorbers become active, which line species is   |
+// being prepared, which species owns continuum density, and what volume-mixing-ratio fraction applies at a    |
+// pressure. Wavelength-dependent line-shape math lives in layer_spectroscopy.zig, state_spectroscopy.zig,     |
+// and carrier_eval.zig, not here.                                                                             |
 //                                                                                                             |
-// called by                                                                                                   |
-//   absorbers.zig builds active line/cross-section absorber lists and selects the continuum owner             |
-//   layer_spectroscopy.zig and state_optical_depth.zig evaluate prepared line and cross-section absorbers     |
-//   prepared_state.zig exposes spectroscopy lookup helpers through PreparedOpticalState                       |
+// build route                                                                                                 |
+//   absorbers.zig calls collectActiveLineAbsorbers and collectActiveCrossSectionAbsorbers while building      |
+//   AbsorberBuildState. Later, after prepared line rows or operational O2 LUTs exist, absorbers.zig calls     |
+//   resolveActiveLineSpecies and resolveContinuumOwnerSpecies before finalize.zig moves the results into      |
+//   PreparedOpticalState.                                                                                     |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   collectActiveLineAbsorbers         keeps scene absorbers using line_by_line spectroscopy                  |
-//   collectActiveCrossSectionAbsorbers keeps scene absorbers using cross-section tables or LUTs               |
-//   resolveActiveLineSpecies           chooses the active line species from scene controls, O2 LUT, or HITRAN |
-//   resolveContinuumOwnerSpecies       decides which species owns the continuum when line ownership is loose  |
-//   speciesMixingRatioAtPressure       interpolates an explicit or scene-level VMR profile at pressure        |
+//   collectActiveLineAbsorbers         : scene absorbers using line_by_line spectroscopy                      |
+//   collectActiveCrossSectionAbsorbers : scene absorbers using cross-section tables or LUTs                   |
+//   resolveActiveLineSpecies           : active line species from scene controls, O2 LUT, or HITRAN metadata  |
+//   resolveContinuumOwnerSpecies       : continuum owner when line ownership is loose                         |
+//   speciesMixingRatioAtPressure       : explicit or scene-level VMR profile interpolation at pressure        |
 //                                                                                                             |
 // boundary shape                                                                                              |
-//   This file only interprets scene/reference metadata. It does not prepare HITRAN sidecars, evaluate line    |
-//   shapes, fill RTM layers, or silently invent unsupported species. Unknown HITRAN gases become typed errors |
-//   where a species is required.                                                                              |
+//   This file interprets scene/reference metadata and returns setup decisions. It does not prepare HITRAN     |
+//   sidecars, evaluate line shapes, fill RTM layers, or silently invent unsupported species. Unknown HITRAN   |
+//   gases become typed errors at the points where a concrete species is required.                             |
+//                                                                                                             |
+// row handoff                                                                                                 |
+//   Active* rows are short-lived setup descriptors. PreparedLineAbsorber rows are built in absorbers.zig and  |
+//   defined in state.zig; this file only inspects their species tags while choosing the continuum owner.      |
+//   Later evaluation modules consume the same prepared rows for density weighting and spectroscopy lookup.    |
 //                                                                                                             |
 // memory                                                                                                      |
-//   collectActive* returns owned slices of small absorber descriptors. Other helpers return borrowed profile  |
-//   views, optional species, or scalar fractions; they do not retain scene pointers or allocate hidden state. |
+//   collectActive* returns owned slices that AbsorberBuildState releases or moves forward. Other helpers      |
+//   return borrowed profile views, optional species, or scalar fractions; they do not retain scene pointers   |
+//   or allocate hidden state.                                                                                 |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   These helpers run during setup, not inside per-wavelength RTM kernels. The only wide-row scan reads       |
+//   PreparedLineAbsorber.species from 280 B rows while choosing the continuum owner; keeping species beside   |
+//   the prepared line payload avoids a parallel column that every owner/deinit path would need to maintain.   |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
@@ -109,7 +125,7 @@ pub fn resolveContinuumOwnerSpecies(
     line_absorbers: []const State.PreparedLineAbsorber,
     operational_o2_lut: OperationalCrossSectionLut,
 ) ?AbsorberModel.AbsorberSpecies {
-    // resolveContinuumOwnerSpecies ------------------------------------------------------------------------   |
+    // resolveContinuumOwnerSpecies ---------------------------------------------------------------------------|
     // Choose which line-absorber species owns continuum density when scene controls did not name one.         |
     //                                                                                                         |
     // call path                                                                                               |
@@ -122,8 +138,9 @@ pub fn resolveContinuumOwnerSpecies(
     //   otherwise O2 is preferred if one prepared line absorber is O2.                                        |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The fallback scan reads only PreparedLineAbsorber.species from wide descriptors by pointer.           |
-    //   This is setup metadata selection, not a per-wavelength loop; a side species column is not justified.  |
+    //   The fallback scan reads only PreparedLineAbsorber.species at byte 272 of each 280 B row. Pointer      |
+    //   capture avoids copying the row, and this setup-time choice is not repeated per wavelength. A side     |
+    //   species column would add ownership/deinit surface for one rare ambiguous-continuum decision.          |
     // --------------------------------------------------------------------------------------------------------|
 
     if (operational_o2_lut.enabled()) return .o2;

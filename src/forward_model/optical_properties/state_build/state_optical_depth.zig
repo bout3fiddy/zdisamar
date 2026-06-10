@@ -14,24 +14,32 @@ const OpticalDepthBreakdown = Types.OpticalDepthBreakdown;
 const EvaluatedLayer = Types.EvaluatedLayer;
 
 // state_optical_depth.zig -----------------------------------------------------------------------------------|
-// Evaluates scalar and layer optical-depth breakdowns from a prepared optical state at one wavelength.       |
+// Evaluates gas, Rayleigh, CIA, aerosol, and scattering optical-depth components from PreparedOpticalState   |
+// at one wavelength. This is the value-row evaluator: it returns OpticalDepthBreakdown or EvaluatedLayer     |
+// rows, while forward_layers.zig is responsible for turning those rows into LABOS LayerInput transport rows. |
 //                                                                                                            |
 // called by                                                                                                  |
-//   PreparedOpticalState helpers, forward_layers, diagnostics, atmospheric budgets, and output reports.      |
+//   prepared_state.zig exposes these helpers as PreparedOpticalState methods. forward_layers.zig calls the   |
+//   scalar route when no transport rows are requested and the layer route while filling direct/fallback RTM  |
+//   inputs. atmospheric_budget.zig, radiative_transfer_diagnostics.zig, and validation shape tests read the  |
+//   same breakdown values for reporting and sanity checks.                                                   |
 //                                                                                                            |
 // main paths                                                                                                 |
-//   total route   : sum every prepared layer or prepared scene mean into OpticalDepthBreakdown.              |
-//   layer route   : evaluate one layer/support span into EvaluatedLayer.                                     |
-//   cache route   : reuse ProfileNodeSpectroscopyCache while several layers share a wavelength.              |
+//   scalar total route : sum every prepared layer or prepared scene mean into OpticalDepthBreakdown.         |
+//   layer route        : evaluate one PreparedLayer/PreparedSublayer support span into EvaluatedLayer.       |
+//   cache route        : reuse ProfileNodeSpectroscopyCache while several layers share a wavelength.         |
 //                                                                                                            |
 // row handoff                                                                                                |
-//   PreparedLayer supplies the support span and representative altitude for sublayer evaluation.             |
-//   PreparedSublayer rows carry temperature, pressure, density, path length, aerosol, and support metadata.  |
-//   Totals are scalar summaries; layer builders use EvaluatedLayer when they must also fill transport rows.  |
+//   PreparedLayer is a 208 B transport-grid row; this file reads its support-span tail and representative    |
+//   altitude when it needs to slice PreparedSublayer rows. PreparedSublayer rows carry temperature, pressure,|
+//   density, path length, aerosol, and support metadata. OpticalDepthBreakdown is a 40 B value row;          |
+//   EvaluatedLayer is an 80 B value row with the breakdown plus phase and direction cosines.                 |
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per high-resolution wavelength. Profile caches prevent repeating spectroscopy over pressure nodes.  |
-//   The PreparedLayer loop reads a few index/altitude fields by pointer; it does not copy the 208 B row.     |
+//   The PreparedLayer loop reads span and altitude fields by pointer and does not copy the 208 B row. The    |
+//   layer row stays whole because forward-layer, RTM quadrature, and diagnostics read the same prepared row  |
+//   family nearby.                                                                                           |
 //                                                                                                            |
 // memory                                                                                                     |
 //   These helpers borrow PreparedOpticalState storage and return value rows. The profile spectroscopy cache  |
@@ -39,8 +47,9 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //   the prepared state. No ownership transfer or heap allocation happens in this file.                       |
 //                                                                                                            |
 // math                                                                                                       |
-//   tau_total(lambda) = gas absorption + Rayleigh scattering + CIA + aerosol extinction.                     |
-//   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
+//   tau_ext(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                             |
+//   tau_aerosol_sca = tau_aerosol * resolved_aerosol_single_scatter_albedo                                   |
+//   omega0          = (tau_rayleigh + tau_aerosol_sca) / tau_ext, clamped by OpticalDepthBreakdown methods   |
 // -----------------------------------------------------------------------------------------------------------|
 
 // OpticalDepthBreakdownRequest ------------------------------------------------------------------------------|
