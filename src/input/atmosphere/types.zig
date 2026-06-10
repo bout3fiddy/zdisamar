@@ -1,20 +1,35 @@
 // types.zig --------------------------------------------------------------------------------------------------|
-// Shared atmosphere enum vocabulary for interval grids, aerosol placement, and fraction controls.             |
+// Shared atmosphere tag vocabulary for the public input model. These enums carry no payload and do no         |
+// validation by themselves; they name which route the payload rows in interval_grid.zig and                   |
+// fraction_control.zig should take.                                                                           |
 //                                                                                                             |
-// called by                                                                                                   |
-//   Atmosphere.zig re-exports these names as part of the public input model                                   |
-//   atmosphere/interval_grid.zig uses interval and particle-placement semantics for vertical contracts        |
-//   atmosphere/fraction_control.zig uses fraction target/kind for wavelength-dependent aerosol fractions      |
-//   prepared optical state stores the chosen interval semantics for RTM layer construction                    |
+// route                                                                                                       |
+//   Atmosphere.zig re-exports these names as part of the stable Scene input surface.                          |
+//   interval_grid.zig stores IntervalSemantics on IntervalGrid and ParticlePlacementSemantics on              |
+//   IntervalPlacement, then validates the matching payload fields before vertical-grid preparation.           |
+//   fraction_control.zig stores FractionTarget/FractionKind beside the fraction values and validates          |
+//   whether those values are a single scalar fraction or a wavelength-dependent table.                        |
+//   vertical_grid.zig and layer_accumulation.zig consume the validated tags while building prepared layer,    |
+//   sublayer, aerosol, and particle support rows.                                                             |
+//                                                                                                             |
+// why this file exists                                                                                        |
+//   The enum names are shared by several input child modules and re-exported by Atmosphere. Keeping them      |
+//   here avoids making interval-grid payload layout depend on fraction-control payload layout, while the      |
+//   concrete structs keep their own memory and validation comments next to the fields they store.             |
 //                                                                                                             |
 // enum roles                                                                                                  |
-//   IntervalSemantics          says how atmosphere layers map to pressure/altitude intervals                  |
-//   ParticlePlacementSemantics says how aerosol placement should be interpreted                               |
-//   FractionTarget             says which physical quantity receives a fractional split                       |
-//   FractionKind               says whether that fraction is constant or wavelength dependent                 |
+//   IntervalSemantics          : how atmosphere layers map to pressure/altitude intervals                     |
+//   ParticlePlacementSemantics : how aerosol or particle placement should be interpreted                      |
+//   FractionTarget             : which physical quantity receives a fractional split                          |
+//   FractionKind               : whether that fraction is constant or wavelength dependent                    |
+//                                                                                                             |
+// hot path boundary                                                                                           |
+//   RTM hot loops do not read these public tags. Setup code copies the resolved choices into prepared optical |
+//   state or expands them into support rows; repeated wavelength execution consumes those prepared rows.      |
 //                                                                                                             |
 // memory                                                                                                      |
-//   These are tag-only public enums. This file owns no buffers and has no runtime state.                      |
+//   These are tag-only public enums. This file owns no buffers, referenced storage, or deinit path. When enum |
+//   storage size matters, the layout boxes live on the structs that embed the tag.                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const IntervalSemantics = enum {
