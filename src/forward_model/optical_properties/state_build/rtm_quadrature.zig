@@ -109,6 +109,19 @@ fn fillAerosolSourceJacobian(
     rtm_level.aerosol_ksca_jacobian = derivative_scale;
 }
 
+fn clearRtmQuadratureLevels(rtm_levels: []transport_common.RtmQuadratureLevel) void {
+    // clearRtmQuadratureLevels ------------------------------------------------------------------------------|
+    // Clear caller-owned RTM quadrature rows when a shared-grid route was requested but no compatible cached |
+    // geometry exists. This prevents stale level rows from leaking into ForwardInput after a failed fill.    |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   RtmQuadratureLevel default values are all zero, so `.{}` clears altitude, weight, k_sca, aerosol     |
+    //   Jacobian, and phase weights in one row assignment.                                                   |
+    // -------------------------------------------------------------------------------------------------------|
+
+    for (rtm_levels) |*rtm_level| rtm_level.* = .{};
+}
+
 fn fillSharedAerosolSourceJacobianFromLayers(
     self: *const PreparedOpticalState,
     layer_inputs: []const transport_common.LayerInput,
@@ -283,13 +296,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             return has_active_quadrature;
         }
 
-        for (request.rtm_levels) |*rtm_level| {
-            rtm_level.* = .{
-                .altitude_km = 0.0,
-                .weight = 0.0,
-                .ksca = 0.0,
-            };
-        }
+        clearRtmQuadratureLevels(request.rtm_levels);
         return false;
     }
 
@@ -432,13 +439,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
         request.prepared,
         request.layer_inputs.len,
     ) orelse {
-        for (request.rtm_levels) |*rtm_level| {
-            rtm_level.* = .{
-                .altitude_km = 0.0,
-                .weight = 0.0,
-                .ksca = 0.0,
-            };
-        }
+        clearRtmQuadratureLevels(request.rtm_levels);
         return false;
     };
 
