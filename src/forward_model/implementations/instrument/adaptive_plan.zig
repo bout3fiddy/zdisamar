@@ -10,12 +10,18 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 
 // adaptive_plan.zig ------------------------------------------------------------------------------------------- |
-// Builds line-aware high-resolution instrument kernels from strong-line intervals and Gauss samples.            |
+// Builds adaptive high-resolution instrument kernels by turning support windows into weighted Gauss samples.    |
 //                                                                                                               |
 // called by                                                                                                     |
-//   integration.zig for adaptive and DISAMAR-style instrument integration kernels                               |
-//   wavelength_sampling.zig through integration.zig when a retained product plan can reuse an interval cache    |
-//   input/o2a_reference/run.zig when validation output needs realized adaptive support wavelengths              |
+//   integration.zig calls the public builders for adaptive kernels, DISAMAR-style realized kernels, and         |
+//   reusable interval caches. wavelength_sampling.zig reaches this file through integration.zig when product    |
+//   simulation can retain one interval plan across many nominal wavelengths. input/o2a_reference/run.zig calls  |
+//   buildAdaptiveSupportWavelengths only to expose the realized support lattice for validation output.          |
+//                                                                                                               |
+// contains                                                                                                      |
+//   AdaptiveKernelSupportWindow is the global/local support bounds. AdaptiveIntervalPlan is the fixed-capacity  |
+//   interval-end table plus per-interval Gauss division count. The public builders share the same internal      |
+//   path: support bounds -> interval ends -> Gauss samples -> response weights -> normalized kernel.            |
 //                                                                                                               |
 // main paths                                                                                                    |
 //   buildAdaptiveIntegrationKernel -> support window -> interval plan -> samples -> normalized kernel           |
@@ -27,8 +33,9 @@ const Allocator = std.mem.Allocator;
 //   global_start_nm/global_end_nm is the scene grid expanded by response support. interval_end_nm stores only   |
 //   each end boundary; the start is global_start_nm or the previous end. Strong O2 line centers can split the   |
 //   FWHM-sized intervals, and narrow intervals receive more Gauss divisions.                                    |
-//   Strong-line collection scans wide SpectroscopyLine rows during setup. It reads only strength and center;    |
-//   the result is the compact boundary list reused by cached plans and per-wavelength sample emission.          |
+//   Strong-line collection scans wide SpectroscopyLine rows during setup. It reads strength at [24..31] and     |
+//   center at [8..15]; the result is the compact boundary list reused by cached plans and per-wavelength        |
+//   sample emission.                                                                                            |
 //                                                                                                               |
 // hot path                                                                                                      |
 //   Wavelength sampling reuses a caller-owned IntegrationKernel and, when possible, a cached 20 KiB             |
@@ -620,8 +627,9 @@ fn collectAdaptiveStrongLineCentersFromList(
     //   buildAdaptiveIntervalPlan sorts and merges the collected centers before assigning Gauss divisions.      |
     //                                                                                                           |
     // memory                                                                                                    |
-    //   SpectroscopyLine is a 104 B setup row. This scan reads strength and center by pointer.                  |
-    //   It writes only the compact centers_nm prefix used to split intervals; no line data is retained here.    |
+    //   SpectroscopyLine is a 104 B setup row. This scan reads line_strength_cm2_per_molecule at [24..31]       |
+    //   and center_wavelength_nm at [8..15] by pointer. It writes only the compact centers_nm prefix used to    |
+    //   split intervals; no line data is retained here.                                                         |
     //                                                                                                           |
     // math                                                                                                      |
     //   keep line when strength >= thresholdStrength(lines) and center is inside the global support window      |

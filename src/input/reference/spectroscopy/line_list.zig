@@ -684,7 +684,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     //   Prepared line-state setup then reuses the match slice instead of searching sidecars per wavelength.   |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at byte [8..15] by        |
+    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at [8..15] by             |
     //   pointer and writes one compact ?u16 match slot with the same index order as self.lines. Vendor        |
     //   partition mode also reads the retained metadata near [91..97] before deciding whether a row can       |
     //   match a sidecar. No line row is copied or retained here beyond the match-index side slice.            |
