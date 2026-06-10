@@ -239,15 +239,6 @@ pub fn loadBundleAsset(
     return initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
 }
 
-pub fn loadCsvBundleAsset(
-    allocator: std.mem.Allocator,
-    kind: AssetKind,
-    bundle_manifest_path: []const u8,
-    asset_id: []const u8,
-) !LoadedAsset {
-    return loadBundleAsset(allocator, kind, bundle_manifest_path, asset_id);
-}
-
 pub fn loadExternalAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,

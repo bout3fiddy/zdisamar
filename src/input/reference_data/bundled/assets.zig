@@ -94,7 +94,7 @@ pub fn zeroContinuumTable(
 pub fn loadStandardClimatologyProfile(
     allocator: Allocator,
 ) !ReferenceData.ClimatologyProfile {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .climatology_profile,
         bundle_manifest_paths.climatology,
@@ -107,7 +107,7 @@ pub fn loadStandardClimatologyProfile(
 pub fn loadO2ALineList(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyLineList {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_line_list,
         bundle_manifest_paths.cross_sections,
@@ -120,7 +120,7 @@ pub fn loadO2ALineList(
 pub fn loadO2AStrongLineSet(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyStrongLineSet {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_strong_line_set,
         bundle_manifest_paths.cross_sections,
@@ -133,7 +133,7 @@ pub fn loadO2AStrongLineSet(
 pub fn loadO2ARelaxationMatrix(
     allocator: Allocator,
 ) !ReferenceData.RelaxationMatrix {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_relaxation_matrix,
         bundle_manifest_paths.cross_sections,
@@ -173,7 +173,7 @@ pub fn loadO2aSpectroscopyLineList(
 pub fn loadO2ACollisionInducedAbsorptionTable(
     allocator: Allocator,
 ) !ReferenceData.CollisionInducedAbsorptionTable {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .collision_induced_absorption_table,
         bundle_manifest_paths.cross_sections,
@@ -186,7 +186,7 @@ pub fn loadO2ACollisionInducedAbsorptionTable(
 pub fn loadAirmassFactorLut(
     allocator: Allocator,
 ) !ReferenceData.AirmassFactorLut {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .lookup_table,
         bundle_manifest_paths.luts,
