@@ -67,41 +67,13 @@ pub fn strongLineContribution(
     pressure_scale: f64,
 ) Types.SpectroscopyEvaluation {
     _ = strong_lines;
-    const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
-    const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    const sig_moy_cm1 = @max(convtp_state.sig_moy_cm1, 1.0e-6);
-    const gam_d = @max(
-        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
-        1.0e-6,
+    return strongLineContributionFromState(
+        wavelength_nm,
+        strong_index,
+        convtp_state,
+        temperature_k,
+        pressure_scale,
     );
-    const cte = @sqrt(@log(2.0)) / gam_d;
-    const cte1 = cte / @sqrt(Types.hitran_pi);
-    const cpf = Core.complexProbabilityFunction(
-        (convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
-        convtp_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
-    );
-    const cte2 = evaluation_wavenumber_cm1 *
-        @max(1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature), 0.0);
-    const base_absorption = cte1 *
-        safe_pressure *
-        convtp_state.population_t[strong_index] *
-        convtp_state.dipole_t[strong_index] *
-        convtp_state.dipole_t[strong_index] *
-        cte2;
-    const number_density = 1013.25 * safe_pressure / safe_temperature / Types.hitran_boltzmann_constant_cm3_hpa_per_k;
-    const line_sigma = @max(base_absorption * cpf.wr / number_density, 0.0);
-    const line_mixing_sigma = (-base_absorption *
-        convtp_state.line_mixing_coefficients[strong_index] *
-        cpf.wi) / number_density;
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = line_sigma,
-        .line_sigma_cm2_per_molecule = line_sigma,
-        .line_mixing_sigma_cm2_per_molecule = line_mixing_sigma,
-        .total_sigma_cm2_per_molecule = @max(line_sigma + line_mixing_sigma, 0.0),
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
 }
 
 pub fn strongLineContributionPrepared(
@@ -121,10 +93,31 @@ pub fn strongLineContributionPrepared(
     // ------------------------------------------------------------------------------------------------------- |
 
     _ = strong_lines;
+    return strongLineContributionFromState(
+        wavelength_nm,
+        strong_index,
+        prepared_state,
+        temperature_k,
+        pressure_scale,
+    );
+}
+
+inline fn strongLineContributionFromState(
+    wavelength_nm: f64,
+    strong_index: usize,
+    state: anytype,
+    temperature_k: f64,
+    pressure_scale: f64,
+) Types.SpectroscopyEvaluation {
+    // strongLineContributionFromState ----------------------------------------------------------------------- |
+    // Shared O2 line-mixing math for the fixed stack state and the exact-sized prepared state.                |
+    // Both state layouts expose the same prepared arrays; only their storage shape differs.                   |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    const sig_moy_cm1 = @max(prepared_state.sig_moy_cm1, 1.0e-6);
+    const sig_moy_cm1 = @max(state.sig_moy_cm1, 1.0e-6);
     const gam_d = @max(
         Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
         1.0e-6,
@@ -132,21 +125,21 @@ pub fn strongLineContributionPrepared(
     const cte = @sqrt(@log(2.0)) / gam_d;
     const cte1 = cte / @sqrt(Types.hitran_pi);
     const cpf = Core.complexProbabilityFunction(
-        (prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
-        prepared_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
+        (state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
+        state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
     );
     const cte2 = evaluation_wavenumber_cm1 *
         @max(1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature), 0.0);
     const base_absorption = cte1 *
         safe_pressure *
-        prepared_state.population_t[strong_index] *
-        prepared_state.dipole_t[strong_index] *
-        prepared_state.dipole_t[strong_index] *
+        state.population_t[strong_index] *
+        state.dipole_t[strong_index] *
+        state.dipole_t[strong_index] *
         cte2;
     const number_density = 1013.25 * safe_pressure / safe_temperature / Types.hitran_boltzmann_constant_cm3_hpa_per_k;
     const line_sigma = @max(base_absorption * cpf.wr / number_density, 0.0);
     const line_mixing_sigma = (-base_absorption *
-        prepared_state.line_mixing_coefficients[strong_index] *
+        state.line_mixing_coefficients[strong_index] *
         cpf.wi) / number_density;
     return .{
         .weak_line_sigma_cm2_per_molecule = 0.0,

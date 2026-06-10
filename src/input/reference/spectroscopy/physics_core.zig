@@ -500,50 +500,11 @@ fn preparedWeakLineInsideVendorCutoff(
     runtime_controls: Types.SpectroscopyRuntimeControls,
     wavelength_state: WeakLineWavelengthState,
 ) bool {
-    const window_cm1 = runtime_controls.cutoff_cm1 orelse return true;
-
-    if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
-        const has_precomputed_wavenumber_grid =
-            runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
-            runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2;
-        const lower_wavelength_endpoint_index, const upper_wavelength_endpoint_index = choose_endpoint_indices: {
-            if (has_precomputed_wavenumber_grid) {
-                break :choose_endpoint_indices .{
-                    nearestWavenumberGridIndexFromWavenumbers(
-                        runtime_controls.cutoff_grid_wavenumbers_cm1,
-                        prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
-                    ),
-                    nearestWavenumberGridIndexFromWavenumbers(
-                        runtime_controls.cutoff_grid_wavenumbers_cm1,
-                        prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
-                    ),
-                };
-            }
-
-            break :choose_endpoint_indices .{
-                nearestWavenumberGridIndex(
-                    runtime_controls.cutoff_grid_wavelengths_nm,
-                    prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
-                ),
-                nearestWavenumberGridIndex(
-                    runtime_controls.cutoff_grid_wavelengths_nm,
-                    prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
-                ),
-            };
-        };
-        const evaluation_index = wavelength_state.cutoff_grid_index.?;
-        const start_index = @min(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
-        const end_index = @max(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
-
-        return evaluation_index >= start_index and evaluation_index <= end_index;
-    }
-
-    const fallback_cutoff_cm1 = window_cm1 + Types.vendor_cutoff_boundary_margin_cm1;
-    const center_distance_cm1 = @abs(
-        prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1,
+    return shiftedCenterInsideVendorCutoff(
+        prepared_line.shifted_center_wavenumber_cm1,
+        runtime_controls,
+        wavelength_state,
     );
-
-    return center_distance_cm1 <= fallback_cutoff_cm1;
 }
 
 fn weakLineInsideVendorCutoff(
@@ -552,9 +513,22 @@ fn weakLineInsideVendorCutoff(
     runtime_controls: Types.SpectroscopyRuntimeControls,
     wavelength_state: WeakLineWavelengthState,
 ) bool {
-    const window_cm1 = runtime_controls.cutoff_cm1 orelse return true;
     const Strong = @import("strong_lines.zig");
     const shifted_center_wavenumber_cm1 = Strong.shiftedLineCenterWavenumberCm1(line, pressure_atm);
+
+    return shiftedCenterInsideVendorCutoff(
+        shifted_center_wavenumber_cm1,
+        runtime_controls,
+        wavelength_state,
+    );
+}
+
+fn shiftedCenterInsideVendorCutoff(
+    shifted_center_wavenumber_cm1: f64,
+    runtime_controls: Types.SpectroscopyRuntimeControls,
+    wavelength_state: WeakLineWavelengthState,
+) bool {
+    const window_cm1 = runtime_controls.cutoff_cm1 orelse return true;
 
     if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
 
