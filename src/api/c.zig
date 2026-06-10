@@ -802,38 +802,6 @@ const Context = struct {
     radiative_transfer_tables: std.ArrayList([]ZdsRadiativeTransferDiagnosticRow) = .empty,
     last_error: [256:0]u8 = [_:0]u8{0} ** 256,
 
-    fn clearResults(self: *Context) void {
-        for (self.results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationResults(self: *Context) void {
-        for (self.oe_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationBatchResults(self: *Context) void {
-        for (self.oe_batch_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_batch_results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationFastmodeBatchResults(self: *Context) void {
-        for (self.oe_fastmode_batch_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_fastmode_batch_results.clearAndFree(allocator);
-    }
-
     fn ownsResult(self: *const Context, result: *const zdisamar.Output) bool {
         for (self.results.items) |stored| {
             if (stored == result) return true;
@@ -877,6 +845,14 @@ const PreparedWavelengthRequest = struct {
 
 fn clearStoredRows(comptime Row: type, list: *std.ArrayList([]Row)) void {
     for (list.items) |rows| allocator.free(rows);
+    list.clearAndFree(allocator);
+}
+
+fn clearStoredResults(comptime Item: type, list: *std.ArrayList(*Item)) void {
+    for (list.items) |result| {
+        result.deinit(allocator);
+        allocator.destroy(result);
+    }
     list.clearAndFree(allocator);
 }
 
@@ -964,10 +940,10 @@ export fn zds_context_create() ?*Context {
 
 export fn zds_context_destroy(ctx: ?*Context) void {
     const resolved = ctx orelse return;
-    resolved.clearResults();
-    resolved.clearOptimalEstimationResults();
-    resolved.clearOptimalEstimationBatchResults();
-    resolved.clearOptimalEstimationFastmodeBatchResults();
+    clearStoredResults(zdisamar.Output, &resolved.results);
+    clearStoredResults(zdisamar.optimal_estimation.Result, &resolved.oe_results);
+    clearStoredResults(zdisamar.optimal_estimation.BatchResult, &resolved.oe_batch_results);
+    clearStoredResults(zdisamar.optimal_estimation.FastmodeBatchResult, &resolved.oe_fastmode_batch_results);
     clearStoredRows(ZdsAtmosphericBudgetRow, &resolved.atmospheric_budgets);
     clearStoredRows(ZdsO2LineContributionRow, &resolved.o2_line_contribution_tables);
     clearStoredRows(ZdsInstrumentResponseRow, &resolved.instrument_response_tables);
