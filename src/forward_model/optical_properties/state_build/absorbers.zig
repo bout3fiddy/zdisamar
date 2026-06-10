@@ -15,16 +15,59 @@ const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
 const max_profile_spectroscopy_cache_nodes: usize = 64;
 
-// layout(64-bit):
-//   size: 304 B, align: 8 B
-// field storage: 304 B across 8 fields; largest: line_list=208 B, temperatures_k=16 B, pressures_hpa=16 B; padding: 0 B
-// (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: temperatures_k, pressures_hpa, strong_relaxation_weights, queue carry references/descriptors; referenced
-// storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 304 B (0.297 KiB); total also includes referenced storage above
+// absorbers.zig ---------------------------------------------------------------------------------------------    |
+// Absorber preparation stage for optical-property state construction.                                            |
+//                                                                                                                |
+// called by                                                                                                      |
+//   root.prepare after Context.init and before layer_accumulation.populate.                                      |
+//                                                                                                                |
+// main path                                                                                                      |
+//   Scene absorber controls -> active line/cross-section descriptors                                             |
+//   reference line list -> runtime filtering, strong-line match index, and optional per-species line lists       |
+//   cross-section table/LUT sources -> cloned prepared absorber rows                                             |
+//   profile T/P nodes -> weak/strong prepared line states, loaded from ProfileStateCache when available          |
+//   resolved species/continuum metadata -> scalar fields consumed by layer_spectroscopy.zig                      |
+//                                                                                                                |
+// hot path                                                                                                       |
+//   This stage runs once per prepared scene so wavelength-time carrier evaluation does not repeat absorber       |
+//   selection, line-list filtering, strong-line partitioning, or profile-node state setup. Profile line-state    |
+//   preparation can split profile nodes across workers; worker rows borrow profile arrays and write into         |
+//   caller-owned prepared-state slices.                                                                          |
+//                                                                                                                |
+// limits                                                                                                         |
+//   Single-list profile spectroscopy without an operational O2 LUT accepts at most                               |
+//   max_profile_spectroscopy_cache_nodes profile nodes so the downstream profile cache stays bounded.            |
+//                                                                                                                |
+// memory                                                                                                         |
+//   AbsorberBuildState owns the active descriptor slices, cloned prepared absorber rows, density columns,        |
+//   optional line-state arrays, and any line-list storage moved out of Context. Deinit releases only initialized |
+//   prefixes tracked by the count fields; Finalize.assemble later transfers surviving ownership into             |
+//   PreparedOpticalState.                                                                                        |
+// ------------------------------------------------------------------------------------------------------------   |
+
+// ProfileLineStateWorker ------------------------------------------------------------------------------------    |
+// Per-thread descriptor for profile line-state preparation.                                                      |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 304 B (0.297 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0..207] line_list                 : SpectroscopyLineList                                                    |
+// [208..223] temperatures_k            : []const f64                                                             |
+// [224..239] pressures_hpa             : []const f64                                                             |
+// [240..255] weak_states               : ?[]WeakLinePreparedState                                                |
+// [256..271] strong_states             : ?[]StrongLinePreparedState                                              |
+// [272..287] strong_relaxation_weights : []f64                                                                   |
+// [288..295] queue                     : *ChunkQueue                                                             |
+// [296..303] worker_index              : usize                                                                   |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   profile arrays, state arrays, relaxation weights, and queue storage are borrowed by the worker.              |
+//   line_list carries descriptors for spectroscopy line storage; ownership stays outside this worker row.        |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 5 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 304 B plus borrowed storage                                                          |
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
     temperatures_k: []const f64,
@@ -35,17 +78,46 @@ const ProfileLineStateWorker = struct {
     queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
-// layout(64-bit):
-//   size: 568 B, align: 8 B
-// field storage: 567 B across 22 fields; largest: owned_lines=216 B, single_active_line_absorber=168 B,
-// active_line_absorbers=16 B; padding: 1 B (8 bits)
-//   unused bits: 8 padding + 21 bool-storage slack = 29 bits
-// out-of-line: active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers,
-// owned_line_absorbers carry references/descriptors; referenced storage is not included in size
-//   cache span: 9 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 568 B (0.555 KiB); total also includes referenced storage above
+// AbsorberBuildState ----------------------------------------------------------------------------------------    |
+// Owns the prepared absorber arrays built from one scene and reference-data context.                             |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 568 B (0.555 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0.. 15] active_line_absorbers              : []ActiveLineAbsorber                                           |
+// [ 16.. 31] active_cross_section_absorbers     : []ActiveCrossSectionAbsorber                                   |
+// [ 32..199] single_active_line_absorber        : ?ActiveLineAbsorber                                            |
+// [200..215] owned_cross_section_absorbers      : []PreparedCrossSectionAbsorber                                 |
+// [216..223] owned_cross_section_absorber_count : usize                                                          |
+// [224..239] owned_line_absorbers               : []PreparedLineAbsorber                                         |
+// [240..247] owned_line_absorber_count          : usize                                                          |
+// [248..263] strong_line_states                 : ?[]StrongLinePreparedState                                     |
+// [264..271] strong_line_state_count            : usize                                                          |
+// [272..287] profile_strong_line_states         : ?[]StrongLinePreparedState                                     |
+// [288..295] profile_strong_line_state_count    : usize                                                          |
+// [296..311] profile_weak_line_states           : ?[]WeakLinePreparedState                                       |
+// [312..319] profile_weak_line_state_count      : usize                                                          |
+// [320..535] owned_lines                        : ?SpectroscopyLineList                                          |
+// [536..543] mean_sigma                         : f64                                                            |
+// [544..551] midpoint_continuum_sigma           : f64                                                            |
+// [552..559] air_mass_factor                    : f64                                                            |
+// [560..560] owns_profile_strong_line_states    : bool                                                           |
+// [561..561] owns_profile_weak_line_states      : bool                                                           |
+// [562..563] active_line_species                : ?AbsorberSpecies                                               |
+// [564..565] continuum_owner_species            : ?AbsorberSpecies                                               |
+// [566..566] has_line_absorbers                 : bool                                                           |
+// [567..567] padding                            : 1 B                                                            |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   active_line_absorbers, active_cross_section_absorbers, owned_cross_section_absorbers,                        |
+//   owned_line_absorbers, strong/profile state slices, and owned_lines may own referenced storage.               |
+//                                                                                                                |
+// unused bits: 8 padding + 21 bool-storage slack = 29 bits                                                       |
+// cache span: 9 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 568 B plus owned absorber and spectroscopy storage                                   |
 pub const AbsorberBuildState = struct {
     active_line_absorbers: []State.ActiveLineAbsorber = &.{},
     active_cross_section_absorbers: []State.ActiveCrossSectionAbsorber = &.{},
@@ -114,17 +186,24 @@ pub const AbsorberBuildState = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
 pub fn build(
     allocator: Allocator,
     context: *Context,
 ) !AbsorberBuildState {
-
-    // hot path:
-    //   when: once per optical-state preparation
-    //   work: builds active cross-section and line absorbers for repeated wavelength evaluation
-    //   reads: reference absorber tables, spectroscopy line lists, profile line-state storage
-    //   follow: buildCrossSectionAbsorbers, buildLineAbsorbers, and prepareProfileLineStates
+    // build ---------------------------------------------------------------------------------------------------  |
+    // Builds active cross-section and line absorbers for repeated wavelength evaluation.                         |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs once per optical-state preparation and moves absorber selection, line partitioning, and profile     |
+    //   line-state setup out of wavelength-time evaluation.                                                      |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   buildCrossSectionAbsorbers                                                                               |
+    //   buildLineAbsorbers                                                                                       |
+    //   prepareProfileLineStates                                                                                 |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     const scene = context.scene;
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
@@ -312,12 +391,16 @@ fn prepareProfileLineStates(
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
 ) !void {
-
-    // hot path:
-    //   when: during spectroscopy absorber preparation for profile-resolved scenes
-    //   work: allocates prepared weak and strong line-state arrays for all profile nodes
-    //   reads: spectroscopy profile nodes, weak-line state slices, strong-line state slices
-    //   follow: fillProfileLineStates and profile-node indexing into prepared state arrays
+    // prepareProfileLineStates --------------------------------------------------------------------------------  |
+    // Allocates and initializes prepared weak and strong line-state arrays for profile-resolved scenes.          |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs during spectroscopy absorber preparation. The returned profile-node states are later indexed by     |
+    //   altitude-aware spectroscopy and carrier evaluation paths.                                                |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   fillProfileLineStates                                                                                    |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     if (temperatures_k.len != pressures_hpa.len) return error.InvalidRequest;
 
@@ -386,12 +469,17 @@ fn fillProfileLineStates(
     strong_relaxation_weight_scratch: []f64,
     strong_weight_count: usize,
 ) void {
-
-    // hot path:
-    //   when: during profile spectroscopy preparation, often across worker chunks
-    //   work: fills prepared weak and strong line states per thermodynamic profile node
-    //   reads: profile pressure/temperature arrays, line absorber arrays, prepared state arrays
-    //   follow: profileLineStateWorkerMain and fillProfileLineStateRange
+    // fillProfileLineStates -----------------------------------------------------------------------------------  |
+    // Fills prepared weak and strong line states for each thermodynamic profile node.                            |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Often splits profile nodes across worker chunks. Each worker reads shared pressure/temperature arrays    |
+    //   and writes into caller-owned prepared-state slices.                                                      |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   profileLineStateWorkerMain                                                                               |
+    //   fillProfileLineStateRange                                                                                |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
     if (worker_count == 1) {
@@ -534,12 +622,13 @@ fn buildCrossSectionAbsorbers(
     context: *Context,
     state: *AbsorberBuildState,
 ) !void {
-
-    // hot path:
-    //   when: once while preparing cross-section absorbers
-    //   work: collects LUT/table-backed absorbers used by wavelength carrier evaluation
-    //   reads: absorber configs, cross-section tables, operational LUT handles
-    //   follow: carrier_eval cross-section loops that consume the resulting active set
+    // buildCrossSectionAbsorbers ------------------------------------------------------------------------------  |
+    // Collects LUT/table-backed absorbers used by wavelength carrier evaluation.                                 |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs once during absorber preparation and clones only the active cross-section sources. Carrier          |
+    //   evaluation then streams the prepared active set without rechecking scene absorber descriptors.           |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     if (state.active_cross_section_absorbers.len == 0) return;
     state.owned_cross_section_absorbers = try allocator.alloc(
@@ -548,18 +637,6 @@ fn buildCrossSectionAbsorbers(
     );
 
     for (state.active_cross_section_absorbers, 0..) |cross_section_absorber, index| {
-        const representation_kind = switch (cross_section_absorber.representation) {
-            .xsec_table => if (cross_section_absorber.use_effective_cross_section)
-                State.CrossSectionRepresentationKind.effective_table
-            else
-                State.CrossSectionRepresentationKind.table,
-            .xsec_lut => if (cross_section_absorber.use_effective_cross_section)
-                State.CrossSectionRepresentationKind.effective_lut
-            else
-                State.CrossSectionRepresentationKind.lut,
-            .line_abs, .none => unreachable,
-        };
-
         const representation = switch (cross_section_absorber.representation) {
             .xsec_table => |table| State.PreparedCrossSectionRepresentation{
                 .table = .{
@@ -588,8 +665,6 @@ fn buildCrossSectionAbsorbers(
 
         state.owned_cross_section_absorbers[index] = .{
             .species = cross_section_absorber.species,
-            .representation_kind = representation_kind,
-            .polynomial_order = cross_section_absorber.polynomial_order,
             .representation = representation,
             .number_densities_cm3 = number_densities_cm3,
         };
@@ -605,26 +680,28 @@ fn buildLineAbsorbers(
     owned_lines: *?ReferenceData.SpectroscopyLineList,
     operational_o2_lut: OperationalCrossSectionLut,
 ) !void {
-
-    // hot path:
-    //   when: once while preparing spectroscopy line absorbers
-    //   work: applies line controls, partitions strong/weak lines, and prepares match indexes
-    //   reads: line lists, strong-line sidecars, runtime controls, prepared line-state slices
-    //   follow: layer_spectroscopy and line_list_eval relevant-window loops
+    // buildLineAbsorbers --------------------------------------------------------------------------------------  |
+    // Applies line controls, partitions strong/weak lines, and prepares match indexes.                           |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs once while preparing spectroscopy line absorbers. Layer spectroscopy and line-list evaluation       |
+    //   reuse the filtered lists and prepared sidecars at wavelength time.                                       |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     const line_list = owned_lines.*;
     if (line_list == null) return;
     var line_list_value = line_list.?;
+    const operational_o2_lut_enabled = operational_o2_lut.enabled();
 
     if (state.active_line_absorbers.len > 1 or
-        (operational_o2_lut.enabled() and state.active_line_absorbers.len != 0))
+        (operational_o2_lut_enabled and state.active_line_absorbers.len != 0))
     {
         state.owned_line_absorbers = try allocator.alloc(State.PreparedLineAbsorber, state.active_line_absorbers.len);
 
         for (state.active_line_absorbers, 0..) |line_absorber, index| {
             var filtered = try line_list_value.clone(allocator);
             errdefer filtered.deinit(allocator);
-            const use_operational_o2_lut = operational_o2_lut.enabled() and line_absorber.species == .o2;
+            const use_operational_o2_lut = operational_o2_lut_enabled and line_absorber.species == .o2;
 
             try applyRuntimeControls(
                 allocator,
@@ -682,18 +759,19 @@ fn buildLineAbsorbers(
     }
 
     if (state.single_active_line_absorber) |line_absorber| {
+        const use_operational_o2_lut = operational_o2_lut_enabled and line_absorber.species == .o2;
         try applyRuntimeControls(
             allocator,
             &line_list_value,
             line_absorber,
-            operational_o2_lut.enabled() and line_absorber.species == .o2,
+            use_operational_o2_lut,
         );
-        if (!operational_o2_lut.enabled() and line_list_value.lines.len == 0) {
+        if (!operational_o2_lut_enabled and line_list_value.lines.len == 0) {
             return error.InvalidRequest;
         }
     }
     sortLineList(&line_list_value);
-    if (!operational_o2_lut.enabled()) {
+    if (!operational_o2_lut_enabled) {
         try line_list_value.buildStrongLineMatchIndex(allocator);
     }
     state.owned_lines = line_list_value;
@@ -737,11 +815,16 @@ fn sortLineList(line_list: *ReferenceData.SpectroscopyLineList) void {
         line_list.lines,
         {},
 
-        // layout(64-bit):
-        //   anonymous comparator namespace: size 0 B, align 1 B
-        //   footprint: no runtime field storage; function declaration only
+        // sortLineList comparator --------------------------------------------------------------------------     |
+        // Anonymous namespace only. No runtime field storage is passed to pdq; the function body is the          |
+        // comparator.                                                                                            |
+        // --------------------------------------------------------------------------------------------------     |
         struct {
-            fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
+            fn lessThan(
+                _: void,
+                left: ReferenceData.SpectroscopyLine,
+                right: ReferenceData.SpectroscopyLine,
+            ) bool {
                 return left.center_wavelength_nm < right.center_wavelength_nm;
             }
         }.lessThan,
@@ -775,18 +858,6 @@ fn collectActiveCrossSectionAbsorbers(
     var active = std.ArrayList(State.ActiveCrossSectionAbsorber).empty;
     defer active.deinit(allocator);
 
-    var any_strong_absorption_band = false;
-    for (scene.bands.items, 0..) |_, band_index| {
-        if (scene.observation_model.cross_section_fit.strongAbsorptionForBand(band_index)) {
-            any_strong_absorption_band = true;
-            break;
-        }
-    }
-    const use_effective_cross_section = scene.observation_model.cross_section_fit.use_effective_cross_section_oe or
-        scene.observation_model.cross_section_fit.use_polynomial_expansion or
-        any_strong_absorption_band;
-    const polynomial_order = scene.observation_model.cross_section_fit.maximumPolynomialOrder();
-
     for (scene.absorbers.items) |absorber| {
         const species = Spectroscopy.resolvedAbsorberSpecies(absorber) orelse continue;
         if (absorber.spectroscopy.mode != .cross_sections) continue;
@@ -801,8 +872,6 @@ fn collectActiveCrossSectionAbsorbers(
             .species = species,
             .representation = representation,
             .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-            .use_effective_cross_section = use_effective_cross_section,
-            .polynomial_order = polynomial_order,
         });
     }
 

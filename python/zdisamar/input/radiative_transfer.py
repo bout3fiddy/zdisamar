@@ -80,15 +80,6 @@ Threshold guide:
   `1e-8`.  This looked unsafe as a broad fast-mode control: even `3e-8`
   produced about `2.3e-5` worst reflectance residual in the sweep.
 
-- `qzero_*_product_suppression`: when the layer-doubling q-series gate has
-  already decided `qseries_is_zero = abs(trace(R)^2) <= threshold_mul`, these
-  booleans suppress the downstream `R-D`, `T-U`, and `T-D` product paths for the
-  same doubling step.  The perturbation sweep found this much safer than forcing
-  the q-series skip itself, but each downstream suppression crossed the retained
-  fast-mode spectra residual contract when combined with the existing Fourier
-  and layer-doubling preset.  These are therefore custom-fast-mode controls, not
-  part of the default O2 A fast preset.
-
 - `phase_function_truncation_threshold`: controls how much aerosol
   phase-function structure is retained before the radiative-transfer solve.
   It must be finite and positive; the O2 A default is `1e-8`.  It affects the
@@ -122,9 +113,6 @@ class RadiativeTransferPerformanceThresholds:
     threshold_doubl: float
     threshold_mul: float
     phase_function_truncation_threshold: float = 1.0e-8
-    qzero_rd_product_suppression: bool = False
-    qzero_tu_product_suppression: bool = False
-    qzero_td_product_suppression: bool = False
 
     @classmethod
     def o2a_default(cls) -> Self:
@@ -162,8 +150,7 @@ class RadiativeTransferPerformanceThresholds:
         family's phase-function truncation threshold, and changes only the
         broadly validated speed knobs.  The current fast preset applies the
         Fourier-order cap, aerosol tangent cap, Fourier-tail reflectance
-        epsilon, layer-doubling threshold, and q-zero downstream product
-        suppression flags defined by `fast()`.
+        epsilon, and layer-doubling threshold defined by `fast()`.
         """
         thresholds = replace(self)
         fast = type(self).fast()
@@ -171,14 +158,28 @@ class RadiativeTransferPerformanceThresholds:
         thresholds.aerosol_tangent_order_cap = fast.aerosol_tangent_order_cap
         thresholds.fourier_tail_reflectance_epsilon = fast.fourier_tail_reflectance_epsilon
         thresholds.threshold_doubl = fast.threshold_doubl
-        thresholds.qzero_rd_product_suppression = fast.qzero_rd_product_suppression
-        thresholds.qzero_tu_product_suppression = fast.qzero_tu_product_suppression
-        thresholds.qzero_td_product_suppression = fast.qzero_td_product_suppression
 
         return thresholds
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
+
+        allowed = {
+            "num_orders_max",
+            "fourier_floor_scalar",
+            "fourier_order_cap",
+            "aerosol_tangent_order_cap",
+            "fourier_tail_reflectance_epsilon",
+            "threshold_conv_first",
+            "threshold_conv_mult",
+            "threshold_doubl",
+            "threshold_mul",
+            "phase_function_truncation_threshold",
+        }
+        unknown = set(data) - allowed
+        if unknown:
+            joined = ", ".join(sorted(unknown))
+            raise ValueError(f"unsupported radiative-transfer threshold fields: {joined}")
 
         return cls(
             num_orders_max=to_int(data["num_orders_max"]),
@@ -199,9 +200,6 @@ class RadiativeTransferPerformanceThresholds:
             phase_function_truncation_threshold=to_float(
                 data.get("phase_function_truncation_threshold", 1.0e-8)
             ),
-            qzero_rd_product_suppression=to_bool(data.get("qzero_rd_product_suppression", False)),
-            qzero_tu_product_suppression=to_bool(data.get("qzero_tu_product_suppression", False)),
-            qzero_td_product_suppression=to_bool(data.get("qzero_td_product_suppression", False)),
         )
 
     def to_dict(self) -> dict[str, float | int | bool | None]:
@@ -217,9 +215,6 @@ class RadiativeTransferPerformanceThresholds:
             "threshold_doubl": self.threshold_doubl,
             "threshold_mul": self.threshold_mul,
             "phase_function_truncation_threshold": self.phase_function_truncation_threshold,
-            "qzero_rd_product_suppression": self.qzero_rd_product_suppression,
-            "qzero_tu_product_suppression": self.qzero_tu_product_suppression,
-            "qzero_td_product_suppression": self.qzero_td_product_suppression,
         }
 
 

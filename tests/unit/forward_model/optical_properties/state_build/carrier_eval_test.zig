@@ -10,7 +10,6 @@ const Rayleigh = internal.reference.rayleigh;
 
 const PreparedSublayer = State.PreparedSublayer;
 const interpolateQuadratureStateAtAltitude = carrier_eval.interpolateQuadratureStateAtAltitude;
-const sharedActiveCarrierAtLevel = carrier_eval.sharedActiveCarrierAtLevel;
 const buildSharedRtmGeometry = shared_geometry.buildSharedRtmGeometry;
 
 test "shared RTM active levels retain particle scattering from adjacent parity support rows" {
@@ -226,12 +225,13 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
     const level_geometry = prepared.shared_rtm_geometry.levels[1];
     try std.testing.expect(level_geometry.weight_km > 0.0);
 
-    const carrier = sharedActiveCarrierAtLevel(
+    const carrier = carrier_eval.sharedActiveCarrierAtLevelWithSpectroscopyCache(
         &prepared,
         wavelength_nm,
         sublayers[0..],
         null,
         level_geometry,
+        null,
     );
     const gas_middle = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[2].number_density_cm3 * 1.0e5;
     try std.testing.expectApproxEqAbs(gas_middle, carrier.gas_scattering_optical_depth_per_km, 1.0e-12);

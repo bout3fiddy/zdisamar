@@ -4,6 +4,37 @@ const OpticsPreparation = @import("../optical_properties/root.zig");
 const common = @import("../radiative_transfer/root.zig");
 const simulate_core = @import("grid_calculation/simulate.zig");
 
+const Allocator = std.mem.Allocator;
+const PreparedOpticalState = OpticsPreparation.PreparedOpticalState;
+const SolveConfig = common.SolveConfig;
+
+// root.zig --------------------------------------------------------------------------------------------------------------|
+// Public facade for measurement-space spectra. Scene, PreparedOpticalState, and RTM controls enter here; the             |
+// dense implementation stays under grid_calculation/. This file keeps the external flow small while allowing             |
+// storage-backed callers to reuse expensive wavelength/profile/preflight work.                                           |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   src/root.zig uses simulateProductWithWorkspace for the public Output path. input/o2a_reference uses both             |
+//   one-shot and workspace routes for bundled O2 A cases. optimal_estimation keeps ProductStorage across trial           |
+//   states so repeated forward calls do not rebuild caches unnecessarily.                                                |
+//                                                                                                                        |
+// route map                                                                                                              |
+//   simulateProduct              -> allocate temporary ProductStorage, run borrowed route, clone owned product           |
+//   simulateProductWithWorkspace -> reuse ProductStorage and return a view borrowed from workspace buffers               |
+//   simulateSummary              -> run the lightweight summary route without retaining public product arrays            |
+//   simulateSummaryWithWorkspace -> summary mode with retained workspace buffers/profile caches                          |
+//   warmProductWorkspace         -> prebuild buffers, wavelength plans, and profile caches for repeated runs             |
+//                                                                                                                        |
+// ownership boundary                                                                                                     |
+//   InstrumentGridProduct owns its arrays. InstrumentGridProductView borrows ProductStorage arrays and is valid          |
+//   only until the next workspace mutation or deinit. This facade preserves that distinction so API callers can          |
+//   choose simple owned output or retrieval-friendly workspace reuse.                                                    |
+//                                                                                                                        |
+// implementation boundary                                                                                                |
+//   Spectral sampling, LABOS prefetch, convolution, reflectance assembly, cache invalidation, and Jacobian packing       |
+//   stay in grid_calculation/. This file re-exports the stable types and forwards into those modules.                    |
+// -----------------------------------------------------------------------------------------------------------------------|
+
 pub const types = @import("grid_calculation/types.zig");
 pub const storage = @import("grid_calculation/storage.zig");
 pub const cache = @import("grid_calculation/cache.zig");
@@ -19,37 +50,20 @@ pub const InstrumentGridProductView = types.InstrumentGridProductView;
 pub const ProductStorage = storage.ProductStorage;
 pub const Error = storage.Error;
 
-pub fn simulateSummary(
-    allocator: @import("std").mem.Allocator,
-    scene: *const @import("../../input/Scene.zig").Scene,
-    rtm_config: @import("../radiative_transfer/root.zig").SolveConfig,
-    prepared: *const @import("../optical_properties/root.zig").PreparedOpticalState,
-) !InstrumentGridSummary {
-    return simulate.simulateSummary(allocator, scene, rtm_config, prepared);
-}
-
-pub fn simulateSummaryWithWorkspace(
-    allocator: @import("std").mem.Allocator,
-    product_workspace: *ProductStorage,
-    scene: *const @import("../../input/Scene.zig").Scene,
-    rtm_config: @import("../radiative_transfer/root.zig").SolveConfig,
-    prepared: *const @import("../optical_properties/root.zig").PreparedOpticalState,
-) !InstrumentGridSummary {
-    return simulate.simulateSummaryWithWorkspace(
-        allocator,
-        product_workspace,
-        scene,
-        rtm_config,
-        prepared,
-    );
-}
+pub const simulateSummary = simulate.simulateSummary;
+pub const simulateSummaryWithWorkspace = simulate.simulateSummaryWithWorkspace;
 
 pub fn simulateProduct(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
+    rtm_config: SolveConfig,
+    prepared: *const PreparedOpticalState,
 ) !InstrumentGridProduct {
+    // simulateProduct ---------------------------------------------------------------------------------------------------|
+    // Convenience owner path. Allocate a short-lived ProductStorage, run the borrowed product route, then                |
+    // clone the result into caller-owned arrays before returning.                                                        |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     var product_workspace: ProductStorage = .{};
     defer product_workspace.deinit(allocator);
     const view = try simulateProductWithWorkspace(
@@ -63,12 +77,24 @@ pub fn simulateProduct(
 }
 
 pub fn simulateProductWithWorkspace(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     product_workspace: *ProductStorage,
     scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
+    rtm_config: SolveConfig,
+    prepared: *const PreparedOpticalState,
 ) !InstrumentGridProductView {
+    // simulateProductWithWorkspace --------------------------------------------------------------------------------------|
+    // Main facade route. ProductStorage owns reusable buffers; the returned view borrows those buffers until             |
+    // the next workspace mutation or deinit.                                                                             |
+    //                                                                                                                    |
+    // flow                                                                                                               |
+    //   ProductStorage.buffers -> simulateInternal -> borrowed InstrumentGridProductView                                 |
+    //                                                                                                                    |
+    // output                                                                                                             |
+    //   Measurement-space arrays are stored in the workspace. Prepared optical-property scalars are copied               |
+    //   into the view so downstream output code can report the physical state used for the spectrum.                     |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     const buffers = try product_workspace.buffers(allocator, scene, rtm_config);
     const summary = try simulate_core.simulateInternal(
         allocator,
@@ -103,12 +129,17 @@ pub fn simulateProductWithWorkspace(
 }
 
 pub fn warmProductWorkspace(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     product_workspace: *ProductStorage,
     scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
+    rtm_config: SolveConfig,
+    prepared: *const PreparedOpticalState,
 ) !void {
+    // warmProductWorkspace ----------------------------------------------------------------------------------------------|
+    // Prepare reusable buffers and wavelength/profile caches without producing a spectrum. This moves first              |
+    // use allocation and plan construction out of the next measured run.                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     _ = try product_workspace.buffers(allocator, scene, rtm_config);
     return simulate_core.warmWavelengthPlan(
         allocator,

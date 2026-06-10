@@ -1,17 +1,41 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-// migration note: Zig 0.15.2 phase clock --------------------------------------------------------------------|
-// This retained trace harness uses std.time.nanoTimestamp while product builds stay on Zig 0.15.2.           |
-// The abandoned 0.16 migration used std.Io.Clock/Timestamp here; that API must not return in this branch.    |
-// end migration note: Zig 0.15.2 phase clock ----------------------------------------------------------------|
+// phase clock -----------------------------------------------------------------------------------------------|
+// The opt-in trace build records LABOS phase timings with std.time.nanoTimestamp. Product and test builds    |
+// compile the same calls to zero-size/no-op timing state when enabled=false.                                 |
+// -----------------------------------------------------------------------------------------------------------|
 
 // phase_timing.zig ------------------------------------------------------------------------------------------|
-// Low-overhead LABOS phase clock used by trace research harnesses.                                           |
+// Opt-in LABOS phase timers for the trace executable. Product, test, telemetry, and perturbation builds keep |
+// the same source calls, but comptime enabled=false turns the timing state into zero-size types and makes    |
+// start/finish/count return before any clock read, counter write, or worker merge.                           |
 //                                                                                                            |
-// Normal product and test builds set enable_trace_phase_timing=false, so start/finish calls compile to       |
-// no-ops. The trace executable opts in, attaches one Timing object per forward worker through Workspace,     |
-// and merges those counters into the retained JSON summary after the worker batch finishes.                  |
+// build route                                                                                                |
+//   build.zig sets enable_trace_phase_timing=false for normal artifacts. The bottleneck trace executable is  |
+//   the route that sets it true and asks ProductStorage to retain a TracePhaseTiming sink for one run.       |
+//                                                                                                            |
+// attachment route                                                                                           |
+//   storage.zig owns the outer TracePhaseTiming row. spectral_forward.zig allocates one LABOS Timing row per |
+//   forward worker, attaches it through ForwardSampleScratch.labos_workspace.trace_phase, and merges worker  |
+//   rows into TracePhaseTiming.labos after the forward-miss batch. The trace CLI writes those fields into    |
+//   labos_phase_timing JSON.                                                                                 |
+//                                                                                                            |
+// called from                                                                                                |
+//   execute.zig times whole LABOS solves, attenuation fill, Fourier loops, PLM basis, RT layer build, and    |
+//   reflectance integration. layers.zig times fixed 12x10 layer-doubling phases and counts skip/retain       |
+//   decisions. orders.zig times source setup, local source passes, transport, and accumulation.              |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   The call sites sit inside high-resolution wavelength, Fourier, layer-doubling, and scattering-order      |
+//   loops. In trace builds, each worker writes only its own Timing row, so the loop path does not take locks;|
+//   cross-worker aggregation happens once after workers finish. Counter updates saturate so long traces      |
+//   cannot wrap elapsed-time or event totals.                                                                |
+//                                                                                                            |
+// memory                                                                                                     |
+//   Timing is 376 B in the trace build: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState |
+//   is 0 B normally and one 8 B optional Timing pointer in the trace build. Active is a borrowed 8 B pointer |
+//   handle threaded through LABOS calls; no timing type owns heap storage.                                   |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const enabled: bool = enabled_by_build: {
@@ -19,6 +43,18 @@ pub const enabled: bool = enabled_by_build: {
     break :enabled_by_build build_options.enable_trace_phase_timing;
 };
 
+// Counter ---------------------------------------------------------------------------------------------------|
+// Elapsed-time bucket for one LABOS phase.                                                                   |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 16 B (0.016 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] ns    : u64                                                                                       |
+// [ 8..15] count : u64                                                                                       |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: per instance = 16 B (0.016 KiB); total = per timed phase in Timing                              |
 pub const Counter = struct {
     ns: u64 = 0,
     count: u64 = 0,
@@ -33,7 +69,19 @@ pub const Counter = struct {
         self.count +|= other.count;
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// Count -----------------------------------------------------------------------------------------------------|
+// Event-count bucket for fixed-kernel decisions that do not need elapsed time.                               |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 8 B (0.008 KiB), align: 8 B                                                                          |
+//                                                                                                            |
+// memory                                                                                                     |
+// [0..7] count : u64                                                                                         |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: per instance = 8 B (0.008 KiB); total = per counted event in Timing                             |
 pub const Count = struct {
     count: u64 = 0,
 
@@ -45,7 +93,47 @@ pub const Count = struct {
         self.count +|= other.count;
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// Timing ----------------------------------------------------------------------------------------------------|
+// Per-worker LABOS trace payload merged into the product-level trace summary after forward prefetch.         |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 376 B (0.367 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 15] execute                  : Counter                                                              |
+// [ 16.. 31] attenuation_fill         : Counter                                                              |
+// [ 32.. 47] fourier_loop             : Counter                                                              |
+// [ 48.. 63] plm_basis                : Counter                                                              |
+// [ 64.. 79] rt_layer_build           : Counter                                                              |
+// [ 80.. 95] rt_layer_phase_matrix    : Counter                                                              |
+// [ 96..111] rt_layer_doubling        : Counter                                                              |
+// [112..127] fixed_qseries_work       : Counter                                                              |
+// [128..143] fixed_rd_update          : Counter                                                              |
+// [144..159] fixed_tu_update          : Counter                                                              |
+// [160..175] fixed_td_update          : Counter                                                              |
+// [176..191] orders_total             : Counter                                                              |
+// [192..207] orders_initial_sources   : Counter                                                              |
+// [208..223] orders_initial_transport : Counter                                                              |
+// [224..239] orders_local_down        : Counter                                                              |
+// [240..255] orders_local_up          : Counter                                                              |
+// [256..271] orders_transport         : Counter                                                              |
+// [272..287] orders_accumulate        : Counter                                                              |
+// [288..303] reflectance_integral     : Counter                                                              |
+// [304..311] fixed_doubling_steps     : Count                                                                |
+// [312..319] fixed_qseries_skipped    : Count                                                                |
+// [320..327] fixed_qseries_retained   : Count                                                                |
+// [328..335] fixed_rd_skipped         : Count                                                                |
+// [336..343] fixed_rd_retained        : Count                                                                |
+// [344..351] fixed_tu_skipped         : Count                                                                |
+// [352..359] fixed_tu_retained        : Count                                                                |
+// [360..367] fixed_td_skipped         : Count                                                                |
+// [368..375] fixed_td_retained        : Count                                                                |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 6 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 376 B (0.367 KiB); total = one per active forward worker in trace builds         |
 pub const Timing = struct {
     execute: Counter = .{},
     attenuation_fill: Counter = .{},
@@ -111,14 +199,42 @@ pub const Timing = struct {
         self.fixed_td_retained.merge(other.fixed_td_retained);
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// Active ----------------------------------------------------------------------------------------------------|
+// Small non-owning handle threaded through LABOS calls that can record phase timing.                         |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 8 B (0.008 KiB), align: 8 B                                                                          |
+//                                                                                                            |
+// memory                                                                                                     |
+// [0..7] timing : *Timing                                                                                    |
+//                                                                                                            |
+// referenced storage: timing points at the worker-local Timing row owned by instrument-grid trace storage.   |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: per instance = 8 B (0.008 KiB); total = borrowed handle only                                    |
 pub const Active = struct {
     timing: *Timing,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// WorkspaceState --------------------------------------------------------------------------------------------|
+// Compile-time selected LABOS workspace hook for the optional phase-timing sink.                             |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// normal build: size 0 B, align 1                                                                            |
+// trace build : size 8 B (0.008 KiB), align 8                                                                |
+//                                                                                                            |
+// memory, trace build                                                                                        |
+// [0..7] timing : ?*Timing                                                                                   |
+//                                                                                                            |
+// referenced storage: timing points at the worker-local Timing row, or null when no trace sink is attached.  |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: normally zero-size; trace build adds one pointer inside each LABOS workspace                    |
 pub const WorkspaceState = if (enabled) struct {
     timing: ?*Timing = null,
 } else struct {};
+// -----------------------------------------------------------------------------------------------------------|
 
 pub inline fn setWorkspaceState(
     state: *WorkspaceState,
@@ -167,6 +283,10 @@ pub inline fn activeWorkspaceState(state: *WorkspaceState) ?Active {
 }
 
 pub inline fn start(active: ?Active) ?i128 {
+    // start -------------------------------------------------------------------------------------------------|
+    // Return a timestamp only when the trace build and an active worker sink are both present.               |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (comptime !enabled) {
         return null;
     }
@@ -180,6 +300,11 @@ pub inline fn finish(
     start_timestamp: ?i128,
     comptime field_name: []const u8,
 ) void {
+    // finish ------------------------------------------------------------------------------------------------|
+    // Add elapsed nanoseconds into one named Counter. Non-positive clock deltas are ignored, and very large  |
+    // deltas saturate to maxInt(u64) before the Counter performs saturating addition.                        |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (comptime !enabled) {
         return;
     }
@@ -198,6 +323,10 @@ pub inline fn count(
     comptime field_name: []const u8,
     amount: u64,
 ) void {
+    // count -------------------------------------------------------------------------------------------------|
+    // Add one event count into a named Count bucket when phase timing is active.                             |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (comptime !enabled) {
         return;
     }

@@ -15,6 +15,34 @@ const SpectroscopyStrongLine = ReferenceData.SpectroscopyStrongLine;
 
 const missing_index = std.math.maxInt(u32);
 
+// o2_line_contributions.zig ----------------------------------------------------------------------------------|
+// O2 spectroscopy contribution diagnostics for prepared weak-line windows and strong-line sidecars. This file |
+// renders line-level explanation rows; it does not feed the forward RTM solve.                                |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.zig exposes buildO2LineContributions for Zig callers. api/c.zig calls the same builder, copies       |
+//   rows into Context-owned C ABI storage, reports total_row_count/truncated, and frees the native table.     |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   build                   -> primary O2 line list -> requested wavelengths -> profile nodes                 |
+//   appendRowsForWavelength -> relevant weak-line window plus strong-line sidecar rows for one state          |
+//   weakLineRow             -> weak-line sigma unless the line is owned by a strong-line sidecar              |
+//   strongLineRow           -> strong-line sidecar sigma and anchor-line metadata                             |
+//                                                                                                             |
+// diagnostic contract                                                                                         |
+//   row_kind separates weak-line and strong-line rows. status explains inclusion, strong-line ownership, or   |
+//   cutoff. max_rows limits materialized rows for large line lists; total_row_count reports the untruncated   |
+//   row count.                                                                                                |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is diagnostic work over wavelength x profile-node x relevant-line grids. The prepared line states    |
+//   and sidecar indexes are reused; the output path still does per-row spectroscopy evaluation by design.     |
+//                                                                                                             |
+// memory                                                                                                      |
+//   ArrayList owns only the materialized rows up to max_rows. Rows are wide value records because they are    |
+//   exported diagnostics with no referenced storage.                                                          |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const O2LineRowKind = enum(u32) {
     weak_line = 0,
     strong_line = 1,
@@ -27,13 +55,42 @@ pub const O2LineStatus = enum(u32) {
     weak_zero_after_cutoff = 3,
 };
 
-// layout(64-bit):
-//   size: 160 B, align: 8 B
-//   field storage: 159 B across 25 fields; largest: temperature_k=8 B, altitude_km=8 B, center_wavenumber_cm1=8 B; padding: 1 B (8 bits)
-//   unused bits: 8 padding + 0 bool-storage slack = 8 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count
+// O2LineContributionRow --------------------------------------------------------------------------------------|
+// Stores one exported O2 line diagnostic row for one wavelength and one thermodynamic state.                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 160 B (0.156 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] temperature_k                      : f64                                                         |
+// [  8.. 15] altitude_km                        : f64                                                         |
+// [ 16.. 23] center_wavenumber_cm1              : f64                                                         |
+// [ 24.. 31] center_wavelength_nm               : f64                                                         |
+// [ 32.. 39] wavelength_nm                      : f64                                                         |
+// [ 40.. 47] shifted_center_wavenumber_cm1      : f64                                                         |
+// [ 48.. 55] line_strength_cm2_per_molecule     : f64                                                         |
+// [ 56.. 63] air_half_width_cm1                 : f64                                                         |
+// [ 64.. 71] pressure_shift_cm1                 : f64                                                         |
+// [ 72.. 79] lower_state_energy_cm1             : f64                                                         |
+// [ 80.. 87] pressure_hpa                       : f64                                                         |
+// [ 88.. 95] weak_line_sigma_cm2_per_molecule   : f64                                                         |
+// [ 96..103] strong_line_sigma_cm2_per_molecule : f64                                                         |
+// [104..111] line_mixing_sigma_cm2_per_molecule : f64                                                         |
+// [112..119] total_sigma_cm2_per_molecule       : f64                                                         |
+// [120..127] abs_total_sigma_cm2_per_molecule   : f64                                                         |
+// [128..131] profile_node_index                 : u32                                                         |
+// [132..135] row_kind                           : O2LineRowKind                                               |
+// [136..139] status                             : O2LineStatus                                                |
+// [140..143] line_index                         : u32                                                         |
+// [144..147] matched_strong_line_index          : u32                                                         |
+// [148..151] isotopologue_code                  : i32                                                         |
+// [152..155] strong_line_index                  : u32                                                         |
+// [156..157] gas_index                          : u16                                                         |
+// [158..158] isotope_number                     : u8                                                          |
+// [159..159] trailing padding                                                                                 |
+//                                                                                                             |
+// unused bits: 8 padding + 0 bool-storage slack = 8 bits                                                      |
+// footprint: per instance = 160 B (0.156 KiB); total = per instance * live instance count                     |
 pub const O2LineContributionRow = struct {
     wavelength_nm: f64,
     profile_node_index: u32,
@@ -61,27 +118,46 @@ pub const O2LineContributionRow = struct {
     total_sigma_cm2_per_molecule: f64,
     abs_total_sigma_cm2_per_molecule: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: altitude_km=8 B, temperature_k=8 B, pressure_hpa=8 B, profile_node_index=4 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total = per instance * live instance count
+// ThermodynamicState -----------------------------------------------------------------------------------------|
+// Carries the profile-node state shared by weak-line and strong-line diagnostic row builders.                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] altitude_km        : f64                                                                           |
+// [ 8..15] temperature_k      : f64                                                                           |
+// [16..23] pressure_hpa       : f64                                                                           |
+// [24..27] profile_node_index : u32                                                                           |
+// [28..31] trailing padding                                                                                   |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per instance = 32 B (0.031 KiB); total = stack or caller-local temporary                         |
 const ThermodynamicState = struct {
     profile_node_index: u32,
     altitude_km: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: rows=16 B, total_row_count=8 B, truncated=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// O2LineContributionTable ------------------------------------------------------------------------------------|
+// Owns the diagnostic rows returned by build and records whether max_rows truncated the materialized slice.   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] rows            : []O2LineContributionRow                                                          |
+// [16..23] total_row_count : usize                                                                            |
+// [24..24] truncated       : bool                                                                             |
+// [25..31] trailing padding                                                                                   |
+//                                                                                                             |
+// out-of-line: rows owns allocator storage; referenced storage is not included in size                        |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// footprint: per instance = 32 B (0.031 KiB); total also includes owned rows                                  |
 pub const O2LineContributionTable = struct {
     rows: []O2LineContributionRow,
     total_row_count: usize,
@@ -92,30 +168,58 @@ pub const O2LineContributionTable = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: O2 line-contribution diagnostics are requested over wavelengths and profile nodes
-//   work: iterates wavelengths/profile nodes and appends weak/strong line contribution rows
-//   data: prepared spectroscopy state, primary O2 line list, row list, max-row limit
-//   follow: appendRowsForWavelength and line-list relevant-window selection
 pub fn build(
     allocator: Allocator,
     prepared: *const PreparedOpticalState,
     wavelengths_nm: []const f64,
     max_rows: usize,
 ) !O2LineContributionTable {
+    // build --------------------------------------------------------------------------------------------------|
+    // Builds O2 line-contribution diagnostics for requested wavelengths and available profile nodes.          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : diagnostic requests over wavelength x profile-node grids                                   |
+    //   costly   : relevant-line windowing, weak-line evaluation, and strong-line sidecar evaluation          |
+    //   memory   : ArrayList grows to max_rows; total_row_count tracks the untruncated row count              |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   appendRowsForWavelength                                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (wavelengths_nm.len == 0) return error.EmptyWavelengths;
     if (max_rows == 0) return error.InvalidRowLimit;
 
-    const line_list = primaryO2LineList(prepared) orelse return error.O2LineListUnavailable;
+    const line_list = prepared.spectroscopy_lines orelse find_o2_line_list: {
+        for (prepared.line_absorbers) |line_absorber| {
+            if (line_absorber.species == .o2) break :find_o2_line_list line_absorber.line_list;
+        }
+
+        return error.O2LineListUnavailable;
+    };
+
+    const strong_line_count = if (line_list.hasStrongLineSidecars())
+        @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars)
+    else
+        0;
 
     var rows = std.ArrayList(O2LineContributionRow).empty;
     errdefer rows.deinit(allocator);
-    try rows.ensureTotalCapacity(allocator, @min(max_rows, line_list.lines.len + strongLineCount(line_list)));
+    try rows.ensureTotalCapacity(allocator, @min(max_rows, line_list.lines.len + strong_line_count));
 
     var total_row_count: usize = 0;
+    const profile_node_count = count_profile_nodes: {
+        const node_count = prepared.spectroscopy_profile_altitudes_km.len;
+        if (node_count == 0) break :count_profile_nodes null;
+        if (prepared.spectroscopy_profile_pressures_hpa.len != node_count) break :count_profile_nodes null;
+        if (prepared.spectroscopy_profile_temperatures_k.len != node_count) break :count_profile_nodes null;
+
+        break :count_profile_nodes node_count;
+    };
+
     for (wavelengths_nm) |wavelength_nm| {
-        if (profileNodeCount(prepared)) |node_count| {
+        if (profile_node_count) |node_count| {
             for (0..node_count) |node_index| {
                 try appendRowsForWavelength(
                     allocator,
@@ -157,32 +261,6 @@ pub fn build(
     };
 }
 
-fn primaryO2LineList(prepared: *const PreparedOpticalState) ?SpectroscopyLineList {
-    if (prepared.spectroscopy_lines) |line_list| return line_list;
-    for (prepared.line_absorbers) |line_absorber| {
-        if (line_absorber.species == .o2) return line_absorber.line_list;
-    }
-    return null;
-}
-
-fn profileNodeCount(prepared: *const PreparedOpticalState) ?usize {
-    const node_count = prepared.spectroscopy_profile_altitudes_km.len;
-    if (node_count == 0) return null;
-    if (prepared.spectroscopy_profile_pressures_hpa.len != node_count) return null;
-    if (prepared.spectroscopy_profile_temperatures_k.len != node_count) return null;
-    return node_count;
-}
-
-fn strongLineCount(line_list: SpectroscopyLineList) usize {
-    if (!line_list.hasStrongLineSidecars()) return 0;
-    return @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars);
-}
-
-// hot path:
-//   when: O2 line diagnostics expand one wavelength/profile-node pair
-//   work: appends relevant weak-line rows and active strong-line sidecar rows
-//   data: relevant line window, strong-line anchors, thermodynamic state, output row list
-//   follow: weakLineRow, strongLineRow, and strong-line ConvTP state preparation
 fn appendRowsForWavelength(
     allocator: Allocator,
     rows: *std.ArrayList(O2LineContributionRow),
@@ -192,6 +270,19 @@ fn appendRowsForWavelength(
     wavelength_nm: f64,
     thermodynamic_state: ThermodynamicState,
 ) !void {
+    // appendRowsForWavelength --------------------------------------------------------------------------------|
+    // Appends weak-line rows and strong-line sidecar rows for one wavelength and thermodynamic state.         |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : every wavelength/profile-node pair in build                                                |
+    //   costly   : relevant-line window scan, weak-line contribution, strong-line ConvTP state preparation    |
+    //   memory   : caller-owned ArrayList; anchor_storage is a bounded stack array                            |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   weakLineRow                                                                                           |
+    //   strongLineRow                                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     const pressure_scale = @max(
         thermodynamic_state.pressure_hpa / 1013.25,
         SpectroscopyTypes.min_spectroscopy_pressure_atm,
@@ -282,10 +373,10 @@ fn weakLineRow(
         line_index,
         strong_line_anchors,
     );
-    const contribution = if (excluded)
-        zeroEvaluation()
-    else
-        SpectroscopyPhysics.weakLineContribution(
+
+    const contribution = choose_contribution: {
+        if (excluded) break :choose_contribution SpectroscopySupport.zeroEvaluation();
+        break :choose_contribution SpectroscopyPhysics.weakLineContribution(
             wavelength_nm,
             line.*,
             temperature_k,
@@ -293,12 +384,14 @@ fn weakLineRow(
             SpectroscopyTypes.hitran_reference_temperature_k,
             line_list.runtime_controls,
         );
-    const status: O2LineStatus = if (excluded)
-        .weak_excluded_by_strong_line
-    else if (contribution.total_sigma_cm2_per_molecule == 0.0)
-        .weak_zero_after_cutoff
-    else
-        .weak_included;
+    };
+
+    const status: O2LineStatus = choose_status: {
+        if (excluded) break :choose_status .weak_excluded_by_strong_line;
+        if (contribution.total_sigma_cm2_per_molecule == 0.0) break :choose_status .weak_zero_after_cutoff;
+        break :choose_status .weak_included;
+    };
+    const matched_strong_line_index: u32 = if (matched_strong_index) |index| @intCast(index) else missing_index;
 
     return .{
         .wavelength_nm = wavelength_nm,
@@ -308,7 +401,7 @@ fn weakLineRow(
         .status = status,
         .line_index = @intCast(start_index + line_index),
         .strong_line_index = missing_index,
-        .matched_strong_line_index = optionalIndex(matched_strong_index),
+        .matched_strong_line_index = matched_strong_line_index,
         .gas_index = line.gas_index,
         .isotope_number = line.isotope_number,
         .isotopologue_code = SpectroscopyStrongLines.deriveIsotopologueCode(line.gas_index, line.isotope_number),
@@ -328,6 +421,31 @@ fn weakLineRow(
         .abs_total_sigma_cm2_per_molecule = @abs(contribution.total_sigma_cm2_per_molecule),
     };
 }
+
+// StrongAnchorFields -----------------------------------------------------------------------------------------|
+// Compact value copied from the weak-line anchor into a strong-line diagnostic row.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_strength_cm2_per_molecule : f64                                                               |
+// [ 8..11] line_index                     : u32                                                               |
+// [12..15] isotopologue_code              : i32                                                               |
+// [16..17] gas_index                      : u16                                                               |
+// [18..18] isotope_number                 : u8                                                                |
+// [19..23] trailing padding               : 5 B                                                               |
+//                                                                                                             |
+// unused bits: 40 padding + 0 bool-storage slack = 40 bits                                                    |
+// footprint: per instance = 24 B (0.023 KiB); stack value while building one strong-line row                  |
+const StrongAnchorFields = struct {
+    line_index: u32,
+    gas_index: u16,
+    isotope_number: u8,
+    isotopologue_code: i32,
+    line_strength_cm2_per_molecule: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
 
 fn strongLineRow(
     line_list: SpectroscopyLineList,
@@ -359,6 +477,7 @@ fn strongLineRow(
         line_list.runtime_controls.line_mixing_factor;
     const total_sigma = @max(contribution.strong_line_sigma_cm2_per_molecule + line_mixing_sigma, 0.0);
     const anchor = strongAnchorLine(strong_line_anchors, relevant_lines, relevant_start_index, strong_index);
+    const anchor_fields = resolveStrongAnchorFields(anchor);
 
     return .{
         .wavelength_nm = wavelength_nm,
@@ -366,22 +485,16 @@ fn strongLineRow(
         .altitude_km = thermodynamic_state.altitude_km,
         .row_kind = .strong_line,
         .status = .strong_sidecar,
-        .line_index = if (anchor) |owned| owned.line_index else missing_index,
+        .line_index = anchor_fields.line_index,
         .strong_line_index = @intCast(strong_index),
         .matched_strong_line_index = @intCast(strong_index),
-        .gas_index = if (anchor) |owned| owned.line.gas_index else 7,
-        .isotope_number = if (anchor) |owned| owned.line.isotope_number else 1,
-        .isotopologue_code = if (anchor) |owned|
-            SpectroscopyStrongLines.deriveIsotopologueCode(owned.line.gas_index, owned.line.isotope_number)
-        else
-            66,
+        .gas_index = anchor_fields.gas_index,
+        .isotope_number = anchor_fields.isotope_number,
+        .isotopologue_code = anchor_fields.isotopologue_code,
         .center_wavelength_nm = strong_line.center_wavelength_nm,
         .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
         .shifted_center_wavenumber_cm1 = strong_state.mod_sig_cm1[strong_index],
-        .line_strength_cm2_per_molecule = if (anchor) |owned|
-            owned.line.line_strength_cm2_per_molecule
-        else
-            std.math.nan(f64),
+        .line_strength_cm2_per_molecule = anchor_fields.line_strength_cm2_per_molecule,
         .air_half_width_cm1 = strong_line.air_half_width_cm1,
         .pressure_shift_cm1 = strong_line.pressure_shift_cm1,
         .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
@@ -395,41 +508,73 @@ fn strongLineRow(
     };
 }
 
+fn resolveStrongAnchorFields(anchor: ?StrongAnchorMatch) StrongAnchorFields {
+    // resolveStrongAnchorFields ------------------------------------------------------------------------------|
+    // Return the weak-line metadata that explains a strong-line sidecar row.                                  |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   anchor present -> copy gas/isotope/index/strength from the matched weak-line row                      |
+    //   no anchor      -> use O2 defaults and missing_index so the exported strong-line row stays complete    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (anchor) |owned| {
+        return .{
+            .line_index = owned.line_index,
+            .gas_index = owned.line.gas_index,
+            .isotope_number = owned.line.isotope_number,
+            .isotopologue_code = SpectroscopyStrongLines.deriveIsotopologueCode(
+                owned.line.gas_index,
+                owned.line.isotope_number,
+            ),
+            .line_strength_cm2_per_molecule = owned.line.line_strength_cm2_per_molecule,
+        };
+    }
+
+    return .{
+        .line_index = missing_index,
+        .gas_index = 7,
+        .isotope_number = 1,
+        .isotopologue_code = 66,
+        .line_strength_cm2_per_molecule = std.math.nan(f64),
+    };
+}
+
+// StrongAnchorMatch ------------------------------------------------------------------------------------------|
+// Carries the weak-line anchor attached to one strong-line sidecar, when the relevant window contains it.     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line       : *const SpectroscopyLine                                                               |
+// [ 8..11] line_index : u32                                                                                   |
+// [12..15] trailing padding                                                                                   |
+//                                                                                                             |
+// out-of-line: line points into the relevant-line slice; pointed storage is not included in size              |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per present optional payload = 16 B (0.016 KiB); total = stack temporary                         |
+const StrongAnchorMatch = struct {
+    line: *const SpectroscopyLine,
+    line_index: u32,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 fn strongAnchorLine(
     strong_line_anchors: []const SpectroscopyTypes.StrongLineAnchorIndex,
     relevant_lines: []const SpectroscopyLine,
     relevant_start_index: usize,
     strong_index: usize,
-) ?struct {
-
-    // layout(64-bit):
-    //   anonymous optional payload: size 16 B, align 8 B; padding: 4 B after line_index
-    //   footprint: per present payload = 16 B (0.016 KiB); line points into the relevant-line slice
-    line: *const SpectroscopyLine,
-    line_index: u32,
-} {
+) ?StrongAnchorMatch {
     if (strong_index >= strong_line_anchors.len) return null;
+
     const relevant_index = strong_line_anchors[strong_index];
     if (relevant_index == SpectroscopyTypes.missing_strong_line_anchor_index) return null;
+
     const relevant_index_usize: usize = @intCast(relevant_index);
     if (relevant_index_usize >= relevant_lines.len) return null;
+
     return .{
         .line = &relevant_lines[relevant_index_usize],
         .line_index = @intCast(relevant_start_index + relevant_index_usize),
-    };
-}
-
-fn optionalIndex(index: ?usize) u32 {
-    return if (index) |value| @intCast(value) else missing_index;
-}
-
-fn zeroEvaluation() ReferenceData.SpectroscopyEvaluation {
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
 }

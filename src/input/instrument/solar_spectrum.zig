@@ -2,13 +2,51 @@ const std = @import("std");
 const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: wavelengths_nm=16 B, irradiance=16 B, spline_second_derivatives=16 B, owns_spline_state=1 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   out-of-line: wavelengths_nm, irradiance, spline_second_derivatives carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
+// solar_spectrum.zig -----------------------------------------------------------------------------------------|
+// Operational solar irradiance table used to align source and target wavelength grids.                        |
+//                                                                                                             |
+// called from                                                                                                 |
+//   Instrument and ObservationModel retain the table inside operational band support.                         |
+//   input/o2a_reference/run.zig loads, retains, rewinds, and prepares O2 A solar support for parity cases.    |
+//   input/reference_data/solar_irradiance.zig uses interpolateIrradiance on cache misses before falling back  |
+//   to bundled or continuum irradiance.                                                                       |
+//   instrument-grid spectral evaluation reads the prepared support while producing measured-space spectra.    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   validate checks sorted finite wavelengths, non-negative irradiance, and optional spline-state shape.      |
+//   prepareInterpolation builds DISAMAR-compatible cubic spline second derivatives when enough samples exist. |
+//   interpolateIrradiance clamps outside the table; interpolateIrradianceWithinBounds returns null there so   |
+//   callers can keep fallback decisions local.                                                                |
+//   interpolateOnto and correctMeasuredSpectrumOnto materialize solar correction arrays for support rewiring. |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Irradiance cache misses and support-grid generation repeatedly sample this row. Prepared spline reads use |
+//   binary bracketing; linear fallback scans adjacent wavelength pairs.                                       |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   clone duplicates wavelength and irradiance arrays. prepareInterpolation owns only the spline state it     |
+//   builds; clearSplineState and deinitOwned release that state when owns_spline_state is true.               |
+// ------------------------------------------------------------------------------------------------------------|
+
+// OperationalSolarSpectrum -----------------------------------------------------------------------------------|
+// Header for one operational solar irradiance table.                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm            : []const f64                                                            |
+// [16..31] irradiance                : []const f64                                                            |
+// [32..47] spline_second_derivatives : []const f64                                                            |
+// [48..48] owns_spline_state         : bool                                                                   |
+// [49..55] trailing padding          : 7 B                                                                    |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   wavelengths_nm and irradiance are owned by clone. spline_second_derivatives is owned only after           |
+//   prepareInterpolation sets owns_spline_state.                                                              |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// footprint: per instance = 56 B (0.055 KiB); total also includes referenced spectrum arrays                  |
 pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
@@ -26,7 +64,9 @@ pub const OperationalSolarSpectrum = struct {
             }
             return;
         }
+
         if (self.irradiance.len != self.wavelengths_nm.len) return errors.Error.InvalidRequest;
+
         if (self.spline_second_derivatives.len != 0 and
             self.spline_second_derivatives.len != self.wavelengths_nm.len)
         {
@@ -34,15 +74,18 @@ pub const OperationalSolarSpectrum = struct {
         }
 
         var previous_wavelength: ?f64 = null;
+
         for (self.wavelengths_nm, self.irradiance) |wavelength_nm, irradiance| {
             if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(irradiance) or irradiance < 0.0) {
                 return errors.Error.InvalidRequest;
             }
+
             if (previous_wavelength) |previous| {
                 if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
             }
             previous_wavelength = wavelength_nm;
         }
+
         for (self.spline_second_derivatives) |second_derivative| {
             if (!std.math.isFinite(second_derivative)) return errors.Error.InvalidRequest;
         }
@@ -87,9 +130,8 @@ pub const OperationalSolarSpectrum = struct {
             c4[index] = (self.irradiance[index] - self.irradiance[index - 1]) / c3[index];
         }
 
-        // PARITY:
-        //   Match DISAMAR's `mathTools::spline` wrapper in the only mode used
-        //   for the O2A solar source: first derivatives specified at both ends.
+        // Match DISAMAR's mathTools::spline wrapper in the O2 A solar-source mode: first derivatives are
+        // specified at both ends.
         c4[0] = 1.0;
         c3[0] = 0.0;
 
@@ -171,25 +213,34 @@ pub const OperationalSolarSpectrum = struct {
         upper_wavelength_nm: f64,
     ) bool {
         if (!self.enabled()) return false;
+
         return lower_wavelength_nm >= self.wavelengths_nm[0] and
             upper_wavelength_nm <= self.wavelengths_nm[self.wavelengths_nm.len - 1];
     }
 
-    // hot path:
-    //   when: irradiance sampling uses an operational solar spectrum inside its support range
-    //   work: chooses prepared spline interpolation or linear interpolation for one wavelength
-    //   data: solar wavelength grid, irradiance values, optional spline second derivatives
-    //   follow: interpolatePreparedSplineWithinBounds and interpolateIrradianceLinearWithinBounds
     pub fn interpolateIrradianceWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
     ) ?f64 {
+        // OperationalSolarSpectrum.interpolateIrradianceWithinBounds ---------------------------------------- |
+        // Chooses prepared spline interpolation when available, otherwise linear interpolation.               |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : each operational solar irradiance sample inside the support range                      |
+        //   reads    : wavelength grid, irradiance values, optional spline second derivatives                 |
+        //   output   : interpolated irradiance or null outside the table                                      |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (!self.enabled()) return null;
         if (wavelength_nm < self.wavelengths_nm[0]) return null;
         if (wavelength_nm > self.wavelengths_nm[self.wavelengths_nm.len - 1]) return null;
-        if (self.splineReady()) {
+
+        const has_prepared_spline = self.spline_second_derivatives.len == self.wavelengths_nm.len and
+            self.wavelengths_nm.len >= 3;
+        if (has_prepared_spline) {
             return self.interpolatePreparedSplineWithinBounds(wavelength_nm);
         }
+
         return self.interpolateIrradianceLinearWithinBounds(wavelength_nm);
     }
 
@@ -200,30 +251,43 @@ pub const OperationalSolarSpectrum = struct {
         if (!self.enabled()) return null;
         if (wavelength_nm < self.wavelengths_nm[0]) return null;
         if (wavelength_nm == self.wavelengths_nm[0]) return self.irradiance[0];
-        for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.irradiance[0 .. self.irradiance.len - 1], self.irradiance[1..]) |left_nm, right_nm, left_irradiance, right_irradiance| {
+
+        for (
+            self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1],
+            self.wavelengths_nm[1..],
+            self.irradiance[0 .. self.irradiance.len - 1],
+            self.irradiance[1..],
+        ) |left_nm, right_nm, left_irradiance, right_irradiance| {
             if (wavelength_nm <= right_nm) {
                 const span = right_nm - left_nm;
                 if (span == 0.0) return right_irradiance;
+
                 const weight = (wavelength_nm - left_nm) / span;
                 return left_irradiance + weight * (right_irradiance - left_irradiance);
             }
         }
+
         if (wavelength_nm == self.wavelengths_nm[self.wavelengths_nm.len - 1]) {
             return self.irradiance[self.irradiance.len - 1];
         }
+
         return null;
     }
 
-    // hot path:
-    //   when: operational solar support is materialized onto another wavelength grid
-    //   work: interpolates irradiance for each target wavelength
-    //   data: target wavelength array, source solar grid, output irradiance array
-    //   follow: interpolateIrradiance and callers that correct measured spectra
     pub fn interpolateOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,
         wavelengths_nm: []const f64,
     ) ![]f64 {
+        // OperationalSolarSpectrum.interpolateOnto ---------------------------------------------------------- |
+        // Materializes irradiance onto another wavelength grid.                                               |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : each target wavelength in operational solar support generation                         |
+        //   reads    : source solar grid                                                                      |
+        //   writes   : newly allocated target irradiance array                                                |
+        // ----------------------------------------------------------------------------------------------------|
+
         const irradiance = try allocator.alloc(f64, wavelengths_nm.len);
         errdefer allocator.free(irradiance);
 
@@ -240,7 +304,9 @@ pub const OperationalSolarSpectrum = struct {
         measured_values: []const f64,
         target_wavelengths_nm: []const f64,
     ) ![]f64 {
-        if (source_wavelengths_nm.len != measured_values.len or measured_values.len != target_wavelengths_nm.len) {
+        if (source_wavelengths_nm.len != measured_values.len or
+            measured_values.len != target_wavelengths_nm.len)
+        {
             return errors.Error.InvalidRequest;
         }
 
@@ -251,16 +317,16 @@ pub const OperationalSolarSpectrum = struct {
         const target_solar = try self.interpolateOnto(allocator, target_wavelengths_nm);
         defer allocator.free(target_solar);
 
-        for (measured_values, source_solar, target_solar, corrected) |measured_value, source_irradiance, target_irradiance, *slot| {
+        for (
+            measured_values,
+            source_solar,
+            target_solar,
+            corrected,
+        ) |measured_value, source_irradiance, target_irradiance, *slot| {
             if (!std.math.isFinite(measured_value)) return errors.Error.InvalidRequest;
             slot.* = measured_value * target_irradiance / @max(source_irradiance, 1.0e-12);
         }
         return corrected;
-    }
-
-    fn splineReady(self: *const OperationalSolarSpectrum) bool {
-        return self.spline_second_derivatives.len == self.wavelengths_nm.len and
-            self.wavelengths_nm.len >= 3;
     }
 
     fn clearSplineState(self: *OperationalSolarSpectrum, allocator: Allocator) void {
@@ -271,15 +337,19 @@ pub const OperationalSolarSpectrum = struct {
         self.owns_spline_state = false;
     }
 
-    // hot path:
-    //   when: operational solar interpolation uses prepared spline state
-    //   work: brackets wavelength and evaluates prepared cubic spline in DISAMAR-compatible form
-    //   data: solar wavelength grid, irradiance values, spline second derivatives
-    //   follow: cachedIrradianceAtWavelength and operational solar cache support
     fn interpolatePreparedSplineWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
     ) ?f64 {
+        // OperationalSolarSpectrum.interpolatePreparedSplineWithinBounds ------------------------------------ |
+        // Brackets one wavelength and evaluates prepared cubic spline state in DISAMAR-compatible form.       |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : operational solar interpolation when spline state is prepared                          |
+        //   reads    : wavelength grid, irradiance values, spline second derivatives                          |
+        //   caller   : cachedIrradianceAtWavelength and operational solar cache support                       |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (wavelength_nm == self.wavelengths_nm[0]) return self.irradiance[0];
         if (wavelength_nm == self.wavelengths_nm[self.wavelengths_nm.len - 1]) {
             return self.irradiance[self.irradiance.len - 1];
@@ -300,11 +370,10 @@ pub const OperationalSolarSpectrum = struct {
         if (span_nm == 0.0) return self.irradiance[upper_index];
 
         const dx_nm = wavelength_nm - self.wavelengths_nm[lower_index];
-        // PARITY:
-        //   DISAMAR `mathTools::splint` evaluates prepared spline second
-        //   derivatives in Horner form. Keep the O2 A solar source on the
-        //   same reduction path; the symmetric cubic only differs in the last
-        //   bits, but irradiance is large enough for those bits to be visible.
+
+        // DISAMAR mathTools::splint evaluates prepared spline second derivatives in Horner form. Keep the
+        // O2 A solar source on the same reduction path; the symmetric cubic only differs in the last bits, but
+        // irradiance is large enough for those bits to be visible.
         const b = (self.irradiance[upper_index] - self.irradiance[lower_index]) / span_nm -
             (2.0 * self.spline_second_derivatives[lower_index] +
                 self.spline_second_derivatives[upper_index]) * span_nm / 6.0;
@@ -314,3 +383,4 @@ pub const OperationalSolarSpectrum = struct {
             dx_nm * (b + dx_nm * (self.spline_second_derivatives[lower_index] / 2.0 + dx_nm * d));
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

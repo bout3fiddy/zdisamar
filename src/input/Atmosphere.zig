@@ -12,13 +12,54 @@ pub const IntervalGrid = @import("atmosphere/interval_grid.zig").IntervalGrid;
 pub const IntervalPlacement = @import("atmosphere/interval_grid.zig").IntervalPlacement;
 pub const FractionControl = @import("atmosphere/fraction_control.zig").FractionControl;
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 95 B across 6 fields; largest: profile_source=56 B, interval_grid=24 B; padding: 1 B (8 bits)
-//   unused bits: 8 padding + 7 bool-storage slack = 15 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
+// Atmosphere.zig ---------------------------------------------------------------------------------------------|
+// Public atmosphere setup row and re-export point for interval and fraction controls.                         |
+//                                                                                                             |
+// called from                                                                                                 |
+//   Scene.validate checks this row before optical preparation.                                                |
+//   vertical_grid.zig calls preparedLayerCount and interval_grid to choose legacy evenly divided layers or    |
+//   explicit pressure/altitude intervals.                                                                     |
+//   layer_accumulation.zig and Context consume the prepared interval/fraction controls after vertical-grid    |
+//   construction, especially for particle and aerosol support placement.                                      |
+//   input/o2a_reference/root.zig fills these fields for the O2 A reference cases.                             |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   preparedLayerCount returns the explicit interval count when interval_grid is enabled, otherwise the       |
+//   legacy layer_count. That count controls vertical-grid allocation and later prepared layer storage.        |
+//   validate rejects inert-looking partial configurations: enabled aerosol/profile/surface-pressure controls  |
+//   require at least one prepared layer, interval grids must agree with layer_count when both are present,    |
+//   and sublayer_divisions must be non-zero.                                                                  |
+//                                                                                                             |
+// exported support rows                                                                                       |
+//   IntervalSemantics, VerticalInterval, IntervalGrid, IntervalPlacement, and FractionControl live in the     |
+//   atmosphere/ submodule files where their payload and layout comments are kept with the concrete structs.   |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   deinitOwned delegates to IntervalGrid. The profile source binding is validated here; binding name storage |
+//   is managed by the caller or loader that created the Atmosphere row.                                       |
+// ------------------------------------------------------------------------------------------------------------|
+
+// Atmosphere -------------------------------------------------------------------------------------------------|
+// Public atmosphere control header.                                                                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..55] profile_source       : Binding                                                                     |
+// [56..63] surface_pressure_hpa : f64                                                                         |
+// [64..87] interval_grid        : IntervalGrid                                                                |
+// [88..91] layer_count          : u32                                                                         |
+// [92..92] sublayer_divisions   : u8                                                                          |
+// [93..93] has_aerosols         : bool                                                                        |
+// [94..95] trailing padding     : 2 B                                                                         |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   profile_source can point at out-of-line binding names. interval_grid may own interval rows.               |
+//                                                                                                             |
+// unused bits: 16 padding + 7 bool-storage slack = 23 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B (0.094 KiB); total also includes referenced binding/interval storage         |
 pub const Atmosphere = struct {
     layer_count: u32 = 0,
     sublayer_divisions: u8 = 3,
@@ -50,7 +91,11 @@ pub const Atmosphere = struct {
         {
             return errors.Error.InvalidRequest;
         }
-        if (self.interval_grid.enabled() and self.layer_count != 0 and self.layer_count != self.interval_grid.intervalCount()) {
+
+        if (self.interval_grid.enabled() and
+            self.layer_count != 0 and
+            self.layer_count != self.interval_grid.intervalCount())
+        {
             return errors.Error.InvalidRequest;
         }
     }
@@ -59,3 +104,4 @@ pub const Atmosphere = struct {
         self.interval_grid.deinitOwned(allocator);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

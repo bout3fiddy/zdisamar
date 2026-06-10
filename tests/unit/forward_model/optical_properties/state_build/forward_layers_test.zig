@@ -7,7 +7,6 @@ const transport_common = internal.forward_model.radiative_transfer;
 const ParticleProfiles = internal.forward_model.optical_properties.shared.particle_profiles;
 const PhaseFunctions = internal.forward_model.optical_properties.shared.phase_functions;
 const State = preparation.state;
-const Evaluation = preparation.evaluation;
 const shared_geometry = preparation.shared_geometry;
 const shared_carrier = preparation.shared_carrier;
 const SpectroscopyState = preparation.state_spectroscopy;
@@ -15,7 +14,6 @@ const forward_layers = preparation.forward_layers;
 
 const PreparedOpticalState = preparation.PreparedOpticalState;
 const OpticalDepthBreakdown = preparation.OpticalDepthBreakdown;
-const fillForwardLayersAtWavelength = forward_layers.fillForwardLayersAtWavelength;
 
 test "shared forward layers reduce prepared support rows" {
     const allocator = std.testing.allocator;
@@ -256,7 +254,7 @@ test "shared forward layers reduce prepared support rows" {
         @intCast(geometry.layers[0].support_start_index),
         @intCast(geometry.layers[0].support_count),
     );
-    const subgrid0 = shared_carrier.evaluateSharedLayerOnSubgrid(
+    const subgrid0 = shared_carrier.evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         &prepared,
         &scene,
         wavelength_nm,
@@ -264,16 +262,23 @@ test "shared forward layers reduce prepared support rows" {
         support0.strong_line_states,
         geometry.layers[0],
         &scratch,
+        null,
     );
-    const expected0 = shared_carrier.evaluateReducedLayerFromSupportRows(
+    var expected_input0: transport_common.LayerInput = .{};
+    const expected0_breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         &prepared,
         &scene,
         wavelength_nm,
         support0.sublayers,
         support0.strong_line_states,
         geometry.layers[0],
+        null,
+        &expected_input0,
+        true,
     );
-    try std.testing.expect(@abs(subgrid0.breakdown.totalOpticalDepth() - expected0.breakdown.totalOpticalDepth()) > 1.0e-3);
+    const subgrid0_tau = subgrid0.breakdown.totalOpticalDepth();
+    const expected0_tau = expected0_breakdown.totalOpticalDepth();
+    try std.testing.expect(@abs(subgrid0_tau - expected0_tau) > 1.0e-3);
 
     const support1 = shared_geometry.sharedSupportSlices(
         &prepared,
@@ -281,24 +286,50 @@ test "shared forward layers reduce prepared support rows" {
         @intCast(geometry.layers[1].support_start_index),
         @intCast(geometry.layers[1].support_count),
     );
-    const expected1 = shared_carrier.evaluateReducedLayerFromSupportRows(
+    var expected_input1: transport_common.LayerInput = .{};
+    _ = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
         &prepared,
         &scene,
         wavelength_nm,
         support1.sublayers,
         support1.strong_line_states,
         geometry.layers[1],
+        null,
+        &expected_input1,
+        true,
     );
 
     var layer_inputs = [_]transport_common.LayerInput{ .{}, .{} };
-    _ = fillForwardLayersAtWavelength(&prepared, &scene, wavelength_nm, layer_inputs[0..]);
+    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(&prepared, wavelength_nm);
+    _ = forward_layers.fillForwardLayersAtWavelengthWithSpectroscopyCache(
+        &prepared,
+        &scene,
+        wavelength_nm,
+        layer_inputs[0..],
+        &profile_cache,
+        true,
+    );
 
-    const expected_input0 = Evaluation.layerInputFromEvaluated(expected0);
-    const expected_input1 = Evaluation.layerInputFromEvaluated(expected1);
     try std.testing.expectApproxEqAbs(expected_input0.optical_depth, layer_inputs[0].optical_depth, 1.0e-12);
-    try std.testing.expectApproxEqAbs(expected_input0.gas_scattering_optical_depth, layer_inputs[0].gas_scattering_optical_depth, 1.0e-12);
-    try std.testing.expectApproxEqAbs(expected_input0.aerosol_optical_depth, layer_inputs[0].aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(
+        expected_input0.gas_scattering_optical_depth,
+        layer_inputs[0].gas_scattering_optical_depth,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        expected_input0.aerosol_optical_depth,
+        layer_inputs[0].aerosol_optical_depth,
+        1.0e-12,
+    );
     try std.testing.expectApproxEqAbs(expected_input1.optical_depth, layer_inputs[1].optical_depth, 1.0e-12);
-    try std.testing.expectApproxEqAbs(expected_input1.gas_scattering_optical_depth, layer_inputs[1].gas_scattering_optical_depth, 1.0e-12);
-    try std.testing.expectApproxEqAbs(expected_input1.aerosol_optical_depth, layer_inputs[1].aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(
+        expected_input1.gas_scattering_optical_depth,
+        layer_inputs[1].gas_scattering_optical_depth,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        expected_input1.aerosol_optical_depth,
+        layer_inputs[1].aerosol_optical_depth,
+        1.0e-12,
+    );
 }

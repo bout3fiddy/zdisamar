@@ -40,11 +40,11 @@
         "min": 0.8387905521166391
       },
       "retrieval_s": {
-        "max": 0.5064672499429435,
-        "max_abs": 0.5064672499429435,
-        "mean": 0.39985671583563087,
-        "median": 0.4107399166096002,
-        "min": 0.23550750012509525
+        "max": 0.49150004191324115,
+        "max_abs": 0.49150004191324115,
+        "mean": 0.39761398871894926,
+        "median": 0.40666527044959366,
+        "min": 0.23305158270522952
       },
       "rows": 100
     },
@@ -65,11 +65,11 @@
       },
       "converged": 100,
       "retrieval_s": {
-        "max": 2.4246600831393152,
-        "max_abs": 2.4246600831393152,
-        "mean": 1.7547040128731168,
-        "median": 1.815178812481463,
-        "min": 0.8780025420710444
+        "max": 2.3186518331058323,
+        "max_abs": 2.3186518331058323,
+        "mean": 1.7423944650264458,
+        "median": 1.7899368547368795,
+        "min": 0.866283499635756
       },
       "rows": 100
     }
@@ -172,9 +172,6 @@
         "aerosol_tangent_order_cap": 11,
         "fourier_order_cap": 5,
         "fourier_tail_reflectance_epsilon": 1e-11,
-        "qzero_rd_product_suppression": false,
-        "qzero_td_product_suppression": false,
-        "qzero_tu_product_suppression": false,
         "threshold_doubl": 3e-05
       }
     },
@@ -197,18 +194,18 @@
       "min": -0.00023283426228870585
     },
     "retrieval_speedup_s": {
-      "max": 1.9418259160593152,
-      "max_abs": 1.9418259160593152,
-      "mean": 1.354847297037486,
-      "median": 1.4166533540701494,
-      "min": 0.5874059170018882
+      "max": 1.8420396661385894,
+      "max_abs": 1.8420396661385894,
+      "mean": 1.3447804763074964,
+      "median": 1.3843871254939586,
+      "min": 0.5809613335877657
     }
   },
   "latency_position": {
-    "fastmode_median_s": 0.4107399166096002,
-    "fastmode_reference_speedup_s": 1.4044388958718628,
+    "fastmode_median_s": 0.40666527044959366,
+    "fastmode_reference_speedup_s": 1.3832715842872858,
     "note": "Fastmode should stay below full-reference median latency while preserving the retained sparse fast-stage and final-correction sample counts.",
-    "reference_median_s": 1.815178812481463
+    "reference_median_s": 1.7899368547368795
   },
   "outputs": {
     "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",

@@ -1,3 +1,31 @@
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Fixed RTM Jacobian state vocabulary and tiny vector helpers.                                                |
+//                                                                                                             |
+// called by                                                                                                   |
+//   radiative_transfer/root.zig re-exports this namespace as RadiativeTransfer.Jacobian                       |
+//   LABOS execute/layer/attenuation code reads per-layer derivative lanes by state                            |
+//   instrument-grid storage, simulation, and product cloning pack active state-major columns                  |
+//   optimal_estimation/retrieval.zig maps native RTM columns into OE state-vector columns                     |
+//   src/api/c.zig validates external state ids against this enum and mask shape                               |
+//                                                                                                             |
+// state order                                                                                                 |
+//   surface_albedo                    : direct surface term                                                   |
+//   aerosol_optical_depth             : aerosol extinction/scattering amount                                  |
+//   aerosol_layer_mid_pressure_hpa    : pressure placement of the aerosol layer                               |
+//                                                                                                             |
+// mask shape                                                                                                  |
+//   StateMask uses the low state_count bits. sanitizedMask drops unknown future bits so callers can pass      |
+//   masks through public boundaries without indexing outside Vector. activeState* helpers translate between   |
+//   sparse masks and compact active-column indexes used by workspace Jacobian buffers.                        |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   The helpers are deliberately branch-light over three fixed lanes. They sit in sample loops, LABOS         |
+//   Jacobian packing, and OE residual projection, so they avoid allocation, dynamic lookup, and string names. |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Vector is [3]f64: 24 B per value. StateMask is u8. This module owns no heap storage and no retained       |
+//   mutable state; public names live in StateNames for API/report labels only.                                |
+// ------------------------------------------------------------------------------------------------------------|
 pub const state_count: usize = 3;
 
 pub const State = enum(u8) {
@@ -10,15 +38,22 @@ pub const Vector = [state_count]f64;
 pub const StateMask = u8;
 pub const all_states_mask: StateMask = (1 << state_count) - 1;
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
+// StateNames ------------------------------------------------------------------------------------------------ |
+// Namespace for public Jacobian state labels.                                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B, align: 1 B                                                                                       |
+//                                                                                                             |
+// memory                                                                                                      |
+// no runtime field storage                                                                                    |
+//                                                                                                             |
+// footprint: namespace/type declarations only                                                                 |
 pub const StateNames = struct {
     pub const surface_albedo = "surface_albedo";
     pub const aerosol_optical_depth = "aerosol_optical_depth";
     pub const aerosol_layer_mid_pressure_hpa = "aerosol_layer_mid_pressure_hpa";
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn zero() Vector {
     return .{0.0} ** state_count;
@@ -83,13 +118,15 @@ pub fn set(vector: *Vector, state: State, value: f64) void {
 }
 
 pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: StateMask) void {
-
-    // hot path:
-    //   when: active derivative routes integrate high-resolution forward samples
-    //   work: adds only requested derivative lanes into a fixed-size accumulator
-    //   Uses the rtm_config state mask, jacobian vector cells, accumulator cells, and scalar factor.
-    //   math: accumulator_i <- accumulator_i + factor * vector_i for active state lanes i
-    //   follow: spectral_eval.integratePrefetchedForwardAtNominal and active-state product buffers
+    // addScaledMasked --------------------------------------------------------------------------------------- |
+    // Adds requested derivative lanes into a fixed-size accumulator.                                          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Active derivative routes integrate high-resolution forward samples through this masked vector add.    |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   accumulator_i += factor * vector_i for active lanes i                                                 |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const active_mask = sanitizedMask(mask);
     for (0..state_count) |index| {
@@ -99,13 +136,15 @@ pub fn addScaledMasked(accumulator: *Vector, vector: Vector, factor: f64, mask: 
 }
 
 pub fn scale(vector: Vector, factor: f64) Vector {
-
-    // hot path:
-    //   when: simulation summaries compute mean Jacobian vectors
-    //   work: multiplies the fixed-size derivative vector by one scalar
-    //   reads: jacobian vector cells and scalar factor
-    //   math: result_i = factor * vector_i
-    //   follow: simulate.processJacobianSamples summary return path
+    // scale ------------------------------------------------------------------------------------------------- |
+    // Multiplies the fixed-size derivative vector by one scalar.                                              |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Simulation summaries use this for mean Jacobian vectors.                                              |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   result_i = factor * vector_i                                                                          |
+    // ------------------------------------------------------------------------------------------------------- |
 
     var result = vector;
     for (&result) |*value| value.* *= factor;
@@ -113,13 +152,15 @@ pub fn scale(vector: Vector, factor: f64) Vector {
 }
 
 pub fn scaleMasked(vector: Vector, factor: f64, mask: StateMask) Vector {
-
-    // hot path:
-    //   when: spectral forward samples convert active reflectance derivatives to radiance derivatives
-    //   work: scales requested lanes and leaves inactive lanes zero for downstream active-column writers
-    //   Uses the rtm_config state mask, jacobian vector cells, and scalar factor.
-    //   math: result_i = factor * vector_i for active lanes, otherwise 0
-    //   follow: spectral_forward.integratedSampleFromForward
+    // scaleMasked ------------------------------------------------------------------------------------------  |
+    // Scales requested derivative lanes and leaves inactive lanes zero.                                       |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Spectral forward samples use this when converting active reflectance derivatives to radiance lanes.   |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   result_i = factor * vector_i for active lanes, otherwise 0                                            |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const active_mask = sanitizedMask(mask);
     var result = zero();

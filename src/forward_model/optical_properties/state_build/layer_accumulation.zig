@@ -12,6 +12,7 @@ const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
+const FirstWorkerErrorState = @import("../../first_worker_error_state.zig").FirstWorkerErrorState;
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const internal = @import("internal.zig");
@@ -29,6 +30,69 @@ const profile_spectral_tolerance: f64 = 1.0e-12;
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
+// layer_accumulation.zig ------------------------------------------------------------------------------------    |
+// Layer and support-row accumulation stage for PreparedOpticalState.                                             |
+//                                                                                                                |
+// called by                                                                                                      |
+//   accumulation.zig after Context.init and Absorbers.build; Finalize.assemble later moves the filled rows.      |
+//                                                                                                                |
+// main paths                                                                                                     |
+//   normal grid           : populate each sublayer, accumulate its parent layer, and write PreparedLayer rows.   |
+//   DISAMAR parity grid   : populate all shared support rows first, then reduce those rows into transport        |
+//                           layers with the DISAMAR support-row placement kept intact.                           |
+//   aerosol input         : scalar controls build a distribution; profile layers are pressure-overlap            |
+//                           reduced into 48 B support-row properties, then collapsed to one equivalent HG phase  |
+//                           row for the prepared state.                                                          |
+//   spectroscopy/CIA      : midpoint profile spectroscopy and collision-complex caches avoid repeated setup      |
+//                           while each support row is filled.                                                    |
+//                                                                                                                |
+// outputs                                                                                                        |
+//   Writes context.sublayers, context.layers, context.aerosol_phase_coefficients, absorber density columns,      |
+//   and the LayerAccumulation totals returned to accumulation.zig as PreparedMeans inputs.                       |
+//                                                                                                                |
+// hot path                                                                                                       |
+//   Runs once per optical-state refresh before repeated wavelength solves. DISAMAR-parity support-row fill can   |
+//   split independent support rows across worker chunks. Profile aerosol helpers reuse the same compact property |
+//   rows for phase collapse and support-row fill. LayerAccumulation is a compact f64 total row, and              |
+//   CollisionComplexProfileCache keeps the 64-node spline second-derivative table inline so per-row CIA sampling |
+//   does not rebuild spline scratch.                                                                             |
+//                                                                                                                |
+// math                                                                                                           |
+//   column = number_density * path_cm                                                                            |
+//   tau_gas = sigma_cont*N_cont + sigma_line*N_line + sigma_xs*N_xs + tau_rayleigh                               |
+//   tau_cia = sigma_cia * collision_pair_density * path_cm                                                       |
+//   tau_aerosol uses scalar/profile placement at the reference wavelength; midpoint scaling is used only to      |
+//   choose the equivalent phase row here. Wavelength scaling for RTM support rows happens later in               |
+//   carrier_eval.zig.                                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+//   Context owns the output layer/support-row arrays during this stage. Worker rows borrow context, absorber,    |
+//   cache, queue, aerosol, and error-state storage, and keep only private LayerAccumulation totals before the    |
+//   final merge.                                                                                                 |
+// ------------------------------------------------------------------------------------------------------------   |
+
+// AerosolSublayerProperties ---------------------------------------------------------------------------------    |
+// Profile aerosol values prepared for one support row before they are copied into PreparedSublayer storage.      |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 48 B (0.047 KiB), align: 8 B                                                                             |
+//                                                                                                                |
+// memory                                                                                                         |
+// [ 0.. 7] optical_depth          : f64                                                                          |
+// [ 8..15] base_optical_depth     : f64                                                                          |
+// [16..23] single_scatter_albedo  : f64                                                                          |
+// [24..31] reference_wavelength_nm: f64                                                                          |
+// [32..39] angstrom_exponent      : f64                                                                          |
+// [40..47] asymmetry_factor       : f64                                                                          |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// footprint: per instance = 48 B; total = per support row when profile aerosol input is active                   |
+//                                                                                                                |
+// hot path                                                                                                       |
+//   Profile-aerosol preparation writes this compact row once, then later rows read it by pointer while filling   |
+//   support rows and building the equivalent phase row. The phase collapse reads optical-depth scaling fields    |
+//   through profileScatteringAtMidpoint, then reads asymmetry_factor at [40..47]. One row keeps the profile      |
+//   aerosol owner and support-row fill path synchronized.                                                        |
 const AerosolSublayerProperties = struct {
     optical_depth: f64 = 0.0,
     base_optical_depth: f64 = 0.0,
@@ -37,6 +101,7 @@ const AerosolSublayerProperties = struct {
     angstrom_exponent: f64 = 0.0,
     asymmetry_factor: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
 const ScalarAerosolSublayers = struct {
     distribution: []const f64,
@@ -93,18 +158,28 @@ const AerosolSublayers = union(enum) {
     }
 };
 
-// layout(64-bit):
-//   size: 1048 B, align: 8 B
-// field storage: node_count=8 B, altitudes_km=16 B, log_complex_vmr_fraction=512 B, log_complex_second=512 B; padding:
-// 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: log_complex_vmr_fraction:[64]f64=512 B, log_complex_second:[64]f64=512 B
-//   out-of-line: altitudes_km carries a slice descriptor; referenced storage is not included in size
-//   cache span: 17 cache line(s) at 64 B per line
-//   count: one per optical-state accumulation request
-//   footprint: per instance = 1048 B (1.023 KiB); precomputes a 512 B spline-second table
-//   sample traffic: pair-density samples avoid 10240 B endpoint-secant spline scratch per call
-//   capacity: enabled collision-complex requests with more than 64 profile nodes are rejected
+// CollisionComplexProfileCache ------------------------------------------------------------------------------    |
+// Fixed-capacity spline cache for collision-complex pair-density sampling.                                       |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 1048 B (1.023 KiB), align: 8 B                                                                           |
+//                                                                                                                |
+// memory                                                                                                         |
+// [   0..   7] node_count               : usize                                                                  |
+// [   8..  23] altitudes_km             : []const f64                                                            |
+// [  24.. 535] log_complex_vmr_fraction : [64]f64                                                                |
+// [ 536..1047] log_complex_second       : [64]f64                                                                |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   altitudes_km borrows the spectroscopy-profile altitude rows.                                                 |
+//                                                                                                                |
+// hot path                                                                                                       |
+//   Pair-density samples reuse the 512 B spline-second table and avoid endpoint-secant scratch per sample.       |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 17 cache lines at 64 B per line                                                                    |
+// footprint: per instance = 1048 B plus borrowed altitude storage                                                |
+// capacity: enabled collision-complex requests with more than 64 profile nodes are rejected                      |
 const CollisionComplexProfileCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
@@ -198,34 +273,35 @@ const CollisionComplexProfileCache = struct {
         return @exp(sampled_log_vmr) * air_number_density_cm3;
     }
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: mutex=16 B, err=2 B; padding: 6 B (48 bits)
-//   unused bits: 48 padding + 0 bool-storage slack = 48 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
-const ParitySupportRowErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
-    err: ?anyerror = null,
+const ParitySupportRowErrorState = FirstWorkerErrorState(anyerror);
 
-    fn store(self: *ParitySupportRowErrorState, err: anyerror) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.err == null) self.err = err;
-    }
-};
-
-// layout(64-bit):
-//   size: 344 B, align: 8 B
-// field storage: 344 B across 17 fields; largest: totals=160 B, aerosol_sublayers=48 B, allocator=16 B; padding: 0 B (0
-// bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-// out-of-line: context, absorbers, profile_spectroscopy_cache, collision_complex_cache, aerosol_sublayers, +3 more
-// carry references/descriptors; referenced storage is not included in size
-//   cache span: 6 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 344 B (0.336 KiB); total also includes referenced storage above
+// ParitySupportRowWorker ------------------------------------------------------------------------------------    |
+// Worker row used by parallel parity support-row accumulation.                                                   |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 272 B (0.266 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0.. 15] allocator                  : Allocator                                                              |
+// [ 16.. 23] context                    : *PreparationContext                                                    |
+// [ 24.. 31] absorbers                  : *AbsorberBuildState                                                    |
+// [ 32.. 39] profile_spectroscopy_cache : ?*const ProfileSpectroscopyCache                                       |
+// [ 40.. 47] collision_complex_cache    : *const CollisionComplexProfileCache                                    |
+// [ 48..111] aerosol_sublayers          : AerosolSublayers                                                       |
+// [112..119] queue                      : *ChunkQueue                                                            |
+// [120..127] error_state                : *ParitySupportRowErrorState                                            |
+// [128..135] worker_index               : usize                                                                  |
+// [136..271] totals                     : LayerAccumulation                                                      |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   context, absorbers, caches, queue, and error-state storage are borrowed. AerosolSublayers may reference      |
+//   either the scalar distribution slice or profile property rows.                                               |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 5 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 272 B plus borrowed storage                                                          |
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
@@ -238,6 +314,7 @@ const ParitySupportRowWorker = struct {
     worker_index: usize,
     totals: LayerAccumulation = .{},
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
 fn collisionComplexPairDensityCm6(
     collision_complex_cache: *const CollisionComplexProfileCache,
@@ -252,14 +329,34 @@ fn collisionComplexPairDensityCm6(
     );
 }
 
-// layout(64-bit):
-//   size: 136 B, align: 8 B
-// field storage: 136 B across 17 fields; largest: base_single_scatter_albedo=8 B, aerosol_single_scatter_albedo=8 B,
-// total_optical_depth=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
+// LayerAccumulation -----------------------------------------------------------------------------------------    |
+// Running f64 totals for one layer or worker partition.                                                          |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 136 B (0.133 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0..  7] base_single_scatter_albedo          : f64                                                           |
+// [  8.. 15] aerosol_single_scatter_albedo       : f64                                                           |
+// [ 16.. 23] total_optical_depth                 : f64                                                           |
+// [ 24.. 31] total_temperature_weighted          : f64                                                           |
+// [ 32.. 39] total_pressure_weighted             : f64                                                           |
+// [ 40.. 47] total_weight                        : f64                                                           |
+// [ 48.. 55] air_column_density_factor           : f64                                                           |
+// [ 56.. 63] oxygen_column_density_factor        : f64                                                           |
+// [ 64.. 71] column_density_factor               : f64                                                           |
+// [ 72.. 79] cia_pair_path_factor_cm5            : f64                                                           |
+// [ 80.. 87] total_gas_optical_depth             : f64                                                           |
+// [ 88.. 95] total_cia_optical_depth             : f64                                                           |
+// [ 96..103] total_aerosol_optical_depth         : f64                                                           |
+// [104..111] total_aerosol_base_optical_depth    : f64                                                           |
+// [112..119] total_scattering_optical_depth      : f64                                                           |
+// [120..127] total_d_optical_depth_d_temperature : f64                                                           |
+// [128..135] depolarization_weighted             : f64                                                           |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 3 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 136 B; one row per accumulated layer or worker total                                 |
 pub const LayerAccumulation = struct {
     base_single_scatter_albedo: f64 = 0.0,
     aerosol_single_scatter_albedo: f64 = 0.0,
@@ -279,15 +376,29 @@ pub const LayerAccumulation = struct {
     total_d_optical_depth_d_temperature: f64 = 0.0,
     depolarization_weighted: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
-// layout(64-bit):
-//   size: 64 B, align: 8 B
-// field storage: 61 B across 10 fields; largest: top_altitude_km=8 B, bottom_altitude_km=8 B, center_altitude_km=8 B;
-// padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count
+// LayerGeometry ---------------------------------------------------------------------------------------------    |
+// Layer altitude, pressure, sublayer span, and thickness used while accumulating one layer.                      |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 64 B (0.062 KiB), align: 8 B                                                                             |
+//                                                                                                                |
+// memory                                                                                                         |
+// [ 0.. 7] top_altitude_km        : f64                                                                          |
+// [ 8..15] bottom_altitude_km     : f64                                                                          |
+// [16..23] center_altitude_km     : f64                                                                          |
+// [24..31] top_pressure_hpa       : f64                                                                          |
+// [32..39] bottom_pressure_hpa    : f64                                                                          |
+// [40..47] thickness_km           : f64                                                                          |
+// [48..51] sublayer_start_index   : u32                                                                          |
+// [52..55] sublayer_count         : u32                                                                          |
+// [56..59] interval_index_1based  : u32                                                                          |
+// [60..63] padding                : 4 B                                                                          |
+//                                                                                                                |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                      |
+// footprint: per instance = 64 B; stack value during layer accumulation                                          |
 const LayerGeometry = struct {
     top_altitude_km: f64,
     bottom_altitude_km: f64,
@@ -299,15 +410,34 @@ const LayerGeometry = struct {
     interval_index_1based: u32,
     thickness_km: f64,
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-// field storage: 112 B across 14 fields; largest: density_weight=8 B, density=8 B, temperature_weighted=8 B; padding: 0
-// B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// LayerSums -------------------------------------------------------------------------------------------------    |
+// Per-layer f64 sums before they are normalized into LayerAccumulation fields.                                   |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 120 B (0.117 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0..  7] density_weight                    : f64                                                             |
+// [  8.. 15] density                           : f64                                                             |
+// [ 16.. 23] temperature_weighted              : f64                                                             |
+// [ 24.. 31] pressure_weighted                 : f64                                                             |
+// [ 32.. 39] line_sigma                        : f64                                                             |
+// [ 40.. 47] line_mixing                       : f64                                                             |
+// [ 48.. 55] d_cross_section_d_temperature     : f64                                                             |
+// [ 56.. 63] gas_optical_depth                 : f64                                                             |
+// [ 64.. 71] gas_scattering_optical_depth      : f64                                                             |
+// [ 72.. 79] cia_optical_depth                 : f64                                                             |
+// [ 80.. 87] aerosol_optical_depth             : f64                                                             |
+// [ 88.. 95] aerosol_base_optical_depth        : f64                                                             |
+// [ 96..103] aerosol_scattering_optical_depth  : f64                                                             |
+// [104..111] aerosol_reference_wavelength_sum  : f64                                                             |
+// [112..119] aerosol_angstrom_sum              : f64                                                             |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 2 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 120 B; stack value before normalization                                              |
 const LayerSums = struct {
     density_weight: f64 = 0.0,
     density: f64 = 0.0,
@@ -344,35 +474,35 @@ const LayerSums = struct {
         self.aerosol_reference_wavelength_sum += terms.aerosol_optical_depth * terms.aerosol_reference_wavelength_nm;
         self.aerosol_angstrom_sum += terms.aerosol_optical_depth * terms.aerosol_angstrom_exponent;
     }
-
-    fn temperature(self: LayerSums) f64 {
-        return if (self.density_weight == 0.0) 0.0 else self.temperature_weighted / self.density_weight;
-    }
-
-    fn pressure(self: LayerSums) f64 {
-        return if (self.density_weight == 0.0) 0.0 else self.pressure_weighted / self.density_weight;
-    }
-
-    fn meanLineSigma(self: LayerSums, sublayer_count: u32) f64 {
-        return self.line_sigma / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
-
-    fn meanLineMixing(self: LayerSums, sublayer_count: u32) f64 {
-        return self.line_mixing / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
-
-    fn meanTemperatureDerivative(self: LayerSums, sublayer_count: u32) f64 {
-        return self.d_cross_section_d_temperature / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 112 B across 14 fields; largest: density=8 B, temperature=8 B, pressure=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// SublayerLayerTerms ----------------------------------------------------------------------------------------    |
+// One sublayer's f64 contribution terms before they are added into LayerSums.                                    |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 120 B (0.117 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0..  7] density                           : f64                                                             |
+// [  8.. 15] temperature                       : f64                                                             |
+// [ 16.. 23] pressure                          : f64                                                             |
+// [ 24.. 31] weight                            : f64                                                             |
+// [ 32.. 39] line_sigma                        : f64                                                             |
+// [ 40.. 47] line_mixing                       : f64                                                             |
+// [ 48.. 55] d_cross_section_d_temperature     : f64                                                             |
+// [ 56.. 63] gas_absorption_optical_depth      : f64                                                             |
+// [ 64.. 71] gas_scattering_optical_depth      : f64                                                             |
+// [ 72.. 79] cia_optical_depth                 : f64                                                             |
+// [ 80.. 87] aerosol_optical_depth             : f64                                                             |
+// [ 88.. 95] aerosol_base_optical_depth        : f64                                                             |
+// [ 96..103] aerosol_scattering_optical_depth  : f64                                                             |
+// [104..111] aerosol_reference_wavelength_nm   : f64                                                             |
+// [112..119] aerosol_angstrom_exponent         : f64                                                             |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 2 cache lines at 64 B per line                                                                     |
+// footprint: per instance = 120 B; stack value inside the sublayer loop                                          |
 const SublayerLayerTerms = struct {
     density: f64,
     temperature: f64,
@@ -396,14 +526,22 @@ pub fn populate(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
 ) !LayerAccumulation {
-
-    // hot path:
-    //   when: once per optical-state preparation before repeated wavelength solves
-    //   work: accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM data
-    //   reads: scene atmosphere, absorber sets, particle profiles, support-row storage
-    // math: aerosol fraction and Angstrom-scaled sublayer weights feed tau_aerosol_i; phase coefficients use HG(g)
-    // before gas/aerosol mixing
-    //   follow: populateParitySupportRowsParallel, populateLayer, and shared carrier reduction
+    // populate ------------------------------------------------------------------------------------------------  |
+    // Accumulates particles, phase coefficients, spectroscopy carriers, support rows, and RTM layer data.        |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs once per optical-state preparation before repeated wavelength solves. Particle placement and        |
+    //   phase-coefficient setup are kept here so carrier and transport paths read prepared rows.                 |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   populateParitySupportRowsParallel                                                                        |
+    //   populateLayer                                                                                            |
+    //   shared carrier reduction                                                                                 |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   aerosol_tau_i = fraction_i * Angstrom-scaled sublayer weight                                             |
+    //   phase rows use HG(g) before gas/aerosol mixing                                                           |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     var totals: LayerAccumulation = .{
         .base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(
@@ -604,6 +742,18 @@ fn profileSpectralScalingMatches(
 }
 
 fn profileScatteringAtMidpoint(context: *const Context, property: *const AerosolSublayerProperties) f64 {
+    // profileScatteringAtMidpoint -----------------------------------------------------------------------------  |
+    // Compute profile-aerosol scattering optical depth at the preparation midpoint wavelength.                   |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   Reads optical_depth at [0..7], reference_wavelength_nm at [24..31], angstrom_exponent at [32..39],       |
+    //   and single_scatter_albedo at [16..23]. The caller passes a pointer so                                    |
+    //   the 48 B support-row property is not copied.                                                             |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   scattering_i = scaled_tau_i(midpoint_nm) * single_scatter_albedo_i                                       |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
     const optical_depth = ParticleProfiles.scaleOpticalDepth(
         property.optical_depth,
@@ -618,6 +768,17 @@ fn profileMeanSingleScatterAlbedo(
     context: *const Context,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) f64 {
+    // profileMeanSingleScatterAlbedo ----------------------------------------------------------------------------|
+    // Collapse profile-aerosol support rows into the scalar aerosol single-scatter albedo kept in totals.        |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   Walks the 48 B profile rows by pointer. Each active row reads optical_depth [0..7],                      |
+    //   single_scatter_albedo [16..23], reference_wavelength_nm [24..31], and angstrom_exponent [32..39].        |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   ssa_mean = sum(scaled_tau_i * single_scatter_albedo_i) / sum(scaled_tau_i)                               |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     var optical_depth: f64 = 0.0;
     var scattering: f64 = 0.0;
 
@@ -643,6 +804,23 @@ fn profileEquivalentPhaseCoefficients(
     context: *const Context,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) [PhaseFunctions.phase_coefficient_count]f64 {
+    // profileEquivalentPhaseCoefficients ----------------------------------------------------------------------  |
+    // Collapse a profile aerosol layer set into one Henyey-Greenstein phase row for the prepared state.          |
+    //                                                                                                            |
+    // call path                                                                                                  |
+    //   AerosolSublayers.phaseCoefficients calls this once during preparation for profile aerosol input.         |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   AerosolSublayerProperties is a 48 B support-row property record. The local loop reads                    |
+    //   asymmetry_factor at [40..47]; profileScatteringAtMidpoint performs the optical-depth,                    |
+    //   reference-wavelength, Angstrom, and single-scatter-albedo reads.                                         |
+    //   This writes one final phase coefficient row into context.aerosol_phase_coefficients.                     |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   g_equiv = sum(scattering_i * asymmetry_i) / sum(scattering_i)                                            |
+    //   scattering_i is midpoint-wavelength aerosol optical depth times single-scatter albedo.                   |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     var scattering: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
 
@@ -699,14 +877,22 @@ fn populateParitySupportRowsParallel(
     totals: *LayerAccumulation,
     aerosol_sublayers: AerosolSublayers,
 ) !void {
+    // populateParitySupportRowsParallel -----------------------------------------------------------------------  |
+    // Fills independent parity support rows used by later wavelength carrier caching.                            |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Splits support-row preparation across worker chunks when the sublayer count is large enough. Each        |
+    //   worker writes private totals and support rows, then reduceParityLayer folds the result.                  |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   paritySupportRowWorkerMain                                                                               |
+    //   reduceParityLayer                                                                                        |
+    // ---------------------------------------------------------------------------------------------------------  |
 
-    // hot path:
-    //   when: during parity-rtm_config support-row preparation across worker chunks
-    //   work: fills independent support rows for later wavelength carrier caching
-    //   reads: support-row arrays, layer/sublayer descriptors, active absorber state
-    //   follow: paritySupportRowWorkerMain and reduceParityLayer
-
-    const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
+    const worker_count = work_partition.preferredWorkerCount(
+        context.sublayers.len,
+        min_parallel_parity_support_row_count,
+    );
     if (worker_count == 1) {
         return populateParitySupportRows(
             allocator,
@@ -760,7 +946,11 @@ fn populateParitySupportRowsParallel(
     if (error_state.err) |err| return err;
 
     for (workers) |worker| {
-        mergeParitySupportTotals(totals, worker.totals);
+        totals.air_column_density_factor += worker.totals.air_column_density_factor;
+        totals.oxygen_column_density_factor += worker.totals.oxygen_column_density_factor;
+        totals.column_density_factor += worker.totals.column_density_factor;
+        totals.cia_pair_path_factor_cm5 += worker.totals.cia_pair_path_factor_cm5;
+        totals.total_d_optical_depth_d_temperature += worker.totals.total_d_optical_depth_d_temperature;
     }
 }
 
@@ -798,8 +988,8 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
 
                 // Hot path:
                 //   Parent-layer ownership is seeded into the support-row
-                //   output buffer before fanout. Workers then load the row-local
-                //   indexes directly instead of scanning layer starts.
+                //   output buffer before fanout. Workers load the row-local
+                //   indexes directly during support-row fill.
                 const current_layer_index: usize = @intCast(worker.context.sublayers[write_index].parent_layer_index);
                 populateParitySupportRow(
                     worker.allocator,
@@ -867,10 +1057,6 @@ fn canParallelPopulateParitySupportRows(
         absorbers.strong_line_states == null;
 }
 
-fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
-    return work_partition.preferredWorkerCount(row_count, min_parallel_parity_support_row_count);
-}
-
 fn seedParitySupportRowLayerIndices(context: *Context) void {
     if (context.layers.len == 0) return;
     var layer_index: usize = 0;
@@ -887,14 +1073,6 @@ fn seedParitySupportRowLayerIndices(context: *Context) void {
         else
             0);
     }
-}
-
-fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
-    total.air_column_density_factor += local.air_column_density_factor;
-    total.oxygen_column_density_factor += local.oxygen_column_density_factor;
-    total.column_density_factor += local.column_density_factor;
-    total.cia_pair_path_factor_cm5 += local.cia_pair_path_factor_cm5;
-    total.total_d_optical_depth_d_temperature += local.total_d_optical_depth_d_temperature;
 }
 
 fn reduceParityLayer(
@@ -1031,14 +1209,21 @@ fn populateLayer(
     layer: *State.PreparedLayer,
     index: usize,
 ) !void {
-
-    // hot path:
-    //   when: for each physical transport layer during optical-state accumulation
-    //   work: iterates sublayers and accumulates optical depth, scattering, particle, and phase terms
-    //   reads: layer descriptors, sublayer rows, absorber/cross-section state, particle distributions
-    // math: tau_layer = sum(tau_gas_i + tau_cia_i + tau_aerosol_i); tau_sca = tau_gas_sca + tau_aerosol *
-    // omega0_aerosol; omega0_layer = tau_sca / max(tau_layer, eps)
-    //   follow: populateSublayer and layer output storage consumed by forward input construction
+    // populateLayer -------------------------------------------------------------------------------------------  |
+    // Iterates sublayers and accumulates optical depth, scattering, particle, and phase terms for one layer.     |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs for each physical transport layer during optical-state accumulation. The output row is consumed     |
+    //   by forward input construction and shared carrier reduction.                                              |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   populateSublayer                                                                                         |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   tau_layer = sum(tau_gas_i + tau_cia_i + tau_aerosol_i)                                                   |
+    //   tau_sca   = tau_gas_sca + tau_aerosol * omega0_aerosol                                                   |
+    //   omega0    = tau_sca / max(tau_layer, eps)                                                                |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     const geometry = layerGeometry(context, index);
     var layer_sums: LayerSums = .{};
@@ -1062,8 +1247,12 @@ fn populateLayer(
     }
 
     const density = layer_sums.density;
-    const temperature = layer_sums.temperature();
-    const pressure = layer_sums.pressure();
+    const density_weight = layer_sums.density_weight;
+    const density_weight_reciprocal = if (density_weight == 0.0) 0.0 else 1.0 / density_weight;
+    const temperature = layer_sums.temperature_weighted * density_weight_reciprocal;
+    const pressure = layer_sums.pressure_weighted * density_weight_reciprocal;
+    const sublayer_count_f64 = @as(f64, @floatFromInt(@max(geometry.sublayer_count, 1)));
+
     const gas_optical_depth = layer_sums.gas_optical_depth;
     const aerosol_optical_depth = layer_sums.aerosol_optical_depth;
     const aerosol_base_optical_depth = layer_sums.aerosol_base_optical_depth;
@@ -1105,7 +1294,7 @@ fn populateLayer(
     totals.total_aerosol_base_optical_depth += aerosol_base_optical_depth;
     totals.total_scattering_optical_depth += scattering;
     totals.depolarization_weighted += depolarization * optical_depth;
-    const layer_temperature_derivative = layer_sums.meanTemperatureDerivative(geometry.sublayer_count);
+    const layer_temperature_derivative = layer_sums.d_cross_section_d_temperature / sublayer_count_f64;
 
     layer.* = .{
         .layer_index = @intCast(index),
@@ -1116,8 +1305,8 @@ fn populateLayer(
         .temperature_k = temperature,
         .number_density_cm3 = density,
         .continuum_cross_section_cm2_per_molecule = absorbers.mean_sigma,
-        .line_cross_section_cm2_per_molecule = layer_sums.meanLineSigma(geometry.sublayer_count),
-        .line_mixing_cross_section_cm2_per_molecule = layer_sums.meanLineMixing(geometry.sublayer_count),
+        .line_cross_section_cm2_per_molecule = layer_sums.line_sigma / sublayer_count_f64,
+        .line_mixing_cross_section_cm2_per_molecule = layer_sums.line_mixing / sublayer_count_f64,
         .cia_optical_depth = layer_sums.cia_optical_depth,
         .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_temperature_derivative,
         .gas_optical_depth = gas_optical_depth,
@@ -1153,14 +1342,22 @@ fn populateSublayer(
     write_index: usize,
     layer_sums: *LayerSums,
 ) !void {
-
-    // hot path:
-    //   when: for each sublayer or support row during optical-state accumulation
-    //   work: evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles
-    //   reads: sublayer thermodynamics, active absorber sets, optical-depth outputs
-    // math: column = density * path_cm; tau_abs = sigma_cont * N_cont + sigma_line * N_line + sigma_xs * N_xs; tau_cia
-    // = sigma_cia * pair_density * path_cm; tau_rayleigh = sigma_rayleigh * N_air
-    //   follow: resolveSpectroscopyEvaluation and carrier_eval support-row consumers
+    // populateSublayer ----------------------------------------------------------------------------------------  |
+    // Evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles for one sublayer/support row.    |
+    //                                                                                                            |
+    // hot path                                                                                                   |
+    //   Runs for each sublayer or parity support row. The computed optical-depth outputs feed layer totals and   |
+    //   the carrier-evaluation support-row consumers.                                                            |
+    //                                                                                                            |
+    // calls                                                                                                      |
+    //   resolveSpectroscopyEvaluation                                                                            |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   column = density * path_cm                                                                               |
+    //   tau_abs = sigma_cont * N_cont + sigma_line * N_line + sigma_xs * N_xs                                    |
+    //   tau_cia = sigma_cia * pair_density * path_cm                                                             |
+    //   tau_rayleigh = sigma_rayleigh * N_air                                                                    |
+    // ---------------------------------------------------------------------------------------------------------  |
 
     const top_altitude_km = context.vertical_grid.sublayer_top_altitudes_km[write_index];
     const bottom_altitude_km = context.vertical_grid.sublayer_bottom_altitudes_km[write_index];

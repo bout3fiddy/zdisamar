@@ -1,6 +1,3 @@
-// Own a spectroscopy line list plus optional strong-line sidecars and runtime
-// controls.
-
 const std = @import("std");
 const PhysicsCore = @import("physics_core.zig");
 const StrongLines = @import("strong_lines.zig");
@@ -8,14 +5,69 @@ const Support = @import("support.zig");
 const Types = @import("types.zig");
 const line_list_module = @This();
 
-// layout(64-bit):
-//   size: 208 B, align: 8 B
-//   field storage: 203 B across 9 fields; largest: runtime_controls=96 B, relaxation_matrix=48 B, lines=16 B; padding: 5 B (40 bits)
-//   unused bits: 40 padding + 21 bool-storage slack = 61 bits
-//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   cache span: 4 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 208 B (0.203 KiB); total also includes referenced storage above
+// line_list.zig --------------------------------------------------------------------------------------------- |
+// Owns normalized spectroscopy line rows after loading and turns them into wavelength-time sigma evaluation.  |
+//                                                                                                             |
+// called by                                                                                                   |
+//   bundled/assets.zig and o2a_reference/run.zig load or clone O2 A rows, attach vendor strong-line sidecars, |
+//   and carry this list into optical preparation. optical_properties/absorbers.zig applies gas/isotope,       |
+//   threshold, cutoff, and line-mixing controls before building profile/support line states. carrier_eval.zig |
+//   and band_means.zig reuse prepared routes at wavelength time. instrument/adaptive_plan.zig scans the same  |
+//   rows while building line-aware integration intervals.                                                     |
+//                                                                                                             |
+// row shape                                                                                                   |
+//   layout(64-bit): self.lines is []SpectroscopyLine, and each row is 104 B. Setup loops sometimes read       |
+//   one or two fields by pointer: center_wavelength_nm at [8..15], line_strength_cm2_per_molecule at          |
+//   [24..31], gas_index at [88..89], and vendor strong-line metadata around [91..97]. The row stays whole     |
+//   because wavelength-time weak-line formulas consume the same line's strength, widths, lower-state energy,  |
+//   pressure shifts, and line-mixing coefficient together.                                                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   raw rows -> runtime controls -> sorted/filtered rows -> relevant wavelength windows -> weak sigma         |
+//   raw sidecars -> vendor partition detection -> strong-line match index -> prepared strong-line state       |
+//   prepared weak/strong state -> wavelength window -> total sigma + line-mixing sigma                        |
+//                                                                                                             |
+// setup state                                                                                                 |
+//   applyRuntimeControls mutates the retained row set and clears stale match state. buildStrongLineMatchIndex |
+//   writes a compact ?u16 sidecar pointer per retained row. validateStrongLinePartition rejects a vendor O2 A |
+//   partition that marks candidates but matches none. These passes run before repeated wavelength evaluation. |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Wavelength-time evaluation binary-searches the relevant weak-line window, computes weak Voigt terms over  |
+//   that window, and optionally adds O2 strong-line plus line-mixing sidecar terms. Prepared-state routes     |
+//   keep pressure/temperature-dependent weak and strong arrays outside the per-wavelength rebuild path.       |
+//                                                                                                             |
+// memory                                                                                                      |
+//   SpectroscopyLineList owns or borrows out-of-line line, sidecar, relaxation, match-index, and runtime      |
+//   control slices. Window structs are borrowed views into those line arrays and caller-provided anchor       |
+//   storage; they do not own line data.                                                                       |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// SpectroscopyLineList -------------------------------------------------------------------------------------- |
+// Header over one spectroscopy line list plus optional O2 strong-line sidecars and controls.                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 208 B (0.203 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] lines                      : []SpectroscopyLine                                                  |
+// [ 16.. 31] strong_lines               : ?[]SpectroscopyStrongLine                                           |
+// [ 32.. 79] relaxation_matrix          : ?RelaxationMatrix                                                   |
+// [ 80.. 87] strong_line_tolerance_nm   : f64                                                                 |
+// [ 88..103] strong_line_match_by_line  : ?[]?u16                                                             |
+// [104..199] runtime_controls           : SpectroscopyRuntimeControls                                         |
+// [200..200] lines_sorted_ascending     : bool                                                                |
+// [201..201] preserve_anchor_weak_lines : bool                                                                |
+// [202..202] vendor_strong_line_partition : bool                                                              |
+// [203..207] trailing padding           : 5 B                                                                 |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   lines, strong_lines, relaxation_matrix arrays, match index, and runtime-control slices may own referenced |
+//   storage. Deinit follows the owning fields and clears runtime controls.                                    |
+//                                                                                                             |
+// unused bits: 40 padding + 21 bool-storage slack = 61 bits                                                   |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 208 B plus referenced line/control storage                                        |
 pub const SpectroscopyLineList = struct {
     lines: []Types.SpectroscopyLine,
     strong_lines: ?[]Types.SpectroscopyStrongLine = null,
@@ -55,6 +107,15 @@ pub const SpectroscopyLineList = struct {
             owned.deinit(allocator);
         };
 
+        const owned_strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
+            try allocator.dupe(?u16, matches)
+        else
+            null;
+        errdefer if (owned_strong_line_match_by_line) |matches| allocator.free(matches);
+
+        var owned_runtime_controls = try self.runtime_controls.clone(allocator);
+        errdefer owned_runtime_controls.deinitOwned(allocator);
+
         return .{
             .lines = owned_lines,
             .strong_lines = owned_strong_lines,
@@ -63,50 +124,24 @@ pub const SpectroscopyLineList = struct {
             .lines_sorted_ascending = self.lines_sorted_ascending,
             .preserve_anchor_weak_lines = self.preserve_anchor_weak_lines,
             .vendor_strong_line_partition = self.vendor_strong_line_partition,
-            .strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
-                try allocator.dupe(?u16, matches)
-            else
-                null,
-            .runtime_controls = try self.runtime_controls.clone(allocator),
+            .strong_line_match_by_line = owned_strong_line_match_by_line,
+            .runtime_controls = owned_runtime_controls,
         };
     }
 
-    pub fn attachStrongLineSidecars(
-        self: *SpectroscopyLineList,
-        allocator: Types.Allocator,
-        strong_lines: Types.SpectroscopyStrongLineSet,
-        relaxation_matrix: Types.RelaxationMatrix,
-    ) !void {
-        return line_list_module.attachStrongLineSidecars(self, allocator, strong_lines, relaxation_matrix);
-    }
-
-    pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.Allocator) !void {
-        return line_list_module.buildStrongLineMatchIndex(self, allocator);
-    }
+    pub const attachStrongLineSidecars = line_list_module.attachStrongLineSidecars;
+    pub const buildStrongLineMatchIndex = line_list_module.buildStrongLineMatchIndex;
 
     pub fn sigmaAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) f64 {
-        return line_list_module.totalSigmaAt(self, wavelength_nm, temperature_k, pressure_hpa).total_sigma_cm2_per_molecule;
+        return line_list_module.totalSigmaAt(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+        ).total_sigma_cm2_per_molecule;
     }
 
-    pub fn applyRuntimeControls(
-        self: *SpectroscopyLineList,
-        allocator: Types.Allocator,
-        gas_index: ?u16,
-        active_isotopes: []const u8,
-        threshold_line_scale: ?f64,
-        cutoff_cm1: ?f64,
-        line_mixing_factor: f64,
-    ) !void {
-        return line_list_module.applyRuntimeControls(
-            self,
-            allocator,
-            gas_index,
-            active_isotopes,
-            threshold_line_scale,
-            cutoff_cm1,
-            line_mixing_factor,
-        );
-    }
+    pub const applyRuntimeControls = line_list_module.applyRuntimeControls;
 
     pub fn sigmaAtPrepared(
         self: SpectroscopyLineList,
@@ -150,122 +185,68 @@ pub const SpectroscopyLineList = struct {
         return self.strong_lines != null and self.relaxation_matrix != null;
     }
 
-    pub fn prepareStrongLineState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) !?Types.StrongLinePreparedState {
-        return line_list_module.prepareStrongLineState(self, allocator, temperature_k, pressure_hpa);
-    }
-
-    pub fn allocStrongLinePreparedState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-    ) !?Types.StrongLinePreparedState {
-        return line_list_module.allocStrongLinePreparedState(self, allocator);
-    }
-
-    pub fn prepareStrongLineStateInto(
-        self: SpectroscopyLineList,
-        prepared: *Types.StrongLinePreparedState,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareStrongLineStateInto(self, prepared, temperature_k, pressure_hpa);
-    }
-
-    pub fn prepareStrongLineStateIntoWithScratch(
-        self: SpectroscopyLineList,
-        prepared: *Types.StrongLinePreparedState,
-        relaxation_weights: []f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareStrongLineStateIntoWithScratch(
-            self,
-            prepared,
-            relaxation_weights,
-            temperature_k,
-            pressure_hpa,
-        );
-    }
-
-    pub fn strongLinePreparedWeightCount(self: SpectroscopyLineList) usize {
-        return line_list_module.strongLinePreparedWeightCount(self);
-    }
-
-    pub fn prepareWeakLineState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) !Types.WeakLinePreparedState {
-        return line_list_module.prepareWeakLineState(self, allocator, temperature_k, pressure_hpa);
-    }
-
-    pub fn allocWeakLinePreparedState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-    ) !Types.WeakLinePreparedState {
-        return line_list_module.allocWeakLinePreparedState(self, allocator);
-    }
-
-    pub fn prepareWeakLineStateInto(
-        self: SpectroscopyLineList,
-        prepared: *Types.WeakLinePreparedState,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareWeakLineStateInto(self, prepared, temperature_k, pressure_hpa);
-    }
-
-    pub fn evaluateAt(
-        self: SpectroscopyLineList,
-        wavelength_nm: f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) Types.SpectroscopyEvaluation {
-        return line_list_module.evaluateAt(self, wavelength_nm, temperature_k, pressure_hpa);
-    }
+    pub const prepareStrongLineState = line_list_module.prepareStrongLineState;
+    pub const allocStrongLinePreparedState = line_list_module.allocStrongLinePreparedState;
+    pub const prepareStrongLineStateInto = line_list_module.prepareStrongLineStateInto;
+    pub const prepareStrongLineStateIntoWithScratch = line_list_module.prepareStrongLineStateIntoWithScratch;
+    pub const strongLinePreparedWeightCount = line_list_module.strongLinePreparedWeightCount;
+    pub const prepareWeakLineState = line_list_module.prepareWeakLineState;
+    pub const allocWeakLinePreparedState = line_list_module.allocWeakLinePreparedState;
+    pub const prepareWeakLineStateInto = line_list_module.prepareWeakLineStateInto;
+    pub const evaluateAt = line_list_module.evaluateAt;
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: lines=16 B, start_index=8 B, anchors=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: lines and anchors carry slice descriptors; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// StrongLineWavelengthWindow -------------------------------------------------------------------------------- |
+// Borrowed weak-line window plus strong-line anchor indexes for one wavelength.                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] lines       : []const SpectroscopyLine                                                             |
+// [16..23] start_index : usize                                                                                |
+// [24..39] anchors     : []const StrongLineAnchorIndex                                                        |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   lines borrows a slice of SpectroscopyLineList.lines. anchors borrows caller-provided anchor storage.      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 1 cache line at 64 B per line                                                                   |
+// footprint: per instance = 40 B plus borrowed line and anchor storage                                        |
 pub const StrongLineWavelengthWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,
     anchors: []const Types.StrongLineAnchorIndex,
 };
 
-// hot path:
-//   when: support-row spectroscopy evaluates an active line absorber
-//   work: computes base sigma and finite-temperature derivative sigma samples
-//   data: line list, wavelength, pressure/temperature state, optional prepared line state
-//   follow: totalSigma* variants and prepared strong-line windows
 pub fn evaluateAt(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 ) Types.SpectroscopyEvaluation {
+    // evaluateAt -------------------------------------------------------------------------------------------- |
+    // Computes base sigma and finite-temperature derivative samples for one active line absorber.             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Support-row spectroscopy calls this when no caller-supplied prepared state is available. The base     |
+    //   total and two temperature perturbations share the same totalSigma* routing.                           |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const total = totalSigmaAt(self, wavelength_nm, temperature_k, pressure_hpa);
     const delta_t = 0.5;
     const upper = totalSigmaAt(self, wavelength_nm, temperature_k + delta_t, pressure_hpa);
     const lower = totalSigmaAt(self, wavelength_nm, @max(temperature_k - delta_t, 150.0), pressure_hpa);
+    const d_sigma_d_temperature =
+        (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t);
+
     return .{
         .weak_line_sigma_cm2_per_molecule = total.weak_line_sigma_cm2_per_molecule,
         .strong_line_sigma_cm2_per_molecule = total.strong_line_sigma_cm2_per_molecule,
         .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
         .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
         .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t),
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = d_sigma_d_temperature,
     };
 }
 
@@ -281,17 +262,20 @@ pub fn totalSigmaAt(
     return totalSigmaFromLineListOnly(self, wavelength_nm, temperature_k, pressure_hpa);
 }
 
-// hot path:
-//   when: a non-strong line list evaluates sigma for a wavelength/support row
-//   work: scans the relevant weak-line window and sums weak-line contributions
-//   data: line window, line thermodynamic state, wavelength state, sigma accumulator
-//   follow: relevantLineWindowForWavelength and weakLineContributionWithWavelengthState
 pub fn totalSigmaFromLineListOnly(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 ) Types.SpectroscopyEvaluation {
+    // totalSigmaFromLineListOnly ---------------------------------------------------------------------------- |
+    // Scans the relevant weak-line window and sums weak-line contributions.                                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Used for line lists without strong-line sidecars. The relevant-window helper keeps cutoff filtering   |
+    //   outside the inner contribution loop when sorted line centers are available.                           |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
     const safe_temperature = @max(temperature_k, 150.0);
@@ -319,17 +303,20 @@ pub fn totalSigmaFromLineListOnly(
     };
 }
 
-// hot path:
-//   when: line-mixing sidecars are enabled for a wavelength/support row
-//   work: sums weak-line contributions plus strong-line sidecar contributions
-//   data: relevant weak lines, strong-line sidecars, relaxation matrix, anchor matches
-//   follow: selectStrongLineAnchors and strongLineContributionPrepared
 pub fn totalSigmaWithStrongLineSidecars(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 ) Types.SpectroscopyEvaluation {
+    // totalSigmaWithStrongLineSidecars ---------------------------------------------------------------------- |
+    // Sums weak-line contributions plus one-shot strong-line sidecar contributions.                           |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Builds a stack ConvTP state for this thermodynamic point, then walks the relevant weak-line window    |
+    //   and all strong-line sidecars.                                                                         |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
     const strong_lines = self.strong_lines.?;
@@ -357,7 +344,14 @@ pub fn totalSigmaWithStrongLineSidecars(
     var line_mixing_sigma: f64 = 0.0;
 
     for (relevant_lines, 0..) |*line, line_index| {
-        if (line_list_module.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, strong_line_anchors)) continue;
+        if (line_list_module.shouldExcludeWeakLine(
+            self,
+            relevant_window.start_index,
+            line,
+            line_index,
+            strong_line_anchors,
+        )) continue;
+
         const contribution = PhysicsCore.weakLineContribution(
             wavelength_nm,
             line.*,
@@ -433,11 +427,6 @@ pub fn prepareStrongLineWavelengthWindow(
     };
 }
 
-// hot path:
-//   when: prepared spectroscopy state is available for a wavelength/support row
-//   work: sums prepared weak-line and prepared strong-line sigma contributions
-//   data: prepared weak-line state, prepared strong-line state, relevant window, wavelength state
-//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and strongLineContributionPrepared
 pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -447,6 +436,14 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     prepared_weak_state: ?*const Types.WeakLinePreparedState,
     window: *const StrongLineWavelengthWindow,
 ) Types.SpectroscopyEvaluation {
+    // totalSigmaWithPreparedStrongLineStateAndWindow -------------------------------------------------------- |
+    // Sums prepared weak-line and prepared strong-line sigma contributions for one wavelength window.         |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   This is the repeated evaluation path used by carrier and band-mean code when prepared state is        |
+    //   available. Weak-line wavelength state and thermodynamic scales are computed once per window.          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
     const strong_lines = self.strong_lines.?;
@@ -458,36 +455,69 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
     var line_mixing_sigma: f64 = 0.0;
     const weak_line_wavelength_state = PhysicsCore.prepareWeakLineWavelengthState(wavelength_nm, self.runtime_controls);
 
-    const weak_line_state = if (prepared_weak_state) |state|
-        if (state.line_count == self.lines.len) state else null
-    else
-        null;
-    const weak_line_states = if (weak_line_state) |state| state.lines else null;
-    const weak_line_stimulated_emission_scale = if (weak_line_state) |state|
-        PhysicsCore.weakLinePreparedStimulatedEmissionScale(weak_line_wavelength_state, state.safe_temperature)
-    else
-        0.0;
-    const weak_line_thermodynamic_scale = if (weak_line_state) |state|
-        PhysicsCore.weakLinePreparedThermodynamicScale(state.safe_temperature, state.safe_pressure)
-    else
-        0.0;
-    const vendor_weak_exclusions = if (line_list_module.usesVendorStrongLinePartition(self) and !self.preserve_anchor_weak_lines)
+    const WeakLineRoute = struct {
+        states: ?[]const Types.WeakLinePreparedLineState,
+        stimulated_emission_scale: f64,
+        thermodynamic_scale: f64,
+    };
+    const weak_line_route: WeakLineRoute = choose_weak_line_route: {
+        const state = prepared_weak_state orelse break :choose_weak_line_route .{
+            .states = null,
+            .stimulated_emission_scale = 0.0,
+            .thermodynamic_scale = 0.0,
+        };
+
+        if (state.line_count != self.lines.len) {
+            break :choose_weak_line_route .{
+                .states = null,
+                .stimulated_emission_scale = 0.0,
+                .thermodynamic_scale = 0.0,
+            };
+        }
+
+        break :choose_weak_line_route .{
+            .states = state.lines,
+            .stimulated_emission_scale = PhysicsCore.weakLinePreparedStimulatedEmissionScale(
+                weak_line_wavelength_state,
+                state.safe_temperature,
+            ),
+            .thermodynamic_scale = PhysicsCore.weakLinePreparedThermodynamicScale(
+                state.safe_temperature,
+                state.safe_pressure,
+            ),
+        };
+    };
+    const uses_vendor_weak_exclusions =
+        line_list_module.usesVendorStrongLinePartition(self) and !self.preserve_anchor_weak_lines;
+    const vendor_weak_exclusions = if (uses_vendor_weak_exclusions)
         self.strong_line_match_by_line
     else
         null;
 
     for (window.lines, 0..) |*line, line_index| {
-        if (vendor_weak_exclusions) |matches| {
-            const global_index = window.start_index + line_index;
-            if (global_index < matches.len and matches[global_index] != null) continue;
-        } else if (line_list_module.shouldExcludeWeakLine(self, window.start_index, line, line_index, window.anchors)) continue;
-        if (weak_line_states) |states| {
+        const exclude_weak_line = choose_exclude_weak_line: {
+            if (vendor_weak_exclusions) |matches| {
+                const global_index = window.start_index + line_index;
+                break :choose_exclude_weak_line global_index < matches.len and matches[global_index] != null;
+            }
+
+            break :choose_exclude_weak_line line_list_module.shouldExcludeWeakLine(
+                self,
+                window.start_index,
+                line,
+                line_index,
+                window.anchors,
+            );
+        };
+        if (exclude_weak_line) continue;
+
+        if (weak_line_route.states) |states| {
             weak_line_sigma += PhysicsCore.weakLineSigmaPreparedWithStimulatedEmissionScale(
                 weak_line_wavelength_state,
                 states[window.start_index + line_index],
                 self.runtime_controls,
-                weak_line_stimulated_emission_scale,
-                weak_line_thermodynamic_scale,
+                weak_line_route.stimulated_emission_scale,
+                weak_line_route.thermodynamic_scale,
             );
         } else {
             const contribution = PhysicsCore.weakLineContributionWithWavelengthState(
@@ -549,6 +579,23 @@ pub fn attachStrongLineSidecars(
 }
 
 pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.Allocator) !void {
+    // buildStrongLineMatchIndex ----------------------------------------------------------------------------- |
+    // Build the per-line pointer into the O2 strong-line sidecar table.                                       |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   absorbers.zig and reference-data tests call this after sidecars/runtime controls are attached.        |
+    //   Prepared line-state setup stores the match slice for wavelength-time reuse.                           |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at [8..15] by             |
+    //   pointer and writes one compact ?u16 match slot with the same index order as self.lines. Vendor        |
+    //   partition mode also reads the retained metadata near [91..97] before deciding whether a row can       |
+    //   match a sidecar. No line row is copied or retained here beyond the match-index side slice.            |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   match when abs(line center - strong-line center) <= strong_line_tolerance_nm                          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (self.strong_line_match_by_line) |matches| {
         allocator.free(matches);
         self.strong_line_match_by_line = null;
@@ -558,24 +605,24 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
 
     const matches = try allocator.alloc(?u16, self.lines.len);
     errdefer allocator.free(matches);
+
     for (self.lines, 0..) |*line, line_index| {
-        if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line)) {
+        const should_skip_vendor_line =
+            usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line);
+        if (should_skip_vendor_line) {
             matches[line_index] = null;
             continue;
         }
+
         matches[line_index] = if (findStrongLineMatch(self.*, line.center_wavelength_nm)) |strong_index|
             @intCast(strong_index)
         else
             null;
     }
+
     self.strong_line_match_by_line = matches;
 }
 
-// hot path:
-//   when: spectroscopy line lists are prepared for a scene/session
-//   work: filters and partitions lines according to runtime controls
-//   data: source lines, control thresholds, strong-line sidecars, filtered line storage
-//   follow: line-list shape consumed by relevantLineWindowForWavelength
 pub fn applyRuntimeControls(
     self: *SpectroscopyLineList,
     allocator: Types.Allocator,
@@ -585,6 +632,15 @@ pub fn applyRuntimeControls(
     cutoff_cm1: ?f64,
     line_mixing_factor: f64,
 ) !void {
+    // applyRuntimeControls ---------------------------------------------------------------------------------- |
+    // Filters and partitions lines according to runtime gas, isotope, threshold, cutoff, and line-mixing      |
+    // controls.                                                                                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs during scene/session line-list preparation. The resulting line-list shape is consumed by         |
+    //   relevantLineWindowForWavelength and prepared-state builders.                                          |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const replacement_active_isotopes = if (active_isotopes.len != 0)
         try allocator.dupe(u8, active_isotopes)
     else
@@ -598,20 +654,24 @@ pub fn applyRuntimeControls(
         .line_mixing_factor = line_mixing_factor,
     };
 
-    if (gas_index != null or active_isotopes.len != 0) {
+    const should_filter_lines = gas_index != null or active_isotopes.len != 0;
+    if (should_filter_lines) {
         var retained_count: usize = 0;
         for (self.lines) |*line| {
             if (Support.runtimeControlsMatchLine(gas_index, active_isotopes, line)) retained_count += 1;
         }
+
         if (retained_count != self.lines.len) {
             const retained = try allocator.alloc(Types.SpectroscopyLine, retained_count);
             errdefer allocator.free(retained);
+
             var write_index: usize = 0;
             for (self.lines) |*line| {
                 if (!Support.runtimeControlsMatchLine(gas_index, active_isotopes, line)) continue;
                 retained[write_index] = line.*;
                 write_index += 1;
             }
+
             allocator.free(self.lines);
             self.lines = retained;
             self.lines_sorted_ascending = false;
@@ -672,17 +732,20 @@ pub fn allocStrongLinePreparedState(
     };
 }
 
-// hot path:
-//   when: preparing strong-line spectroscopy state for profile nodes or effective state
-//   work: fills pressure/temperature-dependent strong-line relaxation state
-//   data: strong-line sidecars, relaxation matrix, pressure/temperature inputs, state output
-//   follow: strongLineContributionPrepared and prepared sidecar ordering
 pub fn prepareStrongLineStateInto(
     self: SpectroscopyLineList,
     prepared: *Types.StrongLinePreparedState,
     temperature_k: f64,
     pressure_hpa: f64,
 ) void {
+    // prepareStrongLineStateInto ---------------------------------------------------------------------------- |
+    // Fills pressure/temperature-dependent strong-line relaxation state.                                      |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs while preparing profile-node or effective strong-line spectroscopy state. The prepared sidecar   |
+    //   ordering is consumed by strongLineContributionPrepared.                                               |
+    // ------------------------------------------------------------------------------------------------------- |
+
     var relaxation_weights: [Types.max_strong_line_sidecars * Types.max_strong_line_sidecars]f64 = undefined;
     prepareStrongLineStateIntoWithScratch(
         self,
@@ -733,17 +796,20 @@ pub fn allocWeakLinePreparedState(
     };
 }
 
-// hot path:
-//   when: preparing weak-line spectroscopy state for profile nodes or effective state
-//   work: fills thermodynamic weak-line state for repeated wavelength evaluation
-//   data: weak-line array, pressure/temperature inputs, prepared weak-line state output
-//   follow: weakLineSigmaPreparedWithStimulatedEmissionScale and cutoff helpers
 pub fn prepareWeakLineStateInto(
     self: SpectroscopyLineList,
     prepared: *Types.WeakLinePreparedState,
     temperature_k: f64,
     pressure_hpa: f64,
 ) void {
+    // prepareWeakLineStateInto ------------------------------------------------------------------------------ |
+    // Fills thermodynamic weak-line state for repeated wavelength evaluation.                                 |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs while preparing profile-node or effective weak-line spectroscopy state. The output rows are      |
+    //   streamed by weakLineSigmaPreparedWithStimulatedEmissionScale.                                         |
+    // ------------------------------------------------------------------------------------------------------- |
+
     std.debug.assert(prepared.lines.len >= self.lines.len);
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
     const safe_temperature = @max(temperature_k, 150.0);
@@ -787,24 +853,35 @@ pub fn findStrongLineMatch(self: SpectroscopyLineList, wavelength_nm: f64) ?usiz
     return best_index;
 }
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: lines=16 B, start_index=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: lines carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+// RelevantLineWindow ---------------------------------------------------------------------------------------- |
+// Borrowed weak-line window selected for one wavelength before optional strong-line anchoring.                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] lines       : []const SpectroscopyLine                                                             |
+// [16..23] start_index : usize                                                                                |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   lines borrows a SpectroscopyLineList.lines subrange; storage lives outside this header.                   |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B plus borrowed line storage                                                   |
 pub const RelevantLineWindow = struct {
     lines: []const Types.SpectroscopyLine,
     start_index: usize,
 };
 
-// hot path:
-//   when: every wavelength/support-row line-list evaluation selects weak lines
-//   work: maps wavelength to a compact relevant-line window
-//   data: sorted line centers, vendor cutoff bounds, line-list window metadata
-//   follow: totalSigma* loops that iterate the returned window
 pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm: f64) RelevantLineWindow {
+    // relevantLineWindowForWavelength ----------------------------------------------------------------------- |
+    // Maps one wavelength to the compact weak-line window used by sigma accumulation loops.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Called by every wavelength/support-row line-list evaluation. Sorted line centers allow binary-search  |
+    //   bounds when vendor cutoff controls are active; otherwise the full line list is returned.              |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!self.lines_sorted_ascending) {
         return .{
             .lines = self.lines,
@@ -831,17 +908,20 @@ pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm
     };
 }
 
-// hot path:
-//   when: line-mixing evaluation prepares weak-to-strong anchor matches
-//   work: selects nearby strong-line anchors for the current weak-line window
-//   data: strong-line match index, relevant weak lines, window start index, anchor array
-//   follow: weakLineRow/totalSigmaWithStrongLineSidecars anchor lookups
 pub fn selectStrongLineAnchors(
     self: SpectroscopyLineList,
     relevant_lines: []const Types.SpectroscopyLine,
     start_index: usize,
     anchor_storage: []Types.StrongLineAnchorIndex,
 ) []const Types.StrongLineAnchorIndex {
+    // selectStrongLineAnchors ------------------------------------------------------------------------------- |
+    // Selects nearby strong-line anchors for the current weak-line window.                                    |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Runs before line-mixing evaluation when sidecars are active. Anchor storage is caller-owned so this   |
+    //   helper does not allocate per wavelength.                                                              |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const strong_lines = self.strong_lines orelse return &.{};
     if (usesVendorStrongLinePartition(self)) return &.{};
     const anchor_count = @min(strong_lines.len, @min(anchor_storage.len, Types.max_strong_line_sidecars));
@@ -851,17 +931,22 @@ pub fn selectStrongLineAnchors(
     var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     for (relevant_lines, 0..) |*line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
+
         if (strong_index >= anchors.len) continue;
         if (line_index > std.math.maxInt(Types.StrongLineAnchorIndex)) continue;
+
         const delta = @abs(strong_lines[strong_index].center_wavelength_nm - line.center_wavelength_nm);
         if (delta > deltas[strong_index]) continue;
+
         if (delta == deltas[strong_index] and anchors[strong_index] != Types.missing_strong_line_anchor_index) {
             const incumbent = &relevant_lines[@intCast(anchors[strong_index])];
             if (incumbent.line_strength_cm2_per_molecule >= line.line_strength_cm2_per_molecule) continue;
         }
+
         anchors[strong_index] = @intCast(line_index);
         deltas[strong_index] = delta;
     }
+
     return anchors;
 }
 
@@ -873,23 +958,21 @@ pub fn matchedStrongIndexForRelevantLine(
 ) ?usize {
     if (self.strong_line_match_by_line) |matches| {
         const global_index = start_index + line_index;
+
         if (global_index < matches.len) {
             if (matches[global_index]) |strong_index| return @as(usize, strong_index);
             return null;
         }
     }
+
     if (usesVendorStrongLinePartition(self)) {
         if (!Support.isVendorO2AStrongCandidateFromSource(line)) return null;
         return findStrongLineMatch(self, line.center_wavelength_nm);
     }
+
     return findStrongLineMatch(self, line.center_wavelength_nm);
 }
 
-// hot path:
-//   when: weak-line sigma loops decide whether a line is covered by a strong sidecar
-//   work: checks vendor partition rules and strong-line anchor matches for one relevant weak line
-//   data: relevant-window start index, line metadata, strong-line anchor array, match index
-//   follow: totalSigmaWithStrongLineSidecars and diagnostic weak-line row expansion
 pub fn shouldExcludeWeakLine(
     self: SpectroscopyLineList,
     start_index: usize,
@@ -897,19 +980,47 @@ pub fn shouldExcludeWeakLine(
     line_index: usize,
     strong_line_anchors: []const Types.StrongLineAnchorIndex,
 ) bool {
+    // shouldExcludeWeakLine --------------------------------------------------------------------------------- |
+    // Checks vendor partition rules and strong-line anchor matches for one relevant weak line.                |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Called inside weak-line sigma loops. The decision keeps lines covered by strong sidecars out of the   |
+    //   weak contribution unless preserve_anchor_weak_lines is enabled.                                       |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (usesVendorStrongLinePartition(self)) {
         if (self.preserve_anchor_weak_lines) return false;
         if (!Support.isVendorO2AStrongCandidateFromSource(line)) return false;
+
         return matchedStrongIndexForRelevantLine(self, start_index, line, line_index) != null;
     }
+
     const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse return false;
+
     if (self.preserve_anchor_weak_lines) return false;
     if (strong_index >= strong_line_anchors.len) return false;
     if (strong_line_anchors[strong_index] == Types.missing_strong_line_anchor_index) return false;
+
     return @as(usize, @intCast(strong_line_anchors[strong_index])) == line_index;
 }
 
 pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
+    // validateStrongLinePartition --------------------------------------------------------------------------- |
+    // Reject a vendor O2 strong-line partition that exposes candidates but matches none of them.              |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   attachStrongLineSidecars and buildStrongLineMatchIndex call this before prepared state is built.      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   This setup-only guard walks 104 B SpectroscopyLine rows by pointer. It reads vendor metadata around   |
+    //   [91..97] to find O2 A strong-line candidates, then reads center_wavelength_nm at [8..15] only for     |
+    //   candidate rows that need sidecar matching. The result protects later strong-line state reuse; there   |
+    //   is no wavelength-time allocation.                                                                     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   at least one vendor strong-line candidate must match a sidecar center within tolerance                |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!usesVendorStrongLinePartition(self.*)) return;
 
     const strong_lines = self.strong_lines orelse return;
@@ -919,10 +1030,13 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
     var matched_candidate = false;
     for (self.lines) |*line| {
         if (!Support.isVendorO2AStrongCandidateFromSource(line)) continue;
+
         saw_candidate = true;
         _ = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
+
         matched_candidate = true;
     }
+
     if (saw_candidate and !matched_candidate) return error.UnmatchedStrongLineCandidate;
 }
 
@@ -941,13 +1055,28 @@ pub fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Types.A
 }
 
 fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
+    // detectVendorStrongLinePartition ----------------------------------------------------------------------- |
+    // Detect whether attached sidecars correspond to the vendor O2 A strong-line partition.                   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   attachStrongLineSidecars uses this once to choose vendor partition handling before validation.        |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   This setup pass reads gas_index at [88..89] and vendor metadata around [91..97] from 104 B line rows  |
+    //   by pointer. It chooses retained sidecar matching mode before prepared state exists. Wavelength-time   |
+    //   formulas still consume the full line rows for strength, width, energy, isotope, and shift fields.     |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!self.hasStrongLineSidecars()) return false;
+
     if (self.runtime_controls.gas_index) |gas_index| {
         if (gas_index != 7) return false;
     }
+
     for (self.lines) |*line| {
         if (line.gas_index != 7) continue;
         if (Support.lineHasVendorStrongLineMetadata(line)) return true;
     }
+
     return false;
 }

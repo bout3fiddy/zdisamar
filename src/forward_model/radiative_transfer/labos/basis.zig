@@ -3,8 +3,27 @@ const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");
 
 // basis.zig -------------------------------------------------------------------------------------------------|
-// Private LABOS basis facade. Re-exports fixed-size types, matrix kernels, and Plm/phase helpers used by     |
-// the sibling LABOS implementation files. No runtime work happens in this file.                              |
+// Private LABOS alias map for stream data rows, dense matrix kernels, and Fourier phase-basis builders used  |
+// by the hot transport files.                                                                                |
+//                                                                                                            |
+// call chain                                                                                                 |
+//   layers.zig, orders.zig, reflectance.zig, attenuation.zig, and workspace.zig import this as basis.        |
+//   radiative_transfer/root.zig re-exports selected aliases through the public labos namespace.              |
+//   src/internal.zig exposes the same alias map to focused LABOS unit tests.                                 |
+//                                                                                                            |
+// owning files                                                                                               |
+//   types.zig       : fixed stream limits, Mat/Vec rows, LayerRT/UD field rows, and Geometry.                |
+//   matrix.zig      : small dense multiply, q-series, and scale/add kernels.                                 |
+//   phase_basis.zig : Fourier PLM basis rows and Z+/Z- phase-kernel builders.                                |
+//                                                                                                            |
+// alias contract                                                                                             |
+//   Hot LABOS files share the same terms: Mat, Vec, LayerRT, UDField, FourierPlmBasis, and Z rows. This map  |
+//   keeps those names as one LABOS vocabulary while the owner files stay split by storage, matrix kernels,   |
+//   and phase-basis construction.                                                                            |
+//                                                                                                            |
+// memory and runtime                                                                                         |
+//   The aliases are resolved at compile time. This file allocates no storage, owns no buffers, dispatches no |
+//   calls, and has no hidden state. The public root facade decides which aliases leave the LABOS package.    |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const max_gauss = types.max_gauss;

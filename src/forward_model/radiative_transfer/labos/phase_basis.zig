@@ -23,6 +23,12 @@ const Geometry = types.Geometry;
 //   weighted variants                                                                                         |
 //     -> mix aerosol phase with Rayleigh l=2 before building the same Z+/Z- objects                           |
 //                                                                                                             |
+// hot path                                                                                                    |
+//   A layer-resolved LABOS solve builds one basis per retained Fourier term and then forms many Z matrices or |
+//   Z rows for layer construction, reflectance weighting, and Jacobians. FourierPlmBasis stores weighted      |
+//   P_l^m(mu_i) rows for the current geometry so those builders walk dense rows while forming Z+ and Z- outer |
+//   products.                                                                                                 |
+//                                                                                                             |
 // math names                                                                                                  |
 //   m              : Fourier index                                                                            |
 //   l              : phase coefficient index                                                                  |
@@ -87,7 +93,7 @@ pub const PhaseKernel = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PhaseKernelRow ---------------------------------------------------------------------------------------------|
-// One row from Z+ and one row from Z-. Used when reflectance weighting needs rows instead of full matrices.   |
+// One row from Z+ and one row from Z-. Used when reflectance weighting needs row-local values.                |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 200 B (0.195 KiB), align: 8 B                                                                         |
@@ -902,8 +908,7 @@ fn fillZplusZminRowFromWeightedPhaseLimited12(
     // fillZplusZminRowFromWeightedPhaseLimited12 -------------------------------------------------------------|
     // Fixed 12-stream row builder for mixed aerosol/Rayleigh phase.                                           |
     //                                                                                                         |
-    // Keeps the column loop in fillPhaseRow12. The caller gets one Z+ row and one Z- row instead of a full    |
-    // PhaseKernel.                                                                                            |
+    // Keeps the column loop in fillPhaseRow12. The caller gets one Z+ row and one Z- row for weighting.       |
     // --------------------------------------------------------------------------------------------------------|
 
     const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);

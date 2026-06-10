@@ -89,7 +89,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         tra += a.data[104];
         tra += a.data[117];
 
-        // Same diagonal indexes, now in B. b.data[13] is B[1,1], not a special column.
+        // Same diagonal indexes, now in B. b.data[13] is B[1,1] in row-major storage.
         var trb = b.data[0];
         trb += b.data[13];
         trb += b.data[26];
@@ -118,7 +118,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     }
 
     // Generic trace gate -------------------------------------------------------------------------------------|
-    // Same test as the fixed rtm_config, but the diagonal stride is n+1 instead of the literal 13 above.      |
+    // Same test as the fixed rtm_config, with diagonal stride n + 1 for the generic row width.                |
     var tra: f64 = 0.0;
     var trb: f64 = 0.0;
     for (0..n_gauss) |k| {
@@ -221,7 +221,7 @@ pub inline fn smulInto(
         tra += a.data[104];
         tra += a.data[117];
 
-        // Same diagonal indexes, now in B. b.data[13] is B[1,1], not a special column.
+        // Same diagonal indexes, now in B. b.data[13] is B[1,1] in row-major storage.
         var trb = b.data[0];
         trb += b.data[13];
         trb += b.data[26];
@@ -1084,7 +1084,7 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
     // --------------------------------------------------------------------------------------------------------|
 
     // Gaussian-block traces ----------------------------------------------------------------------------------|
-    // The threshold uses only the 10 Gaussian directions, not the two extra view/solar columns.               |
+    // The threshold uses the 10 Gaussian directions that form the q-series block.                             |
     //                                                                                                         |
     //   trace(A_gg) = A[0,0] + A[1,1] + ... + A[9,9]                                                          |
     //   trace(C_gg) = C[0,0] + C[1,1] + ... + C[9,9]                                                          |
@@ -2104,7 +2104,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *cons
     }
 
     // Pivoted LU ---------------------------------------------------------------------------------------------|
-    // Factor M into L and U in-place. A near-zero pivot falls back to AB instead of producing unstable Q.     |
+    // Factor M into L and U in-place. A near-zero pivot returns the bounded AB fallback.                      |
     // --------------------------------------------------------------------------------------------------------|
 
     for (0..n_gauss) |pivot_col| {
@@ -2137,7 +2137,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *cons
         // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
         // ----------------------------------------------------------------------------------------------------|
         // This avoids unstable division while inverting I - AB_gg. The fallback keeps the pre-inversion       |
-        // product instead of producing a numerically explosive q-series correction.                           |
+        // product so the q-series correction remains bounded.                                                 |
         if (@abs(diag) < lu_diagonal_floor) return ab_product.*;
         // end tradeoff: LU pivot floor -----------------------------------------------------------------------|
 
@@ -2401,7 +2401,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     }
 
     // Pivoted LU ---------------------------------------------------------------------------------------------|
-    // Factor M into L and U in-place. A near-zero pivot falls back to AB instead of producing unstable Q.     |
+    // Factor M into L and U in-place. A near-zero pivot returns the bounded AB fallback.                      |
     // --------------------------------------------------------------------------------------------------------|
 
     for (0..10) |col| {
@@ -2438,7 +2438,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
         // ----------------------------------------------------------------------------------------------------|
         // This avoids unstable division in the fixed 10x10 inverse. The fallback keeps the pre-inversion      |
-        // product instead of producing a numerically explosive q-series correction.                           |
+        // product so the q-series correction remains bounded.                                                 |
         if (@abs(diag) < lu_diagonal_floor) {
             result.* = ab.*;
             return;

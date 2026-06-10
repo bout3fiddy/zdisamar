@@ -3,14 +3,56 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const AtmosphereModel = @import("../../../input/Atmosphere.zig");
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 128 B, align: 8 B
-//   field storage: 128 B across 8 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_interval_indices_1based=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_interval_indices_1based, sublayer_top_altitudes_km, sublayer_bottom_altitudes_km, +3 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 128 B (0.125 KiB); total also includes referenced storage above
+// particle_profiles.zig -------------------------------------------------------------------------------------   |
+// Builds aerosol optical-depth distributions over prepared layer and sublayer grids.                            |
+//                                                                                                               |
+// called by                                                                                                     |
+//   vertical_grid.zig exposes the prepared layer/sublayer grid slices                                           |
+//   layer_accumulation.zig builds profile aerosol properties during optical-state preparation                   |
+//   forward_layers.zig, carrier_eval.zig, and state_scalar.zig read the prepared particle distribution          |
+//                                                                                                               |
+// main paths                                                                                                    |
+//   buildAerosolSublayerDistribution                                                                            |
+//     -> choose explicit-interval placement or altitude-bound placement from Scene controls                     |
+//     -> allocate one optical-depth weight per prepared sublayer                                                |
+//                                                                                                               |
+//   buildIntervalMatchedDistribution                                                                            |
+//     -> put all aerosol depth on sublayers belonging to one explicit interval                                  |
+//                                                                                                               |
+//   buildFiniteLayerSublayerDistribution                                                                        |
+//     -> distribute aerosol depth by vertical overlap with an altitude interval                                 |
+//                                                                                                               |
+// hot path                                                                                                      |
+//   Layer accumulation and carrier evaluation read the prepared distribution repeatedly at wavelength time.     |
+//   This file keeps placement work in setup and stores only per-sublayer weights for the hot reads.             |
+//                                                                                                               |
+// memory                                                                                                        |
+//   PreparedVerticalGrid borrows vertical-grid arrays from state_build. Distribution builders allocate only     |
+//   the returned []f64 weights; callers own and free those weights with the prepared optical state.             |
+// ------------------------------------------------------------------------------------------------------------  |
+
+// PreparedVerticalGrid --------------------------------------------------------------------------------------   |
+// Borrowed layer and sublayer grid slices used to place aerosol optical depth.                                  |
+//                                                                                                               |
+// layout(64-bit)                                                                                                |
+// size: 128 B (0.125 KiB), align: 8 B                                                                           |
+//                                                                                                               |
+// memory                                                                                                        |
+// [  0.. 15] layer_top_altitudes_km                      : []const f64                                          |
+// [ 16.. 31] layer_bottom_altitudes_km                   : []const f64                                          |
+// [ 32.. 47] layer_interval_indices_1based               : []const u32                                          |
+// [ 48.. 63] sublayer_top_altitudes_km                   : []const f64                                          |
+// [ 64.. 79] sublayer_bottom_altitudes_km                : []const f64                                          |
+// [ 80.. 95] sublayer_mid_altitudes_km                   : []const f64                                          |
+// [ 96..111] sublayer_support_weights_km                 : []const f64                                          |
+// [112..127] sublayer_parent_interval_indices_1based     : []const u32                                          |
+//                                                                                                               |
+// out-of-line                                                                                                   |
+//   all slices borrow prepared vertical-grid arrays; referenced storage is not included in size.                |
+//                                                                                                               |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                        |
+// cache span: 2 cache lines at 64 B per line                                                                    |
+// footprint: per instance = 128 B plus borrowed grid storage                                                    |
 pub const PreparedVerticalGrid = struct {
     layer_top_altitudes_km: []const f64,
     layer_bottom_altitudes_km: []const f64,
@@ -21,6 +63,7 @@ pub const PreparedVerticalGrid = struct {
     sublayer_support_weights_km: []const f64,
     sublayer_parent_interval_indices_1based: []const u32,
 };
+// ------------------------------------------------------------------------------------------------------------  |
 
 pub fn scaleOpticalDepth(
     optical_depth: f64,
@@ -28,45 +71,42 @@ pub fn scaleOpticalDepth(
     angstrom_exponent: f64,
     wavelength_nm: f64,
 ) f64 {
+    // scaleOpticalDepth --------------------------------------------------------------------------------------- |
+    // Applies the Angstrom wavelength scaling used for aerosol reference optical depth.                         |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   tau(lambda) = tau_ref * (lambda_ref / lambda) ^ Angstrom exponent                                       |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (optical_depth == 0.0) return 0.0;
     if (angstrom_exponent == 0.0) return optical_depth;
     if (reference_wavelength_nm == wavelength_nm) return optical_depth;
+
     const safe_wavelength = @max(wavelength_nm, 1.0);
     const safe_reference = @max(reference_wavelength_nm, 1.0);
-    // math: tau(lambda) = tau_ref * (lambda_ref / lambda)^angstrom_exponent
+
     return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
 }
 
-// hot path:
-//   when: optical-state preparation distributes aerosol optical depth over sublayers
-//   work: chooses placement semantics and builds per-sublayer aerosol weights
-//   data: scene aerosol placement, prepared vertical grid, output weight array
-//   follow: explicit interval-matched distribution builder
 pub fn buildAerosolSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
     grid: PreparedVerticalGrid,
 ) ![]f64 {
-    const total_optical_depth = scene.aerosol.optical_depth;
-    return buildPlacementBoundDistribution(
-        allocator,
-        grid,
-        scene.atmosphere.interval_grid.enabled(),
-        scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
-        total_optical_depth,
-        scene.aerosol.placement,
-    );
-}
+    // buildAerosolSublayerDistribution ----------------------------------------------------------------------   |
+    // Chooses aerosol placement semantics and returns one per-sublayer optical-depth distribution.              |
+    //                                                                                                           |
+    // hot path                                                                                                  |
+    //   Runs during optical-state preparation. The returned weights are read repeatedly by layer and carrier    |
+    //   paths, so placement branches stay out of wavelength-time loops.                                         |
+    // -------------------------------------------------------------------------------------------------------   |
 
-pub fn buildPlacementBoundDistribution(
-    allocator: Allocator,
-    grid: PreparedVerticalGrid,
-    has_explicit_interval_grid: bool,
-    enabled: bool,
-    total_optical_depth: f64,
-    placement: AtmosphereModel.IntervalPlacement,
-) ![]f64 {
-    if (placement.interval_index_1based != 0) {
+    const total_optical_depth = scene.aerosol.optical_depth;
+    const enabled = scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0;
+    const placement = scene.aerosol.placement;
+    const uses_explicit_interval = placement.interval_index_1based != 0;
+    if (uses_explicit_interval) {
+        const has_explicit_interval_grid = scene.atmosphere.interval_grid.enabled();
         if (!has_explicit_interval_grid) return error.InvalidRequest;
         return buildIntervalMatchedDistribution(
             allocator,
@@ -87,19 +127,20 @@ pub fn buildPlacementBoundDistribution(
     );
 }
 
-// hot path:
-//   when: explicit interval placement distributes particle optical depth
-//   work: accumulates support-weighted sublayers for one interval and normalizes optical depth
-//   data: sublayer interval indexes, support weights, output distribution
-//   math: tau_i = total_tau * max(support_weight_i, 0) / sum_selected max(support_weight, 0)
-//   follow: layer_accumulation particle optical-depth reads
-pub fn buildIntervalMatchedDistribution(
+fn buildIntervalMatchedDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
     enabled: bool,
     total_optical_depth: f64,
     interval_index_1based: u32,
 ) ![]f64 {
+    // buildIntervalMatchedDistribution ----------------------------------------------------------------------   |
+    // Places all aerosol optical depth on sublayers belonging to one explicit interval.                         |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   tau_i = total_tau * max(support_weight_i, 0) / sum_selected max(support_weight, 0)                      |
+    // -------------------------------------------------------------------------------------------------------   |
+
     const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
 
@@ -109,7 +150,11 @@ pub fn buildIntervalMatchedDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_parent_interval_indices_1based, grid.sublayer_support_weights_km) |*slot, parent_interval_index_1based, support_weight_km| {
+    for (
+        weights,
+        grid.sublayer_parent_interval_indices_1based,
+        grid.sublayer_support_weights_km,
+    ) |*slot, parent_interval_index_1based, support_weight_km| {
         if (parent_interval_index_1based != interval_index_1based) {
             slot.* = 0.0;
             continue;
@@ -126,13 +171,7 @@ pub fn buildIntervalMatchedDistribution(
     return weights;
 }
 
-// hot path:
-//   when: finite altitude placement distributes aerosol optical depth
-//   work: computes vertical overlap weights for every sublayer and normalizes optical depth
-//   data: sublayer top/bottom altitudes, support weights, placement bounds, output weights
-//   math: weight_i = max(support_i, 0) * overlap(slot_i, layer) / slot_height_i; tau_i = total_tau * weight_i / sum(weight)
-//   follow: layer_accumulation particle distribution use
-pub fn buildFiniteLayerSublayerDistribution(
+fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
     enabled: bool,
@@ -141,6 +180,14 @@ pub fn buildFiniteLayerSublayerDistribution(
     top_altitude_km: f64,
     pad_to_slot_height: bool,
 ) ![]f64 {
+    // buildFiniteLayerSublayerDistribution ------------------------------------------------------------------   |
+    // Distributes aerosol optical depth by vertical overlap with a finite altitude interval.                    |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   weight_i = max(support_i, 0) * overlap(slot_i, layer) / slot_height_i                                   |
+    //   tau_i   = total_tau * weight_i / sum(weight)                                                            |
+    // -------------------------------------------------------------------------------------------------------   |
+
     const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
 
@@ -164,7 +211,12 @@ pub fn buildFiniteLayerSublayerDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km, grid.sublayer_support_weights_km) |*slot, slot_top_km, slot_bottom_km, support_weight_km| {
+    for (
+        weights,
+        grid.sublayer_top_altitudes_km,
+        grid.sublayer_bottom_altitudes_km,
+        grid.sublayer_support_weights_km,
+    ) |*slot, slot_top_km, slot_bottom_km, support_weight_km| {
         const slot_height_km = @max(slot_top_km - slot_bottom_km, 1.0e-9);
         const overlap_km = @max(
             0.0,
@@ -176,7 +228,10 @@ pub fn buildFiniteLayerSublayerDistribution(
     }
 
     if (total_weight == 0.0) {
-        const nearest_index = nearestSublayerIndex(grid.sublayer_mid_altitudes_km, 0.5 * (layer_top_km + layer_bottom_km));
+        const nearest_index = nearestSublayerIndex(
+            grid.sublayer_mid_altitudes_km,
+            0.5 * (layer_top_km + layer_bottom_km),
+        );
         if (nearest_index) |index| {
             weights[index] = 1.0;
             total_weight = 1.0;
@@ -191,12 +246,6 @@ pub fn buildFiniteLayerSublayerDistribution(
     return weights;
 }
 
-// hot path:
-//   when: Gaussian aerosol placement distributes optical depth over sublayers
-//   work: computes Gaussian altitude weights and normalizes optical depth
-//   data: sublayer mid-altitudes, support weights, center/width parameters, output weights
-//   math: delta_i = (z_i - center) / max(width, 0.25); weight_i = exp(-0.5 * delta_i^2) * max(support_i, 0); tau_i = total_tau * weight_i / sum(weight)
-//   follow: layer_accumulation particle distribution use
 pub fn buildGaussianSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
@@ -205,6 +254,15 @@ pub fn buildGaussianSublayerDistribution(
     center_km: f64,
     width_km: f64,
 ) ![]f64 {
+    // buildGaussianSublayerDistribution ---------------------------------------------------------------------   |
+    // Distributes aerosol optical depth with a Gaussian altitude weight.                                        |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   delta_i = (z_i - center) / max(width, 0.25)                                                             |
+    //   weight_i = exp(-0.5 * delta_i^2) * max(support_i, 0)                                                    |
+    //   tau_i = total_tau * weight_i / sum(weight)                                                              |
+    // -------------------------------------------------------------------------------------------------------   |
+
     const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
 
@@ -214,7 +272,11 @@ pub fn buildGaussianSublayerDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_mid_altitudes_km, grid.sublayer_support_weights_km) |*slot, altitude_km, support_weight_km| {
+    for (
+        weights,
+        grid.sublayer_mid_altitudes_km,
+        grid.sublayer_support_weights_km,
+    ) |*slot, altitude_km, support_weight_km| {
         const delta = (altitude_km - center_km) / @max(width_km, 0.25);
         const weight = @exp(-0.5 * delta * delta) * @max(support_weight_km, 0.0);
         slot.* = weight;
@@ -231,7 +293,6 @@ fn nearestSublayerIndex(altitudes_km: []const f64, target_altitude_km: f64) ?usi
     var best_distance = std.math.inf(f64);
     for (altitudes_km, 0..) |altitude_km, index| {
         const distance = @abs(altitude_km - target_altitude_km);
-        // math: nearest support row minimizes absolute altitude distance |z_i - z_target|.
         if (distance < best_distance) {
             best_distance = distance;
             best_index = index;

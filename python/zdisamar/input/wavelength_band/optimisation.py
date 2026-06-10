@@ -191,17 +191,12 @@ class FastModeRadiativeTransfer:
     after the retained floor order once the reflectance tail is small.
     `threshold_doubl` relaxes the layer-doubling start threshold, reducing
     doubling work at the cost of a stronger transport approximation.
-    The `qzero_*_product_suppression` flags are experimental downstream matrix
-    product skips; retained fastmode defaults keep them disabled.
     """
 
     fourier_order_cap: int | None = 5
     aerosol_tangent_order_cap: int | None = 11
     fourier_tail_reflectance_epsilon: float = 1.0e-11
     threshold_doubl: float = 3.0e-5
-    qzero_rd_product_suppression: bool = False
-    qzero_tu_product_suppression: bool = False
-    qzero_td_product_suppression: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
@@ -211,9 +206,6 @@ class FastModeRadiativeTransfer:
             "aerosol_tangent_order_cap",
             "fourier_tail_reflectance_epsilon",
             "threshold_doubl",
-            "qzero_rd_product_suppression",
-            "qzero_tu_product_suppression",
-            "qzero_td_product_suppression",
         }
         reject_unknown_fields(data, allowed, "fastmode radiative-transfer")
         defaults = cls()
@@ -232,24 +224,6 @@ class FastModeRadiativeTransfer:
                 )
             ),
             threshold_doubl=to_float(data.get("threshold_doubl", defaults.threshold_doubl)),
-            qzero_rd_product_suppression=to_bool(
-                data.get(
-                    "qzero_rd_product_suppression",
-                    defaults.qzero_rd_product_suppression,
-                )
-            ),
-            qzero_tu_product_suppression=to_bool(
-                data.get(
-                    "qzero_tu_product_suppression",
-                    defaults.qzero_tu_product_suppression,
-                )
-            ),
-            qzero_td_product_suppression=to_bool(
-                data.get(
-                    "qzero_td_product_suppression",
-                    defaults.qzero_td_product_suppression,
-                )
-            ),
         )
 
     def apply_to(self, thresholds: object) -> None:
@@ -268,9 +242,6 @@ class FastModeRadiativeTransfer:
             "aerosol_tangent_order_cap": self.aerosol_tangent_order_cap,
             "fourier_tail_reflectance_epsilon": self.fourier_tail_reflectance_epsilon,
             "threshold_doubl": self.threshold_doubl,
-            "qzero_rd_product_suppression": self.qzero_rd_product_suppression,
-            "qzero_tu_product_suppression": self.qzero_tu_product_suppression,
-            "qzero_td_product_suppression": self.qzero_td_product_suppression,
         }
 
 

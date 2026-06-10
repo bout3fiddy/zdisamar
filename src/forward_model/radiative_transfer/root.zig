@@ -4,8 +4,17 @@ const jacobian = @import("../jacobian/root.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public RTM entry point. Callers bring prepared optical properties and controls here; LABOS                  |
-// solves the transport problem and returns reflectance plus optional Jacobian values.                         |
+// Public radiative-transfer boundary between prepared optical properties and the LABOS transport solver.      |
+// Callers arrive here with dense layer rows, source-interface rows, optional RTM quadrature, and prepared     |
+// controls; this file validates the controls, defines the ABI-like row shapes, and forwards the solve to      |
+// LABOS with optional caller-owned scratch memory.                                                            |
+//                                                                                                             |
+// called by                                                                                                   |
+//   src/root.zig prepares user-facing runs and diagnostics                                                    |
+//   spectral_forward.zig calls executePreparedWithLabosWorkspace for each high-resolution forward sample      |
+//   o2a_reference/run.zig prepares vendor/O2 A SolveConfig rows for validation and retrieval                  |
+//   output/radiative_transfer_diagnostics.zig reads SolveConfig and ForwardInput shape for reports            |
+//   internal.zig re-exports this module for focused tests and lower-level callers                             |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   prepareSolveConfig                    -> reject unsupported RTM controls before the solve                 |
@@ -13,8 +22,22 @@ const phase_functions = @import("../optical_properties/shared/phase_functions.zi
 //   executePreparedWithLabosWorkspace     -> call the LABOS solve with optional caller-owned scratch memory   |
 //   sourceInterfaceFromLayers             -> build source interfaces from layer data when none are supplied   |
 //                                                                                                             |
+// input model                                                                                                 |
+//   ForwardInput is the per-wavelength row. Scalar fields support simple fallback routes; layers,             |
+//   source_interfaces, rtm_quadrature, and pseudo_spherical_grid are borrowed prepared storage. No file I/O,  |
+//   parsing, or hidden global state is allowed at this boundary.                                              |
+//                                                                                                             |
+// output model                                                                                                |
+//   ForwardResult contains top-of-atmosphere reflectance and an optional Jacobian vector. Derivative mode is  |
+//   selected in SolveConfig before the solve; unsupported derivative routes are rejected before LABOS work.   |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Wavelength workers call the prepared workspace route repeatedly. Reusing labos.Workspace keeps geometry,  |
+//   attenuation, layer, phase-basis, and order buffers out of the per-sample allocation path.                 |
+//                                                                                                             |
 // ownership                                                                                                   |
-//   ForwardInput borrows layer/source/quadrature slices. LABOS workspace ownership stays in labos.Workspace.  |
+//   This file defines owner/view row contracts only. ForwardInput borrows layer/source/quadrature slices, and |
+//   LABOS scratch ownership stays in labos.Workspace.                                                         |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const labos = struct {
@@ -28,16 +51,15 @@ pub const labos = struct {
     const workspace_mod = @import("labos/workspace.zig");
 
     // labos facade -------------------------------------------------------------------------------------------|
-    // This struct is a namespace of aliases. It is not a value that gets allocated, and it does not wrap      |
-    // calls. Each pub const line gives another name to code in a sibling LABOS file; Zig resolves the name    |
-    // at compile time.                                                                                        |
+    // This struct is a compile-time namespace of aliases. Each pub const line gives another name to code in   |
+    // a sibling LABOS file; Zig resolves the name at compile time.                                            |
     //                                                                                                         |
     // why keep this facade                                                                                    |
-    //   one public door : RTM code imports LABOS through root.zig, not every child file                       |
+    //   one public door : RTM code imports LABOS through root.zig                                             |
     //   clear exports   : helper-only names can stay private inside their own LABOS module                    |
     //   split hot code   : child files stay grouped by data: basis arrays, attenuation tables, layer R/T      |
     //                      matrices, order workspaces, and reflectance accumulation                           |
-    //   simple callers   : callers see the LABOS API, not the file split used to keep hot loops readable      |
+    //   simple callers   : callers see the LABOS API while child files keep hot loops grouped by data         |
     //   cheap moves      : moving a public LABOS name between child files only changes this export list       |
     //                                                                                                         |
     // why it has no runtime cost                                                                              |
@@ -155,12 +177,9 @@ pub const ScatteringMode = enum(u2) {
 // [50..51] fourier_floor_scalar                : u16                                                          |
 // [52..55] fourier_order_cap                   : ?u16                                                         |
 // [56..59] aerosol_tangent_order_cap           : ?u16                                                         |
-// [60..60] qzero_rd_product_suppression        : bool                                                         |
-// [61..61] qzero_tu_product_suppression        : bool                                                         |
-// [62..62] qzero_td_product_suppression        : bool                                                         |
-// [63..63] padding                             : 1 B                                                          |
+// [60..63] padding                             : 4 B                                                          |
 //                                                                                                             |
-// unused bits: 8 padding + 21 bool-storage slack = 29 bits                                                    |
+// unused bits: 32 padding                                                                                     |
 // cache span: 1 cache line at 64 B per line                                                                   |
 // footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count                      |
 pub const RadiativeTransferPerformanceThresholds = struct {
@@ -174,9 +193,6 @@ pub const RadiativeTransferPerformanceThresholds = struct {
     threshold_doubl: f64 = 0.1,
     threshold_mul: f64 = 1.0e-12,
     phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
-    qzero_rd_product_suppression: bool = false,
-    qzero_tu_product_suppression: bool = false,
-    qzero_td_product_suppression: bool = false,
 
     pub fn validate(self: RadiativeTransferPerformanceThresholds) PrepareError!void {
         // RadiativeTransferPerformanceThresholds.validate ----------------------------------------------------|
@@ -257,9 +273,6 @@ pub const RadiativeTransferPerformanceThresholds = struct {
         .threshold_doubl = 1.0e-6,
         .threshold_mul = 1.0e-8,
         .phase_function_truncation_threshold = 1.0e-8,
-        .qzero_rd_product_suppression = false,
-        .qzero_tu_product_suppression = false,
-        .qzero_td_product_suppression = false,
     };
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -372,6 +385,13 @@ pub const SolveConfig = struct {
 // One prepared atmospheric layer for LABOS. Optical-depth totals and Jacobian values are already built by     |
 // optical-property preparation; RTM code consumes this without file I/O or text parsing.                      |
 //                                                                                                             |
+// row use                                                                                                     |
+//   forward_layers.zig and evaluation.zig write this row after optical-property preparation. LABOS layer      |
+//   builders consume the full row for layer R/T matrices. pseudo_spherical.zig reads optical_depth when it    |
+//   builds attenuation samples from already-filled transport rows. rtm_quadrature.zig reads the scattering    |
+//   Jacobian lane for shared-grid aerosol source Jacobians. reflectance.zig reads scattering and aerosol      |
+//   optical-depth fields for order limits and aerosol Jacobian weighting.                                     |
+//                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 176 B (0.172 KiB), align: 8 B                                                                         |
 //                                                                                                             |
@@ -396,6 +416,12 @@ pub const SolveConfig = struct {
 // out-of-line: phase points at shared prepared phase-coefficient storage                                      |
 // cache span: 3 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 176 B (0.172 KiB); total also includes referenced phase storage                   |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Narrow scans read optical_depth at [40..47], scattering_optical_depth at [48..55], aerosol totals at      |
+//   [24..39], or scattering_optical_depth_jacobian at [88..111]. These walks use pointer capture, so the      |
+//   176 B row is not copied. The row stays whole as the transport contract passed to LABOS immediately after  |
+//   those helpers run, keeping helper-derived quantities attached to their layer row.                         |
 pub const LayerInput = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -463,6 +489,11 @@ pub const SourceInterfaceInput = struct {
 // One altitude quadrature level used by source integration. Phase fields store weights so each level          |
 // does not need its own full phase-coefficient row.                                                           |
 //                                                                                                             |
+// row use                                                                                                     |
+//   rtm_quadrature.zig and carrier_eval.zig write these rows while preparing integrated-source inputs.        |
+//   LABOS reflectance reads them when explicit source integration is active. Shared aerosol Jacobian setup    |
+//   reads weight and writes aerosol_ksca_jacobian without touching the phase weights.                         |
+//                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
 //                                                                                                             |
@@ -479,6 +510,10 @@ pub const SourceInterfaceInput = struct {
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 1 cache line at 64 B per line                                                                   |
 // footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count                      |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Source integration keeps this row to one cache line. Narrow helpers read weight at [8..15], read/write    |
+//   aerosol k_sca fields at [24..47], and leave phase weights at [48..63] for LABOS source mixing.            |
 pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
@@ -719,7 +754,11 @@ pub const Jacobian = jacobian;
 
 pub fn prepareSolveConfig(config: SolveConfig) PrepareError!SolveConfig {
     // prepareSolveConfig -------------------------------------------------------------------------------------|
-    // Validate public RTM controls before callers use the prepared path.                                      |
+    // Validate public RTM controls and return the SolveConfig shape used by prepared execution.               |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This is the last public control check before wavelength workers call executePrepared*. The prepared   |
+    //   route assumes thresholds, stream count, and scattering mode already passed this check.                |
     // --------------------------------------------------------------------------------------------------------|
 
     try config.rtm_controls.validate();
@@ -733,6 +772,10 @@ pub fn executePrepared(
 ) ExecuteError!ForwardResult {
     // executePrepared ----------------------------------------------------------------------------------------|
     // Prepared solve without caller-owned LABOS scratch memory.                                               |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   Use this for one-shot solves after prepareSolveConfig has already validated controls. Repeated        |
+    //   wavelength workers should prefer executePreparedWithLabosWorkspace so LABOS scratch can be reused.    |
     // --------------------------------------------------------------------------------------------------------|
 
     return executePreparedWithLabosWorkspace(allocator, rtm_config, input, null);
@@ -746,7 +789,11 @@ pub fn executePreparedWithLabosWorkspace(
 ) ExecuteError!ForwardResult {
     // executePreparedWithLabosWorkspace ----------------------------------------------------------------------|
     // Prepared solve that can reuse caller-owned LABOS scratch memory across wavelength samples.              |
-    // The transport solve stays under labos.executeWithWorkspace.                                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   The transport solve stays under labos.executeWithWorkspace. This wrapper does not allocate the        |
+    //   workspace and does not re-validate controls; it keeps the public RTM boundary stable while letting    |
+    //   product workers pass their retained worker-local LABOS scratch.                                       |
     // --------------------------------------------------------------------------------------------------------|
 
     return labos.executeWithWorkspace(allocator, rtm_config, input, workspace);
@@ -759,6 +806,10 @@ pub fn execute(
 ) ExecuteError!ForwardResult {
     // execute ------------------------------------------------------------------------------------------------|
     // Public one-shot path. Validate controls, then run the prepared path without a saved LABOS workspace.    |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This is convenient for tests and simple callers. Product simulation usually prepares once and calls   |
+    //   executePreparedWithLabosWorkspace repeatedly.                                                         |
     // --------------------------------------------------------------------------------------------------------|
 
     const rtm_config = try prepareSolveConfig(config);

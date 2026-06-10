@@ -6,6 +6,37 @@ const eigen_tolerance = 1.0e-18;
 pub const Matrix = [max_state_count][max_state_count]f64;
 pub const Vector = [max_state_count]f64;
 
+// algebra.zig -----------------------------------------------------------------------------------------------|
+// Fixed-size state-space algebra for native O2 A optimal estimation.                                         |
+//                                                                                                            |
+// called by                                                                                                  |
+//   retrieval.zig is the only product caller. It uses these routines in runPreparedO2ACore,                  |
+//   correctPreparedO2A, and the tiny pressure-profile spline fallback in buildPressureProfile.               |
+//                                                                                                            |
+// state-space storage                                                                                        |
+//   Vector is [3]f64 and Matrix is [3][3]f64. Callers pass state_count and use only the leading rows and     |
+//   columns, so the one-, two-, and three-state retrieval paths share stack storage and avoid allocators.    |
+//                                                                                                            |
+// retrieval math                                                                                             |
+//   accumulateNormalSystem builds G = sqrt(Sa) * Jt * Se^-1 * J * sqrt(Sa) and b = sqrt(Sa) * Jt *           |
+//   Se^-1 * residual. solveStep diagonalizes that symmetric G, solves the Rodgers transformed update in      |
+//   eigenvector space, rotates the step back to physical state space, and later inverts the posterior        |
+//   precision for covariance and averaging-kernel output.                                                    |
+//                                                                                                            |
+// pressure-profile use                                                                                       |
+//   endpointSplineSecondDerivatives reuses Matrix/Vector only when the pressure profile has <=3 samples.     |
+//   Larger profiles take the dynamic tridiagonal path in retrieval.zig so this file stays a tiny solver.     |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   jacobiEigenSymmetric runs once per OE iteration. choleskyLowerDiagonal runs once per start, and          |
+//   invertSymmetric runs when output covariance is retained. Keep these as fixed arrays unless               |
+//   max_state_count grows and the benchmark evidence says the small dense shape is no longer right.          |
+//                                                                                                            |
+// numbers                                                                                                    |
+//   eigen_tolerance is the Jacobi off-diagonal stop threshold. invertSymmetric rejects pivots at 1.0e-24.    |
+//   Vector is 24 B and Matrix is 72 B on 64-bit targets; neither carries heap references or padding.         |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn zeroVector() Vector {
     return .{0.0} ** max_state_count;
 }
@@ -43,6 +74,18 @@ pub fn jacobiEigenSymmetric(input: Matrix, state_count: usize) struct {
     values: Vector,
     vectors: Matrix,
 } {
+    // jacobiEigenSymmetric ----------------------------------------------------------------------------------|
+    // Diagonalizes the symmetric state-space matrix used by the Rodgers transformed update.                  |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   repeated : once per OE solver update                                                                 |
+    //   shape    : at most 3x3, no heap storage, fixed 24-sweep cap                                          |
+    //   output   : eigenvalues sorted descending with matching eigenvector columns                           |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   Jacobi rotations zero one off-diagonal pair a[p,q] at a time while accumulating eigenvectors.        |
+    // -------------------------------------------------------------------------------------------------------|
+
     var a = input;
     symmetrize(&a, state_count);
     var vectors = identityMatrix(state_count);
@@ -98,13 +141,18 @@ pub fn jacobiEigenSymmetric(input: Matrix, state_count: usize) struct {
 
 fn sortEigenPairs(values: *Vector, vectors: *Matrix, state_count: usize) void {
     if (state_count <= 1) return;
+
     for (0..state_count - 1) |i| {
         var best = i;
+
         for (i + 1..state_count) |j| {
             if (values[j] > values[best]) best = j;
         }
+
         if (best == i) continue;
+
         std.mem.swap(f64, &values[i], &values[best]);
+
         for (0..state_count) |row| std.mem.swap(f64, &vectors[row][i], &vectors[row][best]);
     }
 }
@@ -130,12 +178,24 @@ pub fn transposeMatrixVector(matrix: Matrix, vector: Vector, state_count: usize)
 }
 
 pub fn invertSymmetric(input: Matrix, state_count: usize) !Matrix {
+    // invertSymmetric ---------------------------------------------------------------------------------------|
+    // Inverts a small state-space matrix with Gauss-Jordan elimination and pivoting.                         |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   repeated : final posterior covariance and spline helper solves                                       |
+    //   shape    : at most 3x3, no heap storage, identity matrix carried beside the working matrix           |
+    //                                                                                                        |
+    // guard                                                                                                  |
+    //   pivot_abs <= 1.0e-24 rejects singular or badly scaled systems before row normalization.              |
+    // -------------------------------------------------------------------------------------------------------|
+
     var a = input;
     var inverse = identityMatrix(state_count);
 
     for (0..state_count) |pivot_index| {
         var pivot_row = pivot_index;
         var pivot_abs = @abs(a[pivot_index][pivot_index]);
+
         for (pivot_index + 1..state_count) |row| {
             const candidate = @abs(a[row][pivot_index]);
             if (candidate > pivot_abs) {
@@ -143,7 +203,9 @@ pub fn invertSymmetric(input: Matrix, state_count: usize) !Matrix {
                 pivot_row = row;
             }
         }
+
         if (pivot_abs <= 1.0e-24 or !std.math.isFinite(pivot_abs)) return error.SingularMatrix;
+
         if (pivot_row != pivot_index) {
             for (0..state_count) |col| {
                 std.mem.swap(f64, &a[pivot_index][col], &a[pivot_row][col]);
@@ -152,14 +214,18 @@ pub fn invertSymmetric(input: Matrix, state_count: usize) !Matrix {
         }
 
         const pivot = a[pivot_index][pivot_index];
+
         for (0..state_count) |col| {
             a[pivot_index][col] /= pivot;
             inverse[pivot_index][col] /= pivot;
         }
+
         for (0..state_count) |row| {
             if (row == pivot_index) continue;
+
             const factor = a[row][pivot_index];
             if (factor == 0.0) continue;
+
             for (0..state_count) |col| {
                 a[row][col] -= factor * a[pivot_index][col];
                 inverse[row][col] -= factor * inverse[pivot_index][col];

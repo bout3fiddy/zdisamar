@@ -29,7 +29,7 @@ const Trace = @import("../../instrumentation/trace.zig");
 // main paths                                                                                                  |
 //   execute                                                                                                   |
 //     -> executeWithWorkspace                                                                                 |
-//        -> directSurfaceOnlyResolvedWithWorkspace  when scattering is disabled                               |
+//        -> directSurfaceOnly                       when scalar scattering is disabled                        |
 //        -> layerResolvedLabosWithWorkspace         when input has RT layers                                  |
 //        -> singleLayerLabos                        when scalar layer fields are used                         |
 //                                                                                                             |
@@ -43,6 +43,12 @@ const Trace = @import("../../instrumentation/trace.zig");
 //          -> rho_m                                                                                           |
 //   3. add Fourier-weighted rho_m into total reflectance                                                      |
 //   4. calculate requested Jacobians                                                                          |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Product workers enter executeWithWorkspace for each high-resolution forward miss. The layer-resolved      |
+//   route loops retained Fourier terms, RT layer construction, scattering-order propagation, reflectance      |
+//   integration, and requested Jacobian weighting. A supplied Workspace reuses Geometry, attenuation,         |
+//   RT layer, order, phase-row, and PLM buffers across nearby wavelength samples handled by the same worker.  |
 //                                                                                                             |
 // reference names                                                                                             |
 //   RT_fc         : layer reflection/transmission matrices                                                    |
@@ -154,93 +160,6 @@ fn directSurfaceOnly(
     };
 }
 
-fn directSurfaceOnlyResolvedWithWorkspace(
-    allocator: std.mem.Allocator,
-    input: common.ForwardInput,
-    controls: common.RadiativeTransferControls,
-    workspace: ?*workspace_mod.Workspace,
-    compute_surface_albedo_tangent: bool,
-) common.ExecuteError!DirectSurfaceOnlyComputation {
-    // directSurfaceOnlyResolvedWithWorkspace -----------------------------------------------------------------|
-    // Direct-surface path for layer-resolved input. Steps:                                                    |
-    //                                                                                                         |
-    //   1. build the same geometry and attenuation table as the scattering path                               |
-    //   2. skip RT layer scattering orders because scattering is disabled                                     |
-    //   3. multiply surface reflection by solar and view transmittance                                        |
-    //   4. return reflectance and optional surface-albedo Jacobian                                            |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   path = T_sun(top -> surface) * product of view-layer transmittances                                   |
-    //   direct reflectance = surface.R(view, sun) * path                                                      |
-    // --------------------------------------------------------------------------------------------------------|
-
-    if (input.layers.len == 0) return directSurfaceOnly(input, compute_surface_albedo_tangent);
-
-    // Keep the same angle/index layout as the scattering path.
-    const mu0 = @max(input.mu0, 0.05);
-    const muv = @max(input.muv, 0.05);
-
-    var owned_geo: Geometry = undefined;
-    const geo = if (workspace) |scratch|
-        scratch.geometry(controls.nGauss(), mu0, muv)
-    else choose_owned_geometry: {
-        owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
-        break :choose_owned_geometry &owned_geo;
-    };
-
-    // Direct reflection still needs Beer-Lambert survival through the layers.
-    const owned_atten = workspace == null;
-    var atten: attenuation.DynamicAttenArray = undefined;
-    if (workspace) |scratch| {
-        atten = try scratch.attenuation(
-            input.layers,
-            input.pseudo_spherical_grid,
-            geo,
-            controls.use_spherical_correction,
-        );
-    } else {
-        atten = try fillAttenuationDynamicWithGrid(
-            allocator,
-            input.layers,
-            input.pseudo_spherical_grid,
-            geo,
-            controls.use_spherical_correction,
-        );
-    }
-    defer if (owned_atten) atten.deinit();
-
-    // View and solar rays are stored as extra directions in Geometry.
-    const view_idx = geo.viewIdx();
-    const solar_idx = geo.n_gauss + 1;
-
-    const surface = fillSurface(0, input.surface_albedo, geo);
-
-    // The view ray climbs one layer at a time. The solar table already stores
-    // top-to-surface transmittance.
-    var upward_path: f64 = 1.0;
-    for (1..input.layers.len + 1) |ilevel| upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
-
-    const path = atten.get(solar_idx, input.layers.len, 0) * upward_path;
-
-    const reflectance = surface.R.get(view_idx, solar_idx) * path;
-
-    // Once reflectance is clamped outside [0,2], the albedo tangent should not
-    // report sensitivity from the unclamped expression.
-    const should_report_surface_albedo =
-        compute_surface_albedo_tangent and
-        reflectance >= 0.0 and
-        reflectance < 2.0;
-    const surface_albedo_tangent = if (should_report_surface_albedo) choose_surface_tangent: {
-        const surface_derivative = fillSurface(0, 1.0, geo);
-        break :choose_surface_tangent surface_derivative.R.get(view_idx, solar_idx) * path;
-    } else 0.0;
-
-    return .{
-        .reflectance = math.clamp(reflectance, 0.0, 2.0),
-        .surface_albedo_tangent = surface_albedo_tangent,
-    };
-}
-
 pub fn execute(
     allocator: std.mem.Allocator,
     rtm_config: common.SolveConfig,
@@ -267,9 +186,9 @@ pub fn executeWithWorkspace(
     //   2. return reflectance and the requested Jacobian                                                      |
     //                                                                                                         |
     // path choice                                                                                             |
-    // controls.scattering == none -> direct surface reflection                                                |
-    // input.layers.len > 0       -> layer-resolved LABOS Fourier loop                                         |
-    // otherwise                  -> scalar input converted to one LayerInput                                  |
+    // controls.scattering == none, no layers -> direct surface reflection                                     |
+    // input.layers.len > 0                  -> layer-resolved LABOS Fourier loop                              |
+    // otherwise                             -> scalar input converted to one LayerInput                       |
     //                                                                                                         |
     // hot path                                                                                                |
     // keep dispatch cheap; real work is in the selected LABOS path                                            |
@@ -290,13 +209,10 @@ pub fn executeWithWorkspace(
     // Pick the smallest calculation that still matches the requested physics.
     const computation = choose_labos_path: {
         if (controls.scattering == .none) {
-            const direct = try directSurfaceOnlyResolvedWithWorkspace(
-                allocator,
-                input,
-                controls,
-                workspace,
-                wants_surface_albedo,
-            );
+            if (input.layers.len != 0 or controls.use_spherical_correction) {
+                return error.UnsupportedRadiativeTransferControls;
+            }
+            const direct = directSurfaceOnly(input, wants_surface_albedo);
 
             // With scattering disabled, the only supported derivative here is
             // surface albedo.
@@ -387,6 +303,9 @@ fn layerResolvedLabosWithWorkspace(
 
     const nlayer = input.layers.len;
     if (nlayer == 0) return .{ .reflectance = 0.0 };
+    if (controls.use_spherical_correction and !input.pseudo_spherical_grid.isValidFor(nlayer)) {
+        return error.UnsupportedRadiativeTransferControls;
+    }
     const labos_trace_timing = if (workspace) |scratch| scratch.activeTracePhaseTiming() else null;
 
     // instrumentation: trace phase clock: LABOS execute ------------------------------------------------------|
@@ -741,7 +660,7 @@ fn layerResolvedLabosWithWorkspace(
                     // Non-integrated reflectance takes the transported UD_fc
                     // field directly from the scattering-order solve.
                     if (dynamic_atten) |*atten| {
-                        break :choose_non_integrated_orders orders_mod.ordersScatTransportInto(
+                        break :choose_non_integrated_orders orders_mod.ordersScatInto(
                             orders_workspace,
                             0,
                             nlayer,
@@ -1180,6 +1099,7 @@ fn singleLayerLabos(
 
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
+    if (controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
     const geo = Geometry.init(controls.nGauss(), mu0, muv);
 
     // Convert the scalar fields into the same layer shape used by the normal
@@ -1196,7 +1116,7 @@ fn singleLayerLabos(
     // A one-layer solve can use fixed local attenuation arrays.
     var layer_transmittance: [basis.max_nmutot]f64 = undefined;
     var top_to_level: [basis.max_nmutot * 2]f64 = undefined;
-    const atten = attenuation.fillRuntimeAttenuationWithGridInBuffers(
+    const atten = try attenuation.fillRuntimeAttenuationWithGridInBuffers(
         &layer_transmittance,
         &top_to_level,
         &layers,
@@ -1223,7 +1143,7 @@ fn singleLayerLabos(
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);
         rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
 
-        const orders_result = orders_mod.ordersScatTransportInto(
+        const orders_result = orders_mod.ordersScatInto(
             &orders_workspace,
             0,
             1,

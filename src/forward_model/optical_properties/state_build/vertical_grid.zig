@@ -7,14 +7,67 @@ const gauss_legendre = @import("../../../common/math/quadrature/gauss_legendre.z
 
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 256 B, align: 8 B
-//   field storage: 256 B across 16 fields; largest: layer_top_altitudes_km=16 B, layer_bottom_altitudes_km=16 B, layer_top_pressures_hpa=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: layer_top_altitudes_km, layer_bottom_altitudes_km, layer_top_pressures_hpa, layer_bottom_pressures_hpa, layer_interval_indices_1based, +11 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 4 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 256 B (0.250 KiB); total also includes referenced storage above
+// vertical_grid.zig -----------------------------------------------------------------------------------------|
+// Builds the owned layer and support-row coordinate arrays used before optical-property accumulation writes  |
+// PreparedLayer and PreparedSublayer rows. This file decides vertical placement; layer_accumulation.zig      |
+// later reads these arrays to fill thermodynamics, spectroscopy, aerosol, and interval metadata.             |
+//                                                                                                            |
+// called by                                                                                                  |
+//   context.zig calls build during PreparationContext.init, then keeps OwnedVerticalGrid until               |
+//   layer_accumulation.zig has consumed it. shared particle-profile code borrows the same grid shape through |
+//   OwnedVerticalGrid.borrow.                                                                                |
+//                                                                                                            |
+// route map                                                                                                  |
+//   explicit interval grid        : use scene atmosphere interval controls and profile pressure interpolation|
+//   DISAMAR-parity support grid   : expand explicit intervals into boundary plus Gauss support rows          |
+//   legacy evenly divided profile : split the climatology profile into the requested layer count             |
+//                                                                                                            |
+// grid model                                                                                                 |
+//   layer_* arrays carry transport-layer top/bottom boundaries, original interval id, and the sublayer span. |
+//   sublayer_* arrays carry support-row top/bottom/midpoint coordinates, quadrature support weights, and     |
+//   parent interval ids. The arrays are kept parallel because layer accumulation reads dense columns while   |
+//   filling much wider PreparedLayer/PreparedSublayer rows.                                                  |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Runs once per prepared scene, but O2 A retrievals rebuild it on every state evaluation. The DISAMAR      |
+//   support route uses stack scratch for common support orders and allocates temporary Gauss nodes only when |
+//   the requested order exceeds that stack storage.                                                          |
+//                                                                                                            |
+// ownership                                                                                                  |
+//   OwnedVerticalGrid owns all referenced arrays. Context.deinit frees it unless later preparation has moved |
+//   or consumed the arrays. borrow returns only a view; deinit remains the release point.                    |
+// -----------------------------------------------------------------------------------------------------------|
+
+// OwnedVerticalGrid -----------------------------------------------------------------------------------------|
+// Owned layer and sublayer grid arrays prepared before optical-property accumulation.                        |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 224 B (0.219 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 15] layer_top_altitudes_km               : []f64                                                    |
+// [ 16.. 31] layer_bottom_altitudes_km            : []f64                                                    |
+// [ 32.. 47] layer_top_pressures_hpa              : []f64                                                    |
+// [ 48.. 63] layer_bottom_pressures_hpa           : []f64                                                    |
+// [ 64.. 79] layer_interval_indices_1based        : []u32                                                    |
+// [ 80.. 95] layer_sublayer_starts                : []u32                                                    |
+// [ 96..111] layer_sublayer_counts                : []u32                                                    |
+// [112..127] sublayer_top_altitudes_km            : []f64                                                    |
+// [128..143] sublayer_bottom_altitudes_km         : []f64                                                    |
+// [144..159] sublayer_top_pressures_hpa           : []f64                                                    |
+// [160..175] sublayer_bottom_pressures_hpa        : []f64                                                    |
+// [176..191] sublayer_mid_altitudes_km            : []f64                                                    |
+// [192..207] sublayer_support_weights_km          : []f64                                                    |
+// [208..223] sublayer_interval_indices_1based     : []u32                                                    |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Every field is a slice header over heap arrays allocated by allocate(). Array payload bytes are not      |
+//   included in this 224 B owner header.                                                                     |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 4 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 224 B; referenced grid arrays are out of line                                    |
+// -----------------------------------------------------------------------------------------------------------|
 pub const OwnedVerticalGrid = struct {
     layer_top_altitudes_km: []f64,
     layer_bottom_altitudes_km: []f64,
@@ -32,6 +85,11 @@ pub const OwnedVerticalGrid = struct {
     sublayer_interval_indices_1based: []u32,
 
     pub fn borrow(self: *const OwnedVerticalGrid) ParticleProfiles.PreparedVerticalGrid {
+        // OwnedVerticalGrid.borrow ------------------------------------------------------------------------- |
+        // Return the subset of grid columns needed by particle profile interpolation. The returned view      |
+        // borrows this owner; it must not outlive OwnedVerticalGrid.                                         |
+        // -------------------------------------------------------------------------------------------------- |
+
         return .{
             .layer_top_altitudes_km = self.layer_top_altitudes_km,
             .layer_bottom_altitudes_km = self.layer_bottom_altitudes_km,
@@ -45,6 +103,10 @@ pub const OwnedVerticalGrid = struct {
     }
 
     pub fn deinit(self: *OwnedVerticalGrid, allocator: Allocator) void {
+        // OwnedVerticalGrid.deinit ------------------------------------------------------------------------- |
+        // Release every parallel layer and sublayer column allocated for this preparation context.           |
+        // -------------------------------------------------------------------------------------------------- |
+
         allocator.free(self.layer_top_altitudes_km);
         allocator.free(self.layer_bottom_altitudes_km);
         allocator.free(self.layer_top_pressures_hpa);
@@ -63,33 +125,45 @@ pub const OwnedVerticalGrid = struct {
     }
 };
 
-// hot path:
-//   when: optical-state preparation builds the vertical grid before layer accumulation
-//   work: selects explicit interval or legacy grid construction
-//   data: scene atmosphere controls, climatology profile, owned vertical-grid storage
-//   follow: buildExplicit, buildExplicitDisamarParity, and buildLegacy
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
 ) !OwnedVerticalGrid {
+    // build -------------------------------------------------------------------------------------------------|
+    // Select explicit interval-grid or legacy evenly divided vertical-grid construction.                     |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // optical-state preparation builds this grid before layer accumulation.                                  |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (scene.atmosphere.interval_grid.enabled()) {
         return buildExplicit(allocator, scene, profile);
     }
     return buildLegacy(allocator, scene, profile);
 }
 
-// hot path:
-//   when: explicit interval grids define layer and sublayer geometry
-//   work: allocates grid arrays and fills layer/sublayer altitude, pressure, interval, and label fields
-//   data: interval definitions, climatology profile interpolation, grid output arrays
-//   math: pressure is log-linear in sublayer fraction, p(f) = exp(log(p_bottom) + (log(p_top) - log(p_bottom)) * f); altitude is linear in f when explicit altitude bounds exist
-//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildExplicit(
     allocator: Allocator,
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
 ) !OwnedVerticalGrid {
+    // buildExplicit -----------------------------------------------------------------------------------------|
+    // Build grid arrays from explicit interval definitions.                                                  |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // fills layer/sublayer altitude, pressure, interval, and label fields before layer accumulation.         |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // p(f) = exp(log(p_bottom) + (log(p_top) - log(p_bottom)) * f).                                          |
+    // Altitude is linear in f when explicit altitude bounds exist.                                           |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const AltitudeBounds = struct {
+        top_altitude_km: f64,
+        bottom_altitude_km: f64,
+    };
+
     const intervals = scene.atmosphere.interval_grid.intervals;
     const disamar_support_grid = usesDisamarParitySupportGrid(scene);
     const sublayer_order: usize = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
@@ -128,17 +202,22 @@ fn buildExplicit(
         const interval = intervals[source_interval_index];
         const index = output_layer_index;
         const has_altitude_bounds = interval.hasAltitudeBounds();
-        const layer_top_altitude_km = if (has_altitude_bounds)
-            interval.top_altitude_km
-        else
-            profile.interpolateAltitudeForPressure(interval.top_pressure_hpa);
-        const layer_bottom_altitude_km = if (has_altitude_bounds)
-            interval.bottom_altitude_km
-        else
-            profile.interpolateAltitudeForPressure(interval.bottom_pressure_hpa);
+        const layer_altitudes: AltitudeBounds = choose_layer_altitudes: {
+            if (has_altitude_bounds) {
+                break :choose_layer_altitudes .{
+                    .top_altitude_km = interval.top_altitude_km,
+                    .bottom_altitude_km = interval.bottom_altitude_km,
+                };
+            }
 
-        grid.layer_top_altitudes_km[index] = layer_top_altitude_km;
-        grid.layer_bottom_altitudes_km[index] = layer_bottom_altitude_km;
+            break :choose_layer_altitudes .{
+                .top_altitude_km = profile.interpolateAltitudeForPressure(interval.top_pressure_hpa),
+                .bottom_altitude_km = profile.interpolateAltitudeForPressure(interval.bottom_pressure_hpa),
+            };
+        };
+
+        grid.layer_top_altitudes_km[index] = layer_altitudes.top_altitude_km;
+        grid.layer_bottom_altitudes_km[index] = layer_altitudes.bottom_altitude_km;
         grid.layer_top_pressures_hpa[index] = interval.top_pressure_hpa;
         grid.layer_bottom_pressures_hpa[index] = interval.bottom_pressure_hpa;
         grid.layer_interval_indices_1based[index] = if (disamar_support_grid)
@@ -151,28 +230,44 @@ fn buildExplicit(
         {
             const log_bottom_pressure = @log(@max(interval.bottom_pressure_hpa, 1.0e-9));
             const log_top_pressure = @log(@max(interval.top_pressure_hpa, 1.0e-9));
-            const layer_altitude_span_km = layer_top_altitude_km - layer_bottom_altitude_km;
+            const layer_altitude_span_km = layer_altitudes.top_altitude_km -
+                layer_altitudes.bottom_altitude_km;
+
             for (0..interval.altitude_divisions) |sublayer_index| {
-                const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / @as(f64, @floatFromInt(interval.altitude_divisions));
-                const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / @as(f64, @floatFromInt(interval.altitude_divisions));
+                const division_count_f = @as(f64, @floatFromInt(interval.altitude_divisions));
+                const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / division_count_f;
+                const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / division_count_f;
+
                 // math: sublayer pressures are log-linear between interval bottom/top pressures.
-                const bottom_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * bottom_fraction);
-                const top_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * top_fraction);
-                const bottom_altitude_km = if (has_altitude_bounds)
-                    layer_bottom_altitude_km + layer_altitude_span_km * bottom_fraction
-                else
-                    profile.interpolateAltitudeForPressure(bottom_pressure_hpa);
-                const top_altitude_km = if (has_altitude_bounds)
-                    layer_bottom_altitude_km + layer_altitude_span_km * top_fraction
-                else
-                    profile.interpolateAltitudeForPressure(top_pressure_hpa);
+                const bottom_pressure_hpa =
+                    @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * bottom_fraction);
+                const top_pressure_hpa =
+                    @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * top_fraction);
+                const sublayer_altitudes: AltitudeBounds = choose_sublayer_altitudes: {
+                    if (has_altitude_bounds) {
+                        break :choose_sublayer_altitudes .{
+                            .top_altitude_km = layer_altitudes.bottom_altitude_km +
+                                layer_altitude_span_km * top_fraction,
+                            .bottom_altitude_km = layer_altitudes.bottom_altitude_km +
+                                layer_altitude_span_km * bottom_fraction,
+                        };
+                    }
+
+                    break :choose_sublayer_altitudes .{
+                        .top_altitude_km = profile.interpolateAltitudeForPressure(top_pressure_hpa),
+                        .bottom_altitude_km = profile.interpolateAltitudeForPressure(bottom_pressure_hpa),
+                    };
+                };
                 const global_index = sublayer_cursor + sublayer_index;
-                grid.sublayer_top_altitudes_km[global_index] = top_altitude_km;
-                grid.sublayer_bottom_altitudes_km[global_index] = bottom_altitude_km;
+
+                grid.sublayer_top_altitudes_km[global_index] = sublayer_altitudes.top_altitude_km;
+                grid.sublayer_bottom_altitudes_km[global_index] = sublayer_altitudes.bottom_altitude_km;
                 grid.sublayer_top_pressures_hpa[global_index] = top_pressure_hpa;
                 grid.sublayer_bottom_pressures_hpa[global_index] = bottom_pressure_hpa;
-                grid.sublayer_mid_altitudes_km[global_index] = 0.5 * (top_altitude_km + bottom_altitude_km);
-                grid.sublayer_support_weights_km[global_index] = @max(top_altitude_km - bottom_altitude_km, 0.0);
+                grid.sublayer_mid_altitudes_km[global_index] =
+                    0.5 * (sublayer_altitudes.top_altitude_km + sublayer_altitudes.bottom_altitude_km);
+                grid.sublayer_support_weights_km[global_index] =
+                    @max(sublayer_altitudes.top_altitude_km - sublayer_altitudes.bottom_altitude_km, 0.0);
                 grid.sublayer_interval_indices_1based[global_index] = interval.index_1based;
             }
         }
@@ -181,12 +276,6 @@ fn buildExplicit(
     return grid;
 }
 
-// hot path:
-//   when: explicit interval grids use DISAMAR parity support geometry
-//   work: builds RTM support nodes and sublayer support weights from quadrature division points
-//   data: interval bounds, Gauss nodes/weights, climatology interpolation, grid output arrays
-//   math: z_node = z_lower + 0.5 * (x_gauss + 1) * (z_upper - z_lower); weight_km = 0.5 * w_gauss * (z_upper - z_lower)
-//   follow: shared_geometry.buildSharedRtmGeometry and parity support-row accumulation
 fn buildExplicitDisamarParity(
     allocator: Allocator,
     scene: *const Scene,
@@ -194,34 +283,60 @@ fn buildExplicitDisamarParity(
     grid: *OwnedVerticalGrid,
     sublayer_order: usize,
 ) !OwnedVerticalGrid {
+    // buildExplicitDisamarParity ----------------------------------------------------------------------------|
+    // Build DISAMAR-parity support rows from explicit interval bounds and quadrature division points.        |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // O2 A retrievals refresh this grid every state evaluation. Use stack scratch for common small orders    |
+    // and allocate only when the requested support order exceeds that stack storage.                         |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // z_node = z_lower + 0.5 * (x_gauss + 1) * (z_upper - z_lower).                                          |
+    // weight_km = 0.5 * w_gauss * (z_upper - z_lower).                                                       |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const AltitudeBounds = struct {
+        top_altitude_km: f64,
+        bottom_altitude_km: f64,
+    };
+    const Boundary = struct {
+        altitude_km: f64,
+        pressure_hpa: f64,
+    };
+
     const intervals = scene.atmosphere.interval_grid.intervals;
-    // Hot path:
-    //   O2 A retrievals refresh this grid every state evaluation. Keep the
-    //   dynamic rule math for bit-identical nodes, but avoid heap churn for
-    //   the common small support orders.
+
     var stack_support_nodes: [10]f64 = undefined;
     var stack_support_weights: [10]f64 = undefined;
+
     var dynamic_support_nodes: []f64 = &.{};
     defer if (dynamic_support_nodes.len != 0) allocator.free(dynamic_support_nodes);
+
     var dynamic_support_weights: []f64 = &.{};
     defer if (dynamic_support_weights.len != 0) allocator.free(dynamic_support_weights);
-    const support_nodes, const support_weights = if (sublayer_order <= stack_support_nodes.len) stack: {
+
+    const use_stack_support_nodes = sublayer_order <= stack_support_nodes.len;
+    const support_nodes, const support_weights = if (use_stack_support_nodes) stack: {
         const nodes = stack_support_nodes[0..sublayer_order];
         const weights = stack_support_weights[0..sublayer_order];
+
         try gauss_legendre.fillNodesAndWeights(
             @intCast(sublayer_order),
             nodes,
             weights,
         );
+
         break :stack .{ nodes, weights };
     } else dynamic: {
         dynamic_support_nodes = try allocator.alloc(f64, sublayer_order);
         dynamic_support_weights = try allocator.alloc(f64, sublayer_order);
+
         try gauss_legendre.fillNodesAndWeights(
             @intCast(sublayer_order),
             dynamic_support_nodes,
             dynamic_support_weights,
         );
+
         break :dynamic .{ dynamic_support_nodes, dynamic_support_weights };
     };
 
@@ -234,40 +349,48 @@ fn buildExplicitDisamarParity(
         const interval = intervals[source_interval_index];
         const parity_interval_index_1based: u32 = @intCast((intervals.len - source_interval_index));
         const has_altitude_bounds = interval.hasAltitudeBounds();
-        const interval_top_altitude_km = if (has_altitude_bounds)
-            interval.top_altitude_km
-        else
-            profile.interpolateAltitudeForPressureSpline(interval.top_pressure_hpa);
-        const interval_bottom_altitude_km = if (has_altitude_bounds)
-            interval.bottom_altitude_km
-        else
-            profile.interpolateAltitudeForPressureSpline(interval.bottom_pressure_hpa);
+        const interval_altitudes: AltitudeBounds = choose_interval_altitudes: {
+            if (has_altitude_bounds) {
+                break :choose_interval_altitudes .{
+                    .top_altitude_km = interval.top_altitude_km,
+                    .bottom_altitude_km = interval.bottom_altitude_km,
+                };
+            }
+
+            break :choose_interval_altitudes .{
+                .top_altitude_km = profile.interpolateAltitudeForPressureSpline(interval.top_pressure_hpa),
+                .bottom_altitude_km = profile.interpolateAltitudeForPressureSpline(interval.bottom_pressure_hpa),
+            };
+        };
         const interval_layer_count: usize = @as(usize, interval.altitude_divisions) + 1;
         const interior_node_count = interval_layer_count - 1;
 
         var dynamic_rtm_nodes: []f64 = &.{};
         defer if (dynamic_rtm_nodes.len != 0) allocator.free(dynamic_rtm_nodes);
-        const rtm_nodes: []f64 = if (interior_node_count <= stack_rtm_nodes.len)
+
+        const use_stack_rtm_nodes = interior_node_count <= stack_rtm_nodes.len;
+        const rtm_nodes: []f64 = if (use_stack_rtm_nodes)
             stack_rtm_nodes[0..interior_node_count]
         else dynamic: {
             dynamic_rtm_nodes = try allocator.alloc(f64, interior_node_count);
             break :dynamic dynamic_rtm_nodes;
         };
+
         if (interior_node_count > 0) {
             try gauss_legendre.fillDisamarDivPointsIntervalNodes(
                 @intCast(interior_node_count),
-                interval_bottom_altitude_km,
-                interval_top_altitude_km,
+                interval_altitudes.bottom_altitude_km,
+                interval_altitudes.top_altitude_km,
                 rtm_nodes,
             );
         }
 
         if (layer_cursor == 0) {
-            grid.sublayer_top_altitudes_km[support_cursor] = interval_bottom_altitude_km;
-            grid.sublayer_bottom_altitudes_km[support_cursor] = interval_bottom_altitude_km;
+            grid.sublayer_top_altitudes_km[support_cursor] = interval_altitudes.bottom_altitude_km;
+            grid.sublayer_bottom_altitudes_km[support_cursor] = interval_altitudes.bottom_altitude_km;
             grid.sublayer_top_pressures_hpa[support_cursor] = interval.bottom_pressure_hpa;
             grid.sublayer_bottom_pressures_hpa[support_cursor] = interval.bottom_pressure_hpa;
-            grid.sublayer_mid_altitudes_km[support_cursor] = interval_bottom_altitude_km;
+            grid.sublayer_mid_altitudes_km[support_cursor] = interval_altitudes.bottom_altitude_km;
             grid.sublayer_support_weights_km[support_cursor] = 0.0;
         }
 
@@ -275,53 +398,61 @@ fn buildExplicitDisamarParity(
         // the interval currently being materialized in the vendor diagnostic output.
         grid.sublayer_interval_indices_1based[support_cursor] = parity_interval_index_1based;
 
-        var previous_boundary_altitude_km = interval_bottom_altitude_km;
+        var previous_boundary_altitude_km = interval_altitudes.bottom_altitude_km;
         var previous_boundary_pressure_hpa = interval.bottom_pressure_hpa;
         for (0..interval_layer_count) |local_layer_index| {
-            const next_boundary_altitude_km = if (local_layer_index == interior_node_count)
-                interval_top_altitude_km
-            else
-                rtm_nodes[local_layer_index];
-            const next_boundary_pressure_hpa = if (local_layer_index == interior_node_count)
-                interval.top_pressure_hpa
-            else
-                profile.interpolatePressureLogSpline(next_boundary_altitude_km);
+            const next_boundary: Boundary = choose_next_boundary: {
+                if (local_layer_index == interior_node_count) {
+                    break :choose_next_boundary .{
+                        .altitude_km = interval_altitudes.top_altitude_km,
+                        .pressure_hpa = interval.top_pressure_hpa,
+                    };
+                }
+
+                const altitude_km = rtm_nodes[local_layer_index];
+                break :choose_next_boundary .{
+                    .altitude_km = altitude_km,
+                    .pressure_hpa = profile.interpolatePressureLogSpline(altitude_km),
+                };
+            };
 
             const global_layer_index = layer_cursor + local_layer_index;
-            grid.layer_top_altitudes_km[global_layer_index] = next_boundary_altitude_km;
+            grid.layer_top_altitudes_km[global_layer_index] = next_boundary.altitude_km;
             grid.layer_bottom_altitudes_km[global_layer_index] = previous_boundary_altitude_km;
-            grid.layer_top_pressures_hpa[global_layer_index] = next_boundary_pressure_hpa;
+            grid.layer_top_pressures_hpa[global_layer_index] = next_boundary.pressure_hpa;
             grid.layer_bottom_pressures_hpa[global_layer_index] = previous_boundary_pressure_hpa;
             grid.layer_interval_indices_1based[global_layer_index] = parity_interval_index_1based;
             grid.layer_sublayer_starts[global_layer_index] = @intCast(support_cursor);
             grid.layer_sublayer_counts[global_layer_index] = @intCast(sublayer_order + 2);
 
-            const layer_span_km = @max(next_boundary_altitude_km - previous_boundary_altitude_km, 0.0);
+            const layer_span_km = @max(next_boundary.altitude_km - previous_boundary_altitude_km, 0.0);
             for (0..sublayer_order) |support_index| {
                 const global_support_index = support_cursor + 1 + support_index;
                 const support_altitude_km = previous_boundary_altitude_km +
                     0.5 * (support_nodes[support_index] + 1.0) * layer_span_km;
-                grid.sublayer_top_altitudes_km[global_support_index] = next_boundary_altitude_km;
+
+                grid.sublayer_top_altitudes_km[global_support_index] = next_boundary.altitude_km;
                 grid.sublayer_bottom_altitudes_km[global_support_index] = previous_boundary_altitude_km;
-                grid.sublayer_top_pressures_hpa[global_support_index] = next_boundary_pressure_hpa;
+                grid.sublayer_top_pressures_hpa[global_support_index] = next_boundary.pressure_hpa;
                 grid.sublayer_bottom_pressures_hpa[global_support_index] = previous_boundary_pressure_hpa;
                 grid.sublayer_mid_altitudes_km[global_support_index] = support_altitude_km;
-                grid.sublayer_support_weights_km[global_support_index] = 0.5 * support_weights[support_index] * layer_span_km;
+                grid.sublayer_support_weights_km[global_support_index] =
+                    0.5 * support_weights[support_index] * layer_span_km;
                 grid.sublayer_interval_indices_1based[global_support_index] = parity_interval_index_1based;
             }
 
             const upper_boundary_index = support_cursor + sublayer_order + 1;
-            grid.sublayer_top_altitudes_km[upper_boundary_index] = next_boundary_altitude_km;
-            grid.sublayer_bottom_altitudes_km[upper_boundary_index] = next_boundary_altitude_km;
-            grid.sublayer_top_pressures_hpa[upper_boundary_index] = next_boundary_pressure_hpa;
-            grid.sublayer_bottom_pressures_hpa[upper_boundary_index] = next_boundary_pressure_hpa;
-            grid.sublayer_mid_altitudes_km[upper_boundary_index] = next_boundary_altitude_km;
+            grid.sublayer_top_altitudes_km[upper_boundary_index] = next_boundary.altitude_km;
+            grid.sublayer_bottom_altitudes_km[upper_boundary_index] = next_boundary.altitude_km;
+            grid.sublayer_top_pressures_hpa[upper_boundary_index] = next_boundary.pressure_hpa;
+            grid.sublayer_bottom_pressures_hpa[upper_boundary_index] = next_boundary.pressure_hpa;
+            grid.sublayer_mid_altitudes_km[upper_boundary_index] = next_boundary.altitude_km;
             grid.sublayer_support_weights_km[upper_boundary_index] = 0.0;
             grid.sublayer_interval_indices_1based[upper_boundary_index] = parity_interval_index_1based;
 
             support_cursor = upper_boundary_index;
-            previous_boundary_altitude_km = next_boundary_altitude_km;
-            previous_boundary_pressure_hpa = next_boundary_pressure_hpa;
+            previous_boundary_altitude_km = next_boundary.altitude_km;
+            previous_boundary_pressure_hpa = next_boundary.pressure_hpa;
         }
 
         layer_cursor += interval_layer_count;
@@ -332,17 +463,22 @@ fn buildExplicitDisamarParity(
     return grid.*;
 }
 
-// hot path:
-//   when: legacy atmosphere controls define evenly divided vertical layers
-//   work: fills layer and sublayer altitude/pressure/weight arrays
-//   data: layer count, sublayer divisions, climatology profile, grid output arrays
-//   math: z_layer(i) = z_bottom + i * (z_top - z_bottom) / layer_count; z_sublayer(f) = z_layer_bottom + f * layer_span
-//   follow: layer_accumulation.populate and particle profile distribution builders
 fn buildLegacy(
     allocator: Allocator,
     scene: *const Scene,
     profile: *const ReferenceData.ClimatologyProfile,
 ) !OwnedVerticalGrid {
+    // buildLegacy -------------------------------------------------------------------------------------------|
+    // Build the evenly divided vertical grid used by legacy atmosphere controls.                             |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // fills layer and sublayer altitude, pressure, and support-weight arrays before accumulation.            |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // z_layer(i) = z_bottom + i * (z_top - z_bottom) / layer_count.                                          |
+    // z_sublayer(f) = z_layer_bottom + f * layer_span.                                                       |
+    // -------------------------------------------------------------------------------------------------------|
+
     const layer_count: usize = @max(scene.atmosphere.preparedLayerCount(), @as(u32, 1));
     const sublayer_divisions: usize = @max(@as(u32, scene.atmosphere.sublayer_divisions), @as(u32, 1));
     const total_sublayer_count = layer_count * sublayer_divisions;
@@ -355,8 +491,11 @@ fn buildLegacy(
 
     var sublayer_cursor: usize = 0;
     for (0..layer_count) |index| {
-        const layer_top_altitude = bottom_altitude_km + layer_span_km * @as(f64, @floatFromInt(index + 1));
-        const layer_bottom_altitude = bottom_altitude_km + layer_span_km * @as(f64, @floatFromInt(index));
+        const layer_top_altitude =
+            bottom_altitude_km + layer_span_km * @as(f64, @floatFromInt(index + 1));
+        const layer_bottom_altitude =
+            bottom_altitude_km + layer_span_km * @as(f64, @floatFromInt(index));
+
         grid.layer_top_altitudes_km[index] = layer_top_altitude;
         grid.layer_bottom_altitudes_km[index] = layer_bottom_altitude;
         grid.layer_top_pressures_hpa[index] = profile.interpolatePressure(layer_top_altitude);
@@ -366,19 +505,26 @@ fn buildLegacy(
         grid.layer_sublayer_counts[index] = @intCast(sublayer_divisions);
 
         for (0..sublayer_divisions) |sublayer_index| {
-            const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / @as(f64, @floatFromInt(sublayer_divisions));
-            const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / @as(f64, @floatFromInt(sublayer_divisions));
+            const division_count_f = @as(f64, @floatFromInt(sublayer_divisions));
+            const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / division_count_f;
+            const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / division_count_f;
             const sublayer_top_altitude = layer_bottom_altitude + layer_span_km * top_fraction;
             const sublayer_bottom_altitude = layer_bottom_altitude + layer_span_km * bottom_fraction;
             const global_index = sublayer_cursor + sublayer_index;
+
             grid.sublayer_top_altitudes_km[global_index] = sublayer_top_altitude;
             grid.sublayer_bottom_altitudes_km[global_index] = sublayer_bottom_altitude;
-            grid.sublayer_top_pressures_hpa[global_index] = profile.interpolatePressure(sublayer_top_altitude);
-            grid.sublayer_bottom_pressures_hpa[global_index] = profile.interpolatePressure(sublayer_bottom_altitude);
-            grid.sublayer_mid_altitudes_km[global_index] = 0.5 * (sublayer_top_altitude + sublayer_bottom_altitude);
-            grid.sublayer_support_weights_km[global_index] = @max(sublayer_top_altitude - sublayer_bottom_altitude, 0.0);
+            grid.sublayer_top_pressures_hpa[global_index] =
+                profile.interpolatePressure(sublayer_top_altitude);
+            grid.sublayer_bottom_pressures_hpa[global_index] =
+                profile.interpolatePressure(sublayer_bottom_altitude);
+            grid.sublayer_mid_altitudes_km[global_index] =
+                0.5 * (sublayer_top_altitude + sublayer_bottom_altitude);
+            grid.sublayer_support_weights_km[global_index] =
+                @max(sublayer_top_altitude - sublayer_bottom_altitude, 0.0);
             grid.sublayer_interval_indices_1based[global_index] = @intCast(index + 1);
         }
+
         sublayer_cursor += sublayer_divisions;
     }
     return grid;
@@ -437,6 +583,8 @@ fn allocate(
 }
 
 fn usesDisamarParitySupportGrid(scene: *const Scene) bool {
-    return scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
-        scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
+    const radiance_mode = scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode;
+    const irradiance_mode = scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode;
+
+    return radiance_mode == .disamar_hr_grid or irradiance_mode == .disamar_hr_grid;
 }

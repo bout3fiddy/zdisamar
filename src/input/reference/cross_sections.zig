@@ -3,24 +3,87 @@ const cholesky = @import("../../common/math/linalg/cholesky.zig");
 const dense = @import("../../common/math/linalg/small_dense.zig");
 const Allocator = std.mem.Allocator;
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: wavelength_nm=8 B, sigma_cm2_per_molecule=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// cross_sections.zig -----------------------------------------------------------------------------------------|
+// Continuum and absorber cross-section helpers used after reference data has been loaded into typed rows.     |
+//                                                                                                             |
+// called by                                                                                                   |
+//   ReferenceData.zig re-exports these rows as the public reference-data table shape.                         |
+//   input/reference_data/ingest and bundled loaders build owned CrossSectionTable values from manifests or    |
+//   external O2 A assets. o2a_reference/run.zig can also produce the zero-continuum fallback table.           |
+//   optical_properties/state_build/context.zig either borrows the incoming continuum table or clones its      |
+//   points so PreparedOpticalState can own the support data it will later expose.                             |
+//   absorbers.zig, state_spectroscopy.zig, carrier_eval.zig, state_optical_depth.zig, and accumulation.zig    |
+//   sample the table while preparing absorber means or per-wavelength support rows.                           |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   CrossSectionTable.interpolateSigma brackets one wavelength and linearly interpolates sigma.               |
+//   meanSigmaInRange scans an interval for setup-time band means, with midpoint interpolation as fallback.    |
+//   differentialVector removes a weighted polynomial baseline from diagnostic/effective cross-section rows.   |
+//   effectiveCrossSectionFromSensitivity normalizes by air mass before using the same differential fit.       |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   The table is only a slice header over sorted out-of-line points. It owns that point storage when built by |
+//   loaders or clones, and otherwise it is borrowed through Scene/PreparedOpticalState ownership flags.       |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Wavelength-time evaluation repeatedly calls interpolateSigma through prepared absorber rows. The helper   |
+//   allocates nothing and reads only the bracketed point rows. The polynomial differential route allocates    |
+//   its normal-system scratch because it is used for diagnostics/effective spectra, not inside LABOS kernels. |
+//                                                                                                             |
+// math                                                                                                        |
+//   The differential fit uses a compact polynomial basis over wavelength normalized to roughly [-1, 1].       |
+// ------------------------------------------------------------------------------------------------------------|
+
+// CrossSectionPoint ------------------------------------------------------------------------------------------|
+// One tabulated cross-section sample.                                                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] wavelength_nm          : f64                                                                        |
+// [8..15] sigma_cm2_per_molecule : f64                                                                        |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live point count                         |
 pub const CrossSectionPoint = struct {
     wavelength_nm: f64,
     sigma_cm2_per_molecule: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: points=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: points carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// WavelengthBracket ------------------------------------------------------------------------------------------|
+// Present optional payload returned by bracketForWavelength.                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] left_index  : usize                                                                                 |
+// [8..15] right_index : usize                                                                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per present payload = 16 B (0.016 KiB)                                                           |
+const WavelengthBracket = struct {
+    left_index: usize,
+    right_index: usize,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// CrossSectionTable ------------------------------------------------------------------------------------------|
+// Owner/view header for sorted cross-section samples.                                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..15] points : []const CrossSectionPoint                                                                  |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   points stores out-of-line CrossSectionPoint rows and is released by deinit.                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes owned point rows                            |
 pub const CrossSectionTable = struct {
     points: []const CrossSectionPoint,
 
@@ -42,17 +105,24 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma((start_nm + end_nm) * 0.5);
     }
 
-    // hot path:
-    //   when: carrier evaluation samples table-backed cross sections at a wavelength
-    //   work: brackets wavelength and linearly interpolates sigma
-    //   data: cross-section points, wavelength, bracket indexes
-    //   follow: bracketForWavelength and point array ordering
     pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
+        // CrossSectionTable.interpolateSigma -----------------------------------------------------------------|
+        // Sample sigma at one wavelength from sorted table rows.                                              |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   repeated : carrier evaluation samples table-backed cross sections at each wavelength              |
+        //   work     : bracket wavelength and linearly interpolate sigma                                      |
+        //   memory   : binary search reads point wavelengths, final interpolation reads two compact rows      |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.points.len == 0) return 0.0;
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
-        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) return self.points[self.points.len - 1].sigma_cm2_per_molecule;
+        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) {
+            return self.points[self.points.len - 1].sigma_cm2_per_molecule;
+        }
 
-        const bracket = self.bracketForWavelength(wavelength_nm) orelse return self.points[self.points.len - 1].sigma_cm2_per_molecule;
+        const bracket = self.bracketForWavelength(wavelength_nm) orelse
+            return self.points[self.points.len - 1].sigma_cm2_per_molecule;
         const left = self.points[bracket.left_index];
         const right = self.points[bracket.right_index];
         const span = right.wavelength_nm - left.wavelength_nm;
@@ -61,13 +131,10 @@ pub const CrossSectionTable = struct {
         return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
     }
 
-    // layout(64-bit):
-    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per present payload = 16 B (0.016 KiB)
     pub fn bracketForWavelength(
         self: CrossSectionTable,
         wavelength_nm: f64,
-    ) ?struct { left_index: usize, right_index: usize } {
+    ) ?WavelengthBracket {
         if (self.points.len < 2) return null;
 
         var low: usize = 0;
@@ -86,6 +153,7 @@ pub const CrossSectionTable = struct {
         };
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     if (samples.len == 0 or samples.len != weights.len) return 0.0;
@@ -99,11 +167,6 @@ pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     return numerator / @max(denominator, 1.0e-12);
 }
 
-// hot path:
-//   when: effective cross-section or CIA output builds a differential spectrum
-//   work: assembles and solves a small weighted polynomial fit, then subtracts the fitted baseline
-//   data: wavelength/value/weight arrays, dense normal matrix, Cholesky factor storage
-//   follow: cholesky.factorInPlace and dense.index layout
 pub fn differentialVector(
     allocator: Allocator,
     wavelengths_nm: []const f64,
@@ -111,6 +174,19 @@ pub fn differentialVector(
     weights: []const f64,
     polynomial_order: u32,
 ) ![]f64 {
+    // differentialVector -------------------------------------------------------------------------------------|
+    // Remove a weighted polynomial baseline from one spectral vector.                                         |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : effective cross-section or CIA output builds a differential spectrum                       |
+    //   work     : assemble dense normal equations, Cholesky solve coefficients, subtract fitted baseline     |
+    //   memory   : normal matrix is term_count^2 f64 values; coeff and rhs arrays are term_count f64 values   |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   x = (wavelength_nm - midpoint_nm) / half_span_nm                                                      |
+    //   baseline = sum coefficient[k] * x^k                                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (wavelengths_nm.len != values.len or values.len != weights.len) return error.ShapeMismatch;
     if (polynomial_order > 7) return error.InvalidPolynomialOrder;
 
@@ -134,8 +210,8 @@ pub fn differentialVector(
 
     const midpoint_nm = 0.5 * (wavelengths_nm[0] + wavelengths_nm[wavelengths_nm.len - 1]);
     const half_span_nm = @max(0.5 * (wavelengths_nm[wavelengths_nm.len - 1] - wavelengths_nm[0]), 1.0e-9);
-    // VENDOR:
-    //   Normalize wavelength into a compact polynomial basis before assembling the dense fit system.
+
+    // Normalize wavelength into a compact polynomial basis before assembling the dense fit system.
     for (wavelengths_nm, values, weights) |wavelength_nm, value, weight| {
         const x = (wavelength_nm - midpoint_nm) / half_span_nm;
         var powers: [8]f64 = undefined;

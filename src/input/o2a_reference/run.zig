@@ -1,7 +1,6 @@
 const std = @import("std");
 const AbsorberModel = @import("../../input/Absorber.zig");
 const AerosolModel = @import("../../input/Aerosol.zig");
-const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
@@ -25,9 +24,6 @@ pub const SolveConfig = reference_types.SolveConfig;
 pub const RadiativeTransferControls = reference_types.RadiativeTransferControls;
 pub const ReferenceSample = reference_types.ReferenceSample;
 pub const ExternalAsset = reference_types.ExternalAsset;
-pub const OutputKind = reference_types.OutputKind;
-pub const OutputRequest = reference_types.OutputRequest;
-pub const ValidationPolicy = reference_types.ValidationPolicy;
 pub const PlanSpec = reference_types.PlanSpec;
 pub const Metadata = reference_types.Metadata;
 pub const GeometrySpec = reference_types.GeometrySpec;
@@ -40,14 +36,63 @@ pub const ResolvedVendorO2ACase = reference_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
 pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
-// layout(64-bit):
-//   size: 3824 B, align: 8 B
-//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
-//   cache span: 60 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
+// run.zig --------------------------------------------------------------------------------------------------- |
+// Runtime assembly for resolved O2 A reference cases. This is the place where parsed case rows become loaded  |
+// reference data, a forward-model Scene, a PreparedOpticalState, and optionally an instrument-grid product.   |
+//                                                                                                             |
+// called by                                                                                                   |
+//   o2a_reference/root.zig exposes the public zdisamar.o2a facade. metrics.zig wraps the returned runtime     |
+//   owners in validation-friendly structs. Validation tests and o2a_plot_spectrum_cli run the full product    |
+//   route. optimal_estimation/retrieval.zig calls this file directly so one OE session can keep loaded inputs,|
+//   a mutable scene, weak-cutoff support, and borrowed profile preparation alive across many state updates.   |
+//                                                                                                             |
+// full validation route                                                                                       |
+//   ResolvedVendorO2ACase                                                                                     |
+//     -> loadResolvedVendorO2AInputs       fixed/bundled reference assets become owned loaded tables          |
+//     -> buildResolvedVendorO2AScene       parsed controls become Scene, absorber set, and solar support      |
+//     -> OpticsPrepare.prepare             Scene + loaded tables become PreparedOpticalState                  |
+//     -> installVendorWeakCutoffGrid       line-list cutoff support follows the realized instrument grid      |
+//     -> rewindowParitySolarSupport...     solar support is trimmed to the shared radiance/irradiance kernel  |
+//     -> prepareResolvedVendorO2ASolveConfig -> InstrumentGrid.simulateProduct                                |
+//                                                                                                             |
+// retrieval session route                                                                                     |
+//   RetrievalPreparedCase loads inputs once, owns one mutable Scene, and calls the session-cache optical      |
+//   refresh after each state write. Static continuum/CIA tables are borrowed from LoadedVendorO2AInputs, the  |
+//   weak-cutoff grid is built once from the realized support, and solar rewindowing is installed once per     |
+//   session. Each iteration then focuses on scene mutation, optical-state rebuild, product simulation, and    |
+//   Jacobian rows.                                                                                            |
+//                                                                                                             |
+// cache and ownership rules                                                                                   |
+//   fixed_asset_cache returns caller-owned clones, never retained cache slices. LoadedVendorO2AInputs owns    |
+//   loaded profile, spectroscopy profile, continuum, line list, optional CIA, LUT, reference, and solar rows. |
+//   PreparedRuntimeCase is an owner/view header over reference rows, Scene, solve config, and prepared        |
+//   optical state; callers deinit the moved owners in that order.                                             |
+//                                                                                                             |
+// performance boundary                                                                                        |
+//   This file runs setup and retrieval refresh work before the RTM wavelength loop. The repeated retrieval    |
+//   preparation boundary avoids file I/O, static reference-table reloads, weak-line support-grid rebuilds,    |
+//   and solar rewindowing when the instrument/grid support did not change. Trace zones split those costs so   |
+//   benchmark traces show which setup work moved or disappeared.                                              |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// PreparedRuntimeCase --------------------------------------------------------------------------------------- |
+// Prepared O2 A case with reference samples, before instrument-grid product simulation.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2904 B (2.836 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..  15] reference  : []ReferenceSample                                                                 |
+// [  16.. 687] scene      : Scene                                                                             |
+// [ 688.. 767] rtm_config : SolveConfig                                                                       |
+// [ 768..2903] prepared   : PreparedOpticalState                                                              |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   reference is owned by the runtime case. scene and prepared are inline headers with nested owned storage.  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 46 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2904 B plus referenced scene/prepared/reference storage                           |
 pub const PreparedRuntimeCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -55,47 +100,22 @@ pub const PreparedRuntimeCase = struct {
     prepared: OpticsPrepare.PreparedOpticalState,
 };
 
-// Runtime-prepared O2 A case for repeated native retrieval evaluations.
-// layout(64-bit):
-//   size: 3808 B, align: 8 B
-//   field storage: scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: scene and prepared carry owned buffers; referenced storage is not included in size
-//   cache span: 60 cache line(s) at 64 B per line
-//   count: one live value per native OE forward evaluation
-//   footprint: per instance = 3808 B (3.719 KiB); total also includes referenced storage above
-pub const PreparedRuntimeEvaluation = struct {
-    scene: Scene,
-    rtm_config: SolveConfig,
-    prepared: OpticsPrepare.PreparedOpticalState,
-
-    pub fn deinit(self: *PreparedRuntimeEvaluation, allocator: Allocator) void {
-        self.prepared.deinit(allocator);
-        self.scene.deinitOwned(allocator);
-        self.* = undefined;
-    }
-};
-
-pub const PreparedRuntimeOptics = struct {
-    scene: Scene,
-    prepared: OpticsPrepare.PreparedOpticalState,
-
-    pub fn deinit(self: *PreparedRuntimeOptics, allocator: Allocator) void {
-        self.prepared.deinit(allocator);
-        self.scene.deinitOwned(allocator);
-        self.* = undefined;
-    }
-};
-
-// Retrieval-scoped weak-line cutoff support reused across state evaluations.
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: two slice descriptors at 16 B each; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength and wavenumber grids are owned dense f64 buffers
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one per O2 A retrieval case when vendor weak cutoff is active
-//   footprint: per instance = 32 B (0.031 KiB); total also includes 2 * support_count * 8 B
+// WeakCutoffGridCache --------------------------------------------------------------------------------------- |
+// Retrieval-scoped weak-line cutoff support grid reused across state evaluations.                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm  : []f64                                                                            |
+// [16..31] wavenumbers_cm1 : []f64                                                                            |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   wavelength and wavenumber grids are owned dense f64 buffers.                                              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 1 cache line at 64 B per line                                                                   |
+// footprint: per instance = 32 B plus 16 B per retained support wavelength                                    |
 pub const WeakCutoffGridCache = struct {
     wavelengths_nm: []f64 = &.{},
     wavenumbers_cm1: []f64 = &.{},
@@ -130,6 +150,16 @@ pub const WeakCutoffGridCache = struct {
 };
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
+    // loadReferenceSamples ---------------------------------------------------------------------------------- |
+    // Load the DISAMAR/vendor reference CSV used as validation truth. The parser reads the file once, skips   |
+    // the header row, and keeps wavelength, irradiance, and reflectance. The third CSV column is required so  |
+    // malformed rows fail, but it is not part of ReferenceSample.                                             |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   Returns an owned []ReferenceSample in the caller allocator. fixed_asset_cache may clone this result   |
+    //   for later calls, but callers still deinit their returned slice normally.                              |
+    // --------------------------------------------------------------------------------------------------------|
+
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
@@ -165,6 +195,16 @@ pub fn loadSolarSpectrumSamples(
     allocator: Allocator,
     asset: ExternalAsset,
 ) ![]SolarSpectrumSample {
+    // loadSolarSpectrumSamples ------------------------------------------------------------------------------ |
+    // Load the high-resolution solar irradiance CSV used to build operational solar support. This accepts     |
+    // only the reference solar CSV asset format, then keeps wavelength and irradiance rows for later window   |
+    // trimming in buildResolvedVendorO2AScene and rewindowParitySolarSupportToMeasurementKernel.              |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   Returns an owned []SolarSpectrumSample in the caller allocator. No Scene borrows this raw slice;      |
+    //   Scene construction allocates its own retained wavelength and irradiance arrays.                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (!std.mem.eql(u8, asset.format, "solar_reference_csv")) return error.UnsupportedSolarReferenceAssetFormat;
 
     const file = try std.fs.cwd().openFile(asset.path, .{});
@@ -199,6 +239,21 @@ pub fn loadResolvedVendorO2AInputs(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !LoadedVendorO2AInputs {
+    // loadResolvedVendorO2AInputs --------------------------------------------------------------------------- |
+    // Hydrate one resolved O2 A case into the owned reference-data bundle consumed by Scene/optics setup.     |
+    // This is the expensive input boundary for both one-shot validation and retrieval-session preparation.    |
+    //                                                                                                         |
+    // steps                                                                                                   |
+    //   1. load the fixed atmosphere profile, then densify it to the case surface pressure                    |
+    //   2. build the spectroscopy profile on the original vendor pressure nodes                               |
+    //   3. load continuum, O2 line-list sidecars, optional O2-O2 CIA, airmass LUT, reference, and solar rows  |
+    //   4. return a LoadedVendorO2AInputs owner bundle that later preparation routes may borrow from safely   |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   Fixed-asset caches return clones in allocator. The returned bundle owns every loaded table/slice.     |
+    //   Retrieval keeps this bundle alive so optical refreshes can borrow static continuum/CIA tables safely. |
+    // --------------------------------------------------------------------------------------------------------|
+
     var profile = try loadFixedClimatologyProfile(allocator, resolved.inputs.atmosphere_profile);
     errdefer profile.deinit(allocator);
     var dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
@@ -252,13 +307,7 @@ fn loadFixedClimatologyProfile(
 ) !ReferenceDataModel.ClimatologyProfile {
     if (try fixed_asset_cache.loadProfile(allocator, asset)) |cached| return cached;
 
-    var profile_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .climatology_profile,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var profile_asset = try loadFixedExternalAsset(allocator, .climatology_profile, asset);
     defer profile_asset.deinit(allocator);
     var profile = try profile_asset.toClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
@@ -272,13 +321,7 @@ fn loadFixedCiaTable(
 ) !ReferenceDataModel.CollisionInducedAbsorptionTable {
     if (try fixed_asset_cache.loadCia(allocator, asset)) |cached| return cached;
 
-    var loaded_cia = try reference_assets.loadExternalAsset(
-        allocator,
-        .collision_induced_absorption_table,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var loaded_cia = try loadFixedExternalAsset(allocator, .collision_induced_absorption_table, asset);
     defer loaded_cia.deinit(allocator);
     var table = try loaded_cia.toCollisionInducedAbsorptionTable(allocator);
     errdefer table.deinit(allocator);
@@ -292,13 +335,7 @@ fn loadFixedAirmassLut(
 ) !ReferenceDataModel.AirmassFactorLut {
     if (try fixed_asset_cache.loadAirmassLut(allocator, asset)) |cached| return cached;
 
-    var lut_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .lookup_table,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var lut_asset = try loadFixedExternalAsset(allocator, .lookup_table, asset);
     defer lut_asset.deinit(allocator);
     var lut = try lut_asset.toAirmassFactorLut(allocator);
     errdefer lut.deinit(allocator);
@@ -330,6 +367,20 @@ fn loadFixedSolarSpectrumSamples(
     return samples;
 }
 
+fn loadFixedExternalAsset(
+    allocator: Allocator,
+    kind: reference_assets.AssetKind,
+    asset: ExternalAsset,
+) !reference_assets.LoadedAsset {
+    return reference_assets.loadExternalAsset(
+        allocator,
+        kind,
+        asset.id,
+        asset.path,
+        asset.format,
+    );
+}
+
 fn buildVendorTraceGasSpectroscopyProfile(
     allocator: Allocator,
     source_profile: ReferenceDataModel.ClimatologyProfile,
@@ -357,6 +408,23 @@ pub fn buildResolvedVendorO2AScene(
     resolved: *const ResolvedVendorO2ACase,
     raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
+    // buildResolvedVendorO2AScene --------------------------------------------------------------------------- |
+    // Translate parsed O2 A controls into the mutable Scene used by optical preparation and RTM execution.    |
+    // This function owns the conversion from reference-case schema names to the public forward-model input    |
+    // shape: surface, geometry, atmosphere, aerosol controls, absorber set, observation model, and band       |
+    // support.                                                                                                |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   raw_solar_spectrum is borrowed. retainSolarSupport allocates the Scene-owned solar arrays, and the    |
+    //   returned Scene owns absorber ids/isotope controls plus operational_band_support storage.              |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   retainSolarSupport                                                                                    |
+    //   buildO2AbsorberSet                                                                                    |
+    //   sceneFromResolvedO2A                                                                                  |
+    //   attachResolvedIntervals                                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
     var solar_spectrum = try retainSolarSupport(allocator, resolved, raw_solar_spectrum);
     var solar_spectrum_owned = true;
     errdefer if (solar_spectrum_owned) solar_spectrum.deinitOwned(allocator);
@@ -475,7 +543,7 @@ fn sceneFromResolvedO2A(
     absorber_set: AbsorberModel.AbsorberSet,
     operational_band_support: []Instrument.OperationalBandSupport,
 ) Scene {
-    const aerosol = scalarAerosolView(resolved.aerosol);
+    const aerosol = sceneAerosolFromSpec(resolved.aerosol);
     const phase_function_truncation_threshold =
         resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold;
 
@@ -485,15 +553,7 @@ fn sceneFromResolvedO2A(
             .albedo = resolved.surface_albedo,
             .pressure_hpa = resolved.surface_pressure_hpa,
         },
-        .aerosol = .{
-            .enabled = true,
-            .optical_depth = aerosol.optical_depth,
-            .single_scatter_albedo = aerosol.single_scatter_albedo,
-            .asymmetry_factor = aerosol.asymmetry_factor,
-            .angstrom_exponent = aerosol.angstrom_exponent,
-            .reference_wavelength_nm = aerosol.reference_wavelength_nm,
-            .placement = aerosol.placement,
-        },
+        .aerosol = aerosol,
         .geometry = .{
             .model = resolved.geometry.model,
             .solar_zenith_deg = resolved.geometry.solar_zenith_deg,
@@ -524,23 +584,17 @@ fn sceneFromResolvedO2A(
     };
 }
 
-const ScalarAerosolView = struct {
-    optical_depth: f64,
-    single_scatter_albedo: f64,
-    asymmetry_factor: f64,
-    angstrom_exponent: f64,
-    reference_wavelength_nm: f64,
-    placement: AtmosphereModel.IntervalPlacement,
-};
+fn sceneAerosolFromSpec(aerosol: AerosolSpec) AerosolModel.Aerosol {
+    const scalar_profile_layer = aerosol.profile.len == 1;
 
-fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
-    if (aerosol.profile.len == 1) {
+    if (scalar_profile_layer) {
         const layer = aerosol.profile[0];
         var placement = aerosol.placement;
         placement.top_pressure_hpa = layer.top_pressure_hpa;
         placement.bottom_pressure_hpa = layer.bottom_pressure_hpa;
 
         return .{
+            .enabled = true,
             .optical_depth = layer.optical_depth,
             .single_scatter_albedo = layer.single_scatter_albedo,
             .asymmetry_factor = layer.asymmetry_factor,
@@ -551,6 +605,7 @@ fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
     }
 
     return .{
+        .enabled = true,
         .optical_depth = aerosol.optical_depth,
         .single_scatter_albedo = aerosol.single_scatter_albedo,
         .asymmetry_factor = aerosol.asymmetry_factor,
@@ -593,15 +648,39 @@ pub fn runResolvedVendorO2AReflectanceCase(
     resolved: *const ResolvedVendorO2ACase,
 ) !struct {
 
-    // layout(64-bit):
-    //   anonymous success payload: size 4144 B, align 8 B; padding is included in payload size
-    //   footprint: per successful return payload = 4144 B (4.047 KiB)
+    // runResolvedVendorO2AReflectanceCase payload ----------------------------------------------------------  |
+    // Anonymous success payload returned after product simulation.                                            |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 3144 B (3.070 KiB), align: 8 B                                                                    |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [   0..  15] reference  : []ReferenceSample                                                             |
+    // [  16.. 687] scene      : Scene                                                                         |
+    // [ 688.. 767] rtm_config : SolveConfig                                                                   |
+    // [ 768..2903] prepared   : PreparedOpticalState                                                          |
+    // [2904..3143] product    : InstrumentGridProduct                                                         |
+    //                                                                                                         |
+    // out-of-line                                                                                             |
+    //   reference is an owned slice. scene, prepared, and product carry nested owned storage.                 |
+    //                                                                                                         |
+    // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                  |
+    // footprint: per successful return payload = 3144 B plus referenced runtime storage                       |
     reference: []ReferenceSample,
     scene: Scene,
     rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
     product: InstrumentGrid.InstrumentGridProduct,
 } {
+    // runResolvedVendorO2AReflectanceCase ------------------------------------------------------------------- |
+    // One-shot validation/plotting route: prepare the complete runtime case, run the instrument-grid product, |
+    // and return all owners needed by metrics.zig and callers that inspect both reference and simulated rows. |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   On success ownership moves from PreparedRuntimeCase into the anonymous payload. On error the local    |
+    //   errdefer path releases prepared optical state, Scene storage, reference slice, and product storage.   |
+    // --------------------------------------------------------------------------------------------------------|
+
     var prepared_case = try prepareResolvedVendorO2ACase(allocator, resolved);
     errdefer {
         prepared_case.prepared.deinit(allocator);
@@ -630,24 +709,41 @@ pub fn prepareResolvedVendorO2ACase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !PreparedRuntimeCase {
+    // prepareResolvedVendorO2ACase -------------------------------------------------------------------------- |
+    // Full one-shot preparation route before product simulation. This path is used by metrics wrappers and    |
+    // validation tests when they need the same runtime shape as a complete O2 A reflectance run.              |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   load inputs -> build Scene -> prepare optical state -> install weak-cutoff support -> rewindow solar  |
+    //   support -> prepare RTM solve config                                                                   |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace zones surround each setup stage so retained benchmark traces can tell file loading, scene       |
+    //   translation, optical preparation, cutoff-grid setup, solar rewindowing, and RTM config apart.         |
+    // --------------------------------------------------------------------------------------------------------|
+
     var inputs = inputs: {
 
-        // instrumentation: trace zone
-        // captures: O2 A reference input loading wall time
-        // why: keep file/data preparation separate from model setup in trace runs.
+        // instrumentation: trace zone: prepare.load_inputs -------------------------------------------------- |
+        // captures: O2 A reference input loading wall time                                                    |
+        // why: keep file/data preparation separate from model setup in trace runs.                            |
         const zone = Trace.staticZone(@src(), "prepare.load_inputs");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.load_inputs ---------------------------------------------- |
+
         break :inputs try loadResolvedVendorO2AInputs(allocator, resolved);
     };
     defer inputs.deinit(allocator);
 
     var scene = scene: {
 
-        // instrumentation: trace zone
-        // captures: typed scene construction wall time
-        // why: separate input translation from optical-state preparation.
+        // instrumentation: trace zone: prepare.build_scene -------------------------------------------------- |
+        // captures: typed scene construction wall time                                                        |
+        // why: separate input translation from optical-state preparation.                                     |
         const zone = Trace.staticZone(@src(), "prepare.build_scene");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.build_scene ---------------------------------------------- |
+
         break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     };
     errdefer scene.deinitOwned(allocator);
@@ -663,11 +759,13 @@ pub fn prepareResolvedVendorO2ACase(
 
     var prepared = prepared: {
 
-        // instrumentation: trace zone
-        // captures: optical-state preparation wall time
-        // why: expose setup cost before any instrument-grid simulation.
+        // instrumentation: trace zone: prepare.optical ------------------------------------------------------ |
+        // captures: optical-state preparation wall time                                                       |
+        // why: expose setup cost before any instrument-grid simulation.                                       |
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.optical -------------------------------------------------- |
+
         break :prepared try OpticsPrepare.prepare(allocator, &scene, .{
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
@@ -682,31 +780,37 @@ pub fn prepareResolvedVendorO2ACase(
 
     {
 
-        // instrumentation: trace zone
-        // captures: weak-line cutoff support-grid installation
-        // why: isolate retained spectroscopy pruning setup from core optical preparation.
+        // instrumentation: trace zone: prepare.weak_cutoff_grid --------------------------------------------- |
+        // captures: weak-line cutoff support-grid installation                                                |
+        // why: isolate retained spectroscopy pruning setup from core optical preparation.                     |
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.weak_cutoff_grid ----------------------------------------- |
+
         try installVendorWeakCutoffGrid(allocator, &scene, &prepared, null);
     }
 
     {
 
-        // instrumentation: trace zone
-        // captures: solar support rewindowing wall time
-        // why: separate instrument-kernel alignment from RTM setup.
+        // instrumentation: trace zone: prepare.solar_rewindow ----------------------------------------------- |
+        // captures: solar support rewindowing wall time                                                       |
+        // why: separate instrument-kernel alignment from RTM setup.                                           |
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.solar_rewindow ------------------------------------------- |
+
         try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
     }
 
     const rtm_config = rtm_config: {
 
-        // instrumentation: trace zone
-        // captures: RTM rtm_config preparation wall time
-        // why: show control/rtm_config setup independently from optical data construction.
+        // instrumentation: trace zone: prepare.rtm_config --------------------------------------------------- |
+        // captures: RTM solve-config preparation wall time                                                    |
+        // why: show control setup independently from optical data construction.                               |
         const zone = Trace.staticZone(@src(), "prepare.rtm_config");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.rtm_config ----------------------------------------------- |
+
         break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
     };
 
@@ -718,133 +822,6 @@ pub fn prepareResolvedVendorO2ACase(
     };
 }
 
-pub fn prepareResolvedVendorO2AEvaluationWithInputs(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-) !PreparedRuntimeEvaluation {
-    var optics = try prepareResolvedVendorO2AOpticsWithInputs(allocator, resolved, inputs);
-    errdefer optics.deinit(allocator);
-
-    const rtm_config = rtm_config: {
-
-        // instrumentation: trace zone
-        // captures: RTM rtm_config preparation wall time
-        // why: measure rtm_config setup for input-reuse validation and retrieval lanes.
-        const zone = Trace.staticZone(@src(), "prepare.rtm_config");
-        defer zone.end();
-        break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
-    };
-
-    return .{
-        .scene = optics.scene,
-        .rtm_config = rtm_config,
-        .prepared = optics.prepared,
-    };
-}
-
-pub fn prepareResolvedVendorO2AOpticsWithInputs(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-) !PreparedRuntimeOptics {
-    return prepareResolvedVendorO2AOpticsWithInputsInternal(
-        allocator,
-        resolved,
-        inputs,
-        null,
-    );
-}
-
-pub fn prepareResolvedVendorO2AOpticsWithInputsAndWeakCutoffCache(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-) !PreparedRuntimeOptics {
-    return prepareResolvedVendorO2AOpticsWithInputsInternal(
-        allocator,
-        resolved,
-        inputs,
-        weak_cutoff_grid,
-    );
-}
-
-fn prepareResolvedVendorO2AOpticsWithInputsInternal(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: ?*WeakCutoffGridCache,
-) !PreparedRuntimeOptics {
-    var scene = scene: {
-
-        // instrumentation: trace zone
-        // captures: typed scene construction wall time
-        // why: separate reused loaded inputs from per-scene reconstruction cost.
-        const zone = Trace.staticZone(@src(), "prepare.build_scene");
-        defer zone.end();
-        break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
-    };
-    errdefer scene.deinitOwned(allocator);
-
-    var solar_rewindowed = false;
-    var prepared = try prepareResolvedVendorO2AOpticalStateWithSceneInternal(
-        allocator,
-        &scene,
-        inputs,
-        weak_cutoff_grid,
-        &solar_rewindowed,
-        null,
-        .clone_input_tables,
-        aerosolProfileLayersForOptics(resolved.aerosol),
-    );
-    errdefer prepared.deinit(allocator);
-
-    return .{
-        .scene = scene,
-        .prepared = prepared,
-    };
-}
-
-pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        null,
-        .clone_input_tables,
-        &.{},
-    );
-}
-
-pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-    borrowed_profile_preparation: *const OpticsPrepare.BorrowedProfilePreparation,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        borrowed_profile_preparation,
-        .clone_input_tables,
-        &.{},
-    );
-}
-
 pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     allocator: Allocator,
     scene: *Scene,
@@ -853,10 +830,20 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     solar_rewindowed: *bool,
     borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
 ) !OpticsPrepare.PreparedOpticalState {
+    // prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches -------------------------------------------  |
+    // Retrieval-session optical refresh. The caller owns one mutable Scene and one LoadedVendorO2AInputs      |
+    // bundle for the whole inverse problem, so this route can borrow static continuum/CIA rows and optional   |
+    // profile-preparation arrays while rebuilding the state-dependent optical layers.                         |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Reused: loaded inputs, weak-cutoff support, solar rewindowing, and optional profile arrays/line       |
+    //   states. Rebuilt: optical layers and spectroscopy rows that depend on the current pressure/aerosol     |
+    //   state.                                                                                                |
+    // --------------------------------------------------------------------------------------------------------|
 
     // Retrieval sessions own loaded inputs for the full OE run, so each optical
-    // refresh can borrow immutable continuum/CIA tables instead of cloning them.
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+    // refresh borrows immutable continuum/CIA tables with no per-refresh clone.
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
         allocator,
         scene,
         inputs,
@@ -873,28 +860,6 @@ const StaticInputTableMode = enum {
     borrow_input_tables,
 };
 
-fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: ?*WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
-    static_input_table_mode: StaticInputTableMode,
-    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        borrowed_profile_preparation,
-        static_input_table_mode,
-        aerosol_profile_layers,
-    );
-}
-
 fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     allocator: Allocator,
     scene: *Scene,
@@ -905,6 +870,20 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     static_input_table_mode: StaticInputTableMode,
     aerosol_profile_layers: []const AerosolModel.ProfileLayer,
 ) !OpticsPrepare.PreparedOpticalState {
+    // prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile -----------------------------------------  |
+    // Common optical-state builder behind retrieval-session optical refreshes. It adapts                      |
+    // LoadedVendorO2AInputs into OpticsPrepare.PreparationInputs, then applies the O2 A-only cutoff-grid and  |
+    // solar-window fixes that need the prepared instrument/grid shape.                                        |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   clone_input_tables makes PreparedOpticalState independent of LoadedVendorO2AInputs.                   |
+    //   borrow_input_tables is used only while the retrieval session keeps LoadedVendorO2AInputs alive.       |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   prepare.optical measures OpticsPrepare.prepare. prepare.weak_cutoff_grid and prepare.solar_rewindow   |
+    //   isolate setup that depends on realized instrument support after raw input parsing has finished.       |
+    // --------------------------------------------------------------------------------------------------------|
+
     var collision_induced_absorption: ?*const ReferenceDataModel.CollisionInducedAbsorptionTable = null;
     if (inputs.cia_table) |*table| {
         collision_induced_absorption = table;
@@ -912,11 +891,13 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
 
     var prepared = prepared: {
 
-        // instrumentation: trace zone
-        // captures: optical-state preparation wall time
-        // why: show setup cost when inputs are reused across retrieval iterations.
+        // instrumentation: trace zone: prepare.optical ------------------------------------------------------ |
+        // captures: optical-state preparation wall time                                                       |
+        // why: show setup cost when inputs are reused across retrieval iterations.                            |
         const zone = Trace.staticZone(@src(), "prepare.optical");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.optical -------------------------------------------------- |
+
         break :prepared try OpticsPrepare.prepare(allocator, scene, .{
             .profile = &inputs.profile,
             .spectroscopy_profile = &inputs.spectroscopy_profile,
@@ -934,21 +915,25 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
 
     {
 
-        // instrumentation: trace zone
-        // captures: weak-line cutoff support-grid installation
-        // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.
+        // instrumentation: trace zone: prepare.weak_cutoff_grid --------------------------------------------- |
+        // captures: weak-line cutoff support-grid installation                                                |
+        // why: distinguish cached cutoff-grid reuse from optical-layer rebuilds.                              |
         const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.weak_cutoff_grid ----------------------------------------- |
+
         try installVendorWeakCutoffGrid(allocator, scene, &prepared, weak_cutoff_grid);
     }
 
     if (!solar_rewindowed.*) {
 
-        // instrumentation: trace zone
-        // captures: one-time solar support rewindowing wall time
-        // why: verify retrieval sessions reuse this instrument-grid setup.
+        // instrumentation: trace zone: prepare.solar_rewindow ----------------------------------------------- |
+        // captures: one-time solar support rewindowing wall time                                              |
+        // why: verify retrieval sessions reuse this instrument-grid setup.                                    |
         const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
         defer zone.end();
+        // end instrumentation: trace zone: prepare.solar_rewindow ------------------------------------------- |
+
         try rewindowParitySolarSupportToMeasurementKernel(allocator, scene, &prepared);
         solar_rewindowed.* = true;
     }
@@ -962,6 +947,16 @@ fn installVendorWeakCutoffGrid(
     prepared: *OpticsPrepare.PreparedOpticalState,
     weak_cutoff_grid: ?*WeakCutoffGridCache,
 ) !void {
+    // installVendorWeakCutoffGrid --------------------------------------------------------------------------- |
+    // Attach the realized instrument-grid support to line lists that use the vendor weak-line cutoff. The     |
+    // cutoff is stored in wavenumber space, but the support is built from instrument wavelengths, so each     |
+    // retained wavelength also gets a cm^-1 value.                                                            |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   In retrieval sessions, weak_cutoff_grid is filled once and cloned into each refreshed prepared line   |
+    //   list. Without a cache, this computes adaptive support for the current prepared state.                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     const response = scene.observation_model.resolvedChannelControls(.radiance).response;
     var has_cutoff_line_list = false;
     if (prepared.spectroscopy_lines) |line_list| {
@@ -1066,6 +1061,16 @@ fn rewindowParitySolarSupportToMeasurementKernel(
     scene: *Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !void {
+    // rewindowParitySolarSupportToMeasurementKernel --------------------------------------------------------  |
+    // Trim the Scene-owned solar spectrum to the support range shared by radiance and irradiance integration  |
+    // kernels. The earlier retainSolarSupport keeps a broad margin around the spectral grid; this pass uses   |
+    // the realized instrument kernels so product simulation does not carry unused solar rows.                 |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   Replaces operational_solar_spectrum in place. The old Scene-owned arrays are freed only after the     |
+    //   retained replacement arrays have been allocated and filled.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     const operational_band_support = primaryOperationalBandSupportOwned(scene);
     if (!operational_band_support.operational_solar_spectrum.enabled()) return;
 
@@ -1120,9 +1125,18 @@ fn sharedParityMeasurementSupport(
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !?struct { start_nm: f64, end_nm: f64 } {
 
-    // layout(64-bit):
-    //   anonymous optional payload: size 16 B, align 8 B; padding 0 B (0 bits)
-    //   footprint: per present payload = 16 B (0.016 KiB)
+    // sharedParityMeasurementSupport payload ---------------------------------------------------------------  |
+    // Optional wavelength support bounds shared by radiance and irradiance kernels.                           |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 16 B (0.016 KiB), align: 8 B                                                                      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [0.. 7] start_nm : f64                                                                                  |
+    // [8..15] end_nm   : f64                                                                                  |
+    //                                                                                                         |
+    // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                  |
+    // footprint: per present optional payload = 16 B                                                          |
     var radiance_start: instrument_types.IntegrationKernel = undefined;
     var radiance_end: instrument_types.IntegrationKernel = undefined;
     var irradiance_start: instrument_types.IntegrationKernel = undefined;
@@ -1194,40 +1208,40 @@ pub fn loadResolvedVendorO2ALineList(
     allocator: Allocator,
     spec: LineGasSpec,
 ) !ReferenceDataModel.SpectroscopyLineList {
+    // loadResolvedVendorO2ALineList ------------------------------------------------------------------------- |
+    // Load the O2 HITRAN line list and the LISA strong-line/relaxation sidecars, then attach the sidecars to  |
+    // the runtime spectroscopy line list. The fixed cache key includes all line-gas controls that change the  |
+    // prepared line-list shape.                                                                               |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   Returns a caller-owned SpectroscopyLineList. The cache stores and returns clones, so callers always   |
+    //   release the returned line list through normal deinit.                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (try fixed_asset_cache.loadLineList(allocator, spec)) |cached| {
         return cached;
     }
 
-    var asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .spectroscopy_line_list,
-        spec.line_list_asset.id,
-        spec.line_list_asset.path,
-        spec.line_list_asset.format,
-    );
+    var asset = try loadFixedExternalAsset(allocator, .spectroscopy_line_list, spec.line_list_asset);
     defer asset.deinit(allocator);
 
     var line_list = try asset.toSpectroscopyLineList(allocator);
     errdefer line_list.deinit(allocator);
 
-    var strong_lines_asset = try reference_assets.loadExternalAsset(
+    var strong_lines_asset = try loadFixedExternalAsset(
         allocator,
         .spectroscopy_strong_line_set,
-        spec.strong_lines_asset.id,
-        spec.strong_lines_asset.path,
-        spec.strong_lines_asset.format,
+        spec.strong_lines_asset,
     );
     defer strong_lines_asset.deinit(allocator);
 
     var strong_lines = try strong_lines_asset.toSpectroscopyStrongLineSet(allocator);
     defer strong_lines.deinit(allocator);
 
-    var relaxation_asset = try reference_assets.loadExternalAsset(
+    var relaxation_asset = try loadFixedExternalAsset(
         allocator,
         .spectroscopy_relaxation_matrix,
-        spec.line_mixing_asset.id,
-        spec.line_mixing_asset.path,
-        spec.line_mixing_asset.format,
+        spec.line_mixing_asset,
     );
     defer relaxation_asset.deinit(allocator);
 

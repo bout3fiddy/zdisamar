@@ -11,25 +11,73 @@ pub const ReferenceSample = runtime.ReferenceSample;
 pub const ResolvedVendorO2ACase = runtime.ResolvedVendorO2ACase;
 pub const LineGasSpec = runtime.LineGasSpec;
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: wavelength_nm=8 B, value=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// metrics.zig ----------------------------------------------------------------------------------------------- |
+// O2 A reference-vs-product comparison layer.                                                                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   o2a_reference/root.zig, validation tests, and benchmark/reporting paths that need retained reference      |
+//   reflectance metrics after run.zig has built the runtime case or product.                                  |
+//                                                                                                             |
+// main path                                                                                                   |
+//   prepared runtime case -> optional instrument-grid product -> ComparisonMetrics                            |
+//   current metrics + baseline metrics + tolerances -> AssessmentOutcome                                      |
+//   helper scans keep the same window definitions for validation and report code.                             |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   computeComparisonMetrics streams reference rows for residual sums and again for covariance. Each sample   |
+//   interpolates the generated product at the reference wavelength. Morphology checks scan fixed O2 A windows:|
+//   blue wing 755.0..758.5 nm, trough 760.2..761.1 nm, rebound 761.8..762.4 nm, mid band 763.8..765.5 nm,     |
+//   and red wing 769.5..771.0 nm.                                                                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Metric structs are compact value rows. VendorO2A*Case structs wrap the larger runtime owners from run.zig |
+//   and keep deinit order explicit: product first, then prepared optical state, then scene/reference storage. |
+// ----------------------------------------------------------------------------------------------------------- |
+
+// RangeExtremum --------------------------------------------------------------------------------------------- |
+// Wavelength and value for a range-local minimum or maximum.                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] wavelength_nm : f64                                                                                 |
+// [8..15] value         : f64                                                                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B                                                                              |
 pub const RangeExtremum = struct {
     wavelength_nm: f64,
     value: f64,
 };
 
-// layout(64-bit):
-//   size: 120 B, align: 8 B
-// field storage: 113 B across 15 fields; largest: sample_count=8 B, nonzero_sample_count=8 B, mean_signed_difference=8
-// B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 120 B (0.117 KiB); total = per instance * live instance count
+// ComparisonMetrics ----------------------------------------------------------------------------------------- |
+// Scalar error, correlation, and O2 A morphology metrics for one product/reference comparison.                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 120 B (0.117 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] sample_count                      : usize                                                        |
+// [  8.. 15] nonzero_sample_count              : usize                                                        |
+// [ 16.. 23] mean_signed_difference            : f64                                                          |
+// [ 24.. 31] mean_abs_difference               : f64                                                          |
+// [ 32.. 39] root_mean_square_difference       : f64                                                          |
+// [ 40.. 47] max_abs_difference                : f64                                                          |
+// [ 48.. 55] max_abs_difference_wavelength_nm  : f64                                                          |
+// [ 56.. 63] correlation                       : f64                                                          |
+// [ 64.. 71] blue_wing_mean_difference         : f64                                                          |
+// [ 72.. 79] trough_wavelength_difference_nm   : f64                                                          |
+// [ 80.. 87] trough_value_difference           : f64                                                          |
+// [ 88.. 95] rebound_peak_difference           : f64                                                          |
+// [ 96..103] mid_band_mean_difference          : f64                                                          |
+// [104..111] red_wing_mean_difference          : f64                                                          |
+// [112..112] exact_match_within_zero_tolerance : bool                                                         |
+// [113..119] trailing padding                  : 7 B                                                          |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 120 B                                                                             |
 pub const ComparisonMetrics = struct {
     sample_count: usize,
     nonzero_sample_count: usize,
@@ -48,14 +96,27 @@ pub const ComparisonMetrics = struct {
     red_wing_mean_difference: f64,
 };
 
-// layout(64-bit):
-//   size: 80 B, align: 8 B
-// field storage: 80 B across 10 fields; largest: mean_abs_difference_abs=8 B, root_mean_square_difference_abs=8 B,
-// max_abs_difference_abs=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count
+// TrendTolerances ------------------------------------------------------------------------------------------- |
+// Absolute tolerances used when classifying metric trends against a baseline.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] mean_abs_difference_abs             : f64                                                          |
+// [ 8..15] root_mean_square_difference_abs     : f64                                                          |
+// [16..23] max_abs_difference_abs              : f64                                                          |
+// [24..31] correlation_abs                     : f64                                                          |
+// [32..39] blue_wing_mean_difference_abs       : f64                                                          |
+// [40..47] trough_wavelength_difference_nm_abs : f64                                                          |
+// [48..55] trough_value_difference_abs         : f64                                                          |
+// [56..63] rebound_peak_difference_abs         : f64                                                          |
+// [64..71] mid_band_mean_difference_abs        : f64                                                          |
+// [72..79] red_wing_mean_difference_abs        : f64                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 80 B                                                                              |
 pub const TrendTolerances = struct {
     mean_abs_difference_abs: f64,
     root_mean_square_difference_abs: f64,
@@ -82,13 +143,26 @@ pub const AssessmentVerdict = enum {
     nonzero_fail,
 };
 
-// layout(64-bit):
-//   size: 10 B, align: 1 B
-// field storage: 10 B across 10 fields; largest: mean_abs_difference=1 B, root_mean_square_difference=1 B,
-// max_abs_difference=1 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 10 B (0.010 KiB); total = per instance * live instance count
+// AssessmentTrend ------------------------------------------------------------------------------------------- |
+// Per-metric trend states after comparing current metrics to a baseline.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 10 B (0.010 KiB), align: 1 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..0] mean_abs_difference             : TrendState                                                         |
+// [1..1] root_mean_square_difference     : TrendState                                                         |
+// [2..2] max_abs_difference              : TrendState                                                         |
+// [3..3] correlation                     : TrendState                                                         |
+// [4..4] blue_wing_mean_difference       : TrendState                                                         |
+// [5..5] trough_wavelength_difference_nm : TrendState                                                         |
+// [6..6] trough_value_difference         : TrendState                                                         |
+// [7..7] rebound_peak_difference         : TrendState                                                         |
+// [8..8] mid_band_mean_difference        : TrendState                                                         |
+// [9..9] red_wing_mean_difference        : TrendState                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 10 B                                                                              |
 pub const AssessmentTrend = struct {
     mean_abs_difference: TrendState,
     root_mean_square_difference: TrendState,
@@ -102,25 +176,43 @@ pub const AssessmentTrend = struct {
     red_wing_mean_difference: TrendState,
 };
 
-// layout(64-bit):
-//   size: 11 B, align: 1 B
-//   field storage: verdict=1 B, trend=10 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 11 B (0.011 KiB); total = per instance * live instance count
+// AssessmentOutcome ----------------------------------------------------------------------------------------- |
+// Final validation verdict plus metric-by-metric trend states.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 11 B (0.011 KiB), align: 1 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 0] verdict : AssessmentVerdict                                                                        |
+// [ 1..10] trend   : AssessmentTrend                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 11 B                                                                              |
 pub const AssessmentOutcome = struct {
     verdict: AssessmentVerdict,
     trend: AssessmentTrend,
 };
 
-// layout(64-bit):
-//   size: 4144 B, align: 8 B
-//   field storage: 4144 B across 5 fields; largest: scene=2680 B, prepared=1056 B, product=320 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
-//   cache span: 65 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 4144 B (4.047 KiB); total also includes referenced storage above
+// VendorO2AReflectanceCase ---------------------------------------------------------------------------------- |
+// Fully prepared O2 A case plus simulated instrument-grid product.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 3144 B (3.070 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..  15] reference  : []ReferenceSample                                                                 |
+// [  16.. 687] scene      : Scene                                                                             |
+// [ 688.. 767] rtm_config : SolveConfig                                                                       |
+// [ 768..2903] prepared   : PreparedOpticalState                                                              |
+// [2904..3143] product    : InstrumentGridProduct                                                             |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   reference is an owned slice. scene, prepared, and product are inline headers that own or borrow nested    |
+//   storage released by deinit.                                                                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 50 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 3144 B plus referenced scene/product/reference storage                            |
 pub const VendorO2AReflectanceCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -137,14 +229,24 @@ pub const VendorO2AReflectanceCase = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 3824 B, align: 8 B
-//   field storage: reference=16 B, scene=2680 B, rtm_config=72 B, prepared=1056 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: reference carry references/descriptors; referenced storage is not included in size
-//   cache span: 60 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3824 B (3.734 KiB); total also includes referenced storage above
+// VendorO2APreparedCase ------------------------------------------------------------------------------------- |
+// Prepared O2 A case before instrument-grid product simulation.                                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2904 B (2.836 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..  15] reference  : []ReferenceSample                                                                 |
+// [  16.. 687] scene      : Scene                                                                             |
+// [ 688.. 767] rtm_config : SolveConfig                                                                       |
+// [ 768..2903] prepared   : PreparedOpticalState                                                              |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   reference is an owned slice. scene and prepared are inline headers with nested owned/borrowed storage.    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 46 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 2904 B plus referenced scene/prepared/reference storage                           |
 pub const VendorO2APreparedCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
@@ -557,9 +659,4 @@ pub fn computeComparisonMetrics(
     };
 }
 
-pub fn loadResolvedO2ASpectroscopyLineList(
-    allocator: std.mem.Allocator,
-    spec: LineGasSpec,
-) !ReferenceDataModel.SpectroscopyLineList {
-    return runtime.loadResolvedVendorO2ALineList(allocator, spec);
-}
+pub const loadResolvedO2ASpectroscopyLineList = runtime.loadResolvedVendorO2ALineList;

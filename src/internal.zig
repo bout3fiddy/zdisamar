@@ -1,3 +1,26 @@
+// internal.zig -----------------------------------------------------------------------------------------------|
+// Test-only import router for non-public source modules that need focused unit coverage.                      |
+//                                                                                                             |
+// used by                                                                                                     |
+//   tests/unit/internal_root.zig pulls this file into the unit-test graph                                     |
+//   source-path unit tests import private preparation, instrument-grid, spectroscopy, and LABOS helpers       |
+//   validation tests use selected internal rows without widening the public zdisamar API                      |
+//                                                                                                             |
+// route map                                                                                                   |
+//   input/reference exports expose loaders and typed reference tables for focused parsing and physics tests.  |
+//   forward_model.optical_properties exposes state-build modules that public callers reach only through       |
+//   prepare(). instrument_grid exposes workspace/storage internals for cache and sampling tests.              |
+//   radiative_transfer exposes LABOS and shared transport rows so matrix/order tests use the same types.      |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   Product code should not depend on this router. Public callers use src/root.zig; this file keeps tests     |
+//   close to private helpers while preserving the narrower public input -> RTM -> output surface.             |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   The nested structs below are namespace-only wrappers around @import aliases. They carry no runtime state, |
+//   allocation, or dispatch layer. This file-level note covers their zero-storage shape.                      |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const scene = @import("input/Scene.zig");
 pub const Scene = scene.Scene;
 pub const absorber = @import("input/Absorber.zig");
@@ -11,10 +34,6 @@ pub const surface = @import("input/Surface.zig");
 pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
 pub const reference_data = @import("input/ReferenceData.zig");
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const reference = struct {
     pub const airmass_phase = @import("input/reference/airmass_phase.zig");
     pub const cia = @import("input/reference/cia.zig");
@@ -24,10 +43,6 @@ pub const reference = struct {
     pub const spectroscopy_strong_lines = @import("input/reference/spectroscopy/strong_lines.zig");
 };
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const input_reference_data = struct {
     pub const ingest_reference_assets = @import("input/reference_data/ingest/reference_assets.zig");
     pub const ingest_reference_assets_loaded_asset =
@@ -37,52 +52,27 @@ pub const input_reference_data = struct {
 pub const o2a_reference = @import("input/o2a_reference/root.zig");
 pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const common = struct {
     pub const errors = @import("common/errors.zig");
     pub const units = @import("common/units.zig");
     pub const lut_controls = @import("common/lut_controls.zig");
 
-    // layout(64-bit):
-    //   size: 0 B, align: 1 B
-    //   field storage: 0 B; padding: 0 B (0 bits)
-    //   footprint: no runtime field storage; namespace/type declarations only
     pub const math = struct {
-
-        // layout(64-bit):
-        //   size: 0 B, align: 1 B
-        //   field storage: 0 B; padding: 0 B (0 bits)
-        //   footprint: no runtime field storage; namespace/type declarations only
         pub const quadrature = struct {
             pub const gauss_legendre = @import("common/math/quadrature/gauss_legendre.zig");
         };
 
-        // layout(64-bit):
-        //   size: 0 B, align: 1 B
-        //   field storage: 0 B; padding: 0 B (0 bits)
-        //   footprint: no runtime field storage; namespace/type declarations only
         pub const linalg = struct {
             pub const cholesky = @import("common/math/linalg/cholesky.zig");
             pub const small_dense = @import("common/math/linalg/small_dense.zig");
         };
 
-        // layout(64-bit):
-        //   size: 0 B, align: 1 B
-        //   field storage: 0 B; padding: 0 B (0 bits)
-        //   footprint: no runtime field storage; namespace/type declarations only
         pub const interpolation = struct {
             pub const spline = @import("common/math/interpolation/spline.zig");
         };
     };
 };
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const forward_model = struct {
 
     // instrumentation: internal test exports
@@ -93,10 +83,6 @@ pub const forward_model = struct {
     pub const performance_trace = @import("forward_model/instrumentation/trace.zig");
     pub const work_partition = @import("forward_model/work_partition.zig");
 
-    // layout(64-bit):
-    //   size: 0 B, align: 1 B
-    //   field storage: 0 B; padding: 0 B (0 bits)
-    //   footprint: no runtime field storage; namespace/type declarations only
     pub const optical_properties = struct {
         const root = @import("forward_model/optical_properties/root.zig");
 
@@ -121,10 +107,6 @@ pub const forward_model = struct {
         pub const PreparedOpticalState = root.PreparedOpticalState;
         pub const prepare = root.prepare;
 
-        // layout(64-bit):
-        //   size: 0 B, align: 1 B
-        //   field storage: 0 B; padding: 0 B (0 bits)
-        //   footprint: no runtime field storage; namespace/type declarations only
         pub const shared = struct {
             pub const phase_functions = @import("forward_model/optical_properties/shared/phase_functions.zig");
             pub const band_means = @import("forward_model/optical_properties/shared/band_means.zig");
@@ -132,10 +114,6 @@ pub const forward_model = struct {
         };
     };
 
-    // layout(64-bit):
-    //   size: 0 B, align: 1 B
-    //   field storage: 0 B; padding: 0 B (0 bits)
-    //   footprint: no runtime field storage; namespace/type declarations only
     pub const instrument_grid = struct {
         const root = @import("forward_model/instrument_grid/root.zig");
 
@@ -145,6 +123,7 @@ pub const forward_model = struct {
         pub const forward_input = root.forward_input;
         pub const spectral_eval = root.spectral_eval;
         pub const simulate = root.simulate;
+        pub const wavelength_plan = @import("forward_model/instrument_grid/grid_calculation/wavelength_plan.zig");
 
         pub const reflectance_export_name = root.reflectance_export_name;
         pub const fitted_reflectance_export_name = root.fitted_reflectance_export_name;
@@ -160,10 +139,6 @@ pub const forward_model = struct {
         pub const warmProductWorkspace = root.warmProductWorkspace;
         pub const spectral_forward = @import("forward_model/instrument_grid/grid_calculation/spectral_forward.zig");
 
-        // layout(64-bit):
-        //   size: 0 B, align: 1 B
-        //   field storage: 0 B; padding: 0 B (0 bits)
-        //   footprint: no runtime field storage; namespace/type declarations only
         pub const spectral_math = struct {
             pub const calibration = @import("forward_model/instrument_grid/spectral_math/calibration.zig");
             pub const convolution = @import("forward_model/instrument_grid/spectral_math/convolution.zig");
@@ -171,10 +146,6 @@ pub const forward_model = struct {
         };
     };
 
-    // layout(64-bit):
-    //   size: 0 B, align: 1 B
-    //   field storage: 0 B; padding: 0 B (0 bits)
-    //   footprint: no runtime field storage; namespace/type declarations only
     pub const radiative_transfer = struct {
         const root = @import("forward_model/radiative_transfer/root.zig");
 
@@ -204,7 +175,6 @@ pub const forward_model = struct {
         pub const sourceInterfaceFromLayers = root.sourceInterfaceFromLayers;
         pub const fillSourceInterfacesFromLayers = root.fillSourceInterfacesFromLayers;
 
-        pub const derivatives = @import("forward_model/radiative_transfer/derivatives.zig");
         pub const labos = root.labos;
         pub const labos_basis = @import("forward_model/radiative_transfer/labos/basis.zig");
         pub const labos_layers = @import("forward_model/radiative_transfer/labos/layers.zig");
@@ -217,10 +187,6 @@ pub const forward_model = struct {
     pub const instrument_types = @import("forward_model/implementations/instrument/types.zig");
 };
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const output = struct {
     pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
     pub const o2_line_contributions = @import("output/o2_line_contributions.zig");

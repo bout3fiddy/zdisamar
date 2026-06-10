@@ -7,13 +7,46 @@ const assets = @import("assets.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
+// selection.zig ---------------------------------------------------------------------------------------------|
+// Scene-to-reference selection rules used before optical preparation and LUT generation. This file answers   |
+// which reference rows a Scene is allowed to use; assets.zig performs concrete loads/clones and workflows.zig|
+// may mutate a working Scene copy after this policy has selected the inputs.                                 |
+//                                                                                                            |
+// call routes                                                                                                |
+//   bundled/load.zig calls loadContinuumForScene, loadSpectroscopyForScene, and                              |
+//   loadCollisionInducedAbsorptionForScene while hydrating the Data owner used by prepare().                 |
+//   bundled/workflows.zig calls sampleSceneWavelengthsOwned only for generated LUT modes that need support   |
+//   wavelengths shaped like the source scene.                                                                |
+//                                                                                                            |
+// selection order                                                                                            |
+//   continuum   : resolved cross-section requests are accepted; unresolved cross-section requests reject;    |
+//                 otherwise an owned zero-continuum table covers the scene spectral span.                    |
+//   spectroscopy: resolved scene line list wins; explicit unresolved bindings reject; bundled O2 A defaults  |
+//                 load only for O2 A line-by-line requests overlapping the bundled line-list range.          |
+//   O2-O2 CIA   : resolved scene CIA wins; explicit unresolved CIA bindings reject; operational LUT support  |
+//                 suppresses the sidecar unless the scene is currently generating that LUT.                  |
+//   wavelengths : generated LUTs prefer high-resolution LUT sampling, then measured wavelengths, then a      |
+//                 uniform scene grid from spectral_grid start/end/sample_count.                              |
+//                                                                                                            |
+// failure boundary                                                                                           |
+//   If the scene explicitly asks for an asset binding, this file either returns that resolved asset or       |
+//   rejects the request. Bundled defaults are only for absent bindings on supported O2 A default paths.      |
+//   Operational O2-O2 LUT support suppresses the bundled CIA sidecar unless the current workflow is          |
+//   generating the operational LUT and therefore needs the source table.                                     |
+//                                                                                                            |
+// memory and ownership                                                                                       |
+//   Selectors may allocate owned tables or wavelength arrays for setup code. They do not parse files, run    |
+//   the RTM, or retain hidden global state; callers own every returned buffer and deinitialize it. The       |
+//   wavelength support helper returns owned f64 rows and leaves the source Scene borrowed.                   |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
     if (requestsUnresolvedCrossSectionSpectroscopy(scene)) {
         return error.UnsupportedSpectroscopyConfiguration;
     }
-    // UNITS:
-    //   The fallback table preserves the scene's spectral grid in nanometers while keeping the
-    //   continuum coefficient identically zero.
+
+    // The fallback table keeps the scene spectral grid in nanometers and leaves the continuum coefficient at
+    // exactly zero.
     return assets.zeroContinuumTable(allocator, scene.spectral_grid.start_nm, scene.spectral_grid.end_nm);
 }
 
@@ -21,10 +54,10 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
     if (try assets.cloneResolvedSpectroscopyLineList(allocator, scene)) |line_list| {
         return line_list;
     }
+
     if (assets.hasExplicitSpectroscopyBindings(scene)) {
-        // GOTCHA:
-        //   Explicit asset bindings must resolve; otherwise a missing asset would silently mask a
-        //   configuration problem if we fell back to bundled defaults here.
+
+        // Explicit asset bindings must resolve. Falling back here would hide a broken scene configuration.
         return error.UnresolvedSpectroscopyBinding;
     }
 
@@ -51,11 +84,13 @@ fn requestsLineByLineSpectroscopy(scene: *const Scene) bool {
 fn requestsUnresolvedCrossSectionSpectroscopy(scene: *const Scene) bool {
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != .cross_sections) continue;
+
         switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
             .xsec_table, .xsec_lut => continue,
             .line_abs, .none => return true,
         }
     }
+
     return false;
 }
 
@@ -66,20 +101,25 @@ pub fn loadCollisionInducedAbsorptionForScene(
     const requests_explicit_cia = assets.sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
     const generating_o2o2_lut = requests_explicit_cia and scene.lut_controls.xsec.mode == .generate;
     const has_explicit_cia_bindings = assets.hasExplicitCiaBindings(scene);
+
     if (requests_explicit_cia) {
         if (assets.resolvedCollisionInducedAbsorptionTable(scene)) |table| {
             return try table.clone(allocator);
         }
     }
+
     if (has_explicit_cia_bindings) {
-        // GOTCHA:
-        //   Explicit CIA bindings must be materialized or the scene configuration is incomplete.
+
+        // Explicit CIA bindings must be materialized or the scene configuration is incomplete.
         return error.UnresolvedCollisionInducedAbsorptionBinding;
     }
-    if (scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled() and !generating_o2o2_lut) {
-        // DECISION:
-        //   The operational LUT takes precedence over the bundled O2-O2 CIA sidecar to preserve
-        //   the runtime control path expected by the scene configuration.
+
+    const uses_operational_o2o2_lut =
+        scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled();
+    if (uses_operational_o2o2_lut and !generating_o2o2_lut) {
+
+        // The operational LUT takes precedence over the bundled O2-O2 CIA sidecar because that is the runtime
+        // control path requested by the scene.
         return null;
     }
 
@@ -93,6 +133,25 @@ pub fn loadCollisionInducedAbsorptionForScene(
 }
 
 pub fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64 {
+    // sampleSceneWavelengthsOwned ---------------------------------------------------------------------------|
+    // Build the wavelength support used while generating operational O2 or O2-O2 LUTs from the source scene. |
+    //                                                                                                        |
+    // call path                                                                                              |
+    //   workflows.zig calls this only for .generate LUT modes before replacing the working scene LUT handle. |
+    //                                                                                                        |
+    // route order                                                                                            |
+    //   1. high-resolution LUT sampling expands nominal bounds by the instrument response half-span          |
+    //   2. measured-channel scenes clone the measured wavelength list exactly                                |
+    //   3. ordinary scenes build a uniform grid from spectral_grid start/end/sample_count                    |
+    //                                                                                                        |
+    // ownership                                                                                              |
+    //   The returned slice is owned by the caller and freed after the generated LUT is built. The source     |
+    //   Scene is borrowed and is not mutated here.                                                           |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   lambda_i = start_nm + i * (end_nm - start_nm) / (sample_count - 1)                                   |
+    // -------------------------------------------------------------------------------------------------------|
+
     const support = scene.observation_model.primaryOperationalBandSupport();
     const nominal_bounds = scene.lutNominalWavelengthBounds();
     const support_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
@@ -132,6 +191,20 @@ fn uniformWavelengthGridOwned(
     end_nm: f64,
     step_nm: f64,
 ) ![]f64 {
+    // uniformWavelengthGridOwned ----------------------------------------------------------------------------|
+    // Allocate an inclusive uniform grid for high-resolution LUT sampling.                                   |
+    //                                                                                                        |
+    // boundary                                                                                               |
+    //   Invalid spans or non-positive steps are rejected before LUT generation can allocate empty or         |
+    //   backwards support rows.                                                                              |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   interval_count = ceil((end_nm - start_nm) / step_nm - 1.0e-12)                                       |
+    //   lambda_i       = min(start_nm + i * step_nm, end_nm)                                                 |
+    //                                                                                                        |
+    // The small epsilon keeps an exact multiple of step_nm from gaining one extra endpoint from roundoff.    |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (!(step_nm > 0.0) or !std.math.isFinite(start_nm) or !std.math.isFinite(end_nm) or end_nm < start_nm) {
         return error.InvalidRequest;
     }

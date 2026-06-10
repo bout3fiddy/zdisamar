@@ -174,6 +174,18 @@ Write formulas like a person will read them:
 Box structs when memory shape matters. Include the struct in the box. Show small
 memory slots, unused bits, and footprint in B and KiB.
 
+Use compiler-backed numbers, not hand arithmetic. Check `@sizeOf`, `@alignOf`,
+and `@offsetOf` for the target build. Regular Zig structs may be reordered by
+the compiler, so the `memory` rows should show actual storage order rather than
+source declaration order. If build options change the layout, name the variant
+and show the changed size or moved fields.
+
+Keep referenced storage separate from the struct size. Slices, pointers,
+hash maps, array lists, and owned plans carry out-of-line storage; the box
+should say whether that storage is borrowed, owned, or retained elsewhere.
+Count trailing padding separately from bool-storage slack when a `bool` occupies
+only one bit of a stored byte.
+
 ```zig
 // Result -----------------------------------------------------------------------------------------------------|
 // Stores one solve before it is copied into the public output.                                                |

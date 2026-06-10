@@ -7,43 +7,98 @@ pub const Error = error{
     InvalidExplicitSamples,
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: start_nm=8 B, end_nm=8 B, sample_count=4 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count
+// grid.zig --------------------------------------------------------------------------------------------------------------|
+// Wavelength-axis helpers for instrument-grid output rows. This file turns the public uniform spectral grid and          |
+// optional measured-channel wavelength table into one addressable nominal axis for simulation.                           |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   simulate.zig builds a ResolvedAxis before wavelength sampling, summary, and product runs.                            |
+//   wavelength_sampling.zig uses sampleAt to assign nominal rows and integration support wavelengths.                    |
+//   tests cover native uniform grids, measured-channel override rows, and strict measured-wavelength ordering.           |
+//                                                                                                                        |
+// main paths                                                                                                             |
+//   SpectralGrid.sampleAt -> uniform native grid address                                                                 |
+//   ResolvedAxis.sampleAt -> explicit measured wavelength when present, otherwise uniform grid                           |
+//                                                                                                                        |
+// contract                                                                                                               |
+//   SpectralGrid is endpoint-inclusive: index 0 is start_nm and index sample_count - 1 is end_nm.                        |
+//   Measured-channel wavelengths replace the uniform formula only when the explicit table has exactly one value per      |
+//   output row and is finite, strictly increasing, and non-empty.                                                        |
+//                                                                                                                        |
+// memory                                                                                                                 |
+//   SpectralGrid is a 24 B value. ResolvedAxis is a 40 B value that borrows the optional measured-wavelength slice;      |
+//   it never owns spectral assets or product buffers.                                                                    |
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// SpectralGrid ----------------------------------------------------------------------------------------------------------|
+// Uniform output wavelength grid in nm. sample_count includes both endpoints.                                            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] start_nm     : f64                                                                                            |
+// [ 8..15] end_nm       : f64                                                                                            |
+// [16..19] sample_count : u32                                                                                            |
+// [20..23] padding      : 4 B                                                                                            |
+//                                                                                                                        |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                               |
+// footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count                                 |
 pub const SpectralGrid = struct {
     start_nm: f64,
     end_nm: f64,
     sample_count: u32,
 
     pub fn validate(self: SpectralGrid) Error!void {
+        // SpectralGrid.validate -----------------------------------------------------------------------------------------|
+        // Reject grids that cannot define a positive finite step between two endpoints.                                  |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         if (self.sample_count < 2) return Error.InvalidSampleCount;
         if (self.end_nm <= self.start_nm) return Error.InvalidBounds;
     }
 
     pub fn sampleAt(self: SpectralGrid, index: u32) Error!f64 {
+        // SpectralGrid.sampleAt -----------------------------------------------------------------------------------------|
+        // Return the wavelength for a uniform endpoint-inclusive grid index.                                             |
+        //                                                                                                                |
+        // math                                                                                                           |
+        //   lambda_i = start_nm + i * (end_nm - start_nm) / (sample_count - 1)                                           |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         try self.validate();
         if (index >= self.sample_count) return Error.IndexOutOfRange;
-        // math: lambda_i = start_nm + i * (end_nm - start_nm) / (sample_count - 1)
+
         const step = (self.end_nm - self.start_nm) / @as(f64, @floatFromInt(self.sample_count - 1));
         return self.start_nm + step * @as(f64, @floatFromInt(index));
     }
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: base=24 B, explicit_wavelengths_nm=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: explicit_wavelengths_nm carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// ResolvedAxis ----------------------------------------------------------------------------------------------------------|
+// Output wavelength axis after measured-channel input has been resolved. Explicit samples override the base              |
+// grid but must have exactly the same row count, so downstream product buffers keep one shared sample_count.             |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 40 B (0.039 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..23] base                    : SpectralGrid                                                                        |
+// [24..39] explicit_wavelengths_nm : []const f64                                                                         |
+//                                                                                                                        |
+// explicit_wavelengths_nm references external storage and is not included in the 40 B struct size.                       |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above                               |
 pub const ResolvedAxis = struct {
     base: SpectralGrid,
     explicit_wavelengths_nm: []const f64 = &.{},
 
     pub fn validate(self: ResolvedAxis) Error!void {
+        // ResolvedAxis.validate -----------------------------------------------------------------------------------------|
+        // Validate the base grid and, when measured wavelengths are present, require a strict one-to-one                 |
+        // replacement for each output row.                                                                               |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         try self.base.validate();
         if (self.explicit_wavelengths_nm.len == 0) return;
         if (self.explicit_wavelengths_nm.len != self.base.sample_count) return Error.InvalidExplicitSamples;
@@ -51,13 +106,24 @@ pub const ResolvedAxis = struct {
     }
 
     pub fn sampleAt(self: ResolvedAxis, index: u32) Error!f64 {
+        // ResolvedAxis.sampleAt -----------------------------------------------------------------------------------------|
+        // Resolve one output wavelength. Measured-channel scenes use the explicit wavelength table; native               |
+        // scenes fall back to the uniform SpectralGrid formula.                                                          |
+        // ---------------------------------------------------------------------------------------------------------------|
+
         try self.validate();
         if (self.explicit_wavelengths_nm.len != 0) return sampleAtExplicit(self.explicit_wavelengths_nm, index);
         return self.base.sampleAt(index);
     }
 };
+// -----------------------------------------------------------------------------------------------------------------------|
 
 pub fn validateExplicitSamples(wavelengths_nm: []const f64) Error!void {
+    // validateExplicitSamples -------------------------------------------------------------------------------------------|
+    // Check measured-channel wavelengths before they are used as output-grid addresses. Strictly increasing              |
+    // finite samples keep interpolation, cache keys, and product ordering unambiguous.                                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     if (wavelengths_nm.len == 0) return error.InvalidExplicitSamples;
 
     var previous: ?f64 = null;
@@ -71,6 +137,11 @@ pub fn validateExplicitSamples(wavelengths_nm: []const f64) Error!void {
 }
 
 pub fn sampleAtExplicit(wavelengths_nm: []const f64, index: u32) Error!f64 {
+    // sampleAtExplicit --------------------------------------------------------------------------------------------------|
+    // Return one already-validated measured-channel wavelength. This helper still validates its input so                 |
+    // direct test and internal call sites fail before reading an invalid index.                                          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     try validateExplicitSamples(wavelengths_nm);
     if (index >= wavelengths_nm.len) return error.IndexOutOfRange;
     return wavelengths_nm[index];

@@ -5,30 +5,42 @@ const common = @import("../root.zig");
 const math = std.math;
 
 // reflectance.zig --------------------------------------------------------------------------------------------|
-// Converts LABOS order fields into one Fourier reflectance term, then builds aerosol Jacobian weights.        |
+// Converts LABOS order fields into one Fourier reflectance term and aerosol Jacobian weights.                 |
 //                                                                                                             |
-// used by                                                                                                     |
-//   execute.zig calls this after orders.zig has produced UD_fc and optional UDsumLocal_fc                     |
-//   root.zig exports the public reflectance and Fourier-bound helpers                                         |
+// caller route                                                                                                |
+//   execute.zig builds layer matrices, runs scattering orders, and then calls this file once per retained     |
+//   Fourier term. The non-integrated route reads the top-of-atmosphere U field directly. The integrated       |
+//   source route combines UD_fc, optional UDsumLocal_fc, prepared source interfaces, and RTM quadrature       |
+//   rows into rho_m before execute.zig applies the Fourier weight and accumulates total reflectance.          |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   calcReflectance                                                                                           |
-//     -> non-integrated rtm_config; read top-of-atmosphere U field directly                                   |
+// public paths                                                                                                |
+//   calcReflectance                         : non-integrated rho_m from top level U                           |
+//   calcIntegratedReflectanceWithBasis      : source integral plus zero-Fourier direct surface/cloud term     |
+//   calcAerosolDerivativeWeightingWithBasis : paired aerosol optical-depth and layer-pressure weighting       |
+//   calcAerosolOpticalDepthWeightingWithBasis / calcAerosolLayerPressureShiftWeightingWithBasis               |
+//                                            : single-state weighting helpers used when only one tangent is   |
+//                                              requested                                                      |
+//   totalScatteringOpticalDepth             : layer scattering total used before order/Fourier decisions      |
+//   resolvedFourierMax / resolvedPhaseCoefficientMax : upper bounds for LABOS loop pruning                    |
 //                                                                                                             |
-//   calcIntegratedReflectanceWithBasis                                                                        |
-//     -> integrate level source terms into rho_m                                                              |
-//     -> optional phase-row reuse from execute.zig workspace                                                  |
-//     -> zero-Fourier surface/cloud direct term                                                               |
+// row contracts                                                                                               |
+//   layers            : []LayerInput from optical preparation. Each 176 B row carries optical-depth totals,   |
+//                       Jacobian vectors, direction cosines, and phase view for the same transport layer.     |
+//   rtm_quadrature    : optional one-cache-line RtmQuadratureLevel rows for explicit source integration.      |
+//   source_interfaces : optional SourceInterfaceInput rows for fallback interface weighting.                  |
+//   UD_fc/UDsumLocal_fc: LABOS radiation fields from orders.zig; this file only reads them.                   |
 //                                                                                                             |
-//   calcAerosolDerivativeWeightingWithBasis                                                                   |
-//     -> paired aerosol optical-depth and layer-pressure weighting                                            |
-//     -> shared phase-row cache when the active aerosol interval allows it                                    |
+// layout reads                                                                                                |
+//   The row-scan helpers below are intentional setup/weighting scans over the transport-layer row slice.      |
+//   totalScatteringOpticalDepth reads LayerInput.scattering_optical_depth at [48..55].                        |
+//   aerosolSingleScatteringAlbedo reads aerosol_optical_depth at [24..31] and aerosol_scattering at           |
+//   [32..39]. Both use pointer capture, so no 176 B row is copied. LayerInput remains the shared row passed   |
+//   through orders, reflectance weighting, and Jacobian weighting.                                            |
 //                                                                                                             |
-//   calcAerosolOpticalDepthWeightingWithBasis                                                                 |
-//     -> aerosol optical-depth weighting only                                                                 |
-//                                                                                                             |
-//   calcAerosolLayerPressureShiftWeightingWithBasis                                                           |
-//     -> aerosol layer-pressure weighting only                                                                |
+// hot path                                                                                                    |
+//   Runs inside the Fourier/order solve for every high-resolution wavelength. The caller supplies caches and  |
+//   workspaces; this file does not allocate. PhaseRowCache is a 2408 B inline row cache that avoids           |
+//   rebuilding Zplus/Zmin rows for every stream/view/solar access when a whole Fourier term can reuse them.   |
 //                                                                                                             |
 // reference names                                                                                             |
 //   rho_m          : refl_fc before execute.zig applies the Fourier weight                                    |
@@ -941,7 +953,15 @@ pub fn fillAdjacentLayerPhaseMaxIndices(
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     // totalScatteringOpticalDepth ----------------------------------------------------------------------------|
-    // Sum positive scattering optical depth across all layers.                                                |
+    // Sum positive layer scattering optical depth for the LABOS order/Fourier decisions.                      |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   execute.zig uses this before ordersScat to choose the scattering-order cap.                           |
+    //   root.zig also exports it for callers that need the same transport-layer total.                        |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   LayerInput is a 176 B transport row. This scan reads scattering_optical_depth at [48..55] by          |
+    //   pointer, so rows are not copied. The same layer slice is immediately consumed by LABOS transport.     |
     //                                                                                                         |
     // math                                                                                                    |
     //   total scattering optical depth = sum(max(layer scattering optical depth, 0))                          |
@@ -1403,7 +1423,15 @@ fn activeAerosolInteriorBounds(
 
 fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
     // aerosolSingleScatteringAlbedo --------------------------------------------------------------------------|
-    // Layer-total aerosol SSA used to blend scattering and absorption weighting.                              |
+    // Collapse layer aerosol extinction and aerosol scattering into one effective aerosol SSA.                |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   Aerosol Jacobian weighting calls this before optical-depth and pressure contributions are split.      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   LayerInput is a 176 B transport row. This scan reads aerosol_optical_depth at [24..31] and            |
+    //   aerosol_scattering_optical_depth at [32..39] by pointer, so rows are not copied. The scan stays on    |
+    //   the transport layer slice, so weighting uses the rows that produced reflectance.                      |
     //                                                                                                         |
     // math                                                                                                    |
     //   aerosol SSA = aerosol scattering optical depth / aerosol optical depth                                |
@@ -1628,7 +1656,7 @@ fn interfaceWeightingFromPhaseRows(
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : active aerosol interfaces in paired derivative rtm_config                                  |
-    //   memory   : reuses PhaseRowCache instead of rebuilding Zplus/Zmin rows                                 |
+    //   memory   : reuses PhaseRowCache for Zplus/Zmin rows                                                   |
     //                                                                                                         |
     // math                                                                                                    |
     //   scattering coefficient weighting = scattering source weighting + absorption weighting                 |

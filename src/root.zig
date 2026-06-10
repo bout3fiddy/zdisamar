@@ -11,6 +11,29 @@ const radiative_transfer = @import("forward_model/radiative_transfer/root.zig");
 const measurement = @import("forward_model/instrument_grid/root.zig");
 pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Public Zig module root for the O2 A forward model, diagnostics, and retrieval entry points.                 |
+//                                                                                                             |
+// called by                                                                                                   |
+//   build.zig exposes this file as the zdisamar module                                                        |
+//   src/api/c.zig owns the C/Python boundary and converts external handles into these public calls            |
+//   validation CLIs and Zig tests import zdisamar directly                                                    |
+//                                                                                                             |
+// public flow                                                                                                 |
+//   defaultO2AInput / parseO2AInputJson / renderDefaultO2AInputJson                                           |
+//     -> prepareO2A or prepare                                                                                |
+//        -> runO2A / runO2AWithSessionStorage / run                                                           |
+//           -> output tables, generated spectra, diagnostic rows, and optional OE results                     |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file is a narrow facade. It names stable public types, forwards preparation and run calls to the     |
+//   O2 A/input/forward-model modules, and keeps loading/parsing/report-writing out of the RTM compute path.   |
+//   Tests cover the facade export set so non-public helpers stay behind internal and test routers.            |
+//                                                                                                             |
+// memory                                                                                                      |
+//   PreparedInput embeds the input, reference data, optical state, and product workspace owner. Deinit order  |
+//   is storage -> optical properties -> reference data so borrowed buffers are released after their users.    |
+// ------------------------------------------------------------------------------------------------------------|
 pub const Input = @import("input/Scene.zig").Scene;
 pub const O2AInput = o2a_reference.O2AInput;
 pub const ReferenceData = bundled_data.Data;
@@ -31,13 +54,25 @@ pub const RadiativeTransferPerformanceThresholds = radiative_transfer.RadiativeT
 pub const RadiativeTransferControls = radiative_transfer.RadiativeTransferControls;
 pub const RadiativeTransferJacobian = radiative_transfer.Jacobian;
 
-// layout(64-bit):
-//   size: 7392 B, align: 8 B
-//   field storage: input=2680 B, reference_data=3040 B, optical_properties=1056 B, storage=616 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 116 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 7392 B (7.219 KiB); total = per instance * live instance count
+// PreparedInput ----------------------------------------------------------------------------------------------|
+// Public owner bundle returned by prepare().                                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 4368 B (4.266 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0.. 671] input              : Input                                                                     |
+// [ 672..1679] reference_data     : ReferenceData                                                             |
+// [1680..3815] optical_properties: OpticalProperties                                                          |
+// [3816..4367] storage            : CalculationStorage                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   Embedded owners retain their own buffers; this row owns teardown order.                                   |
+//   Backing arrays stay inside those embedded owners.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 69 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 4368 B (4.266 KiB); total also includes referenced storage in each embedded owner |
 pub const PreparedInput = struct {
     input: Input,
     reference_data: ReferenceData,
@@ -51,6 +86,7 @@ pub const PreparedInput = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const o2a = o2a_reference;
 pub const report = report_json;
@@ -67,7 +103,7 @@ pub fn prepare(
     var reference_data = try bundled_data.load(allocator, input);
     errdefer reference_data.deinit(allocator);
 
-    var optical_properties = try bundled_data.buildOptics(allocator, &reference_data.working_case, &reference_data);
+    var optical_properties = try bundled_data.buildOptics(allocator, &reference_data);
     errdefer optical_properties.deinit(allocator);
 
     return .{
@@ -98,106 +134,16 @@ pub fn run(
     return view.toOwned(allocator);
 }
 
-pub fn defaultO2AInput() O2AInput {
-    return o2a_reference.defaultInput();
-}
-
-pub fn parseO2AInputJson(
-    allocator: std.mem.Allocator,
-    json: []const u8,
-) !std.json.Parsed(O2AInput) {
-    return o2a_reference.parseInputJson(allocator, json);
-}
-
-pub fn renderDefaultO2AInputJson(allocator: std.mem.Allocator) ![]u8 {
-    return o2a_reference.renderDefaultInputJson(allocator);
-}
-
-pub fn prepareO2A(
-    allocator: std.mem.Allocator,
-    input: *const O2AInput,
-) !PreparedO2A {
-    return o2a_reference.prepareO2A(allocator, input);
-}
-
-pub fn runO2A(
-    allocator: std.mem.Allocator,
-    prepared: *const PreparedO2A,
-) !Output {
-    return o2a_reference.runO2A(allocator, prepared);
-}
-
-pub fn runO2AWithSessionStorage(
-    allocator: std.mem.Allocator,
-    storage: *O2ASessionStorage,
-    prepared: *const PreparedO2A,
-) !Output {
-    return o2a_reference.runO2AWithSessionStorage(allocator, storage, prepared);
-}
-
-pub fn warmO2ASessionStorage(
-    allocator: std.mem.Allocator,
-    storage: *O2ASessionStorage,
-    prepared: *const PreparedO2A,
-) !void {
-    return o2a_reference.warmO2ASessionStorage(allocator, storage, prepared);
-}
-
-pub fn buildAtmosphericBudget(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-) ![]AtmosphericBudgetRow {
-    return atmospheric_budget.build(allocator, input, optical_properties, wavelengths_nm);
-}
-
-pub fn buildO2LineContributions(
-    allocator: std.mem.Allocator,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-    max_rows: usize,
-) !O2LineContributionTable {
-    return o2_line_contributions.build(allocator, optical_properties, wavelengths_nm, max_rows);
-}
-
-pub fn buildInstrumentResponse(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-    channel_mask: u32,
-) ![]InstrumentResponseRow {
-    return instrument_response.build(allocator, input, optical_properties, wavelengths_nm, channel_mask);
-}
-
-pub fn buildO2O2CIADiagnostics(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-) ![]O2O2CIARow {
-    return o2_o2_cia.build(allocator, input, optical_properties, wavelengths_nm);
-}
-
-pub fn buildRadiativeTransferDiagnostics(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    rtm_config: radiative_transfer.SolveConfig,
-    wavelengths_nm: []const f64,
-    spectrum_view: ?RadiativeTransferSpectrumView,
-) ![]RadiativeTransferDiagnosticRow {
-    return radiative_transfer_diagnostics.build(
-        allocator,
-        input,
-        optical_properties,
-        rtm_config,
-        wavelengths_nm,
-        spectrum_view,
-    );
-}
-
-pub fn writeReport(summary_path: []const u8, summary: DiagnosticReport) !void {
-    return report_json.writeSummaryReport(summary_path, summary);
-}
+pub const defaultO2AInput = o2a_reference.defaultInput;
+pub const parseO2AInputJson = o2a_reference.parseInputJson;
+pub const renderDefaultO2AInputJson = o2a_reference.renderDefaultInputJson;
+pub const prepareO2A = o2a_reference.prepareO2A;
+pub const runO2A = o2a_reference.runO2A;
+pub const runO2AWithSessionStorage = o2a_reference.runO2AWithSessionStorage;
+pub const warmO2ASessionStorage = o2a_reference.warmO2ASessionStorage;
+pub const buildAtmosphericBudget = atmospheric_budget.build;
+pub const buildO2LineContributions = o2_line_contributions.build;
+pub const buildInstrumentResponse = instrument_response.build;
+pub const buildO2O2CIADiagnostics = o2_o2_cia.build;
+pub const buildRadiativeTransferDiagnostics = radiative_transfer_diagnostics.build;
+pub const writeReport = report_json.writeSummaryReport;

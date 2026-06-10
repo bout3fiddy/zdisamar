@@ -1928,9 +1928,6 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
             thresholds = case.radiative_transfer.performance_thresholds
             assert thresholds.aerosol_tangent_order_cap is None
-            assert not thresholds.qzero_rd_product_suppression
-            assert not thresholds.qzero_tu_product_suppression
-            assert not thresholds.qzero_td_product_suppression
             assert math.isclose(thresholds.fourier_tail_reflectance_epsilon, 3.0e-14)
             fast_thresholds = o2a.RadiativeTransferPerformanceThresholds.fast()
             assert fast_thresholds.fourier_order_cap == 5
@@ -1938,9 +1935,6 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert math.isclose(fast_thresholds.fourier_tail_reflectance_epsilon, 1.0e-11)
             assert math.isclose(fast_thresholds.threshold_doubl, 3.0e-5)
             assert math.isclose(fast_thresholds.threshold_mul, thresholds.threshold_mul)
-            assert not fast_thresholds.qzero_rd_product_suppression
-            assert not fast_thresholds.qzero_tu_product_suppression
-            assert not fast_thresholds.qzero_td_product_suppression
             validation_thresholds = copy.deepcopy(thresholds)
             validation_thresholds.phase_function_truncation_threshold = 1.0e-6
             validation_fast_thresholds = validation_thresholds.with_fast_mode()
@@ -1961,9 +1955,6 @@ def assert_reference_data_and_rtm_tables() -> None:
                 validation_fast_thresholds.phase_function_truncation_threshold,
                 validation_thresholds.phase_function_truncation_threshold,
             )
-            assert not validation_fast_thresholds.qzero_rd_product_suppression
-            assert not validation_fast_thresholds.qzero_tu_product_suppression
-            assert not validation_fast_thresholds.qzero_td_product_suppression
             fast_case = copy.deepcopy(case)
             fast_case.optimisation.fastmode.enabled = True
             assert fast_case is not case
@@ -2087,9 +2078,6 @@ def assert_reference_data_and_rtm_tables() -> None:
                 3.0e-5,
             )
             fast_thresholds = fast_rtm_case.radiative_transfer.performance_thresholds
-            assert not fast_thresholds.qzero_rd_product_suppression
-            assert not fast_thresholds.qzero_tu_product_suppression
-            assert not fast_thresholds.qzero_td_product_suppression
             fast_grid = fast_rtm_case.instrument_response.adaptive_reference_grid
             assert fast_grid["points_per_fwhm"] == 28
             assert fast_grid["strong_line_min_divisions"] == 6

@@ -22,6 +22,45 @@ pub const max_iteration_count: usize = 1000;
 pub const no_lower_bound = -std.math.inf(f64);
 pub const no_upper_bound = std.math.inf(f64);
 
+// retrieval.zig ---------------------------------------------------------------------------------------------|
+// Native O2 A optimal-estimation workflow and retained result owners.                                        |
+//                                                                                                            |
+// called by                                                                                                  |
+//   src/root.zig exposes this file as zdisamar.optimal_estimation.                                           |
+//   src/api/c.zig is the external C/Python boundary: it normalizes measurement slices, builds StateSpec      |
+//   rows, creates pressure-profile spline scratch, and stores returned Result/BatchResult handles.           |
+//   src/internal.zig imports this file for focused tests without widening the public facade.                 |
+//                                                                                                            |
+// public routes                                                                                              |
+//   runO2A              : one full solve from a resolved O2 A case to an owned Result.                       |
+//   runO2ABatch         : repeated starts over one state template, writing run-major SoA batch outputs.      |
+//   runO2AFastmodeBatch : fast-stage batch solve, then a full-correction batch seeded from fast states.      |
+//   correctPreparedO2A  : one retained correction solve against an already prepared O2 A forward case.       |
+//   buildPressureProfile/freePressureProfile build the spline side data used by pressure-state retrievals.   |
+//                                                                                                            |
+// input and preparation flow                                                                                 |
+//   StateSpec rows describe the OE state vector. RetrievalPreparedCase copies the resolved O2 A input into   |
+//   mutable scene/interval storage, owns the measurement workspace, captures reusable spectroscopy profile   |
+//   arrays after the first preparation, and borrows the caller-owned ProductStorage used for RTM products.   |
+//                                                                                                            |
+// iteration flow                                                                                             |
+//   runPreparedO2ACore initializes StateSpace, enables semi-analytical Jacobians, evaluates RTM/Jacobian,    |
+//   streams samples into Jt * Se^-1 * J and Jt * Se^-1 * residual, solves the Rodgers transformed update,    |
+//   clamps physical bounds, records history, and converts posterior precision to covariance and              |
+//   averaging-kernel output.                                                                                 |
+//                                                                                                            |
+// memory layout model                                                                                        |
+//   Small state-space values live in fixed [max_state_count=3] vectors and matrices from algebra.zig.        |
+//   Spectral-length data stays in MeasurementWorkspace, ProductStorage, and retained output slices.          |
+//   BatchResult and FastmodeBatchResult are run-major SoA owners so C/Python views can borrow contiguous     |
+//   status, state, iteration, convergence, and history arrays until the native handle is freed.              |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Batches reuse one RetrievalPreparedCase per worker. The per-start loop mutates only state-dependent      |
+//   scene rows, then accumulateNormalSystem walks the wavelength grid once while projecting active native    |
+//   Jacobian columns into the <=3 OE state columns. Keep allocation and text/API handling outside this loop. |
+// -----------------------------------------------------------------------------------------------------------|
+
 pub const Error = error{
     EmptyMeasurement,
     InvalidMeasurement,
@@ -36,15 +75,30 @@ pub const Error = error{
     InvalidPriorCovariance,
 };
 
-// Scalar retrieval variable description passed from Python into native OE.
-// layout(64-bit):
-//   size: 104 B, align: 8 B
-//   field storage: 101 B across 9 fields; largest: pressure_altitude_profile=48 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   encoded fields: bounds use infinities for absence; an empty pressure profile means no pressure-state metadata
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: retrieval state count, currently 1..3
-//   footprint: per instance = 104 B (0.102 KiB); total = per instance * state count
+// StateSpec -------------------------------------------------------------------------------------------------|
+// Scalar retrieval variable description passed from Python and C into native OE.                             |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 104 B (0.102 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] initial                  : f64                                                                  |
+// [  8.. 15] prior                    : f64                                                                  |
+// [ 16.. 23] variance                 : f64                                                                  |
+// [ 24.. 31] lower_bound              : f64                                                                  |
+// [ 32.. 39] upper_bound              : f64                                                                  |
+// [ 40.. 47] thickness_hpa            : f64                                                                  |
+// [ 48.. 95] pressure_altitude_profile: PressureAltitudeProfile                                              |
+// [ 96.. 99] interval_index_1based    : u32                                                                  |
+// [100..100] state                    : jacobian.State                                                       |
+// [101..103] trailing padding         : 3 B                                                                  |
+//                                                                                                            |
+// encoded fields                                                                                             |
+//   bounds use +/-inf for absence. An empty pressure profile means no pressure-state metadata.               |
+//                                                                                                            |
+// unused bits: 24 padding + 0 bool-storage slack = 24 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 104 B (0.102 KiB); total = per instance * state count                            |
 pub const StateSpec = struct {
     state: jacobian.State,
     initial: f64,
@@ -56,16 +110,25 @@ pub const StateSpec = struct {
     interval_index_1based: u32 = 0,
     pressure_altitude_profile: PressureAltitudeProfile = .{},
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Pressure-altitude table used to convert native altitude tangents to hPa tangents.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: altitude_km=16 B, pressure_hpa=16 B, second=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: all fields are borrowed or workspace-owned slices; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: at most one profile per pressure-placement state
-//   footprint: per instance = 48 B (0.047 KiB); total also includes second-derivative storage
+// PressureAltitudeProfile -----------------------------------------------------------------------------------|
+// Pressure-altitude table used to convert native altitude tangents to hPa tangents.                          |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 48 B (0.047 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..15] altitude_km : []const f64                                                                         |
+// [16..31] pressure_hpa: []const f64                                                                         |
+// [32..47] second      : []const f64                                                                         |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Slices borrow caller/workspace arrays. Referenced altitude, pressure, and spline storage is out-of-line. |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 48 B (0.047 KiB); total also includes second-derivative storage                  |
 pub const PressureAltitudeProfile = struct {
     altitude_km: []const f64 = &.{},
     pressure_hpa: []const f64 = &.{},
@@ -122,16 +185,25 @@ pub const PressureAltitudeProfile = struct {
         return @exp(log_pressure);
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Long-lived measurement buffers for one retrieval.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: three slice descriptors at 16 B each; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength, reflectance, and inverse variance are dense f64 SoA buffers owned by this workspace
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one per retrieval
-//   footprint: per instance = 48 B (0.047 KiB); total also includes 3 * sample_count * 8 B
+// MeasurementWorkspace --------------------------------------------------------------------------------------|
+// Long-lived measurement buffers for one retrieval.                                                          |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 48 B (0.047 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..15] wavelength_nm: []f64                                                                              |
+// [16..31] reflectance   : []f64                                                                             |
+// [32..47] inv_variance  : []f64                                                                             |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Owns three dense f64 SoA buffers copied from caller input. Struct size excludes backing arrays.          |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 48 B (0.047 KiB); total also includes 3 * sample_count * 8 B                     |
 pub const MeasurementWorkspace = struct {
     wavelength_nm: []f64 = &.{},
     reflectance: []f64 = &.{},
@@ -181,15 +253,31 @@ pub const MeasurementWorkspace = struct {
         self.* = .{};
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Reused fixed-size state-space scratch. The spectral dimension is never stored here.
-// layout(64-bit):
-//   size: 416 B, align: 8 B
-//   field storage: vectors=128 B across 8 x [3]f64, matrices=288 B across 4 x 3x3 f64; padding: 0 B
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 7 cache line(s) at 64 B per line
-//   count: one stack value per active retrieval
-//   footprint: per instance = 416 B (0.406 KiB)
+// IterationWorkspace ----------------------------------------------------------------------------------------|
+// Reused fixed-size state-space scratch. The spectral dimension is never stored here.                        |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 480 B (0.469 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 23] sqrt_sa            : Vector                                                                     |
+// [ 24.. 47] sqrt_inv_sa        : Vector                                                                     |
+// [ 48.. 71] dx_white           : Vector                                                                     |
+// [ 72.. 95] b                  : Vector                                                                     |
+// [ 96..119] dx_trans           : Vector                                                                     |
+// [120..143] rhs_trans          : Vector                                                                     |
+// [144..167] dx_trans_new       : Vector                                                                     |
+// [168..191] dx_physical        : Vector                                                                     |
+// [192..263] g                  : Matrix                                                                     |
+// [264..335] jt_invse_j         : Matrix                                                                     |
+// [336..407] eigenvectors       : Matrix                                                                     |
+// [408..479] posterior_precision: Matrix                                                                     |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 8 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 480 B (0.469 KiB); one stack value per active retrieval                          |
 pub const IterationWorkspace = struct {
     sqrt_sa: Vector = algebra.zeroVector(),
     sqrt_inv_sa: Vector = algebra.zeroVector(),
@@ -204,16 +292,37 @@ pub const IterationWorkspace = struct {
     eigenvectors: Matrix = algebra.zeroMatrix(),
     posterior_precision: Matrix = algebra.zeroMatrix(),
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Native result storage retained behind the C result handle.
-// layout(64-bit):
-//   size: 184 B, align: 8 B
-//   field storage: counters/status=4 B, slice descriptors=176 B across 11 fields; padding: 4 B
-//   unused bits: 32 padding + 7 bool-storage slack = 39 bits
-//   out-of-line: state, posterior, and history arrays are owned contiguous f64/u8 buffers
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: one per completed retrieval result handle
-//   footprint: per instance = 184 B (0.180 KiB); total also includes referenced result buffers
+// Result ----------------------------------------------------------------------------------------------------|
+// Native result storage retained behind the C result handle.                                                 |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 184 B (0.180 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 15] state_ids                       : []jacobian.State                                              |
+// [ 16.. 31] state                           : []f64                                                         |
+// [ 32.. 47] initial_state                   : []f64                                                         |
+// [ 48.. 63] posterior_covariance            : []f64                                                         |
+// [ 64.. 79] averaging_kernel                : []f64                                                         |
+// [ 80.. 95] history_state                   : []f64                                                         |
+// [ 96..111] history_chi2                    : []f64                                                         |
+// [112..127] history_chi2_reflectance        : []f64                                                         |
+// [128..143] history_chi2_state_vector       : []f64                                                         |
+// [144..159] history_state_vector_convergence: []f64                                                         |
+// [160..175] history_snr_normal              : []u8                                                          |
+// [176..177] iteration_count                 : u16                                                           |
+// [178..178] state_count                     : u8                                                            |
+// [179..179] converged                       : bool                                                          |
+// [180..183] trailing padding                : 4 B                                                           |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Owns state, posterior, averaging-kernel, and history arrays. Struct size excludes those buffers.         |
+//                                                                                                            |
+// unused bits: 32 padding + 7 bool-storage slack = 39 bits                                                   |
+// cache span: 3 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 184 B (0.180 KiB); total also includes referenced result buffers                 |
 pub const Result = struct {
     state_count: u8 = 0,
     iteration_count: u16 = 0,
@@ -266,7 +375,30 @@ pub const Result = struct {
         self.* = .{};
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// BatchResult -----------------------------------------------------------------------------------------------|
+// Batch output owner for repeated full-physics starts.                                                       |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 104 B (0.102 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] run_count       : usize                                                                         |
+// [  8.. 15] state_count     : usize                                                                         |
+// [ 16.. 23] history_capacity: usize                                                                         |
+// [ 24.. 39] iteration_count : []usize                                                                       |
+// [ 40.. 55] converged       : []u8                                                                          |
+// [ 56.. 71] status          : []u8                                                                          |
+// [ 72.. 87] state           : []f64                                                                         |
+// [ 88..103] history_state   : []f64                                                                         |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Owns SoA result buffers sized by run_count, state_count, and history_capacity.                           |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 104 B (0.102 KiB); total also includes owned result buffers                      |
 pub const BatchResult = struct {
     run_count: usize = 0,
     state_count: usize = 0,
@@ -294,7 +426,10 @@ pub const BatchResult = struct {
         result.state = try allocator.alloc(f64, run_count * state_count);
         result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
 
-        initializeBatchOutput(result.output());
+        const batch = result.output();
+        for (0..batch.run_count) |run_index| {
+            resetBatchRun(batch, run_index, .pending);
+        }
         return result;
     }
 
@@ -322,6 +457,7 @@ pub const BatchResult = struct {
         };
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 pub const BatchRunStatus = enum(u8) {
     pending = 0,
@@ -329,6 +465,30 @@ pub const BatchRunStatus = enum(u8) {
     failed = 2,
 };
 
+// BatchOutput -----------------------------------------------------------------------------------------------|
+// Borrowed view used by batch initializers and workers.                                                      |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 120 B (0.117 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] run_count           : usize                                                                     |
+// [  8.. 15] state_count         : usize                                                                     |
+// [ 16.. 23] history_capacity    : usize                                                                     |
+// [ 24.. 31] history_stride      : usize                                                                     |
+// [ 32.. 39] history_start_offset: usize                                                                     |
+// [ 40.. 55] iteration_count     : []usize                                                                   |
+// [ 56.. 71] converged           : []u8                                                                      |
+// [ 72.. 87] status              : []u8                                                                      |
+// [ 88..103] state               : []f64                                                                     |
+// [104..119] history_state       : []f64                                                                     |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Borrows storage from BatchResult or a fastmode stage view. No backing arrays are owned here.             |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 120 B (0.117 KiB); total storage lives in the owner                              |
 const BatchOutput = struct {
     run_count: usize,
     state_count: usize,
@@ -341,12 +501,7 @@ const BatchOutput = struct {
     state: []f64,
     history_state: []f64,
 };
-
-fn initializeBatchOutput(batch: BatchOutput) void {
-    for (0..batch.run_count) |run_index| {
-        markBatchRunPending(batch, run_index);
-    }
-}
+// -----------------------------------------------------------------------------------------------------------|
 
 fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
     for (0..result.run_count) |run_index| {
@@ -368,21 +523,10 @@ fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
     }
 }
 
-fn markBatchRunPending(batch: BatchOutput, run_index: usize) void {
+fn resetBatchRun(batch: BatchOutput, run_index: usize, status: BatchRunStatus) void {
     batch.iteration_count[run_index] = 0;
     batch.converged[run_index] = 0;
-    batch.status[run_index] = @intFromEnum(BatchRunStatus.pending);
-    const state_offset = run_index * batch.state_count;
-    for (0..batch.state_count) |state_index| {
-        batch.state[state_offset + state_index] = std.math.nan(f64);
-    }
-    clearBatchRunHistory(batch, run_index);
-}
-
-fn markBatchRunFailure(batch: BatchOutput, run_index: usize) void {
-    batch.iteration_count[run_index] = 0;
-    batch.converged[run_index] = 0;
-    batch.status[run_index] = @intFromEnum(BatchRunStatus.failed);
+    batch.status[run_index] = @intFromEnum(status);
     const state_offset = run_index * batch.state_count;
     for (0..batch.state_count) |state_index| {
         batch.state[state_offset + state_index] = std.math.nan(f64);
@@ -398,6 +542,32 @@ fn clearBatchRunHistory(batch: BatchOutput, run_index: usize) void {
     }
 }
 
+// FastmodeBatchResult ---------------------------------------------------------------------------------------|
+// Batch output owner for fast-stage starts plus full-correction metadata.                                    |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 168 B (0.164 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..  7] run_count                      : usize                                                          |
+// [  8.. 15] state_count                    : usize                                                          |
+// [ 16.. 23] history_capacity               : usize                                                          |
+// [ 24.. 39] iteration_count                : []usize                                                        |
+// [ 40.. 55] converged                      : []u8                                                           |
+// [ 56.. 71] status                         : []u8                                                           |
+// [ 72.. 87] state                          : []f64                                                          |
+// [ 88..103] history_state                  : []f64                                                          |
+// [104..119] fast_stage_iteration_count     : []usize                                                        |
+// [120..135] fast_stage_converged           : []u8                                                           |
+// [136..151] full_correction_iteration_count: []usize                                                        |
+// [152..167] full_correction_converged      : []u8                                                           |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Owns SoA buffers for final state, combined history, and per-stage convergence metadata.                  |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 3 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 168 B (0.164 KiB); total also includes owned result buffers                      |
 pub const FastmodeBatchResult = struct {
     run_count: usize = 0,
     state_count: usize = 0,
@@ -457,23 +627,50 @@ pub const FastmodeBatchResult = struct {
         self.* = .{};
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// Controls --------------------------------------------------------------------------------------------------|
+// OE iteration limits and convergence thresholds supplied by the API boundary.                               |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 24 B (0.023 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] max_iterations                    : usize                                                         |
+// [ 8..15] state_vector_convergence_threshold: f64                                                           |
+// [16..23] max_change_transformed_state      : f64                                                           |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 24 B (0.023 KiB); usually passed by value                                        |
 pub const Controls = struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
     max_change_transformed_state: f64 = 1.0,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Dense state-space vectors derived once before an OE run or correction step.
-// layout(64-bit):
-//   size: 128 B, align: 8 B
-//   field storage: vectors=120 B across 5 x [3]f64, derivative_state_mask=1 B; padding: 7 B
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: one stack value per active retrieval or correction
-//   footprint: per instance = 128 B (0.125 KiB)
-//   ownership: no heap references; copied by value so the correction path reuses prepared scalar state without aliases
-//   hot-path reason: keeps state/prior/bounds/mask contiguous for the single full-physics correction solve
+// StateSpace ------------------------------------------------------------------------------------------------|
+// Dense state-space vectors derived once before an OE run or correction step.                                |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 128 B (0.125 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 23] state                : Vector                                                                   |
+// [ 24.. 47] prior                : Vector                                                                   |
+// [ 48.. 71] variance             : Vector                                                                   |
+// [ 72.. 95] lower                : Vector                                                                   |
+// [ 96..119] upper                : Vector                                                                   |
+// [120..120] derivative_state_mask: jacobian.StateMask                                                       |
+// [121..127] trailing padding    : 7 B                                                                       |
+//                                                                                                            |
+// ownership                                                                                                  |
+//   No heap references. Copied by value so correction paths reuse prepared scalar state without aliases.     |
+//                                                                                                            |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 128 B (0.125 KiB); one stack value per active retrieval or correction            |
 const StateSpace = struct {
     state: Vector,
     prior: Vector,
@@ -482,26 +679,29 @@ const StateSpace = struct {
     upper: Vector,
     derivative_state_mask: jacobian.StateMask,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Retrieval-session cache for profile spectroscopy support.
-// layout(64-bit):
-//   size: 104 B, align: 8 B
-//   field storage: borrowed=96 B, captured=1 B; padding: 7 B
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-// out-of-line: borrowed slices own first-iteration profile arrays or prepared line-state arrays; keys summarize
-// invariant spectroscopy support
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: one per retrieval, reused across all OE state evaluations
-//   footprint: per instance = 104 B (0.102 KiB); referenced arrays are captured from the first prepared optical state
-//   invariant: pressure-placement refreshes vertical-grid rows, not these profile thermodynamic rows
+// ProfilePreparationSession ---------------------------------------------------------------------------------|
+// Retrieval-session cache for profile spectroscopy support.                                                  |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 104 B (0.102 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 95] borrowed        : OpticsPrepare.BorrowedProfilePreparation                                       |
+// [96.. 96] captured        : bool                                                                           |
+// [97..103] trailing padding: 7 B                                                                            |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Captures first-iteration profile arrays and prepared line-state arrays from PreparedOpticalState.        |
+//   Pressure-placement updates rebuild vertical-grid rows, not these invariant spectroscopy profile rows.    |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 104 B (0.102 KiB); total also includes captured referenced arrays                |
 const ProfilePreparationSession = struct {
     borrowed: OpticsPrepare.BorrowedProfilePreparation = .{},
     captured: bool = false,
-
-    fn borrowedPreparation(self: *const ProfilePreparationSession) ?*const OpticsPrepare.BorrowedProfilePreparation {
-        if (!self.captured) return null;
-        return &self.borrowed;
-    }
 
     fn captureFromPrepared(
         self: *ProfilePreparationSession,
@@ -549,10 +749,39 @@ const ProfilePreparationSession = struct {
         self.* = undefined;
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Retrieval-owned preparation for one inverse problem. State evaluations still
-// rebuild the state-dependent scene and optical state, but rtm_config selection and
-// long-lived input/measurement ownership are outside the iteration loop.
+// RetrievalPreparedCase -------------------------------------------------------------------------------------|
+// Retrieval-owned preparation for one inverse problem.                                                       |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 2200 B (2.148 KiB), align: 8 B                                                                       |
+//                                                                                                            |
+// memory                                                                                                     |
+// [   0..  15] state_specs        : []const StateSpec                                                        |
+// [  16..  23] forward_storage    : *InstrumentGrid.ProductStorage                                           |
+// [  24..  71] measurement        : MeasurementWorkspace                                                     |
+// [  72.. 407] loaded_inputs      : o2a_types.LoadedVendorO2AInputs                                          |
+// [ 408..1287] mutable_input      : o2a_types.ResolvedVendorO2ACase                                          |
+// [1288..1303] mutable_intervals  : []VerticalInterval                                                       |
+// [1304..1975] scene              : Scene                                                                    |
+// [1976..2007] weak_cutoff_grid   : o2a_runtime.WeakCutoffGridCache                                          |
+// [2008..2111] profile_preparation: ProfilePreparationSession                                                |
+// [2112..2191] rtm_config         : o2a_types.SolveConfig                                                    |
+// [2192..2192] solar_rewindowed   : bool                                                                     |
+// [2193..2199] trailing padding   : 7 B                                                                      |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   State evaluations rebuild state-dependent scene/optical rows, while rtm_config selection and measurement |
+//   ownership stay outside the iteration loop.                                                               |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Owns mutable case copies, scene buffers, weak-cutoff cache, captured profile arrays, and measurement     |
+//   SoA buffers. state_specs and forward_storage are borrowed from the caller.                               |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 35 cache lines at 64 B per line                                                                |
+// footprint: per instance = 2200 B (2.148 KiB); total also includes owned referenced storage                 |
 const RetrievalPreparedCase = struct {
     state_specs: []const StateSpec,
     forward_storage: *InstrumentGrid.ProductStorage,
@@ -622,6 +851,7 @@ const RetrievalPreparedCase = struct {
         self.* = undefined;
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 pub fn runO2A(
     allocator: Allocator,
@@ -1014,6 +1244,8 @@ fn runO2ABatchRange(
         if (batch.status[run_index] != @intFromEnum(BatchRunStatus.pending)) continue;
 
         const state_offset = run_index * state_template.len;
+        const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
+            batch.state_count;
         const summary = runPreparedO2AStartSummary(
             allocator,
             prepared_case,
@@ -1023,11 +1255,11 @@ fn runO2ABatchRange(
             controls,
             run_index + 1,
             range_context,
-            batchHistoryState(batch.*, run_index),
+            batch.history_state[history_offset .. history_offset + batch.history_capacity * batch.state_count],
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => {
-                markBatchRunFailure(batch.*, run_index);
+                resetBatchRun(batch.*, run_index, .failed);
                 continue;
             },
         };
@@ -1070,19 +1302,14 @@ fn runPreparedO2AStartSummary(
     );
     Telemetry.setContext(start_context);
     defer Telemetry.setContext(previous_context);
-    return runPreparedO2ASummary(
+    return runPreparedO2ACore(
         allocator,
         prepared_case,
         run_specs_buffer[0..state_template.len],
         controls,
+        null,
         history_state,
     );
-}
-
-fn batchHistoryState(batch: BatchOutput, run_index: usize) []f64 {
-    const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
-        batch.state_count;
-    return batch.history_state[history_offset .. history_offset + batch.history_capacity * batch.state_count];
 }
 
 // Worker descriptor for one contiguous slice of a native OE start batch.
@@ -1266,16 +1493,6 @@ fn runPreparedO2A(
     return result;
 }
 
-fn runPreparedO2ASummary(
-    allocator: Allocator,
-    prepared_case: *RetrievalPreparedCase,
-    state_specs: []const StateSpec,
-    controls: Controls,
-    history_state: []f64,
-) !RunSummary {
-    return runPreparedO2ACore(allocator, prepared_case, state_specs, controls, null, history_state);
-}
-
 fn runPreparedO2ACore(
     allocator: Allocator,
     prepared_case: *RetrievalPreparedCase,
@@ -1284,6 +1501,19 @@ fn runPreparedO2ACore(
     full_result: ?*Result,
     history_state: []f64,
 ) !RunSummary {
+    // runPreparedO2ACore ------------------------------------------------------------------------------------|
+    // Runs one optimal-estimation solve over a prepared mutable O2 A case.                                   |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   repeated : once per retrieval start, and once per batch start in batch mode                          |
+    //   inner    : every OE iteration evaluates RTM/Jacobian, streams samples into Jt * Se^-1 * J, then      |
+    //              solves a max_state_count=3 linearized update                                              |
+    //   memory   : IterationWorkspace keeps fixed-size vectors/matrices on the stack; spectral arrays stay   |
+    //              in MeasurementWorkspace and ProductStorage                                                |
+    //                                                                                                        |
+    // instrumentation                                                                                        |
+    //   trace zones split total retrieval, iteration, RTM/Jacobian, normal-system, and solver-update costs.  |
+    // -------------------------------------------------------------------------------------------------------|
 
     // instrumentation: trace zone
     // captures: full optimal-estimation retrieval wall time
@@ -1601,33 +1831,49 @@ fn validateStateSpec(spec: StateSpec) !void {
     }
 }
 
-// Borrowed forward evaluation consumed immediately by the OE accumulation loop.
-// layout(64-bit):
-//   size: 328 B, align: 8 B
-//   field storage: view=320 B, solar_mu0=8 B; padding: 0 B
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: view borrows ProductStorage arrays; runtime case storage is consumed before return
-//   cache span: 6 cache line(s) at 64 B per line
-//   count: one live value inside an iteration
-//   footprint: per instance = 328 B (0.320 KiB); borrowed product buffers live in ProductStorage
+// ForwardEvaluation -----------------------------------------------------------------------------------------|
+// Borrowed forward evaluation consumed immediately by the OE accumulation loop.                              |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 256 B (0.250 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0..247] view     : InstrumentGrid.InstrumentGridProductView                                             |
+// [248..255] solar_mu0: f64                                                                                  |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   view borrows ProductStorage arrays. Runtime case storage is consumed before return.                      |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 4 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 256 B (0.250 KiB); borrowed product buffers live in ProductStorage               |
 const ForwardEvaluation = struct {
     view: InstrumentGrid.InstrumentGridProductView,
     solar_mu0: f64,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Batch-only final-state output for one start.
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: state=24 B, iteration_count=8 B, converged=1 B; padding: 7 B
-//   unused bits: 56 padding + 7 bool-storage slack = 63 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one stack value per completed batch start
-//   footprint: per instance = 40 B (0.039 KiB)
+// RunSummary ------------------------------------------------------------------------------------------------|
+// Batch-only final-state output for one start.                                                               |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 40 B (0.039 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..23] state           : Vector                                                                          |
+// [24..31] iteration_count : usize                                                                           |
+// [32..32] converged       : bool                                                                            |
+// [33..39] trailing padding: 7 B                                                                             |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 40 B (0.039 KiB); one stack value per completed batch start                      |
 const RunSummary = struct {
     state: Vector,
     iteration_count: usize,
     converged: bool,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 fn evaluateO2AState(
     allocator: Allocator,
@@ -1669,13 +1915,17 @@ fn evaluateO2AState(
         // The mutable scene is retrieval-owned. Solar rewindow support is
         // derived from the instrument grid and line-list plan, so it is
         // installed once and then reused while optical state is refreshed.
+        const borrowed_profile_preparation = if (prepared_case.profile_preparation.captured)
+            &prepared_case.profile_preparation.borrowed
+        else
+            null;
         break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
             allocator,
             &prepared_case.scene,
             &prepared_case.loaded_inputs,
             &prepared_case.weak_cutoff_grid,
             &prepared_case.solar_rewindowed,
-            prepared_case.profile_preparation.borrowedPreparation(),
+            borrowed_profile_preparation,
         );
     };
     defer prepared_optics.deinit(allocator);
@@ -1754,22 +2004,43 @@ fn writeStateToInput(
     }
 }
 
+// Accumulation ----------------------------------------------------------------------------------------------|
+// Normal-system contribution returned from one measurement stream pass.                                      |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 80 B (0.078 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] chi2_reflectance: f64                                                                             |
+// [ 8..79] jt_invse_j      : Matrix                                                                          |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 80 B (0.078 KiB); one stack return per OE iteration                              |
 const Accumulation = struct {
     chi2_reflectance: f64,
     jt_invse_j: Matrix,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
-// Per-iteration projection from active native RTM Jacobian columns into the OE state vector.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: source_offset=24 B, state_scale=24 B; padding: 0 B
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: one stack value per OE iteration
-//   footprint: per instance = 48 B (0.047 KiB)
+// JacobianProjection ----------------------------------------------------------------------------------------|
+// Per-iteration projection from active native RTM Jacobian columns into the OE state vector.                 |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 48 B (0.047 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..23] source_offset: [max_state_count]usize                                                             |
+// [24..47] state_scale  : Vector                                                                             |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 48 B (0.047 KiB); one stack value per OE iteration                               |
 const JacobianProjection = struct {
     source_offset: [max_state_count]usize = [_]usize{0} ** max_state_count,
     state_scale: Vector = algebra.zeroVector(),
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 fn accumulateNormalSystem(
     measurement: MeasurementWorkspace,
@@ -1781,6 +2052,22 @@ fn accumulateNormalSystem(
     solar_mu0: f64,
     scratch: *IterationWorkspace,
 ) !Accumulation {
+    // accumulateNormalSystem --------------------------------------------------------------------------------|
+    // Streams measurement samples into the OE normal system for one RTM/Jacobian evaluation.                 |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   repeated : once per OE iteration                                                                     |
+    //   stream   : wavelength sample -> residual -> projected Jacobian columns -> b and G accumulation       |
+    //   shape    : max_state_count=3 keeps the state loops fixed and small while the wavelength loop carries |
+    //              the spectral dimension                                                                    |
+    //   memory   : raw_jacobian is column-major by active native Jacobian state; JacobianProjection stores   |
+    //              each active column offset plus pressure-state scaling for this iteration                  |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   G += sqrt(Sa) * Jt * Se^-1 * J * sqrt(Sa)                                                            |
+    //   b += sqrt(Sa) * Jt * Se^-1 * residual                                                                |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (view.wavelengths.len != measurement.wavelength_nm.len) return error.WavelengthGridMismatch;
 
     const raw_jacobian = view.jacobian orelse return error.MissingJacobian;
@@ -1838,11 +2125,27 @@ fn accumulateNormalSystem(
     };
 }
 
+// Step ------------------------------------------------------------------------------------------------------|
+// Solver output for one OE iteration.                                                                        |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 104 B (0.102 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..23] state              : Vector                                                                       |
+// [24..95] posterior_precision: Matrix                                                                       |
+// [96..96] snr_normal         : bool                                                                         |
+// [97..103] trailing padding  : 7 B                                                                          |
+//                                                                                                            |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                   |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 104 B (0.102 KiB); one stack return per OE iteration                             |
 const Step = struct {
     state: Vector,
     posterior_precision: Matrix,
     snr_normal: bool,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 fn solveStep(
     state_count: usize,

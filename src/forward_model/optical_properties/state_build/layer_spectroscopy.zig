@@ -1,5 +1,6 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
+const SpectroscopySupport = @import("../../../input/reference/spectroscopy/support.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
@@ -14,15 +15,52 @@ const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const max_spectroscopy_profile_nodes: usize = 64;
 const min_parallel_profile_cache_node_count: usize = 8;
 const profile_cache_node_chunk_size: usize = 2;
+const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex;
 
-// layout(64-bit):
-//   size: 288 B, align: 8 B
-//   field storage: 288 B across 9 fields; largest: line_list=208 B, prepared_states=16 B, prepared_weak_states=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: cache, context, wavelength_window, queue carry references/descriptors; referenced storage is not included in size
-//   cache span: 5 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 288 B (0.281 KiB); total also includes referenced storage above
+// layer_spectroscopy.zig -------------------------------------------------------------------------------------|
+// Builds layer-preparation spectroscopy values from line lists, operational O2 LUTs, and profile caches.      |
+//                                                                                                             |
+// called by                                                                                                   |
+//   layer_accumulation.zig builds one ProfileSpectroscopyCache for the preparation midpoint wavelength when   |
+//   profile-node spectroscopy is active, then passes it into parity/support-row population.                   |
+//   resolveSpectroscopyEvaluation fills each support row's line, line-mixing, total sigma, and temperature    |
+//   derivative before layer_accumulation writes PreparedLayer or PreparedSublayer storage.                    |
+//   operational_o2.zig supplies the LUT evaluation shape used when the line route is replaced by an           |
+//   operational O2 cross-section product.                                                                     |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   profile cache  : evaluate spectroscopy at profile nodes, prepare endpoint-secant splines, and later       |
+//                    sample those cached line/line-mixing/total columns by altitude.                          |
+//   prepared lines : evaluate active line absorbers, prepare strong-line sidecars when needed, and            |
+//                    density-weight their sigma values into one support-row evaluation.                       |
+//   single line    : use the operational O2 LUT, a single retained line list, a profile-cache hit, or zero    |
+//                    spectroscopy when no line data is active.                                                |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Runs during optical-state preparation. The cache path is parallelized for larger profile grids so each    |
+//   worker fills a chunk of profile-node spectroscopy values before spline setup.                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   ProfileSpectroscopyCache is a stack/local value with fixed 64-node columns and borrowed altitude storage. |
+//   Worker rows borrow the cache, context, line list, wavelength window, and queue; this file does not own    |
+//   the final prepared slices moved into PreparedOpticalState.                                                |
+// ------------------------------------------------------------------------------------------------------------|
+
+// ProfileCacheValueWorker ------------------------------------------------------------------------------------|
+// Work item passed to each profile-spectroscopy cache initialization worker.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 288 B (0.281 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// line_list: 208 B                                                                                            |
+// cache, context, wavelength window, and queue pointers: 4 x pointer-sized fields                             |
+// prepared strong/weak state slices: 2 x optional slice headers                                               |
+// wavelength_nm and worker_index: 2 x 8 B                                                                     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 5 cache lines at 64 B per line                                                                  |
+// footprint: per worker = 288 B; cache, context, window, and queue storage are borrowed                       |
 const ProfileCacheValueWorker = struct {
     cache: *ProfileSpectroscopyCache,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -35,22 +73,25 @@ const ProfileCacheValueWorker = struct {
     worker_index: usize,
 };
 
-// hot path:
-//   when: once per high-resolution forward miss when profile spectroscopy is active
-//   work: caches spline-derived profile values and per-node spectroscopy evaluations
-//   data: pressure, temperature, density, VMR, prepared profile line-state arrays
-//   math: cache stores sigma_line(z_k), sigma_mixing(z_k), sigma_total(z_k) plus endpoint-secant second derivatives for cubic interpolation
-//   follow: evaluationAtAltitude and resolveCachedSingleLineEvaluation
-// layout(64-bit):
-//   size: 3096 B, align: 8 B
-//   field storage: 3096 B across 8 fields; largest: line_values=512 B, line_mixing_values=512 B, total_values=512 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   inline arrays: 6 fields reserve 3072 B inside each instance
-//   out-of-line: altitudes_km carry references/descriptors; referenced storage is not included in size
-//   cache span: 49 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 3096 B (3.023 KiB); total also includes referenced storage above
-//   capacity: enabled profile-spectroscopy requests with more than 64 profile nodes are rejected
+// ProfileSpectroscopyCache -----------------------------------------------------------------------------------|
+// Spline-ready spectroscopy values for one wavelength on the spectroscopy profile grid.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 3096 B (3.023 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// node_count: usize                                                                                           |
+// altitudes_km: []const f64                                                                                   |
+// line, line-mixing, total values and second-derivative arrays: 6 x [64]f64 = 3072 B                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 49 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 3096 B; altitude storage is borrowed                                              |
+// capacity: enabled profile-spectroscopy requests with more than 64 profile nodes are rejected                |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   cache stores sigma_line(z), sigma_mixing(z), sigma_total(z), and endpoint-secant spline second            |
+//   derivatives for altitude interpolation during support-row evaluation.                                     |
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},
@@ -66,6 +107,16 @@ pub const ProfileSpectroscopyCache = struct {
         absorbers: *const Absorbers.AbsorberBuildState,
         wavelength_nm: f64,
     ) !ProfileSpectroscopyCache {
+        // ProfileSpectroscopyCache.init --------------------------------------------------------------------- |
+        // Build profile-node spectroscopy values and spline second derivatives for one wavelength.            |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        // called once per high-resolution forward miss when profile spectroscopy is active.                   |
+        //                                                                                                     |
+        // route                                                                                               |
+        // skip cache when active line absorbers or operational O2 already own the spectroscopy route.         |
+        // --------------------------------------------------------------------------------------------------- |
+
         const line_list = absorbers.owned_lines orelse return .{};
         if (absorbers.owned_line_absorbers.len != 0 or context.operational_o2_lut.enabled()) return .{};
         const node_count = context.spectroscopy_profile_altitudes_km.len;
@@ -73,14 +124,20 @@ pub const ProfileSpectroscopyCache = struct {
         if (node_count < 3) return .{};
         if (context.spectroscopy_profile_pressures_hpa.len != node_count or
             context.spectroscopy_profile_temperatures_k.len != node_count) return .{};
-        const prepared_states = if (absorbers.profile_strong_line_states) |states|
-            if (states.len == node_count) states else null
-        else
-            null;
-        const prepared_weak_states = if (absorbers.profile_weak_line_states) |states|
-            if (states.len == node_count) states else null
-        else
-            null;
+
+        const prepared_states = choose_prepared_states: {
+            if (absorbers.profile_strong_line_states) |states| {
+                if (states.len == node_count) break :choose_prepared_states states;
+            }
+            break :choose_prepared_states null;
+        };
+
+        const prepared_weak_states = choose_prepared_weak_states: {
+            if (absorbers.profile_weak_line_states) |states| {
+                if (states.len == node_count) break :choose_prepared_weak_states states;
+            }
+            break :choose_prepared_weak_states null;
+        };
 
         var cache = ProfileSpectroscopyCache{
             .node_count = node_count,
@@ -92,16 +149,19 @@ pub const ProfileSpectroscopyCache = struct {
             .line_mixing_second = undefined,
             .total_second = undefined,
         };
+
         var wavelength_window_storage: LineListEval.StrongLineWavelengthWindow = undefined;
-        var wavelength_anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex = undefined;
-        const wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow = if (prepared_states != null) blk: {
+        var wavelength_anchor_storage: StrongLineAnchorBuffer = undefined;
+        const wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow = choose_window: {
+            if (prepared_states == null) break :choose_window null;
             wavelength_window_storage = LineListEval.prepareStrongLineWavelengthWindow(
                 line_list,
                 wavelength_nm,
                 &wavelength_anchor_storage,
             );
-            break :blk &wavelength_window_storage;
-        } else null;
+            break :choose_window &wavelength_window_storage;
+        };
+
         fillProfileSpectroscopyCacheValues(
             &cache,
             line_list,
@@ -111,6 +171,7 @@ pub const ProfileSpectroscopyCache = struct {
             prepared_weak_states,
             wavelength_window,
         );
+
         const altitudes = cache.altitudes_km[0..node_count];
         spline.endpointSecantSecondDerivatives3(
             altitudes,
@@ -128,6 +189,16 @@ pub const ProfileSpectroscopyCache = struct {
         self: *const ProfileSpectroscopyCache,
         altitude_km: f64,
     ) ?ReferenceData.SpectroscopyEvaluation {
+        // ProfileSpectroscopyCache.evaluationAtAltitude ----------------------------------------------------- |
+        // Sample cached line, line-mixing, and total spectroscopy at altitude.                                |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        // used by support-row evaluation after the cache has spline-ready profile values.                     |
+        //                                                                                                     |
+        // math                                                                                                |
+        // sigma(z) = cubic endpoint-secant spline over cached profile-node values.                            |
+        // --------------------------------------------------------------------------------------------------- |
+
         if (self.node_count < 3) return null;
         if (altitude_km < self.altitudes_km[0] or
             altitude_km > self.altitudes_km[self.node_count - 1]) return null;
@@ -185,7 +256,20 @@ fn fillProfileSpectroscopyCacheValues(
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
     wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
 ) void {
-    const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
+    // fillProfileSpectroscopyCacheValues -------------------------------------------------------------------- |
+    // Fill all profile-node spectroscopy values, using worker chunks when the profile is large enough.        |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // preparation calls this once per cache miss; workers write disjoint node ranges into inline arrays.      |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    // worker and chunk zones expose parallel cache-fill cost in timeline traces.                              |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    const worker_count = work_partition.preferredWorkerCount(
+        cache.node_count,
+        min_parallel_profile_cache_node_count,
+    );
     if (worker_count == 1) {
         fillProfileSpectroscopyCacheValueRange(
             cache,
@@ -244,6 +328,7 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
         "zdisamar-profile-init-{d}",
         .{worker.worker_index},
     ) catch "zdisamar-profile-init";
+
     // instrumentation: trace thread label
     // captures: profile spectroscopy cache worker identity
     // why: make parallel cache-initialization lanes separable in timeline traces.
@@ -258,6 +343,7 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
 
     while (worker.queue.next()) |chunk| {
         {
+
             // instrumentation: trace zone
             // captures: profile spectroscopy cache chunk wall time and node count
             // why: reveal chunk imbalance while building per-altitude spectroscopy values.
@@ -291,32 +377,38 @@ fn fillProfileSpectroscopyCacheValueRange(
     start: usize,
     end: usize,
 ) void {
+    // fillProfileSpectroscopyCacheValueRange ---------------------------------------------------------------- |
+    // Fill one contiguous range of cached profile-node spectroscopy values.                                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // each worker repeatedly calls this on queue chunks until the profile cache is complete.                  |
+    // ------------------------------------------------------------------------------------------------------- |
+
     for (start..end) |index| {
-        const evaluation = if (prepared_states) |states|
-            LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
-                line_list,
-                wavelength_nm,
-                context.spectroscopy_profile_temperatures_k[index],
-                context.spectroscopy_profile_pressures_hpa[index],
-                &states[index],
-                if (prepared_weak_states) |weak_states| &weak_states[index] else null,
-                wavelength_window.?,
-            )
-        else
-            LineListEval.totalSigmaAt(
+        const evaluation = evaluate_profile_node: {
+            if (prepared_states) |states| {
+                break :evaluate_profile_node LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                    line_list,
+                    wavelength_nm,
+                    context.spectroscopy_profile_temperatures_k[index],
+                    context.spectroscopy_profile_pressures_hpa[index],
+                    &states[index],
+                    if (prepared_weak_states) |weak_states| &weak_states[index] else null,
+                    wavelength_window.?,
+                );
+            }
+
+            break :evaluate_profile_node LineListEval.totalSigmaAt(
                 line_list,
                 wavelength_nm,
                 context.spectroscopy_profile_temperatures_k[index],
                 context.spectroscopy_profile_pressures_hpa[index],
             );
+        };
         cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
         cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
         cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
     }
-}
-
-fn preferredProfileCacheWorkerCount(node_count: usize) usize {
-    return work_partition.preferredWorkerCount(node_count, min_parallel_profile_cache_node_count);
 }
 
 fn sampleCachedEndpointSecant(
@@ -331,7 +423,8 @@ fn sampleCachedEndpointSecant(
     if (h == 0.0) return y[klo];
     const a = (x[khi] - target_x) / h;
     const b = (target_x - x[klo]) / h;
-    // math: cubic spline segment y(z) = a*y_klo + b*y_khi + ((a^3-a)M_klo + (b^3-b)M_khi)h^2/6.
+
+    // math: cubic spline segment with endpoint-secant second derivatives.
     return a * y[klo] + b * y[khi] +
         ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
 }
@@ -365,59 +458,31 @@ pub fn resolveCachedSingleLineEvaluation(
     absorber_density_cm3: *f64,
     profile_cache: *const ProfileSpectroscopyCache,
 ) ReferenceData.SpectroscopyEvaluation {
-    const species = absorbers.active_line_species;
-    const absorber_mixing_ratio = if (species) |active_species|
-        Spectroscopy.speciesMixingRatioAtPressure(
-            context.scene,
-            active_species,
-            if (absorbers.single_active_line_absorber) |line_absorber|
-                line_absorber.volume_mixing_ratio_profile_ppmv
-            else
-                &.{},
-            pressure,
-            if (active_species == .o2) oxygen_volume_mixing_ratio else null,
-        ) orelse oxygen_volume_mixing_ratio
-    else
-        oxygen_volume_mixing_ratio;
+    // resolveCachedSingleLineEvaluation --------------------------------------------------------------------- |
+    // Resolve single-line spectroscopy while layer preparation already owns a profile spectroscopy cache.     |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // support-row preparation calls this when one retained line list is active.                               |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    const absorber_mixing_ratio = activeLineMixingRatio(context, absorbers, pressure);
     absorber_density_cm3.* = density * absorber_mixing_ratio;
 
     if (context.operational_o2_lut.enabled()) {
-        const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
-        return .{
-            .weak_line_sigma_cm2_per_molecule = sigma,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = sigma,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = sigma,
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
-                context.midpoint_nm,
-                temperature,
-                pressure,
-            ),
-        };
+        return operationalO2EvaluationAtContext(context, temperature, pressure);
     }
+
     if (absorbers.owned_lines) |line_list| {
-        if (profile_cache.evaluationAtAltitude(context.vertical_grid.sublayer_mid_altitudes_km[write_index])) |evaluation| {
+        const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
+        if (profile_cache.evaluationAtAltitude(altitude_km)) |evaluation| {
             return evaluation;
         }
         return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
     }
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
+
+    return SpectroscopySupport.zeroEvaluation();
 }
 
-// hot path:
-//   when: inside support-row carrier evaluation for active line absorbers
-//   work: resolves spectroscopy through profile cache, prepared states, or direct evaluation
-//   data: line absorber metadata, altitude, wavelength, profile spectroscopy cache
-//   math: active line absorbers are density-weighted, sigma_bar = sum(sigma_species * n_species) / sum(n_species)
-//   follow: resolvePreparedLineEvaluation and evaluatePreparedLineAbsorber
 pub fn resolveSpectroscopyEvaluation(
     allocator: Allocator,
     context: *Context,
@@ -431,6 +496,16 @@ pub fn resolveSpectroscopyEvaluation(
     absorber_density_cm3: *f64,
     profile_cache: ?*const ProfileSpectroscopyCache,
 ) !ReferenceData.SpectroscopyEvaluation {
+    // resolveSpectroscopyEvaluation ------------------------------------------------------------------------- |
+    // Resolve spectroscopy for one support row through prepared active absorbers or the single-line route.    |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // called inside support-row carrier evaluation for active line absorbers.                                 |
+    //                                                                                                         |
+    // math                                                                                                    |
+    // active line absorbers are density-weighted: sigma_bar = sum(sigma_species * n_species) / sum(n).        |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (absorbers.owned_line_absorbers.len != 0) {
         return resolvePreparedLineEvaluation(
             allocator,
@@ -489,21 +564,29 @@ fn resolvePreparedLineEvaluation(
                 pressure,
             );
             spectroscopy_weight += o2_density_cm3;
-            weighted.weak_line_sigma_cm2_per_molecule += o2_eval.weak_line_sigma_cm2_per_molecule * o2_density_cm3;
-            weighted.strong_line_sigma_cm2_per_molecule += o2_eval.strong_line_sigma_cm2_per_molecule * o2_density_cm3;
-            weighted.line_sigma_cm2_per_molecule += o2_eval.line_sigma_cm2_per_molecule * o2_density_cm3;
-            weighted.line_mixing_sigma_cm2_per_molecule += o2_eval.line_mixing_sigma_cm2_per_molecule * o2_density_cm3;
-            weighted.total_sigma_cm2_per_molecule += o2_eval.total_sigma_cm2_per_molecule * o2_density_cm3;
+            weighted.weak_line_sigma_cm2_per_molecule +=
+                o2_eval.weak_line_sigma_cm2_per_molecule * o2_density_cm3;
+            weighted.strong_line_sigma_cm2_per_molecule +=
+                o2_eval.strong_line_sigma_cm2_per_molecule * o2_density_cm3;
+            weighted.line_sigma_cm2_per_molecule +=
+                o2_eval.line_sigma_cm2_per_molecule * o2_density_cm3;
+            weighted.line_mixing_sigma_cm2_per_molecule +=
+                o2_eval.line_mixing_sigma_cm2_per_molecule * o2_density_cm3;
+            weighted.total_sigma_cm2_per_molecule +=
+                o2_eval.total_sigma_cm2_per_molecule * o2_density_cm3;
             weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
                 o2_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * o2_density_cm3;
         }
     }
 
     for (absorbers.owned_line_absorbers, absorbers.active_line_absorbers) |*line_absorber, active_absorber| {
-        if (context.operational_o2_lut.enabled() and line_absorber.species == .o2) {
+        const operational_o2_owns_species = context.operational_o2_lut.enabled() and line_absorber.species == .o2;
+        if (operational_o2_owns_species) {
             line_absorber.number_densities_cm3[write_index] = 0.0;
             continue;
         }
+
+        // route: use the active absorber's VMR profile for this pressure level.
         const absorber_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
             context.scene,
             line_absorber.species,
@@ -511,6 +594,7 @@ fn resolvePreparedLineEvaluation(
             pressure,
             if (line_absorber.species == .o2) oxygen_volume_mixing_ratio else null,
         ) orelse return error.InvalidRequest;
+
         const density_cm3 = density * absorber_mixing_ratio;
         line_absorber.number_densities_cm3[write_index] = density_cm3;
         absorber_density_cm3.* += density_cm3;
@@ -553,12 +637,6 @@ fn resolvePreparedLineEvaluation(
     return weighted;
 }
 
-// hot path:
-//   when: direct prepared-line evaluation is used for an active absorber/support row
-//   work: evaluates base sigma and finite-temperature derivative terms
-//   data: prepared weak/strong line state, absorber VMR, pressure, temperature, wavelength
-//   math: d_sigma/dT uses central finite difference (sigma(T+0.5 K) - sigma(max(T-0.5 K,150 K))) / 1 K
-//   follow: line_list_eval.evaluateAtPrepared and temperature-derivative sampling
 fn evaluatePreparedLineAbsorber(
     allocator: Allocator,
     line_absorber: *State.PreparedLineAbsorber,
@@ -567,21 +645,39 @@ fn evaluatePreparedLineAbsorber(
     temperature: f64,
     pressure: f64,
 ) !ReferenceData.SpectroscopyEvaluation {
-    var evaluation = if (line_absorber.strong_line_states) |states| blk: {
-        states[write_index] = (try line_absorber.line_list.prepareStrongLineState(
-            allocator,
-            temperature,
-            pressure,
-        )).?;
-        line_absorber.strong_line_state_initialized.?[write_index] = true;
-        line_absorber.strong_line_state_count += 1;
-        break :blk line_absorber.line_list.evaluateAtPrepared(
+    // evaluatePreparedLineAbsorber -------------------------------------------------------------------------- |
+    // Evaluate one prepared line absorber and attach a finite-difference temperature derivative.              |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // direct prepared-line route for an active absorber/support row.                                          |
+    //                                                                                                         |
+    // math                                                                                                    |
+    // d_sigma/dT = (sigma(T + 0.5 K) - sigma(max(T - 0.5 K, 150 K))) / 1 K.                                   |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    var evaluation = evaluate_line: {
+        if (line_absorber.strong_line_states) |states| {
+            states[write_index] = (try line_absorber.line_list.prepareStrongLineState(
+                allocator,
+                temperature,
+                pressure,
+            )).?;
+            line_absorber.strong_line_state_initialized.?[write_index] = true;
+            line_absorber.strong_line_state_count += 1;
+            break :evaluate_line line_absorber.line_list.evaluateAtPrepared(
+                midpoint_nm,
+                temperature,
+                pressure,
+                &states[write_index],
+            );
+        }
+
+        break :evaluate_line line_absorber.line_list.evaluateAt(
             midpoint_nm,
             temperature,
             pressure,
-            &states[write_index],
         );
-    } else line_absorber.line_list.evaluateAt(midpoint_nm, temperature, pressure);
+    };
 
     const upper = line_absorber.line_list.evaluateAt(midpoint_nm, temperature + 0.5, pressure);
     const lower = line_absorber.line_list.evaluateAt(midpoint_nm, @max(temperature - 0.5, 150.0), pressure);
@@ -601,44 +697,34 @@ fn resolveSingleLineEvaluation(
     absorber_density_cm3: *f64,
     profile_cache: ?*const ProfileSpectroscopyCache,
 ) !ReferenceData.SpectroscopyEvaluation {
-    const species = absorbers.active_line_species;
-    const absorber_mixing_ratio = if (species) |active_species|
-        Spectroscopy.speciesMixingRatioAtPressure(
-            context.scene,
-            active_species,
-            if (absorbers.single_active_line_absorber) |line_absorber|
-                line_absorber.volume_mixing_ratio_profile_ppmv
-            else
-                &.{},
-            pressure,
-            if (active_species == .o2) oxygen_volume_mixing_ratio else null,
-        ) orelse oxygen_volume_mixing_ratio
-    else
-        oxygen_volume_mixing_ratio;
+    // resolveSingleLineEvaluation --------------------------------------------------------------------------- |
+    // Resolve one retained line-list route for layer preparation.                                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    // used when no prepared active-line absorber array is present.                                            |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    const absorber_mixing_ratio = activeLineMixingRatio(context, absorbers, pressure);
     absorber_density_cm3.* = density * absorber_mixing_ratio;
 
     if (context.operational_o2_lut.enabled()) {
-        const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
-        return .{
-            .weak_line_sigma_cm2_per_molecule = sigma,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = sigma,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = sigma,
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
-                context.midpoint_nm,
+        return operationalO2EvaluationAtContext(context, temperature, pressure);
+    }
+
+    if (absorbers.owned_lines) |*line_list| {
+        if (profile_cache) |cache| {
+            const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
+            if (cache.evaluationAtAltitude(altitude_km)) |evaluation| return evaluation;
+        }
+
+        if (absorbers.strong_line_states) |states| {
+            states[write_index] = (try line_list.prepareStrongLineState(
+                allocator,
                 temperature,
                 pressure,
-            ),
-        };
-    }
-    if (absorbers.owned_lines) |*line_list| {
-        if (profile_cache) |cache| if (cache.evaluationAtAltitude(context.vertical_grid.sublayer_mid_altitudes_km[write_index])) |evaluation| {
-            return evaluation;
-        };
-        if (absorbers.strong_line_states) |states| {
-            states[write_index] = (try line_list.prepareStrongLineState(allocator, temperature, pressure)).?;
+            )).?;
             absorbers.strong_line_state_count += 1;
+
             var evaluation = line_list.evaluateAtPrepared(
                 context.midpoint_nm,
                 temperature,
@@ -647,18 +733,62 @@ fn resolveSingleLineEvaluation(
             );
             const upper = line_list.evaluateAt(context.midpoint_nm, temperature + 0.5, pressure);
             const lower = line_list.evaluateAt(context.midpoint_nm, @max(temperature - 0.5, 150.0), pressure);
+
             evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
                 (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / 1.0;
             return evaluation;
         }
+
         return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
     }
+
+    return SpectroscopySupport.zeroEvaluation();
+}
+
+fn activeLineMixingRatio(
+    context: *const Context,
+    absorbers: *const Absorbers.AbsorberBuildState,
+    pressure: f64,
+) f64 {
+    // activeLineMixingRatio --------------------------------------------------------------------------------- |
+    // Resolve the active single-line species mixing ratio at pressure, falling back to O2.                    |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    const active_species = absorbers.active_line_species orelse return oxygen_volume_mixing_ratio;
+    const volume_mixing_ratio_profile = if (absorbers.single_active_line_absorber) |line_absorber|
+        line_absorber.volume_mixing_ratio_profile_ppmv
+    else
+        &.{};
+
+    return Spectroscopy.speciesMixingRatioAtPressure(
+        context.scene,
+        active_species,
+        volume_mixing_ratio_profile,
+        pressure,
+        if (active_species == .o2) oxygen_volume_mixing_ratio else null,
+    ) orelse oxygen_volume_mixing_ratio;
+}
+
+fn operationalO2EvaluationAtContext(
+    context: *const Context,
+    temperature: f64,
+    pressure: f64,
+) ReferenceData.SpectroscopyEvaluation {
+    // operationalO2EvaluationAtContext ---------------------------------------------------------------------- |
+    // Build the standard operational O2 evaluation at the preparation midpoint wavelength.                    |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
     return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .weak_line_sigma_cm2_per_molecule = sigma,
         .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = sigma,
         .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+        .total_sigma_cm2_per_molecule = sigma,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
+            context.midpoint_nm,
+            temperature,
+            pressure,
+        ),
     };
 }

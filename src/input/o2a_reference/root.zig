@@ -9,6 +9,30 @@ const runtime = @import("run.zig");
 
 const Allocator = std.mem.Allocator;
 
+// root.zig ---------------------------------------------------------------------------------------------------|
+// Public O2 A reference-case facade used by Zig tests, C/Python bindings, and research harnesses.             |
+//                                                                                                             |
+// called by                                                                                                   |
+//   src/root.zig exposes this namespace as zdisamar.o2a and forwards public O2 A helpers                      |
+//   src/api/c.zig validates inputs, prepares handles, runs spectra/Jacobians, and gates retrieval support     |
+//   optimal_estimation/retrieval.zig consumes prepared O2 A cases for retrieval paths                         |
+//   trace, telemetry, and perturbation CLIs use the default and benchmark validation cases                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   defaultInput / benchmarkJacobianInput build deterministic DISAMAR-reference O2 A cases                    |
+//   parseInputJson / renderInputJson validate and preserve the public JSON shape                              |
+//   prepareO2A converts the resolved case into scene, reference data, RTM config, and prepared optics         |
+//   runO2A* executes the instrument-grid product with optional caller-owned session storage and Jacobian rows |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This file is a facade over metrics.zig, run.zig, and instrument-grid execution. It owns validation and    |
+//   stable defaults; detailed asset loading, scene construction, and metric comparison stay in child modules. |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Functions return owned prepared cases or output products through the caller allocator. This module owns   |
+//   no retained cache; fixed-asset caching lives in fixed_asset_cache.zig.                                    |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const ReferenceData = metrics.ReferenceData;
 pub const ReferenceSample = metrics.ReferenceSample;
 pub const O2AInput = reference_types.ResolvedVendorO2ACase;
@@ -199,12 +223,6 @@ pub fn defaultInput() O2AInput {
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
-        .outputs = &.{},
-        .validation = .{
-            .strict_unknown_fields = true,
-            .require_resolved_assets = true,
-            .require_resolved_stage_references = true,
-        },
     };
 }
 
@@ -281,8 +299,6 @@ pub fn renderInputJson(allocator: Allocator, input: *const O2AInput) ![]u8 {
         },
         .o2o2 = input.o2o2,
         .rtm_controls = input.rtm_controls,
-        .outputs = input.outputs,
-        .validation = input.validation,
     };
     return std.fmt.allocPrint(
         allocator,

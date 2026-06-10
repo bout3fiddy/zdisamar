@@ -2,6 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 const Spectroscopy = internal.forward_model.optical_properties.spectroscopy;
+const StateSpectroscopy = internal.forward_model.optical_properties.state_spectroscopy;
 const ReferenceData = internal.reference_data;
 
 test "line species inference rejects unsupported HITRAN gas indices" {
@@ -20,5 +21,22 @@ test "line species inference rejects unsupported HITRAN gas indices" {
     try std.testing.expectError(
         error.UnsupportedSpectroscopyConfiguration,
         Spectroscopy.resolveActiveLineSpecies(null, line_list, .{}),
+    );
+}
+
+test "profile-node spectroscopy cache layout matches documented comments" {
+    try std.testing.expectEqual(@as(usize, 1032), @sizeOf(StateSpectroscopy.ProfileNodeSpectroscopyCache));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(StateSpectroscopy.ProfileNodeSpectroscopyCache));
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        @offsetOf(StateSpectroscopy.ProfileNodeSpectroscopyCache, "node_count"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 8),
+        @offsetOf(StateSpectroscopy.ProfileNodeSpectroscopyCache, "total_values"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 520),
+        @offsetOf(StateSpectroscopy.ProfileNodeSpectroscopyCache, "total_second"),
     );
 }

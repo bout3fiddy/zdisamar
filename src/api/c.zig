@@ -3,21 +3,76 @@ const zdisamar = @import("zdisamar");
 
 const allocator = std.heap.smp_allocator;
 
+// c.zig ------------------------------------------------------------------------------------------------------|
+// C ABI boundary for Python bindings and other callers that cannot hold native Zig owners directly.           |
+//                                                                                                             |
+// called from                                                                                                 |
+//   build.zig builds this file as the C shared-library root.                                                  |
+//   python/zdisamar/bindings/signatures.py binds every zds_* export with ctypes-compatible signatures.        |
+//   python/zdisamar/bindings/handles.py owns the high-level Python handle lifecycle and calls the matching    |
+//   zds_*_free function for every borrowed result view.                                                       |
+//   src/root.zig, input/o2a_reference/root.zig, and optimal_estimation/retrieval.zig are the native Zig       |
+//   surfaces this boundary converts into and out of.                                                          |
+//                                                                                                             |
+// exports                                                                                                     |
+//   context       : create/destroy, last_error, parsed/default O2 A preparation, session warmup               |
+//   spectra       : run spectrum, run Jacobian spectrum, choose Jacobian states by external state id          |
+//   retrieval     : single, batch, fastmode batch, and prepared-correction optimal-estimation runs            |
+//   diagnostics   : spectrum summary, atmospheric budget, O2 lines, instrument response, O2-O2 CIA, RT rows   |
+//   cleanup       : zds_*_free functions remove Context-owned native handles or copied diagnostic row tables  |
+//                                                                                                             |
+// call path                                                                                                   |
+//   C request structs borrow caller buffers long enough to validate and convert into native Zig slices.       |
+//   Context owns prepared O2 A state, parsed JSON storage, session storage, native output handles, copied     |
+//   diagnostic row buffers, and the fixed last_error string.                                                  |
+//   Run functions allocate native outputs, store those pointers in Context lists, and return extern structs   |
+//   containing borrowed array pointers plus an opaque result_handle.                                          |
+//   Diagnostic functions copy native rows into Context-owned C row arrays so C/Python callers can read stable |
+//   tables until the matching free call.                                                                      |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   Input arrays and JSON buffers are borrowed from the caller. Result and diagnostic pointers are borrowed   |
+//   from Context. C callers must call the matching zds_*_free function before destroying the context, or let  |
+//   zds_context_destroy clear any still-retained handles.                                                     |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   This file does no file I/O, CLI parsing, or reference-data loading itself. It validates raw pointers and  |
+//   counts, translates errors into c_int status plus last_error, and forwards work to the public Zig facade.  |
+//                                                                                                             |
+// memory                                                                                                      |
+//   Public structs below are extern ABI rows. Field order is part of the C contract, so layout comments show  |
+//   source order plus explicit padding measured with @sizeOf, @alignOf, and @offsetOf on the current target.  |
+//   Pointer fields are one-word C pointers here; referenced arrays, JSON storage, and native result buffers   |
+//   live out of line and are not counted in the ABI row size.                                                 |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const ZdsStatus = enum(c_int) {
     ok = 0,
     failure = 1,
 };
 
-// layout(64-bit):
-//   size: 64 B, align: 8 B
-//   field storage: 64 B across 8 fields; largest: len=8 B, wavelength_nm=8 B, radiance=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: len=8 B
-// out-of-line: wavelength_nm, radiance, irradiance, reflectance, result_handle carry references/descriptors; referenced
-// storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above
+// ZdsSpectrum ------------------------------------------------------------------------------------------------|
+// Borrowed spectrum arrays returned by run calls. result_handle owns the backing native Output.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 64 B (0.062 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len                  : usize                                                                       |
+// [ 8..15] wavelength_nm        : [*]const f64                                                                |
+// [16..23] radiance             : [*]const f64                                                                |
+// [24..31] irradiance           : [*]const f64                                                                |
+// [32..39] reflectance          : [*]const f64                                                                |
+// [40..47] jacobian             : ?[*]const f64                                                               |
+// [48..55] jacobian_state_count : usize                                                                       |
+// [56..63] result_handle        : ?*anyopaque                                                                 |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   array pointers borrow result_handle storage until the matching zds_spectrum_free call.                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 1 cache line at 64 B per line                                                                   |
+// footprint: per instance = 64 B (0.062 KiB); total also includes referenced storage above                    |
 pub const ZdsSpectrum = extern struct {
     len: usize = 0,
     wavelength_nm: [*]const f64 = undefined,
@@ -29,13 +84,23 @@ pub const ZdsSpectrum = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-// field storage: 44 B across 6 fields; largest: wavelength_start_nm=8 B, wavelength_end_nm=8 B, mean_radiance=8 B;
-// padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total = per instance * live instance count
+// ZdsDiagnosticReport ----------------------------------------------------------------------------------------|
+// Small scalar summary for one spectrum.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 3] sample_count        : u32                                                                          |
+// [ 4.. 7] padding             : 4 B                                                                          |
+// [ 8..15] wavelength_start_nm : f64                                                                          |
+// [16..23] wavelength_end_nm   : f64                                                                          |
+// [24..31] mean_radiance       : f64                                                                          |
+// [32..39] mean_irradiance     : f64                                                                          |
+// [40..47] mean_reflectance    : f64                                                                          |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per instance = 48 B (0.047 KiB); stack or caller-owned row                                       |
 pub const ZdsDiagnosticReport = extern struct {
     sample_count: u32 = 0,
     wavelength_start_nm: f64 = 0.0,
@@ -45,14 +110,34 @@ pub const ZdsDiagnosticReport = extern struct {
     mean_reflectance: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-//   field storage: 88 B across 13 fields; largest: initial=8 B, prior=8 B, variance=8 B; padding: 8 B (64 bits)
-//   unused bits: 64 padding + 0 bool-storage slack = 64 bits
-//   out-of-line: pressure_profile_altitude_km and pressure_profile_pressure_hpa borrow caller buffers
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: retrieval state count, currently 1..3
-//   footprint: per instance = 96 B (0.094 KiB); total also includes borrowed profile arrays
+// ZdsOptimalEstimationStateSpec ------------------------------------------------------------------------------|
+// One C-facing retrieval-state control row. Optional pressure profile pointers borrow caller buffers.         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 0] state_id                      : u8                                                                 |
+// [ 1.. 1] has_lower                     : u8                                                                 |
+// [ 2.. 2] has_upper                     : u8                                                                 |
+// [ 3.. 3] padding                       : 1 B                                                                |
+// [ 4.. 7] interval_index_1based         : u32                                                                |
+// [ 8..15] initial                       : f64                                                                |
+// [16..23] prior                         : f64                                                                |
+// [24..31] variance                      : f64                                                                |
+// [32..39] lower                         : f64                                                                |
+// [40..47] upper                         : f64                                                                |
+// [48..55] thickness_hpa                 : f64                                                                |
+// [56..63] pressure_profile_count        : usize                                                              |
+// [64..71] pressure_profile_altitude_km  : ?[*]const f64                                                      |
+// [72..79] pressure_profile_pressure_hpa : ?[*]const f64                                                      |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   pressure profile arrays are borrowed only while the request is converted into native state specs.         |
+//                                                                                                             |
+// unused bits: 8 padding + 0 bool-storage slack = 8 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 80 B (0.078 KiB); total also includes borrowed profile arrays                     |
 pub const ZdsOptimalEstimationStateSpec = extern struct {
     state_id: u8 = 0,
     has_lower: u8 = 0,
@@ -69,27 +154,46 @@ pub const ZdsOptimalEstimationStateSpec = extern struct {
     pressure_profile_pressure_hpa: ?[*]const f64 = null,
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: 24 B across 3 fields; largest: max_iterations=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one per native OE request
-//   footprint: per instance = 24 B (0.023 KiB)
+// ZdsOptimalEstimationControls -------------------------------------------------------------------------------|
+// Iteration and convergence controls copied into the native retrieval request.                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] max_iterations                     : usize                                                         |
+// [ 8..15] state_vector_convergence_threshold : f64                                                           |
+// [16..23] max_change_transformed_state       : f64                                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); embedded in request rows                                        |
 pub const ZdsOptimalEstimationControls = extern struct {
     max_iterations: usize = 10,
     state_vector_convergence_threshold: f64 = 1.0,
     max_change_transformed_state: f64 = 1.0,
 };
 
-// layout(64-bit):
-//   size: 72 B, align: 8 B
-//   field storage: 72 B across 8 fields; largest: sample_count=8 B, wavelength_nm=8 B, reflectance=8 B; padding: 0 B
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: measurement arrays and state specs borrow caller buffers
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: one per native OE request
-//   footprint: per instance = 72 B (0.070 KiB); total also includes borrowed buffers
+// ZdsOptimalEstimationRequest --------------------------------------------------------------------------------|
+// Single-run retrieval request with borrowed measurement arrays and state rows.                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] sample_count  : usize                                                                              |
+// [ 8..15] wavelength_nm : ?[*]const f64                                                                      |
+// [16..23] reflectance   : ?[*]const f64                                                                      |
+// [24..31] variance      : ?[*]const f64                                                                      |
+// [32..39] state_count   : usize                                                                              |
+// [40..47] states        : ?[*]const ZdsOptimalEstimationStateSpec                                            |
+// [48..71] controls      : ZdsOptimalEstimationControls                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   measurement arrays and state specs borrow caller buffers for the duration of the call.                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 72 B (0.070 KiB); total also includes borrowed buffers                            |
 pub const ZdsOptimalEstimationRequest = extern struct {
     sample_count: usize = 0,
     wavelength_nm: ?[*]const f64 = null,
@@ -100,14 +204,36 @@ pub const ZdsOptimalEstimationRequest = extern struct {
     controls: ZdsOptimalEstimationControls = .{},
 };
 
-// layout(64-bit):
-//   size: 120 B, align: 8 B
-//   field storage: 113 B across 15 fields; largest: state_count=8 B, iteration_count=8 B, state_ids=8 B; padding: 7 B
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   out-of-line: all pointer fields borrow the native result handle until freed
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: one per native OE result
-//   footprint: per instance = 120 B (0.117 KiB); total also includes native result arrays
+// ZdsOptimalEstimationResult ---------------------------------------------------------------------------------|
+// Borrowed single-run retrieval output. result_handle owns all pointed-to result arrays.                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 120 B (0.117 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] state_count                      : usize                                                         |
+// [  8.. 15] iteration_count                  : usize                                                         |
+// [ 16.. 16] converged                        : u8                                                            |
+// [ 17.. 23] padding                          : 7 B                                                           |
+// [ 24.. 31] state_ids                        : ?[*]const u8                                                  |
+// [ 32.. 39] state                            : ?[*]const f64                                                 |
+// [ 40.. 47] initial_state                    : ?[*]const f64                                                 |
+// [ 48.. 55] posterior_covariance             : ?[*]const f64                                                 |
+// [ 56.. 63] averaging_kernel                 : ?[*]const f64                                                 |
+// [ 64.. 71] history_state                    : ?[*]const f64                                                 |
+// [ 72.. 79] history_chi2                     : ?[*]const f64                                                 |
+// [ 80.. 87] history_chi2_reflectance         : ?[*]const f64                                                 |
+// [ 88.. 95] history_chi2_state_vector        : ?[*]const f64                                                 |
+// [ 96..103] history_state_vector_convergence : ?[*]const f64                                                 |
+// [104..111] history_snr_normal               : ?[*]const u8                                                  |
+// [112..119] result_handle                    : ?*anyopaque                                                   |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   all pointer fields borrow native result arrays until zds_optimal_estimation_result_free.                  |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 120 B (0.117 KiB); total also includes native result arrays                       |
 pub const ZdsOptimalEstimationResult = extern struct {
     state_count: usize = 0,
     iteration_count: usize = 0,
@@ -126,6 +252,31 @@ pub const ZdsOptimalEstimationResult = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
+// ZdsOptimalEstimationBatchRequest ---------------------------------------------------------------------------|
+// Multi-run retrieval request sharing one measurement grid and one state template across run-specific priors. |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 104 B (0.102 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] sample_count       : usize                                                                       |
+// [  8.. 15] wavelength_nm      : ?[*]const f64                                                               |
+// [ 16.. 23] reflectance        : ?[*]const f64                                                               |
+// [ 24.. 31] variance           : ?[*]const f64                                                               |
+// [ 32.. 39] state_count        : usize                                                                       |
+// [ 40.. 47] state_template     : ?[*]const ZdsOptimalEstimationStateSpec                                     |
+// [ 48.. 55] run_count          : usize                                                                       |
+// [ 56.. 63] initial            : ?[*]const f64                                                               |
+// [ 64.. 71] prior              : ?[*]const f64                                                               |
+// [ 72.. 95] controls           : ZdsOptimalEstimationControls                                                |
+// [ 96..103] batch_worker_count : usize                                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   measurement arrays, template state rows, and run initial/prior arrays borrow caller buffers.              |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 104 B (0.102 KiB); total also includes borrowed buffers                           |
 pub const ZdsOptimalEstimationBatchRequest = extern struct {
     sample_count: usize = 0,
     wavelength_nm: ?[*]const f64 = null,
@@ -140,6 +291,29 @@ pub const ZdsOptimalEstimationBatchRequest = extern struct {
     batch_worker_count: usize = 1,
 };
 
+// ZdsOptimalEstimationBatchResult ----------------------------------------------------------------------------|
+// Borrowed batch retrieval output backed by a native BatchResult handle.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] run_count        : usize                                                                           |
+// [ 8..15] state_count      : usize                                                                           |
+// [16..23] history_capacity : usize                                                                           |
+// [24..31] iteration_count  : ?[*]const usize                                                                 |
+// [32..39] converged        : ?[*]const u8                                                                    |
+// [40..47] status           : ?[*]const u8                                                                    |
+// [48..55] state            : ?[*]const f64                                                                   |
+// [56..63] history_state    : ?[*]const f64                                                                   |
+// [64..71] result_handle    : ?*anyopaque                                                                     |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   pointer fields borrow native batch result arrays until zds_optimal_estimation_batch_result_free.          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 72 B (0.070 KiB); total also includes native result arrays                        |
 pub const ZdsOptimalEstimationBatchResult = extern struct {
     run_count: usize = 0,
     state_count: usize = 0,
@@ -152,6 +326,33 @@ pub const ZdsOptimalEstimationBatchResult = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
+// ZdsOptimalEstimationFastmodeBatchResult --------------------------------------------------------------------|
+// Borrowed fastmode batch output with per-stage iteration and convergence arrays.                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 104 B (0.102 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] run_count                       : usize                                                          |
+// [  8.. 15] state_count                     : usize                                                          |
+// [ 16.. 23] history_capacity                : usize                                                          |
+// [ 24.. 31] iteration_count                 : ?[*]const usize                                                |
+// [ 32.. 39] converged                       : ?[*]const u8                                                   |
+// [ 40.. 47] status                          : ?[*]const u8                                                   |
+// [ 48.. 55] state                           : ?[*]const f64                                                  |
+// [ 56.. 63] history_state                   : ?[*]const f64                                                  |
+// [ 64.. 71] fast_stage_iteration_count      : ?[*]const usize                                                |
+// [ 72.. 79] fast_stage_converged            : ?[*]const u8                                                   |
+// [ 80.. 87] full_correction_iteration_count : ?[*]const usize                                                |
+// [ 88.. 95] full_correction_converged       : ?[*]const u8                                                   |
+// [ 96..103] result_handle                   : ?*anyopaque                                                    |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   pointer fields borrow native fastmode arrays until the matching fastmode result free call.                |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 104 B (0.102 KiB); total also includes native result arrays                       |
 pub const ZdsOptimalEstimationFastmodeBatchResult = extern struct {
     run_count: usize = 0,
     state_count: usize = 0,
@@ -168,14 +369,46 @@ pub const ZdsOptimalEstimationFastmodeBatchResult = extern struct {
     result_handle: ?*anyopaque = null,
 };
 
-// layout(64-bit):
-//   size: 240 B, align: 8 B
-// field storage: 240 B across 33 fields; largest: wavelength_nm=8 B, altitude_km=8 B, top_altitude_km=8 B; padding: 0 B
-// (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 4 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 240 B (0.234 KiB); total = per instance * live instance count
+// ZdsAtmosphericBudgetRow ------------------------------------------------------------------------------------|
+// One atmospheric budget row copied from a native diagnostic row.                                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 208 B (0.203 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] wavelength_nm                    : f64                                                           |
+// [  8.. 11] layer_index                      : u32                                                           |
+// [ 12.. 15] sublayer_index                   : u32                                                           |
+// [ 16.. 19] global_sublayer_index            : u32                                                           |
+// [ 20.. 23] interval_index_1based            : u32                                                           |
+// [ 24.. 27] support_row_kind                 : u32                                                           |
+// [ 28.. 31] padding                          : 4 B                                                           |
+// [ 32.. 39] altitude_km                      : f64                                                           |
+// [ 40.. 47] top_altitude_km                  : f64                                                           |
+// [ 48.. 55] bottom_altitude_km               : f64                                                           |
+// [ 56.. 63] pressure_hpa                     : f64                                                           |
+// [ 64.. 71] top_pressure_hpa                 : f64                                                           |
+// [ 72.. 79] bottom_pressure_hpa              : f64                                                           |
+// [ 80.. 87] temperature_k                    : f64                                                           |
+// [ 88.. 95] number_density_cm3               : f64                                                           |
+// [ 96..103] oxygen_number_density_cm3        : f64                                                           |
+// [104..111] absorber_number_density_cm3      : f64                                                           |
+// [112..119] path_length_cm                   : f64                                                           |
+// [120..127] aerosol_fraction                 : f64                                                           |
+// [128..135] gas_absorption_optical_depth     : f64                                                           |
+// [136..143] gas_scattering_optical_depth     : f64                                                           |
+// [144..151] cia_optical_depth                : f64                                                           |
+// [152..159] aerosol_optical_depth            : f64                                                           |
+// [160..167] aerosol_scattering_optical_depth : f64                                                           |
+// [168..175] aerosol_absorption_optical_depth : f64                                                           |
+// [176..183] total_absorption_optical_depth   : f64                                                           |
+// [184..191] total_scattering_optical_depth   : f64                                                           |
+// [192..199] total_optical_depth              : f64                                                           |
+// [200..207] single_scatter_albedo            : f64                                                           |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// cache span: 4 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 208 B (0.203 KiB); total = per instance * live row count                          |
 pub const ZdsAtmosphericBudgetRow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -207,27 +440,65 @@ pub const ZdsAtmosphericBudgetRow = extern struct {
     single_scatter_albedo: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: len=8 B
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// ZdsAtmosphericBudget ---------------------------------------------------------------------------------------|
+// Borrowed atmospheric budget table. rows is owned by Context until released.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len  : usize                                                                                       |
+// [ 8..15] rows : [*]const ZdsAtmosphericBudgetRow                                                            |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   rows points at a Context-owned copied row buffer.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above                    |
 pub const ZdsAtmosphericBudget = extern struct {
     len: usize = 0,
     rows: [*]const ZdsAtmosphericBudgetRow = undefined,
 };
 
-// layout(64-bit):
-//   size: 168 B, align: 8 B
-// field storage: 159 B across 25 fields; largest: wavelength_nm=8 B, altitude_km=8 B, center_wavelength_nm=8 B;
-// padding: 9 B (72 bits)
-//   unused bits: 72 padding + 0 bool-storage slack = 72 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count
+// ZdsO2LineContributionRow -----------------------------------------------------------------------------------|
+// One O2 line-contribution diagnostic row copied from native spectroscopy diagnostics.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 168 B (0.164 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] wavelength_nm                    : f64                                                           |
+// [  8.. 11] profile_node_index               : u32                                                           |
+// [ 12.. 15] padding                          : 4 B                                                           |
+// [ 16.. 23] altitude_km                      : f64                                                           |
+// [ 24.. 27] row_kind                         : u32                                                           |
+// [ 28.. 31] status                           : u32                                                           |
+// [ 32.. 35] line_index                       : u32                                                           |
+// [ 36.. 39] strong_line_index                : u32                                                           |
+// [ 40.. 43] matched_strong_line_index        : u32                                                           |
+// [ 44.. 45] gas_index                        : u16                                                           |
+// [ 46.. 46] isotope_number                   : u8                                                            |
+// [ 47.. 47] padding                          : 1 B                                                           |
+// [ 48.. 51] isotopologue_code                : i32                                                           |
+// [ 52.. 55] padding                          : 4 B                                                           |
+// [ 56.. 63] center_wavelength_nm             : f64                                                           |
+// [ 64.. 71] center_wavenumber_cm1            : f64                                                           |
+// [ 72.. 79] shifted_center_wavenumber_cm1    : f64                                                           |
+// [ 80.. 87] line_strength_cm2_per_molecule   : f64                                                           |
+// [ 88.. 95] air_half_width_cm1               : f64                                                           |
+// [ 96..103] pressure_shift_cm1               : f64                                                           |
+// [104..111] lower_state_energy_cm1           : f64                                                           |
+// [112..119] temperature_k                    : f64                                                           |
+// [120..127] pressure_hpa                     : f64                                                           |
+// [128..135] weak_line_sigma_cm2_per_molecule : f64                                                           |
+// [136..143] strong_line_sigma_cm2_per_molecule : f64                                                         |
+// [144..151] line_mixing_sigma_cm2_per_molecule : f64                                                         |
+// [152..159] total_sigma_cm2_per_molecule     : f64                                                           |
+// [160..167] abs_total_sigma_cm2_per_molecule : f64                                                           |
+//                                                                                                             |
+// unused bits: 72 padding + 0 bool-storage slack = 72 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 168 B (0.164 KiB); total = per instance * live row count                          |
 pub const ZdsO2LineContributionRow = extern struct {
     wavelength_nm: f64 = 0.0,
     profile_node_index: u32 = 0,
@@ -256,14 +527,24 @@ pub const ZdsO2LineContributionRow = extern struct {
     abs_total_sigma_cm2_per_molecule: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: len=8 B, total_row_count=8 B, truncated=1 B, rows=8 B; padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   metadata fields: len=8 B
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// ZdsO2LineContributions -------------------------------------------------------------------------------------|
+// Borrowed O2 line-contribution table plus total available row count before truncation.                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len             : usize                                                                            |
+// [ 8..15] total_row_count : usize                                                                            |
+// [16..16] truncated       : u8                                                                               |
+// [17..23] padding         : 7 B                                                                              |
+// [24..31] rows            : [*]const ZdsO2LineContributionRow                                                |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   rows points at a Context-owned copied row buffer.                                                         |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above                    |
 pub const ZdsO2LineContributions = extern struct {
     len: usize = 0,
     total_row_count: usize = 0,
@@ -271,14 +552,34 @@ pub const ZdsO2LineContributions = extern struct {
     rows: [*]const ZdsO2LineContributionRow = undefined,
 };
 
-// layout(64-bit):
-//   size: 96 B, align: 8 B
-// field storage: 85 B across 14 fields; largest: nominal_wavelength_nm=8 B, offset_nm=8 B, support_wavelength_nm=8 B;
-// padding: 11 B (88 bits)
-//   unused bits: 88 padding + 0 bool-storage slack = 88 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 96 B (0.094 KiB); total = per instance * live instance count
+// ZdsInstrumentResponseRow -----------------------------------------------------------------------------------|
+// One instrument-response support sample copied from native diagnostics.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 3] nominal_index                 : i32                                                                |
+// [ 4.. 7] padding                       : 4 B                                                                |
+// [ 8..15] nominal_wavelength_nm         : f64                                                                |
+// [16..19] channel                       : u32                                                                |
+// [20..23] sample_index                  : u32                                                                |
+// [24..27] support_count                 : u32                                                                |
+// [28..31] padding                       : 4 B                                                                |
+// [32..39] offset_nm                     : f64                                                                |
+// [40..47] support_wavelength_nm         : f64                                                                |
+// [48..55] weight                        : f64                                                                |
+// [56..63] support_width_nm              : f64                                                                |
+// [64..71] instrument_fwhm_nm            : f64                                                                |
+// [72..79] high_resolution_step_nm       : f64                                                                |
+// [80..87] high_resolution_half_span_nm  : f64                                                                |
+// [88..91] integration_mode              : u32                                                                |
+// [92..92] response_enabled              : u8                                                                 |
+// [93..95] padding                       : 3 B                                                                |
+//                                                                                                             |
+// unused bits: 88 padding + 0 bool-storage slack = 88 bits                                                    |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 96 B (0.094 KiB); total = per instance * live row count                           |
 pub const ZdsInstrumentResponseRow = extern struct {
     nominal_index: i32 = 0,
     nominal_wavelength_nm: f64 = 0.0,
@@ -296,27 +597,53 @@ pub const ZdsInstrumentResponseRow = extern struct {
     response_enabled: u8 = 0,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: len=8 B
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// ZdsInstrumentResponse --------------------------------------------------------------------------------------|
+// Borrowed instrument-response diagnostic table.                                                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len  : usize                                                                                       |
+// [ 8..15] rows : [*]const ZdsInstrumentResponseRow                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   rows points at a Context-owned copied row buffer.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above                    |
 pub const ZdsInstrumentResponse = extern struct {
     len: usize = 0,
     rows: [*]const ZdsInstrumentResponseRow = undefined,
 };
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-// field storage: 112 B across 16 fields; largest: wavelength_nm=8 B, altitude_km=8 B, pressure_hpa=8 B; padding: 0 B (0
-// bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// ZdsO2O2CIARow ----------------------------------------------------------------------------------------------|
+// One O2-O2 CIA diagnostic row copied from native optical-depth diagnostics.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 112 B (0.109 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] wavelength_nm                     : f64                                                          |
+// [  8.. 11] layer_index                       : u32                                                          |
+// [ 12.. 15] sublayer_index                    : u32                                                          |
+// [ 16.. 19] global_sublayer_index             : u32                                                          |
+// [ 20.. 23] interval_index_1based             : u32                                                          |
+// [ 24.. 31] altitude_km                       : f64                                                          |
+// [ 32.. 39] pressure_hpa                      : f64                                                          |
+// [ 40.. 47] temperature_k                     : f64                                                          |
+// [ 48.. 55] oxygen_number_density_cm3         : f64                                                          |
+// [ 56.. 63] path_length_cm                    : f64                                                          |
+// [ 64.. 71] cia_cross_section_cm5_per_molecule2 : f64                                                        |
+// [ 72.. 79] cia_optical_depth                 : f64                                                          |
+// [ 80.. 87] total_absorption_optical_depth    : f64                                                          |
+// [ 88.. 95] total_optical_depth               : f64                                                          |
+// [ 96..103] cia_share_of_total_absorption     : f64                                                          |
+// [104..111] cia_share_of_total_optical_depth  : f64                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 112 B (0.109 KiB); total = per instance * live row count                          |
 pub const ZdsO2O2CIARow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -336,27 +663,58 @@ pub const ZdsO2O2CIARow = extern struct {
     cia_share_of_total_optical_depth: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: len=8 B
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// ZdsO2O2CIADiagnostics --------------------------------------------------------------------------------------|
+// Borrowed O2-O2 CIA diagnostic table.                                                                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len  : usize                                                                                       |
+// [ 8..15] rows : [*]const ZdsO2O2CIARow                                                                      |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   rows points at a Context-owned copied row buffer.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above                    |
 pub const ZdsO2O2CIADiagnostics = extern struct {
     len: usize = 0,
     rows: [*]const ZdsO2O2CIARow = undefined,
 };
 
-// layout(64-bit):
-//   size: 136 B, align: 8 B
-// field storage: 133 B across 20 fields; largest: wavelength_nm=8 B, altitude_km=8 B, total_optical_depth=8 B; padding:
-// 3 B (24 bits)
-//   unused bits: 24 padding + 0 bool-storage slack = 24 bits
-//   cache span: 3 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 136 B (0.133 KiB); total = per instance * live instance count
+// ZdsRadiativeTransferDiagnosticRow --------------------------------------------------------------------------|
+// One radiative-transfer diagnostic row copied from the native RT diagnostic table.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 136 B (0.133 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] wavelength_nm                      : f64                                                         |
+// [  8.. 11] layer_index                        : u32                                                         |
+// [ 12.. 15] sublayer_index                     : u32                                                         |
+// [ 16.. 19] global_sublayer_index              : u32                                                         |
+// [ 20.. 23] interval_index_1based              : u32                                                         |
+// [ 24.. 31] altitude_km                        : f64                                                         |
+// [ 32.. 39] total_optical_depth                : f64                                                         |
+// [ 40.. 47] total_absorption_optical_depth     : f64                                                         |
+// [ 48.. 55] total_scattering_optical_depth     : f64                                                         |
+// [ 56.. 63] single_scatter_albedo              : f64                                                         |
+// [ 64.. 71] cumulative_optical_depth_above     : f64                                                         |
+// [ 72.. 79] mid_layer_transmission_proxy       : f64                                                         |
+// [ 80.. 87] direct_surface_transmission_proxy  : f64                                                         |
+// [ 88.. 95] atmospheric_scattering_source_proxy : f64                                                        |
+// [ 96..103] absorption_loss_proxy              : f64                                                         |
+// [104..111] pseudo_spherical_airmass_factor    : f64                                                         |
+// [112..115] n_streams                          : u32                                                         |
+// [116..116] integrate_source_function          : u8                                                          |
+// [117..119] padding                            : 3 B                                                         |
+// [120..127] final_reflectance                  : f64                                                         |
+// [128..135] final_radiance                     : f64                                                         |
+//                                                                                                             |
+// unused bits: 24 padding + 0 bool-storage slack = 24 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 136 B (0.133 KiB); total = per instance * live row count                          |
 pub const ZdsRadiativeTransferDiagnosticRow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -380,30 +738,55 @@ pub const ZdsRadiativeTransferDiagnosticRow = extern struct {
     final_radiance: f64 = 0.0,
 };
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: len=8 B, rows=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   metadata fields: len=8 B
-//   out-of-line: rows carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// ZdsRadiativeTransferDiagnostics ----------------------------------------------------------------------------|
+// Borrowed radiative-transfer diagnostic table.                                                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len  : usize                                                                                       |
+// [ 8..15] rows : [*]const ZdsRadiativeTransferDiagnosticRow                                                  |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   rows points at a Context-owned copied row buffer.                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above                    |
 pub const ZdsRadiativeTransferDiagnostics = extern struct {
     len: usize = 0,
     rows: [*]const ZdsRadiativeTransferDiagnosticRow = undefined,
 };
 
-// layout(64-bit):
-//   size: 5840 B, align: 8 B
-// field storage: 5833 B across 11 fields; largest: prepared=3832 B, parsed_input=960 B, o2a_session_storage=616 B;
-// padding: 7 B (56 bits)
-//   unused bits: 56 padding + 0 bool-storage slack = 56 bits
-//   inline arrays: last_error:[256:0]u8=257 B
-// out-of-line: results, oe_results, atmospheric_budgets, o2_line_contribution_tables, instrument_response_tables,
-// o2_o2_cia_tables, +1 more carry references/descriptors; referenced storage is not included in size
-//   cache span: 92 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 5840 B (5.703 KiB); total also includes referenced storage above
+// Context ----------------------------------------------------------------------------------------------------|
+// Native owner behind the opaque C context pointer. It owns prepared state, JSON storage, results, and        |
+// copied diagnostic rows exposed through borrowed C views.                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 4840 B (4.727 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..2911] prepared                       : ?PreparedO2A                                                  |
+// [2912..3807] parsed_input                   : ?std.json.Parsed(O2AInput)                                    |
+// [3808..4359] o2a_session_storage            : O2ASessionStorage                                             |
+// [4360..4383] results                        : ArrayList(*Output)                                            |
+// [4384..4407] oe_results                     : ArrayList(*Result)                                            |
+// [4408..4431] oe_batch_results               : ArrayList(*BatchResult)                                       |
+// [4432..4455] oe_fastmode_batch_results      : ArrayList(*FastmodeBatchResult)                               |
+// [4456..4479] atmospheric_budgets            : ArrayList([]ZdsAtmosphericBudgetRow)                          |
+// [4480..4503] o2_line_contribution_tables    : ArrayList([]ZdsO2LineContributionRow)                         |
+// [4504..4527] instrument_response_tables     : ArrayList([]ZdsInstrumentResponseRow)                         |
+// [4528..4551] o2_o2_cia_tables               : ArrayList([]ZdsO2O2CIARow)                                    |
+// [4552..4575] radiative_transfer_tables      : ArrayList([]ZdsRadiativeTransferDiagnosticRow)                |
+// [4576..4832] last_error                     : [256:0]u8                                                     |
+// [4833..4839] trailing padding               : 7 B                                                           |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   array lists retain native result pointers and copied diagnostic row buffers until cleared or released.    |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 76 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 4840 B (4.727 KiB); total also includes referenced storage above                  |
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
@@ -418,130 +801,6 @@ const Context = struct {
     o2_o2_cia_tables: std.ArrayList([]ZdsO2O2CIARow) = .empty,
     radiative_transfer_tables: std.ArrayList([]ZdsRadiativeTransferDiagnosticRow) = .empty,
     last_error: [256:0]u8 = [_:0]u8{0} ** 256,
-
-    fn clearResults(self: *Context) void {
-        for (self.results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationResults(self: *Context) void {
-        for (self.oe_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationBatchResults(self: *Context) void {
-        for (self.oe_batch_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_batch_results.clearAndFree(allocator);
-    }
-
-    fn clearOptimalEstimationFastmodeBatchResults(self: *Context) void {
-        for (self.oe_fastmode_batch_results.items) |result| {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
-        self.oe_fastmode_batch_results.clearAndFree(allocator);
-    }
-
-    fn clearAtmosphericBudgets(self: *Context) void {
-        clearStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets);
-    }
-
-    fn clearO2LineContributionTables(self: *Context) void {
-        clearStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables);
-    }
-
-    fn clearInstrumentResponseTables(self: *Context) void {
-        clearStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables);
-    }
-
-    fn clearO2O2CIATables(self: *Context) void {
-        clearStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables);
-    }
-
-    fn clearRadiativeTransferTables(self: *Context) void {
-        clearStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables);
-    }
-
-    fn removeResult(self: *Context, result: *zdisamar.Output) bool {
-        for (self.results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationResult(self: *Context, result: *zdisamar.optimal_estimation.Result) bool {
-        for (self.oe_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationBatchResult(self: *Context, result: *zdisamar.optimal_estimation.BatchResult) bool {
-        for (self.oe_batch_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_batch_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationFastmodeBatchResult(
-        self: *Context,
-        result: *zdisamar.optimal_estimation.FastmodeBatchResult,
-    ) bool {
-        for (self.oe_fastmode_batch_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_fastmode_batch_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeAtmosphericBudget(self: *Context, rows_ptr: [*]const ZdsAtmosphericBudgetRow) ?[]ZdsAtmosphericBudgetRow {
-        return removeStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets, rows_ptr);
-    }
-
-    fn removeO2LineContributionTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsO2LineContributionRow,
-    ) ?[]ZdsO2LineContributionRow {
-        return removeStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables, rows_ptr);
-    }
-
-    fn removeInstrumentResponseTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsInstrumentResponseRow,
-    ) ?[]ZdsInstrumentResponseRow {
-        return removeStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables, rows_ptr);
-    }
-
-    fn removeO2O2CIATable(self: *Context, rows_ptr: [*]const ZdsO2O2CIARow) ?[]ZdsO2O2CIARow {
-        return removeStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables, rows_ptr);
-    }
-
-    fn removeRadiativeTransferTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsRadiativeTransferDiagnosticRow,
-    ) ?[]ZdsRadiativeTransferDiagnosticRow {
-        return removeStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables, rows_ptr);
-    }
 
     fn ownsResult(self: *const Context, result: *const zdisamar.Output) bool {
         for (self.results.items) |stored| {
@@ -564,13 +823,21 @@ const Context = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: prepared=8 B, wavelengths=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: prepared, wavelengths carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+// PreparedWavelengthRequest ----------------------------------------------------------------------------------|
+// Zig-only checked view of a prepared context plus caller-provided wavelength slice.                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] prepared    : *PreparedO2A                                                                         |
+// [ 8..23] wavelengths : []const f64                                                                          |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   prepared lives in Context; wavelengths borrows the caller buffer.                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); stack-local request view                                        |
 const PreparedWavelengthRequest = struct {
     prepared: *zdisamar.PreparedO2A,
     wavelengths: []const f64,
@@ -581,13 +848,40 @@ fn clearStoredRows(comptime Row: type, list: *std.ArrayList([]Row)) void {
     list.clearAndFree(allocator);
 }
 
-fn removeStoredRows(comptime Row: type, list: *std.ArrayList([]Row), rows_ptr: [*]const Row) ?[]Row {
+fn clearStoredResults(comptime Item: type, list: *std.ArrayList(*Item)) void {
+    for (list.items) |result| {
+        result.deinit(allocator);
+        allocator.destroy(result);
+    }
+    list.clearAndFree(allocator);
+}
+
+fn destroyStoredResult(comptime Item: type, list: *std.ArrayList(*Item), result: *Item) void {
     for (list.items, 0..) |stored, index| {
-        if (stored.ptr == rows_ptr) {
-            return list.swapRemove(index);
+        if (stored == result) {
+            _ = list.swapRemove(index);
+            result.deinit(allocator);
+            allocator.destroy(result);
+            return;
         }
     }
-    return null;
+}
+
+fn freeStoredRowsIfOwned(
+    comptime Row: type,
+    list: *std.ArrayList([]Row),
+    rows_ptr: [*]const Row,
+    row_count: usize,
+) void {
+    const has_rows = row_count != 0;
+    if (!has_rows) return;
+
+    for (list.items, 0..) |stored, index| {
+        if (stored.ptr == rows_ptr) {
+            allocator.free(list.swapRemove(index));
+            return;
+        }
+    }
 }
 
 fn checkedWavelengthRequest(
@@ -646,15 +940,15 @@ export fn zds_context_create() ?*Context {
 
 export fn zds_context_destroy(ctx: ?*Context) void {
     const resolved = ctx orelse return;
-    resolved.clearResults();
-    resolved.clearOptimalEstimationResults();
-    resolved.clearOptimalEstimationBatchResults();
-    resolved.clearOptimalEstimationFastmodeBatchResults();
-    resolved.clearAtmosphericBudgets();
-    resolved.clearO2LineContributionTables();
-    resolved.clearInstrumentResponseTables();
-    resolved.clearO2O2CIATables();
-    resolved.clearRadiativeTransferTables();
+    clearStoredResults(zdisamar.Output, &resolved.results);
+    clearStoredResults(zdisamar.optimal_estimation.Result, &resolved.oe_results);
+    clearStoredResults(zdisamar.optimal_estimation.BatchResult, &resolved.oe_batch_results);
+    clearStoredResults(zdisamar.optimal_estimation.FastmodeBatchResult, &resolved.oe_fastmode_batch_results);
+    clearStoredRows(ZdsAtmosphericBudgetRow, &resolved.atmospheric_budgets);
+    clearStoredRows(ZdsO2LineContributionRow, &resolved.o2_line_contribution_tables);
+    clearStoredRows(ZdsInstrumentResponseRow, &resolved.instrument_response_tables);
+    clearStoredRows(ZdsO2O2CIARow, &resolved.o2_o2_cia_tables);
+    clearStoredRows(ZdsRadiativeTransferDiagnosticRow, &resolved.radiative_transfer_tables);
     resolved.clearPrepared();
     resolved.o2a_session_storage.deinit(allocator);
     allocator.destroy(resolved);
@@ -832,34 +1126,45 @@ export fn zds_run_spectrum_jacobian_for_states(
     return runSpectrumJacobianForStateIds(ctx, out, state_ids, state_count);
 }
 
-// Borrowed measurement slices used only after C request validation.
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: three slice descriptors at 16 B each; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: wavelength_nm, reflectance, and variance borrow caller-owned C buffers
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: one stack value per native OE request
-//   footprint: per instance = 48 B (0.047 KiB); total also includes borrowed request buffers
-//   ABI: Zig-only normalized view, never passed across the C boundary
-//   ownership: no allocation; lifetime is bounded by the caller-owned request buffers
+// OptimalEstimationMeasurementSlices -------------------------------------------------------------------------|
+// Zig-only checked view of caller-owned measurement arrays. Never passed across the C boundary.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelength_nm : []const f64                                                                        |
+// [16..31] reflectance   : []const f64                                                                        |
+// [32..47] variance      : []const f64                                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   all slices borrow caller-owned C buffers after null and length validation.                                |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 48 B (0.047 KiB); stack-local request view                                        |
 const OptimalEstimationMeasurementSlices = struct {
     wavelength_nm: []const f64,
     reflectance: []const f64,
     variance: []const f64,
 };
 
-// Request-scoped native state specs plus owned pressure-profile spline scratch.
-// layout(64-bit):
-//   size: 464 B, align: 8 B
-//   field storage: profiles=144 B, state_specs=312 B, state_count=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: pressure-profile second-derivative arrays are owned until the C call returns
-//   cache span: 8 cache line(s) at 64 B per line
-//   count: one stack value per native OE request
-//   footprint: per instance = 464 B (0.453 KiB); total also includes pressure-profile spline storage
-//   ABI: Zig-only normalized view, never passed across the C boundary
-//   ownership: deinit frees only pressure-profile spline storage allocated during request parsing
+// OptimalEstimationStateSpecs --------------------------------------------------------------------------------|
+// Zig-only normalized state specs plus request-scoped pressure-profile spline scratch.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 464 B (0.453 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..143] profiles    : [max_state_count]PressureAltitudeProfile                                           |
+// [144..455] state_specs : [max_state_count]StateSpec                                                         |
+// [456..463] state_count : usize                                                                              |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   pressure-profile second-derivative arrays are owned until the C call returns and deinit frees them.       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 8 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 464 B (0.453 KiB); total also includes pressure-profile spline storage            |
 const OptimalEstimationStateSpecs = struct {
     profiles: [zdisamar.optimal_estimation.max_state_count]zdisamar.optimal_estimation.PressureAltitudeProfile =
         [_]zdisamar.optimal_estimation.PressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count,
@@ -1795,10 +2100,7 @@ export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.Output = @ptrCast(@alignCast(handle));
-        if (resolved.removeResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.Output, &resolved.results, result);
     }
     output.* = .{};
 }
@@ -1808,10 +2110,7 @@ export fn zds_optimal_estimation_result_free(ctx: ?*Context, out: ?*ZdsOptimalEs
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.Result = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.optimal_estimation.Result, &resolved.oe_results, result);
     }
     output.* = .{};
 }
@@ -1821,10 +2120,7 @@ export fn zds_optimal_estimation_batch_result_free(ctx: ?*Context, out: ?*ZdsOpt
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.BatchResult = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationBatchResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.optimal_estimation.BatchResult, &resolved.oe_batch_results, result);
     }
     output.* = .{};
 }
@@ -1837,10 +2133,11 @@ export fn zds_optimal_estimation_fastmode_batch_result_free(
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.FastmodeBatchResult = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationFastmodeBatchResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(
+            zdisamar.optimal_estimation.FastmodeBatchResult,
+            &resolved.oe_fastmode_batch_results,
+            result,
+        );
     }
     output.* = .{};
 }
@@ -1848,45 +2145,40 @@ export fn zds_optimal_estimation_fastmode_batch_result_free(
 export fn zds_atmospheric_budget_free(ctx: ?*Context, out: ?*ZdsAtmosphericBudget) void {
     const resolved = ctx orelse return;
     const budget = out orelse return;
-    if (budget.len != 0) {
-        if (resolved.removeAtmosphericBudget(budget.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsAtmosphericBudgetRow, &resolved.atmospheric_budgets, budget.rows, budget.len);
     budget.* = .{};
 }
 
 export fn zds_o2_line_contributions_free(ctx: ?*Context, out: ?*ZdsO2LineContributions) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeO2LineContributionTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsO2LineContributionRow, &resolved.o2_line_contribution_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_instrument_response_free(ctx: ?*Context, out: ?*ZdsInstrumentResponse) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeInstrumentResponseTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsInstrumentResponseRow, &resolved.instrument_response_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_o2_o2_cia_diagnostics_free(ctx: ?*Context, out: ?*ZdsO2O2CIADiagnostics) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeO2O2CIATable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsO2O2CIARow, &resolved.o2_o2_cia_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_radiative_transfer_diagnostics_free(ctx: ?*Context, out: ?*ZdsRadiativeTransferDiagnostics) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeRadiativeTransferTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(
+        ZdsRadiativeTransferDiagnosticRow,
+        &resolved.radiative_transfer_tables,
+        table.rows,
+        table.len,
+    );
     table.* = .{};
 }
 

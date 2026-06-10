@@ -11,6 +11,34 @@ const selection = @import("selection.zig");
 
 const Allocator = std.mem.Allocator;
 
+// workflows.zig ----------------------------------------------------------------------------------------------|
+// Applies reference-data LUT workflow controls to a working Scene before optical preparation. This is the     |
+// mutation layer between selected bundled/reference inputs and PreparedOpticalState: it may generate LUTs,    |
+// clone only the scene subtrees that must change, and record generated-asset metadata for later reports.      |
+//                                                                                                             |
+// call route                                                                                                  |
+//   load.zig builds a shallow working Scene copy, loads or clones selected continuum/CIA/spectroscopy rows,   |
+//   then calls applyLutWorkflows before OpticsPrepare.prepare(). The source scene stays borrowed. When a      |
+//   workflow needs to replace an absorber-specific LUT or primary operational-band LUT, this file clones      |
+//   only that absorber set or operational-band-support slice into working-scene owned storage.                |
+//                                                                                                             |
+// workflow routes                                                                                             |
+//   reflectance/correction : record direct or generated LUT execution labels                                  |
+//   O2 line-by-line        : consume an operational O2 LUT or generate one from filtered HITRAN lines         |
+//   O2-O2 CIA              : consume or generate an operational CIA LUT                                       |
+//   generic cross-section  : consume a resolved LUT or generate one from a resolved cross-section table       |
+//                                                                                                             |
+// failure boundary                                                                                            |
+//   direct records the active non-LUT route when no operational LUT is present. consume requires an already   |
+//   resolved LUT. generate requires the source line/CIA/cross-section table needed to build one. Missing      |
+//   requested inputs return an explicit workflow error at this boundary.                                      |
+//                                                                                                             |
+// memory and hot path                                                                                         |
+//   This setup work runs before wavelength-time evaluation. Generated LUTs are first owned by temporary       |
+//   outputs from load.zig, then cloned into the working Scene or generated asset list. Execution labels and   |
+//   GeneratedLutAsset strings are caller-owned and later moved into PreparedOpticalState.                     |
+// ------------------------------------------------------------------------------------------------------------|
+
 const PrimaryOperationalBandSupportLut = enum {
     o2,
     o2o2,

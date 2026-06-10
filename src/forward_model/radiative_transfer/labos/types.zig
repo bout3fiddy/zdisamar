@@ -2,16 +2,33 @@ const gauss_legendre = @import("../../../common/math/quadrature/gauss_legendre.z
 const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 
 // types.zig -------------------------------------------------------------------------------------------------|
-// Core LABOS shapes used by attenuation, layer matrices, scattering orders, and reflectance.                 |
+// Core LABOS data shapes for stream matrices, direction geometry, layer reflection/transmission, local       |
+// radiation fields, and phase-kernel rows. The implementation files use these rows as fixed-capacity stack   |
+// or workspace storage while `n`, `n_gauss`, and `nmutot` tell each loop how much of the storage is active.  |
+//                                                                                                            |
+// called by                                                                                                  |
+//   attenuation.zig reads Geometry stream directions for survival tables                                     |
+//   layers.zig writes LayerRT matrices and source fields for each atmospheric layer                          |
+//   orders.zig streams UDField/UDLocal rows through scattering orders                                        |
+//   reflectance.zig integrates Fourier/order results into top-of-atmosphere reflectance                      |
+//   workspace.zig allocates retained slices of these rows for repeated wavelength solves                     |
 //                                                                                                            |
 // direction indexes                                                                                          |
 //   0 .. n_gauss - 1 : Gaussian quadrature streams                                                           |
-//   Geometry.viewIdx() : viewing stream                                                                      |
-//   n_gauss + 1       : solar stream                                                                         |
+//   Geometry.viewIdx()  : viewing stream                                                                     |
+//   n_gauss + 1        : solar stream                                                                        |
+//                                                                                                            |
+// row groups                                                                                                 |
+//   Mat/Vec/Vec2        : fixed stream linear algebra used by layer doubling and q-series solves             |
+//   Geometry            : direction grid plus precomputed pair factors used by attenuation and layer math    |
+//   LayerRT             : per-layer reflection/transmission matrices for one Fourier term                    |
+//   UDField/UDLocal     : direct/up/down fields used by scattering-order and integrated-source routes        |
+//   PhaseKernel*        : phase rows imported through phase_basis.zig and re-exported by basis.zig           |
 //                                                                                                            |
 // storage                                                                                                    |
-//   Matrix/vector storage is fixed at the LABOS maximum size. Each value also carries the active size where  |
-//   later loops need it. This keeps hot routines allocation-free after the caller prepares a workspace.      |
+//   Matrix/vector storage is fixed at the LABOS maximum size. Each value also carries active counts where    |
+//   later loops need them. This keeps hot routines allocation-free after the caller prepares a workspace and |
+//   lets fixed 12x10 kernels use compile-time bounds while generic routes share the same row shapes.         |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const max_gauss: usize = 10;

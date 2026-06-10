@@ -4,6 +4,38 @@ const LutControls = @import("../common/lut_controls.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberModel = @import("Absorber.zig");
 
+// Scene.zig --------------------------------------------------------------------------------------------------|
+// Public typed request boundary for one forward-model run and the stable zdisamar.Input type.                 |
+//                                                                                                             |
+// used by                                                                                                     |
+//   root.zig exposes Scene as the public Input API                                                            |
+//   o2a_reference/run.zig builds owned O2 A scenes from parsed vendor/control data                            |
+//   optical_properties/state_build/context.zig validates Scene before optical preparation                     |
+//   instrument_grid/grid_calculation/simulate.zig reads Scene as the product-grid request                     |
+//   bundled reference-data workflows derive LUT selection and generated-asset compatibility from it           |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   validate -> nested row validation, band-support count checks, measured-wavelength/grid agreement          |
+//   lutCompatibilityKey -> geometry + nominal grid + instrument support + active spectroscopy controls        |
+//   lutNominalWavelengthBounds / lutLowResolutionSamplingIdentity -> effective nominal grid for LUT keys      |
+//   deinitOwned -> release only nested storage with explicit ownership in child rows                          |
+//                                                                                                             |
+// boundary rules                                                                                              |
+//   Scene carries typed inputs only. Forward-model code may read it, but parsing, file I/O, and generated     |
+//   asset loading stay in input/reference-data layers. No nested control should be silently ignored: validate |
+//   accepts it, rejects it, or key-building includes the controls that affect generated LUT compatibility.    |
+//                                                                                                             |
+// layout                                                                                                      |
+//   Scene is a 672 B value row with nested owner/view headers. The row itself does not own referenced storage |
+//   by default; ownership flags live in child structs such as bands, absorbers, aerosol, observation_model,   |
+//   interval grids, and operational support rows.                                                             |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Scene is passed by pointer through preparation and product simulation. Cache-key hashing scans absorber   |
+//   controls during setup; wavelength-time RTM and instrument loops consume the prepared state derived from   |
+//   this public input row.                                                                                    |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
 pub const Binding = @import("Binding.zig").Binding;
 pub const BindingKind = @import("Binding.zig").BindingKind;
@@ -32,14 +64,32 @@ pub const DerivativeMode = enum {
     semi_analytical,
 };
 
-// layout(64-bit):
-//   size: 2456 B, align: 8 B
-//   field storage: 2456 B across 11 fields; largest: observation_model=1816 B, aerosol=224 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: id carry references/descriptors; referenced storage is not included in size
-//   cache span: 39 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 2456 B (2.398 KiB); total also includes referenced storage above
+// Scene ------------------------------------------------------------------------------------------------------|
+// Complete user-facing forward-model request.                                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 672 B (0.656 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] id                                  : []const u8                                                 |
+// [ 16..111] atmosphere                          : Atmosphere                                                 |
+// [112..151] geometry                            : Geometry                                                   |
+// [152..175] spectral_grid                       : SpectralGrid                                               |
+// [176..191] bands                               : SpectralBandSet                                            |
+// [192..207] absorbers                           : AbsorberSet                                                |
+// [208..223] surface                             : Surface                                                    |
+// [224..391] aerosol                             : Aerosol                                                    |
+// [392..607] observation_model                   : ObservationModel                                           |
+// [608..663] lut_controls                        : LutControls.Controls                                       |
+// [664..671] phase_function_truncation_threshold : f64                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   id and nested slice headers point at caller-owned or prepared data.                                       |
+//   Referenced storage is not in this row.                                                                    |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 11 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 672 B (0.656 KiB); total also includes referenced nested storage                  |
 pub const Scene = struct {
     id: []const u8 = "scene-0",
     atmosphere: Atmosphere = .{},
@@ -72,7 +122,6 @@ pub const Scene = struct {
         {
             return errors.Error.InvalidRequest;
         }
-        try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
         const explicit_operational_band_count = self.observation_model.operational_band_support.len;
         if (self.bands.items.len != 0 and
             explicit_operational_band_count != 0 and
@@ -84,9 +133,8 @@ pub const Scene = struct {
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {
 
-            // INVARIANT:
-            //   Explicit measured channels and the scene spectral grid must describe the same
-            //   sample count once the scene is ready for execution.
+            // Explicit measured channels and the scene spectral grid must describe the same sample count before
+            // instrument-grid execution.
             return errors.Error.InvalidRequest;
         }
     }
@@ -231,3 +279,4 @@ pub const Scene = struct {
         self.observation_model.deinitOwned(allocator);
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

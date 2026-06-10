@@ -1,9 +1,53 @@
 const std = @import("std");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const SpectroscopyTypes = @import("../../../input/reference/spectroscopy/types.zig");
+const hashing = @import("../../../common/hashing.zig");
 
 const Allocator = std.mem.Allocator;
 
+// profile_state_cache.zig ------------------------------------------------------------------------------------|
+// Single-entry cache for expensive HITRAN profile line-state preparation.                                     |
+//                                                                                                             |
+// called by                                                                                                   |
+//   absorbers.zig tries load() before preparing strong/weak profile states, then store() after a miss         |
+//   preparation contexts may also bypass this cache with borrowed profile states from a caller                |
+//                                                                                                             |
+// cached payload                                                                                              |
+//   key           : hash of line-list content, strong-line sidecars, relaxation matrix, runtime controls,     |
+//                   profile temperatures, and profile pressures                                               |
+//   weak_states   : cloned WeakLinePreparedState rows for each profile level                                  |
+//   strong_states : cloned StrongLinePreparedState rows for each profile level                                |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   load() clones the retained entry into caller-owned output arrays; store() clones caller-owned states into |
+//   smp_allocator-backed retained storage. The cache never lends its slices directly to PreparedOpticalState, |
+//   so each prepared state keeps its normal deinit ownership.                                                 |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is preparation-time only. The per-wavelength spectroscopy path reads prepared states owned by the    |
+//   optical state; it does not lock this mutex or touch the cache entry.                                      |
+//                                                                                                             |
+// memory                                                                                                      |
+//   One process-wide Entry is protected by mutex. Replacing it deinitializes the old cloned strong/weak state |
+//   arrays. Shapes must match temperatures, pressures, weak outputs, and strong outputs before cloning.       |
+// ------------------------------------------------------------------------------------------------------------|
+
+// Entry ------------------------------------------------------------------------------------------------------|
+// Retained strong/weak line-state cache entry for one profile-state key.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] key           : u64                                                                                |
+// [ 8..23] strong_states : []StrongLinePreparedState                                                          |
+// [24..39] weak_states   : []WeakLinePreparedState                                                            |
+//                                                                                                             |
+// out-of-line storage                                                                                         |
+//   strong_states and weak_states own cloned profile-level prepared-state rows.                               |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B (0.039 KiB); one retained optional entry plus state rows                     |
 const Entry = struct {
     key: u64,
     strong_states: []ReferenceData.StrongLinePreparedState,
@@ -17,6 +61,7 @@ const Entry = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 var mutex = std.Thread.Mutex{};
 var cached_entry: ?Entry = null;
@@ -165,76 +210,56 @@ fn computeKey(
     pressures_hpa: []const f64,
 ) u64 {
     var hash = std.hash.Wyhash.init(0);
-    updateInt(&hash, temperatures_k.len);
+    hashing.updateInt(&hash, temperatures_k.len);
     hash.update(std.mem.sliceAsBytes(temperatures_k));
     hash.update(std.mem.sliceAsBytes(pressures_hpa));
 
-    updateInt(&hash, line_list.lines.len);
+    hashing.updateInt(&hash, line_list.lines.len);
     for (line_list.lines) |line| {
-        updateInt(&hash, line.gas_index);
-        updateInt(&hash, line.isotope_number);
-        updateFloat(&hash, line.center_wavelength_nm);
-        updateFloat(&hash, line.center_wavenumber_cm1);
-        updateFloat(&hash, line.line_strength_cm2_per_molecule);
-        updateFloat(&hash, line.air_half_width_cm1);
-        updateFloat(&hash, line.temperature_exponent);
-        updateFloat(&hash, line.lower_state_energy_cm1);
-        updateFloat(&hash, line.pressure_shift_cm1);
-        updateInt(&hash, line.branch_ic1 orelse 0);
-        updateInt(&hash, line.branch_ic2 orelse 0);
-        updateInt(&hash, line.rotational_nf orelse 0);
+        hashing.updateInt(&hash, line.gas_index);
+        hashing.updateInt(&hash, line.isotope_number);
+        hashing.updateFloat(&hash, line.center_wavelength_nm);
+        hashing.updateFloat(&hash, line.center_wavenumber_cm1);
+        hashing.updateFloat(&hash, line.line_strength_cm2_per_molecule);
+        hashing.updateFloat(&hash, line.air_half_width_cm1);
+        hashing.updateFloat(&hash, line.temperature_exponent);
+        hashing.updateFloat(&hash, line.lower_state_energy_cm1);
+        hashing.updateFloat(&hash, line.pressure_shift_cm1);
+        hashing.updateInt(&hash, line.branch_ic1 orelse 0);
+        hashing.updateInt(&hash, line.branch_ic2 orelse 0);
+        hashing.updateInt(&hash, line.rotational_nf orelse 0);
     }
 
     if (line_list.strong_lines) |strong_lines| {
-        updateInt(&hash, strong_lines.len);
+        hashing.updateInt(&hash, strong_lines.len);
         for (strong_lines) |line| {
-            updateFloat(&hash, line.center_wavenumber_cm1);
-            updateFloat(&hash, line.population_t0);
-            updateFloat(&hash, line.dipole_ratio);
-            updateFloat(&hash, line.dipole_t0);
-            updateFloat(&hash, line.lower_state_energy_cm1);
-            updateFloat(&hash, line.air_half_width_cm1);
-            updateFloat(&hash, line.temperature_exponent);
-            updateFloat(&hash, line.pressure_shift_cm1);
-            updateInt(&hash, line.rotational_index_m1);
+            hashing.updateFloat(&hash, line.center_wavenumber_cm1);
+            hashing.updateFloat(&hash, line.population_t0);
+            hashing.updateFloat(&hash, line.dipole_ratio);
+            hashing.updateFloat(&hash, line.dipole_t0);
+            hashing.updateFloat(&hash, line.lower_state_energy_cm1);
+            hashing.updateFloat(&hash, line.air_half_width_cm1);
+            hashing.updateFloat(&hash, line.temperature_exponent);
+            hashing.updateFloat(&hash, line.pressure_shift_cm1);
+            hashing.updateInt(&hash, line.rotational_index_m1);
         }
     } else {
-        updateInt(&hash, @as(usize, 0));
+        hashing.updateInt(&hash, @as(usize, 0));
     }
 
     if (line_list.relaxation_matrix) |matrix| {
-        updateInt(&hash, matrix.line_count);
+        hashing.updateInt(&hash, matrix.line_count);
         hash.update(std.mem.sliceAsBytes(matrix.wt0));
         hash.update(std.mem.sliceAsBytes(matrix.bw));
     } else {
-        updateInt(&hash, @as(usize, 0));
+        hashing.updateInt(&hash, @as(usize, 0));
     }
 
     const controls = line_list.runtime_controls;
-    updateOptionalInt(&hash, controls.gas_index);
+    hashing.updateOptionalInt(&hash, controls.gas_index);
     hash.update(controls.active_isotopes);
-    updateOptionalFloat(&hash, controls.threshold_line_scale);
-    updateOptionalFloat(&hash, controls.cutoff_cm1);
-    updateFloat(&hash, controls.line_mixing_factor);
+    hashing.updateOptionalFloat(&hash, controls.threshold_line_scale);
+    hashing.updateOptionalFloat(&hash, controls.cutoff_cm1);
+    hashing.updateFloat(&hash, controls.line_mixing_factor);
     return hash.final();
-}
-
-fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |payload| updateFloat(hash, payload);
-}
-
-fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |payload| updateInt(hash, payload);
-}
-
-fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
 }

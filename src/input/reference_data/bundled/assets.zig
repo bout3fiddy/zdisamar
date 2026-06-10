@@ -4,20 +4,46 @@ const AbsorberModel = @import("../../Absorber.zig");
 const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
+// assets.zig -------------------------------------------------------------------------------------------------|
+// Names the retained O2 A reference-data assets and converts them into typed rows used by scene preparation.  |
+// This is the asset-ID and clone helper layer below bundled/selection.zig: selection decides whether a scene  |
+// should use a resolved scene asset, a bundled default, or a typed rejection; this file performs the concrete |
+// load or clone once that decision has been made.                                                             |
+//                                                                                                             |
+// called by                                                                                                   |
+//   selection.zig chooses continuum, spectroscopy, CIA, and LUT inputs for bundled/load.zig. load.zig owns    |
+//   the hydrated Data object passed to optical preparation. workflows.zig may consume the same selected       |
+//   line lists and CIA tables while generating operational LUTs. Tests cover bundle defaults, explicit        |
+//   binding rejection, resolved-payload cloning, and asset-schema conversion.                                 |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   load* functions route manifest IDs through ingest/reference_assets.zig and convert LoadedAsset rows.      |
+//   loadO2aSpectroscopyLineList attaches the O2 strong-line sidecar set and relaxation matrix.                |
+//   cloneResolvedSpectroscopyLineList copies scene-provided rows and normalizes missing HITRAN gas indexes.   |
+//   shouldLoadBundled* treats empty absorber lists as the bundled-default O2 A scene.                         |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file may load retained CSV assets through the reference-asset ingest layer. User control parsing,    |
+//   selection policy, RTM execution, and diagnostics stay at their own boundaries. selection.zig rejects      |
+//   explicit unresolved bindings before this file loads bundled defaults.                                     |
+//                                                                                                             |
+// row handoff                                                                                                 |
+//   SpectroscopyLineList rows returned from here are owned by the caller. Bundled O2 A rows already carry     |
+//   HITRAN gas_index values; cloned scene-provided rows may use gas_index=0, so clone normalization fills     |
+//   the absorber species HITRAN index before optical preparation hashes and filters the list.                 |
+//                                                                                                             |
+// memory                                                                                                      |
+//   bundle_manifest_paths and asset_ids are namespace-only constant groups, so they have no runtime state.    |
+//   Loaded tables own their returned arrays; zeroContinuumTable allocates the small 3-point zero table.       |
+//   normalizeResolvedLineGasIndex mutates only a cloned list and leaves scene-owned line lists borrowed.      |
+// ------------------------------------------------------------------------------------------------------------|
+
 pub const bundle_manifest_paths = struct {
     pub const climatology = "data/reference_data/climatologies/bundle_manifest.json";
     pub const cross_sections = "data/reference_data/cross_sections/bundle_manifest.json";
     pub const luts = "data/reference_data/luts/bundle_manifest.json";
 };
 
-// layout(64-bit):
-//   size: 0 B, align: 1 B
-//   field storage: 0 B; padding: 0 B (0 bits)
-//   footprint: no runtime field storage; namespace/type declarations only
 pub const asset_ids = struct {
     pub const standard_climatology_profile = "us_standard_1976_profile";
     pub const o2a_line_list = "o2a_hitran_07_hit08_tropomi";
@@ -39,10 +65,23 @@ pub fn zeroContinuumTable(
     start_nm: f64,
     end_nm: f64,
 ) !ReferenceData.CrossSectionTable {
+    // zeroContinuumTable -------------------------------------------------------------------------------------|
+    // Build an owned three-point continuum table that preserves the scene wavelength support with zero sigma. |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   selection.zig uses this when no supported continuum asset is requested. o2a_reference/run.zig uses    |
+    //   the same shape for reference-case setup.                                                              |
+    //                                                                                                         |
+    // units                                                                                                   |
+    //   Wavelength support stays in nanometers so downstream interpolation sees the same spectral axis even   |
+    //   though every coefficient value is zero.                                                               |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Returns an owned 3-row CrossSectionPoint slice; the caller releases it through CrossSectionTable.     |
+    // --------------------------------------------------------------------------------------------------------|
+
     const midpoint_nm = (start_nm + end_nm) * 0.5;
-    // UNITS:
-    //   The continuum grid is kept in nanometers so downstream interpolation sees the same
-    //   spectral support even when the coefficient values are zero.
+
     return .{
         .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
@@ -55,7 +94,7 @@ pub fn zeroContinuumTable(
 pub fn loadStandardClimatologyProfile(
     allocator: Allocator,
 ) !ReferenceData.ClimatologyProfile {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .climatology_profile,
         bundle_manifest_paths.climatology,
@@ -68,7 +107,7 @@ pub fn loadStandardClimatologyProfile(
 pub fn loadO2ALineList(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyLineList {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_line_list,
         bundle_manifest_paths.cross_sections,
@@ -81,7 +120,7 @@ pub fn loadO2ALineList(
 pub fn loadO2AStrongLineSet(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyStrongLineSet {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_strong_line_set,
         bundle_manifest_paths.cross_sections,
@@ -94,7 +133,7 @@ pub fn loadO2AStrongLineSet(
 pub fn loadO2ARelaxationMatrix(
     allocator: Allocator,
 ) !ReferenceData.RelaxationMatrix {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .spectroscopy_relaxation_matrix,
         bundle_manifest_paths.cross_sections,
@@ -107,6 +146,17 @@ pub fn loadO2ARelaxationMatrix(
 pub fn loadO2aSpectroscopyLineList(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyLineList {
+    // loadO2aSpectroscopyLineList ----------------------------------------------------------------------------|
+    // Load the bundled O2 A line list and attach DISAMAR-style strong-line sidecars.                          |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   The returned SpectroscopyLineList owns its line rows plus cloned strong-line and relaxation storage.  |
+    //   Temporary sidecar containers are released after attachStrongLineSidecars clones them into the list.   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   selection.zig uses this only after policy has chosen the bundled O2 A line-list path.                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     var line_list = try loadO2ALineList(allocator);
     errdefer line_list.deinit(allocator);
 
@@ -123,7 +173,7 @@ pub fn loadO2aSpectroscopyLineList(
 pub fn loadO2ACollisionInducedAbsorptionTable(
     allocator: Allocator,
 ) !ReferenceData.CollisionInducedAbsorptionTable {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .collision_induced_absorption_table,
         bundle_manifest_paths.cross_sections,
@@ -136,7 +186,7 @@ pub fn loadO2ACollisionInducedAbsorptionTable(
 pub fn loadAirmassFactorLut(
     allocator: Allocator,
 ) !ReferenceData.AirmassFactorLut {
-    var asset = try reference_assets.loadCsvBundleAsset(
+    var asset = try reference_assets.loadBundleAsset(
         allocator,
         .lookup_table,
         bundle_manifest_paths.luts,
@@ -147,17 +197,29 @@ pub fn loadAirmassFactorLut(
 }
 
 pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
-    // DECISION:
-    //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
-    //   explicit configuration.
+    // shouldLoadBundledO2ALineList ---------------------------------------------------------------------------|
+    // Decide whether absent line-list bindings should use the bundled O2 A line list.                         |
+    //                                                                                                         |
+    // policy                                                                                                  |
+    //   Empty absorber lists are the bundled-default scene. Otherwise, the bundled line list is selected      |
+    //   only for an explicit O2 line-by-line request; unsupported explicit bindings are rejected in           |
+    //   selection.zig before this helper can act as a fallback.                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (scene.absorbers.items.len == 0) return true;
     return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line);
 }
 
 pub fn shouldLoadBundledO2ACia(scene: *const Scene) bool {
-    // DECISION:
-    //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
-    //   explicit configuration.
+    // shouldLoadBundledO2ACia --------------------------------------------------------------------------------|
+    // Decide whether absent CIA bindings should use the bundled O2-O2 table.                                  |
+    //                                                                                                         |
+    // policy                                                                                                  |
+    //   Empty absorber lists are the bundled-default scene. Otherwise, O2 line-by-line or explicit O2-O2 CIA  |
+    //   requests can use the bundled CIA table when the scene overlaps O2 A support. selection.zig rejects    |
+    //   unresolved explicit CIA bindings before this helper can act as a fallback.                            |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (scene.absorbers.items.len == 0) return true;
     return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line) or
         sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
@@ -168,8 +230,18 @@ pub fn sceneRequestsSpectroscopyMode(
     species: AbsorberSpecies,
     mode: AbsorberModel.SpectroscopyMode,
 ) bool {
+    // sceneRequestsSpectroscopyMode --------------------------------------------------------------------------|
+    // Scan scene absorber controls for one typed species and spectroscopy mode.                               |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Unknown absorber identifiers are ignored here because selection only needs to know whether a known    |
+    //   species requested the mode. The typed rejection for unsupported explicit asset bindings happens in    |
+    //   selection.zig before bundled defaults are loaded.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != mode) continue;
+
         const absorber_species = resolvedAbsorberSpecies(absorber) orelse continue;
         if (absorber_species == species) return true;
     }
@@ -195,21 +267,23 @@ pub fn hasExplicitCiaBindings(scene: *const Scene) bool {
     return false;
 }
 
-pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecies {
-    return AbsorberModel.resolvedAbsorberSpecies(absorber);
-}
-
-pub fn resolvedSpectroscopyLineList(scene: *const Scene) ?*const ReferenceData.SpectroscopyLineList {
-    for (scene.absorbers.items) |*absorber| {
-        if (absorber.spectroscopy.resolved_line_list) |*line_list| return line_list;
-    }
-    return null;
-}
+pub const resolvedAbsorberSpecies = AbsorberModel.resolvedAbsorberSpecies;
 
 pub fn cloneResolvedSpectroscopyLineList(
     allocator: Allocator,
     scene: *const Scene,
 ) !?ReferenceData.SpectroscopyLineList {
+    // cloneResolvedSpectroscopyLineList ----------------------------------------------------------------------|
+    // Clone the first resolved scene-provided spectroscopy line list for bundled preparation.                 |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This path preserves an explicit resolved scene payload, then fills missing HITRAN gas indexes from    |
+    //   the absorber species so later spectroscopy setup sees concrete rows.                                  |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   The clone is caller-owned. The source Scene and its resolved line list remain borrowed.               |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (scene.absorbers.items) |absorber| {
         const resolved = absorber.spectroscopy.resolved_line_list orelse continue;
         var owned = try resolved.clone(allocator);
@@ -219,7 +293,9 @@ pub fn cloneResolvedSpectroscopyLineList(
     return null;
 }
 
-pub fn resolvedCollisionInducedAbsorptionTable(scene: *const Scene) ?*const ReferenceData.CollisionInducedAbsorptionTable {
+pub fn resolvedCollisionInducedAbsorptionTable(
+    scene: *const Scene,
+) ?*const ReferenceData.CollisionInducedAbsorptionTable {
     for (scene.absorbers.items) |*absorber| {
         if (absorber.spectroscopy.resolved_cia_table) |*cia_table| return cia_table;
     }
@@ -230,6 +306,18 @@ fn normalizeResolvedLineGasIndex(
     line_list: *ReferenceData.SpectroscopyLineList,
     maybe_species: ?AbsorberSpecies,
 ) void {
+    // normalizeResolvedLineGasIndex --------------------------------------------------------------------------|
+    // Fill missing HITRAN gas indexes on a cloned scene-provided line list.                                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   This is setup work after cloneResolvedSpectroscopyLineList, not per-wavelength spectroscopy.          |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   The loop reads and may write gas_index at [88..89] of each 104 B SpectroscopyLine row. It uses        |
+    //   pointer capture, does not copy rows, and keeps the public line-list row intact for later              |
+    //   spectroscopy evaluation and cache-key hashing.                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+
     const species = maybe_species orelse return;
     const gas_index = species.hitranIndex() orelse return;
     for (line_list.lines) |*line| {

@@ -26,7 +26,6 @@ test {
     _ = @import("forward_model/optical_properties/shared/phase_functions_test.zig");
     _ = @import("forward_model/optical_properties/shared/band_means_test.zig");
 
-    _ = @import("forward_model/radiative_transfer/derivatives_test.zig");
     _ = @import("forward_model/radiative_transfer/root_test.zig");
     _ = @import("forward_model/radiative_transfer/labos/workspace_test.zig");
     _ = @import("forward_model/radiative_transfer/labos/orders_test.zig");

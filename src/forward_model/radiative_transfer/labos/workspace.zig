@@ -11,21 +11,50 @@ const layer_phase_signature_hash_mask: u64 = 0x00ff_ffff_ffff_ffff;
 const layer_phase_signature_index_shift: u6 = 56;
 
 // workspace.zig ---------------------------------------------------------------------------------------------|
-// Caller-owned LABOS scratch memory. This file owns buffers and cache validity; it does not own physics.     |
+// Retained LABOS scratch memory for repeated radiative-transfer solves. The workspace owns storage and cache |
+// validity only; optical properties, RTM controls, and layer physics stay in the prepared ForwardInput that  |
+// execute.zig passes in for the current wavelength.                                                          |
 //                                                                                                            |
-// used by                                                                                                    |
-//   execute.zig passes one Workspace across high-resolution wavelength samples when the caller provides it.  |
+// caller route                                                                                               |
+//   spectral_forward.zig keeps one Workspace inside each worker-local ForwardSampleScratch. Each             |
+//   high-resolution miss builds a wavelength-specific ForwardInput, then calls                               |
+//   executePreparedWithLabosWorkspace -> labos.executeWithWorkspace -> layerResolvedLabosWithWorkspace.      |
+//   Tests and one-shot callers may pass null instead; execute.zig then allocates temporary storage locally.  |
 //                                                                                                            |
-// main cache paths                                                                                           |
-//   attenuation data       -> reused by dynamic and runtime attenuation builders                             |
-//   RT layers              -> reused by layer matrix builders                                                |
-//   order fields           -> reused by orders.zig scattering transport                                      |
-//   Plm basis              -> reused by Fourier term when geometry and phase range still match               |
-//   layer phase signatures -> reused for telemetry about possible phase-kernel reuse                         |
+// runtime shape                                                                                              |
+//   One LABOS solve walks the same large arrays many times: geometry, direct-beam attenuation, RT layer      |
+//   matrices, scattering-order fields, phase-kernel rows, and Fourier PLM bases. Product workers evaluate    |
+//   many nearby wavelengths, so retaining those buffers removes allocator traffic from the per-sample path.  |
+//                                                                                                            |
+// owned buffers                                                                                              |
+//   attenuation_data                  : full dynamic attenuation, indexed by direction and level pair        |
+//   attenuation_layer_transmittance   : compact adjacent-layer survival for integrated-source reflectance    |
+//   attenuation_top_to_level          : compact top-to-interface survival for integrated-source reflectance  |
+//   rt_layers                         : surface slot plus one LABOS reflection/transmission row per layer    |
+//   orders                            : nested OrdersWorkspace used by orders.zig transport loops            |
+//   layer_phase_rows/_valid           : saved phase rows from layer construction for source-interface reuse  |
+//   plm_basis_cache/_valid            : Fourier-indexed PLM bases for the current cached geometry            |
+//   previous_layer_phase_signatures   : trace probe for possible phase-kernel reuse across solves            |
+//                                                                                                            |
+// borrowed results                                                                                           |
+//   Public methods return slices or pointers into the workspace. They are valid until the next workspace     |
+//   method that can resize the same buffer, until ordersWorkspace replaces its nested workspace, or until    |
+//   deinit. The caller must not share one Workspace across concurrent LABOS solves.                          |
+//                                                                                                            |
+// cache invalidation                                                                                         |
+//   Geometry is the parent cache key. When nGauss, mu0, or muv changes, the workspace rebuilds Geometry and  |
+//   clears PLM and layer-phase-signature validity because stream weights and angle-dependent basis rows      |
+//   changed. PLM cache growth also clears validity because ensureCapacity may replace the backing storage.   |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   The important case is a worker-local workspace reused over many wavelength samples and Fourier terms.    |
+//   Trace phase timing is attached only by trace executables; in normal builds its WorkspaceState is zero    |
+//   size and the scratch layout stays focused on transport buffers.                                          |
 //                                                                                                            |
 // resizing rule                                                                                              |
-//   ensureCapacity allocates a replacement buffer and does not copy old values. Callers rebuild any values   |
-//   that matter after a resize. This keeps the workspace simple and avoids preserving scratch data.          |
+//   ensureCapacity allocates a replacement buffer and does not copy old values. That is safe because every   |
+//   caller either rebuilds the returned slice before reading it or resets the matching validity flags after  |
+//   growth. This rule keeps cache-validity comments beside the storage owner and the reuse call sites.       |
 // -----------------------------------------------------------------------------------------------------------|
 
 // Workspace -------------------------------------------------------------------------------------------------|

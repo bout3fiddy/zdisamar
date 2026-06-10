@@ -5,23 +5,51 @@ const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zi
 const OperationalReferenceGrid = @import("../../../input/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: line_mean_cross_section_cm2_per_molecule=8 B, line_mixing_mean_cross_section_cm2_per_molecule=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// band_means.zig --------------------------------------------------------------------------------------------   |
+// Computes wavelength-band mean spectroscopy values used while preparing absorber state.                        |
+//                                                                                                               |
+// called by                                                                                                     |
+//   state_build/accumulation.zig when building band-level gas and O2/O2-O2 optical-depth summaries              |
+//   operational O2/O2-O2 LUT routes through weightedOperational* helpers in this file                           |
+//                                                                                                               |
+// main paths                                                                                                    |
+//   computeBandLineMeans                                                                                        |
+//     -> prepare strong and weak line state once for the effective T/p                                          |
+//     -> scan the scene spectral grid                                                                           |
+//     -> accumulate line and line-mixing sigma means                                                            |
+//                                                                                                               |
+//   weightedOperationalO2BandMeans / weightedOperationalO2O2BandMean                                            |
+//     -> evaluate operational LUTs over the same spectral grid                                                  |
+//     -> weight by column-density or pair-path factors before accumulation                                      |
+//                                                                                                               |
+// hot path                                                                                                      |
+//   These functions run during optical-state preparation. Their result moves repeated spectroscopy averaging    |
+//   out of layer accumulation and wavelength-time RTM loops.                                                    |
+//                                                                                                               |
+// memory                                                                                                        |
+//   LineBandMeans is a 16 B stack/return value. Temporary strong/weak line states are owned inside              |
+//   computeBandLineMeans and deinitialized before return.                                                       |
+// ------------------------------------------------------------------------------------------------------------  |
+
+// LineBandMeans ---------------------------------------------------------------------------------------------   |
+// Mean line and line-mixing cross sections over one spectral band.                                              |
+//                                                                                                               |
+// layout(64-bit)                                                                                                |
+// size: 16 B (0.016 KiB), align: 8 B                                                                            |
+//                                                                                                               |
+// memory                                                                                                        |
+// [ 0.. 7] line_mean_cross_section_cm2_per_molecule        : f64                                                |
+// [ 8..15] line_mixing_mean_cross_section_cm2_per_molecule : f64                                                |
+//                                                                                                               |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                        |
+// cache span: 1 cache line at 64 B per line                                                                     |
+// footprint: per instance = 16 B; stack return value                                                            |
 pub const LineBandMeans = struct {
     line_mean_cross_section_cm2_per_molecule: f64 = 0.0,
     line_mixing_mean_cross_section_cm2_per_molecule: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------  |
 
-// hot path:
-//   when: absorber preparation computes band-mean spectroscopy support values
-//   work: scans active line absorbers and accumulates weighted band means
-//   data: line absorber arrays, wavelength windows, weights, output means
-//   math: mean_sigma = sum_i sigma(lambda_i,T,p) / N over the spectral grid
-//   follow: prepared absorber state and band-mean consumers in layer accumulation
 pub fn computeBandLineMeans(
     allocator: std.mem.Allocator,
     scene: *const Scene,
@@ -29,6 +57,17 @@ pub fn computeBandLineMeans(
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
 ) !LineBandMeans {
+    // computeBandLineMeans ----------------------------------------------------------------------------------   |
+    // Scans the spectral grid and accumulates mean line spectroscopy values for one band.                       |
+    //                                                                                                           |
+    // hot path                                                                                                  |
+    //   Runs in absorber preparation. Strong-line and weak-line prepared states are built once here and         |
+    //   reused across the wavelength samples in this mean.                                                      |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   mean_sigma = sum_i sigma(lambda_i, T, p) / N                                                            |
+    // -------------------------------------------------------------------------------------------------------   |
+
     const sample_count = @max(scene.spectral_grid.sample_count, @as(u32, 1));
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const wavelength_step = if (sample_count <= 1) 0.0 else span_nm / @as(f64, @floatFromInt(sample_count - 1));
@@ -38,38 +77,50 @@ pub fn computeBandLineMeans(
         @max(effective_pressure_hpa, 1.0),
     );
     defer if (prepared_state) |*state| state.deinit(allocator);
-    var prepared_weak_state = if (prepared_state != null)
-        try line_list.prepareWeakLineState(
+
+    var prepared_weak_state = prepare_weak_state: {
+        if (prepared_state == null) break :prepare_weak_state null;
+
+        break :prepare_weak_state try line_list.prepareWeakLineState(
             allocator,
             @max(effective_temperature_k, 150.0),
             @max(effective_pressure_hpa, 1.0),
-        )
-    else
-        null;
+        );
+    };
     defer if (prepared_weak_state) |*state| state.deinit(allocator);
 
     var line_sum: f64 = 0.0;
     var line_mixing_sum: f64 = 0.0;
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
-        const evaluation = if (prepared_state) |*state| blk: {
-            var anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex = undefined;
-            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm, &anchor_storage);
-            break :blk LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
-                line_list.*,
+        const evaluation = evaluate_sample: {
+            if (prepared_state) |*state| {
+                var anchor_storage: [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex =
+                    undefined;
+                const window = LineListEval.prepareStrongLineWavelengthWindow(
+                    line_list.*,
+                    wavelength_nm,
+                    &anchor_storage,
+                );
+
+                break :evaluate_sample LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                    line_list.*,
+                    wavelength_nm,
+                    @max(effective_temperature_k, 150.0),
+                    @max(effective_pressure_hpa, 1.0),
+                    state,
+                    if (prepared_weak_state) |*weak_state| weak_state else null,
+                    &window,
+                );
+            }
+
+            break :evaluate_sample line_list.evaluateAtPrepared(
                 wavelength_nm,
                 @max(effective_temperature_k, 150.0),
                 @max(effective_pressure_hpa, 1.0),
-                state,
-                if (prepared_weak_state) |*weak_state| weak_state else null,
-                &window,
+                null,
             );
-        } else line_list.evaluateAtPrepared(
-            wavelength_nm,
-            @max(effective_temperature_k, 150.0),
-            @max(effective_pressure_hpa, 1.0),
-            null,
-        );
+        };
         line_sum += evaluation.line_sigma_cm2_per_molecule;
         line_mixing_sum += evaluation.line_mixing_sigma_cm2_per_molecule;
     }
@@ -86,6 +137,13 @@ pub fn computeOperationalBandMean(
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
 ) f64 {
+    // computeOperationalBandMean ------------------------------------------------------------------------------ |
+    // Returns the operational O2/O2-O2 band mean for the active observation support.                            |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   unweighted mean = sum_i sigma(lambda_i, T, p) / N                                                       |
+    // --------------------------------------------------------------------------------------------------------  |
+
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     if (operational_band_support.operational_refspec_grid.enabled()) {
         return computeWeightedOperationalBandMean(
@@ -110,7 +168,6 @@ pub fn computeOperationalBandMean(
         );
     }
 
-    // math: unweighted operational band mean = sum_i sigma(lambda_i,T,p) / N
     return sigma_sum / @as(f64, @floatFromInt(sample_count));
 }
 
@@ -120,6 +177,13 @@ pub fn computeWeightedOperationalBandMean(
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
 ) f64 {
+    // computeWeightedOperationalBandMean ---------------------------------------------------------------------- |
+    // Computes the reference-spectrum weighted operational mean.                                                |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   weighted mean = sum_i weight_i * sigma(lambda_i, T, p) / sum_i weight_i                                 |
+    // --------------------------------------------------------------------------------------------------------  |
+
     var sigma_sum: f64 = 0.0;
     var weight_sum: f64 = 0.0;
     for (refspec_grid.wavelengths_nm, refspec_grid.weights) |wavelength_nm, weight| {
@@ -130,11 +194,18 @@ pub fn computeWeightedOperationalBandMean(
         );
         weight_sum += weight;
     }
-    // math: weighted band mean = sum_i w_i * sigma(lambda_i,T,p) / sum_i w_i
+
     return sigma_sum / @max(weight_sum, 1e-12);
 }
 
 pub fn computeWeightedWindowMean(values: []const f64, weights: []const f64) f64 {
+    // computeWeightedWindowMean ------------------------------------------------------------------------------- |
+    // Generic weighted mean helper for already sampled window values.                                           |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   mean = sum_i value_i * weight_i / sum_i weight_i                                                        |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (values.len == 0 or values.len != weights.len) return 0.0;
 
     var numerator: f64 = 0.0;
@@ -143,6 +214,6 @@ pub fn computeWeightedWindowMean(values: []const f64, weights: []const f64) f64 
         numerator += value * weight;
         denominator += weight;
     }
-    // math: generic weighted mean = sum(value_i * weight_i) / sum(weight_i)
+
     return numerator / @max(denominator, 1.0e-12);
 }

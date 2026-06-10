@@ -2,18 +2,57 @@ pub const Error = error{
     KernelShapeMismatch,
 };
 
+// convolution.zig -------------------------------------------------------------------------------------------------------|
+// One-dimensional slit convolution for measurement-space arrays. It is the fallback spectral-response path used          |
+// when instrument integration has not already averaged radiance, irradiance, or active Jacobian columns.                 |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   grid_calculation/simulate.zig applies this to radiance and irradiance scratch arrays before channel                  |
+//   calibration. The same file applies it to each active state-major Jacobian column before derivative calibration.      |
+//   implementations/instrument/integration.zig documents the legacy five-tap kernel that reaches this helper.            |
+//                                                                                                                        |
+// main paths                                                                                                             |
+//   apply               -> whole signal, including boundary and interior samples                                         |
+//   applyBoundarySample -> clipped edge normalization                                                                    |
+//   applyFullKernelSample -> fixed-window interior dot product                                                           |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   The dense interior streams a fixed window over one caller-owned slice and uses a two-lane vector dot product.        |
+//   Boundaries are handled separately because the kernel clips at the first and last samples.                            |
+//                                                                                                                        |
+// storage contract                                                                                                       |
+//   This is not an in-place transform. The output slice must be length-matched and caller-owned, but it must not         |
+//   overlap the signal slice when convolution should use the original signal values. simulate.zig follows that           |
+//   contract by convolving scratch -> radiance/irradiance, and by convolving each Jacobian column into scratch_aux       |
+//   before copying the result back to the column.                                                                        |
+//                                                                                                                        |
+// contract                                                                                                               |
+//   Boundaries normalize by the valid part of the kernel only, so constant input stays constant at the edges.            |
+//   Interior samples reuse the full kernel norm. signal and output must have the same length.                            |
+// -----------------------------------------------------------------------------------------------------------------------|
+
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
-    // apply --------------------------------------------------------------------------------------------------|
-    // Slit convolution for radiance, irradiance, and active Jacobian columns.                                 |
-    //                                                                                                         |
-    // Steps:                                                                                                  |
-    //   1. use edge-normalized samples near the signal boundaries                                             |
-    //   2. use the full kernel norm through the dense interior                                                |
-    //   3. write one output sample per input sample                                                           |
-    //                                                                                                         |
-    // output[i] = sum_j signal[i + j - half_width] * kernel[j] / sum_j kernel[j]                              |
-    // Boundary samples clip j to valid signal samples before normalizing.                                     |
-    // --------------------------------------------------------------------------------------------------------|
+    // apply -------------------------------------------------------------------------------------------------------------|
+    // Slit convolution for radiance, irradiance, and active Jacobian columns.                                            |
+    //                                                                                                                    |
+    // Steps:                                                                                                             |
+    //   1. use edge-normalized samples near the signal boundaries                                                        |
+    //   2. use the full kernel norm through the dense interior                                                           |
+    //   3. write one output sample per input sample                                                                      |
+    //                                                                                                                    |
+    // interior math                                                                                                      |
+    //               sum_j signal[i + j - half_width] * kernel_j                                                          |
+    //   output_i = ---------------------------------------------                                                         |
+    //                              sum_j kernel_j                                                                        |
+    //                                                                                                                    |
+    // boundary math                                                                                                      |
+    //   Use the same formula, but keep only j where signal[i + j - half_width] is inside the signal. The                 |
+    //   denominator uses that clipped kernel subset, so constant input stays constant at the edges.                      |
+    //                                                                                                                    |
+    // memory                                                                                                             |
+    //   Reads from signal and writes to output in ascending index order. Callers that need the original signal after     |
+    //   a write must pass separate output storage; calibration.zig owns the in-place postprocess route.                  |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
 
@@ -40,9 +79,17 @@ pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void
 }
 
 fn applyBoundarySample(signal: []const f64, kernel: []const f64, half_width: usize, index: usize) f64 {
-    // applyBoundarySample ------------------------------------------------------------------------------------|
-    // Edge sample with partial-kernel normalization. Only valid signal samples contribute to the norm.        |
-    // --------------------------------------------------------------------------------------------------------|
+    // applyBoundarySample -----------------------------------------------------------------------------------------------|
+    // Edge sample with partial-kernel normalization. Only valid signal samples contribute to the numerator               |
+    // and denominator.                                                                                                   |
+    //                                                                                                                    |
+    // index mapping                                                                                                      |
+    //   signal_index = output_index + kernel_index - half_width                                                          |
+    //   kernel_start/kernel_end clip kernel_index so signal_index stays in bounds.                                       |
+    //                                                                                                                    |
+    // why                                                                                                                |
+    //   The clipped norm avoids darkening or brightening the spectrum at the first and last samples.                     |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     const kernel_start = if (index < half_width) half_width - index else 0;
     const kernel_end = @min(kernel.len, signal.len + half_width - index);
@@ -61,13 +108,17 @@ fn applyBoundarySample(signal: []const f64, kernel: []const f64, half_width: usi
 }
 
 fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: f64) f64 {
-    // applyFullKernelSample ----------------------------------------------------------------------------------|
-    // Full-kernel interior convolution sample. Boundary samples are handled by applyBoundarySample.           |
-    //                                                                                                         |
-    // Two-lane vector path                                                                                    |
-    //   vector_sum accumulates two signal*kernel products at a time with @mulAdd.                             |
-    //   @reduce(.Add, vector_sum) collapses the lanes before the scalar tail and normalization.               |
-    // --------------------------------------------------------------------------------------------------------|
+    // applyFullKernelSample ---------------------------------------------------------------------------------------------|
+    // Full-kernel interior convolution sample. Boundary samples are handled by applyBoundarySample.                      |
+    //                                                                                                                    |
+    // Two-lane vector path                                                                                               |
+    //   vector_sum accumulates two signal*kernel products at a time with @mulAdd.                                        |
+    //   @reduce(.Add, vector_sum) collapses the lanes before the scalar tail and normalization.                          |
+    //                                                                                                                    |
+    // math                                                                                                               |
+    //   The vector and scalar paths compute the same dot product: sum_j signal_window[j] * kernel[j].                    |
+    //   The final divide by norm applies the kernel normalization once.                                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     if (norm == 0.0) return 0.0;
     const Vec2 = @Vector(2, f64);
@@ -91,9 +142,9 @@ fn applyFullKernelSample(signal_window: []const f64, kernel: []const f64, norm: 
 }
 
 fn kernelSum(kernel: []const f64) f64 {
-    // kernelSum ----------------------------------------------------------------------------------------------|
-    // Sum kernel weights once so interior samples can reuse the same normalization.                           |
-    // --------------------------------------------------------------------------------------------------------|
+    // kernelSum ---------------------------------------------------------------------------------------------------------|
+    // Sum kernel weights once so interior samples can reuse the same normalization.                                      |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     var sum: f64 = 0.0;
     for (kernel) |weight| sum += weight;
@@ -101,12 +152,12 @@ fn kernelSum(kernel: []const f64) f64 {
 }
 
 inline fn loadPair(values: []const f64, index: usize) @Vector(2, f64) {
-    // loadPair (two adjacent f64 values as one vector) -------------------------------------------------------|
-    // Read values[index] and values[index + 1] as one two-lane vector. The convolution interior uses this for |
-    // two signal*kernel products at a time.                                                                   |
-    //                                                                                                         |
-    // align(1) is deliberate: slices are contiguous, but this helper does not require vector-aligned storage. |
-    // --------------------------------------------------------------------------------------------------------|
+    // loadPair (two adjacent f64 values as one vector) ------------------------------------------------------------------|
+    // Read values[index] and values[index + 1] as one two-lane vector. The convolution interior uses this for            |
+    // two signal*kernel products at a time.                                                                              |
+    //                                                                                                                    |
+    // align(1) is deliberate: slices are contiguous, but this helper does not require vector-aligned storage.            |
+    // -------------------------------------------------------------------------------------------------------------------|
 
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&values[index]);
     return pair.*;

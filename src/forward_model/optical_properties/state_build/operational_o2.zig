@@ -1,18 +1,42 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
+// operational_o2.zig ----------------------------------------------------------------------------------------- |
+// Adapts an operational O2 cross-section LUT into the SpectroscopyEvaluation shape used by prepared optics.    |
+//                                                                                                              |
+// called by                                                                                                    |
+//   spectroscopy.zig exposes this through the state-build spectroscopy facade.                                 |
+//   state_spectroscopy.zig calls it when an operational O2 LUT replaces line-by-line O2 spectroscopy.          |
+//   carrier_eval.zig and layer_spectroscopy.zig then density-weight the returned evaluation with other active  |
+//   line absorbers for support-row, profile-node, and altitude carrier routes.                                 |
+//                                                                                                              |
+// mapping                                                                                                      |
+//   OperationalCrossSectionLut.sigmaAt fills weak_line_sigma, line_sigma, and total_sigma. Strong-line and     |
+//   line-mixing fields stay zero because the LUT is the complete operational O2 cross-section value for this   |
+//   thermodynamic sample. d_sigma_d_temperature comes from the same LUT.                                       |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Runs at wavelength time for each O2 operational thermodynamic sample. Keep this as one borrowed-LUT value  |
+//   adapter; setup ownership and LUT generation/consumption live in input/instrument and state_build/context.  |
+//                                                                                                              |
+// memory                                                                                                       |
+//   Returns one ReferenceData.SpectroscopyEvaluation value row. The LUT rows stay borrowed from                |
+//   PreparedOpticalState or the setup Context; no allocation or retained state is created here.                |
+// ------------------------------------------------------------------------------------------------------------ |
+
 pub fn operationalO2EvaluationAtWavelength(
     operational_o2_lut: OperationalCrossSectionLut,
     wavelength_nm: f64,
     temperature_k: f64,
     pressure_hpa: f64,
 ) ReferenceData.SpectroscopyEvaluation {
-
-    // hot path:
-    //   when: support-row spectroscopy uses the operational O2 LUT rtm_config
-    //   work: evaluates LUT sigma and temperature derivative for one wavelength/thermodynamic state
-    //   reads: operational O2 LUT, wavelength, temperature, pressure
-    //   follow: cross_section_lut_eval.evaluate and carrier_eval support-row spectroscopy fields
+    // operationalO2EvaluationAtWavelength -------------------------------------------------------------------- |
+    // Evaluates LUT sigma and temperature derivative for one wavelength/thermodynamic state.                   |
+    //                                                                                                          |
+    // calls                                                                                                    |
+    //   OperationalCrossSectionLut.sigmaAt                                                                     |
+    //   OperationalCrossSectionLut.dSigmaDTemperatureAt                                                        |
+    // -------------------------------------------------------------------------------------------------------- |
 
     const sigma = operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
     return .{

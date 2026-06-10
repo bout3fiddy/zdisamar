@@ -4,9 +4,10 @@ const internal = @import("internal");
 const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
 const Scene = internal.Scene;
 const hgPhaseCoefficients = phase_functions.hgPhaseCoefficients;
-const gasPhaseCoefficientsAtWavelength = phase_functions.gasPhaseCoefficientsAtWavelength;
+const gasPhaseCoefficientsFromRayleigh2 = phase_functions.gasPhaseCoefficientsFromRayleigh2;
 const computeLayerDepolarization = phase_functions.computeLayerDepolarization;
 const maxPhaseCoefficientIndex = phase_functions.maxPhaseCoefficientIndex;
+const rayleighPhaseCoefficient2AtWavelength = phase_functions.rayleighPhaseCoefficient2AtWavelength;
 
 test "layer depolarization uses already-fraction-scaled particle taus" {
     const scene: Scene = .{
@@ -39,7 +40,8 @@ test "analytic HG phase coefficients follow vendor normalization" {
 }
 
 test "scalar Rayleigh phase coefficient follows vendor depolarization formula" {
-    const coefficients = gasPhaseCoefficientsAtWavelength(761.75);
+    const rayleigh_coef2 = rayleighPhaseCoefficient2AtWavelength(761.75);
+    const coefficients = gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), coefficients[0], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[1], 1.0e-12);
     // Tolerance loosened from 1e-15: the original inline test was never

@@ -3,12 +3,41 @@ const Allocator = std.mem.Allocator;
 const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: start_nm=8 B, end_nm=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// Bands.zig --------------------------------------------------------------------------------------------------|
+// Spectral band and exclusion-window input rows used to constrain scene wavelength ranges.                    |
+//                                                                                                             |
+// used by                                                                                                     |
+//   Scene.validate checks band lists and matches explicit operational support counts                          |
+//   O2 A reference scene builders carry one primary band beside operational support data                      |
+//   validation/tests exercise exclusion ordering before product wavelength plans are built                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   SpectralWindow.validate checks one wavelength interval                                                    |
+//   SpectralBand.validate checks band bounds, positive step, and ordered in-band exclusions                   |
+//   SpectralBandSet.validate rejects duplicate ids; clone/deinitOwned manage band and exclusion storage       |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   These rows describe requested spectral ranges only. Product wavelength grids are built later from Scene   |
+//   spectral_grid and observation_model controls. Band exclusions are validated metadata here, not the        |
+//   measurement mask consumed by Measurement.zig.                                                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   SpectralBandSet is a slice header. Cloned sets own band rows; cloned bands own exclusion rows and borrow  |
+//   their id string from the parsed or caller-owned input model.                                              |
+// ------------------------------------------------------------------------------------------------------------|
+
+// SpectralWindow ---------------------------------------------------------------------------------------------|
+// One wavelength interval in nanometers.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] start_nm : f64                                                                                      |
+// [8..15] end_nm   : f64                                                                                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = per instance * live window count                        |
 pub const SpectralWindow = struct {
     start_nm: f64 = 0.0,
     end_nm: f64 = 0.0,
@@ -20,18 +49,28 @@ pub const SpectralWindow = struct {
         }).validate() catch return errors.Error.InvalidRequest;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 56 B, align: 8 B
-//   field storage: 56 B across 5 fields; largest: id=16 B, exclude=16 B, start_nm=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: id, exclude carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 56 B (0.055 KiB); total also includes referenced storage above
+// SpectralBand -----------------------------------------------------------------------------------------------|
+// One named spectral band plus optional exclusion windows.                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] id       : []const u8                                                                              |
+// [16..23] start_nm : f64                                                                                     |
+// [24..31] end_nm   : f64                                                                                     |
+// [32..39] step_nm  : f64                                                                                     |
+// [40..55] exclude  : []const SpectralWindow                                                                  |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   id points at name bytes. exclude points at out-of-line SpectralWindow rows owned by cloned bands.         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 56 B (0.055 KiB); total also includes referenced id/exclusion storage             |
 pub const SpectralBand = struct {
     id: []const u8 = "",
-    // UNITS:
-    //   Band bounds and step are expressed in nanometers on the canonical spectral grid.
     start_nm: f64 = 0.0,
     end_nm: f64 = 0.0,
     step_nm: f64 = 0.0,
@@ -75,14 +114,22 @@ pub const SpectralBand = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: items=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: items carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total also includes referenced storage above
+// SpectralBandSet --------------------------------------------------------------------------------------------|
+// Owner/view header for a band list.                                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..15] items : []const SpectralBand                                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   items points at out-of-line SpectralBand rows owned by cloned band sets.                                  |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total also includes referenced band rows                        |
 pub const SpectralBandSet = struct {
     items: []const SpectralBand = &[_]SpectralBand{},
 
@@ -124,3 +171,4 @@ pub const SpectralBandSet = struct {
         self.* = .{};
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

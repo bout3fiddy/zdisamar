@@ -140,6 +140,76 @@ test "labos no-scattering surface albedo tangent is active at zero albedo" {
     try std.testing.expectApproxEqAbs(finite_difference, tangent, 1.0e-10);
 }
 
+test "labos rejects no-scattering with layer-resolved input" {
+    const allocator = std.testing.allocator;
+    const common = internal.forward_model.radiative_transfer;
+    const controls: common.RadiativeTransferControls = .{
+        .scattering = .none,
+        .n_streams = 4,
+    };
+    const rtm_config: common.SolveConfig = .{
+        .derivative_mode = .none,
+        .rtm_controls = controls,
+    };
+    const layers = [_]common.LayerInput{.{
+        .optical_depth = 0.18,
+        .scattering_optical_depth = 0.0,
+        .single_scatter_albedo = 0.0,
+        .solar_mu = 0.61,
+        .view_mu = 0.72,
+    }};
+    const input: common.ForwardInput = .{
+        .mu0 = 0.61,
+        .muv = 0.72,
+        .surface_albedo = 0.21,
+        .layers = &layers,
+        .optical_depth = 0.18,
+        .rtm_controls = controls,
+    };
+
+    try std.testing.expectError(
+        error.UnsupportedRadiativeTransferControls,
+        labos.execute(allocator, rtm_config, input),
+    );
+}
+
+test "labos rejects spherical correction without pseudo-spherical grid" {
+    const allocator = std.testing.allocator;
+    const common = internal.forward_model.radiative_transfer;
+    const controls: common.RadiativeTransferControls = .{
+        .scattering = .multiple,
+        .n_streams = 4,
+        .use_spherical_correction = true,
+        .integrate_source_function = false,
+    };
+    const rtm_config: common.SolveConfig = .{
+        .derivative_mode = .none,
+        .rtm_controls = controls,
+    };
+    const layers = [_]common.LayerInput{.{
+        .optical_depth = 0.18,
+        .scattering_optical_depth = 0.12,
+        .single_scatter_albedo = 0.7,
+        .solar_mu = 0.61,
+        .view_mu = 0.72,
+        .phase = common.LayerPhase.fromUnitPhase(&default_layer_phase),
+    }};
+    const input: common.ForwardInput = .{
+        .mu0 = 0.61,
+        .muv = 0.72,
+        .surface_albedo = 0.21,
+        .relative_azimuth_rad = 0.0,
+        .layers = &layers,
+        .optical_depth = 0.18,
+        .rtm_controls = controls,
+    };
+
+    try std.testing.expectError(
+        error.UnsupportedRadiativeTransferControls,
+        labos.execute(allocator, rtm_config, input),
+    );
+}
+
 test "labos rejects non-integrated pressure tangent without layer pressure jacobians" {
     const allocator = std.testing.allocator;
     const common = internal.forward_model.radiative_transfer;
@@ -223,6 +293,34 @@ test "labos synthetic single-layer rtm_config returns surface albedo tangent" {
     try std.testing.expectApproxEqAbs(finite_difference, tangent, 3.0e-6);
 }
 
+test "labos rejects scalar spherical correction without pseudo-spherical grid" {
+    const allocator = std.testing.allocator;
+    const common = internal.forward_model.radiative_transfer;
+    const controls: common.RadiativeTransferControls = .{
+        .scattering = .multiple,
+        .n_streams = 4,
+        .use_spherical_correction = true,
+    };
+    const rtm_config: common.SolveConfig = .{
+        .derivative_mode = .none,
+        .rtm_controls = controls,
+    };
+    const input: common.ForwardInput = .{
+        .mu0 = 0.58,
+        .muv = 0.69,
+        .surface_albedo = 0.18,
+        .optical_depth = 0.24,
+        .single_scatter_albedo = 0.74,
+        .relative_azimuth_rad = 0.0,
+        .rtm_controls = controls,
+    };
+
+    try std.testing.expectError(
+        error.UnsupportedRadiativeTransferControls,
+        labos.execute(allocator, rtm_config, input),
+    );
+}
+
 test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
     const allocator = std.testing.allocator;
     const common = internal.forward_model.radiative_transfer;
@@ -249,6 +347,13 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
         .view_mu = 0.72,
         .phase = common.LayerPhase.fromUnitPhase(&default_layer_phase),
     }};
+    const pseudo_samples = [_]common.PseudoSphericalSample{.{
+        .altitude_km = 5.0,
+        .thickness_km = 5.0,
+        .optical_depth = 0.18,
+    }};
+    const pseudo_starts = [_]usize{ 0, 1 };
+    const pseudo_altitudes = [_]f64{ 10.0, 0.0 };
     const input: common.ForwardInput = .{
         .mu0 = 0.61,
         .muv = 0.72,
@@ -256,6 +361,11 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
         .relative_azimuth_rad = 0.0,
         .layers = &layers,
         .optical_depth = 0.18,
+        .pseudo_spherical_grid = .{
+            .samples = &pseudo_samples,
+            .level_sample_starts = &pseudo_starts,
+            .level_altitudes_km = &pseudo_altitudes,
+        },
         .rtm_controls = controls,
     };
 

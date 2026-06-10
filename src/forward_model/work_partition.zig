@@ -1,81 +1,58 @@
-//! Work partitioning policies for forward-model worker loops.
-//!
-//! This module intentionally does not own a thread pool, a scheduler, or the
-//! lifetime rules for worker state. Callers still use `std.Thread` directly so
-//! each loop can keep its own error type, local scratch storage, reduction
-//! strategy, and trace labels. The shared piece is only the decision about which
-//! item indices a worker is allowed to process.
-//!
-//! There are two policies here because the forward model has two different
-//! kinds of parallel work.
-//!
-//! `ChunkQueue` is dynamic assignment. It is the right fit when item costs can
-//! vary enough that workers should keep asking for more work after they finish a
-//! small chunk:
-//!
-//! ```
-//! var queue = ChunkQueue.init(item_count, chunk_size);
-//! while (queue.next()) |chunk| {
-//!     for (chunk.start..chunk.end) |index| process(index);
-//! }
-//! ```
-//!
-//! That pattern is useful for spectroscopy setup and support-grid accumulation,
-//! but it is not a safe latency policy for every workload. In the high-resolution
-//! forward prefetch, all misses are known up front and each miss is expensive.
-//! A mutex queue can accidentally collapse to nearly serial work when worker
-//! start-up is staggered:
-//!
-//! ```
-//! // Mock timeline for dynamic queue assignment:
-//! worker 0 starts, locks queue, gets 0..8
-//! worker 0 finishes quickly enough to lock again, gets 8..16
-//! worker 0 repeats while worker 1..N are still starting
-//! worker 1..N finally enter queue.next(), but most chunks are already gone
-//! // The program created threads, but latency is dominated by one worker.
-//! ```
-//!
-//! `staticRange` is deterministic ownership. It is the right fit when the full
-//! item list already exists, the work should be evenly divided, and start-up
-//! timing must not decide who gets the work:
-//!
-//! ```
-//! const range = staticRange(item_count, worker_count, worker_index);
-//! for (range.start..range.end) |index| process(index);
-//! ```
-//!
-//! With static ranges, a slow-to-start worker still owns its range. No other
-//! worker can drain it first, so a queue race cannot turn the forward prefetch
-//! into a mostly single-worker run.
-//!
-//! This module also centralizes the worker-count threshold used by these loops.
-//! Keep that policy here even though callers record trace labels around the same
-//! loops. A trace facade that also owns worker limits or runtime policy is a
-//! smell: instrumentation should observe scheduling decisions, not define them.
-//! Worker limits and runtime policy belong with partitioning/scheduling, not
-//! instrumentation.
-//!
-//! The worker-count threshold is deliberately separate from the Linux Python
-//! wheel bug. On Linux, a Zig shared library loaded through Python must link
-//! libc so `std.Thread` uses pthreads. Without that, Zig can use its raw Linux
-//! clone/TLS path; inside a `.so` loaded by CPython, that path can observe
-//! thread-local state differently from a standalone executable. macOS reaches
-//! threads through libSystem/pthread already, so it did not show the same
-//! failure mode. The build fix belongs in `build.zig`; this file documents why
-//! the worker loops still use native `std.Thread` after that fix instead of
-//! inventing an application scheduler.
-
 const std = @import("std");
+
+// work_partition.zig -----------------------------------------------------------------------------------------|
+// Work partitioning policies shared by forward-model worker loops.                                            |
+//                                                                                                             |
+// called by                                                                                                   |
+//   optical setup: absorber line-state workers, spectroscopy cache initialization, and support-row buildup    |
+//   instrument grid: wavelength sampling, forward-cache prefetch, profile-cache build, and product simulate   |
+//   optimal estimation: batch retrieval workers                                                               |
+//   tests/unit/forward_model/work_partition_test.zig covers chunk draining, static coverage, and worker caps  |
+//                                                                                                             |
+// boundary shape                                                                                              |
+//   This module does not own a thread pool, scheduler, worker lifetime, trace label, scratch buffer, error    |
+//   channel, or reduction strategy. Callers keep std.Thread and their local worker state. The shared policy   |
+//   here is only which half-open item range one worker may process.                                           |
+//                                                                                                             |
+// policies                                                                                                    |
+//   ChunkQueue is dynamic assignment: workers claim the next small chunk when item costs vary enough that     |
+//   static ranges can leave late work stranded. It fits spectroscopy setup and support-grid accumulation.     |
+//                                                                                                             |
+//   staticRange is deterministic ownership: workers get fixed ranges when the full item list already exists,  |
+//   work should be evenly divided, and startup timing must not decide who drains the expensive items. It is   |
+//   the preferred latency shape for high-resolution forward prefetch.                                         |
+//                                                                                                             |
+// queue hazard                                                                                                |
+//   Dynamic queues are not universally safe. If worker 0 starts early and repeatedly locks the queue before   |
+//   worker 1..N enter next(), it can drain most known-expensive chunks and make the run mostly serial. Static |
+//   ranges prevent that by leaving each worker's range owned even if the worker starts late.                  |
+//                                                                                                             |
+// worker count                                                                                                |
+//   preferredWorkerCount combines CPU count, item count, max_workers, and ZDISAMAR_WORKER_LIMIT. Keep that    |
+//   scheduling policy here. Trace and telemetry may observe worker loops, but instrumentation must not define |
+//   worker limits or runtime policy.                                                                          |
+//                                                                                                             |
+// platform note                                                                                               |
+//   The Linux Python wheel thread bug was fixed in build.zig by linking libc for the shared library so        |
+//   std.Thread uses pthreads when loaded by CPython. This file keeps native std.Thread partitioning instead   |
+//   of adding an application scheduler. macOS already reaches threads through libSystem/pthread.              |
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const max_workers: usize = 64;
 pub const worker_limit_env = "ZDISAMAR_WORKER_LIMIT";
 
-// layout(64-bit):
-//   size: 16 B, align: 8 B
-//   field storage: start=8 B, end=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 16 B (0.016 KiB); total = per instance * live instance count
+// Range ----------------------------------------------------------------------------------------------------- |
+// Half-open item range owned by one worker or one queue claim.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] start : usize                                                                                      |
+// [ 8..15] end   : usize                                                                                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B; stack return value                                                          |
 pub const Range = struct {
     start: usize,
     end: usize,
@@ -84,13 +61,22 @@ pub const Range = struct {
         return self.end - self.start;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: mutex=16 B, next_index=8 B, item_count=8 B, chunk_size=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total = per instance * live instance count
+// ChunkQueue ------------------------------------------------------------------------------------------------ |
+// Mutex-protected dynamic chunk dispenser for variable-cost worker loops.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] mutex      : Thread.Mutex                                                                          |
+// [16..23] next_index : usize                                                                                 |
+// [24..31] item_count : usize                                                                                 |
+// [32..39] chunk_size : usize                                                                                 |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 40 B; one queue per dynamic worker group                                          |
 pub const ChunkQueue = struct {
     mutex: std.Thread.Mutex = .{},
     next_index: usize = 0,
@@ -105,13 +91,18 @@ pub const ChunkQueue = struct {
         };
     }
 
-    // hot path:
-    //   when: variable-cost workers claim chunks for wavelength sampling or support-row setup
-    //   work: hands out the next contiguous item range under a short mutex
-    //   data: next index, item count, chunk size, returned range
-    //   math: start = next_index; end = min(start + chunk_size, item_count)
-    //   follow: wavelengthSamplingWorkerMain and profile/support-row worker loops
     pub fn next(self: *ChunkQueue) ?Range {
+        // ChunkQueue.next --------------------------------------------------------------------------------    |
+        // Hands out the next contiguous item range under a short mutex.                                       |
+        //                                                                                                     |
+        // hot path                                                                                            |
+        //   Variable-cost workers claim chunks for wavelength sampling or support-row setup.                  |
+        //                                                                                                     |
+        // math                                                                                                |
+        //   start = next_index                                                                                |
+        //   end   = min(start + chunk_size, item_count)                                                       |
+        // ------------------------------------------------------------------------------------------------    |
+
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.next_index >= self.item_count) return null;
@@ -122,14 +113,21 @@ pub const ChunkQueue = struct {
         return .{ .start = start, .end = end };
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: forward prefetch assigns known expensive misses to workers
-//   work: computes deterministic ownership range for one worker
-//   data: item count, worker count, worker index
-//   math: start = floor(worker_index * item_count / worker_count); end = floor((worker_index + 1) * item_count / worker_count)
-//   follow: spectral_forward.prefetchForwardSamples worker setup
 pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) Range {
+    // staticRange ------------------------------------------------------------------------------------------- |
+    // Computes deterministic ownership range for one worker.                                                  |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Forward prefetch assigns known expensive misses up front, so startup timing must not decide which     |
+    //   worker drains the work.                                                                               |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   start = floor(worker_index * item_count / worker_count)                                               |
+    //   end   = floor((worker_index + 1) * item_count / worker_count)                                         |
+    // ------------------------------------------------------------------------------------------------------- |
+
     std.debug.assert(worker_count != 0);
     std.debug.assert(worker_index < worker_count);
     return .{
@@ -138,35 +136,17 @@ pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) 
     };
 }
 
-pub fn rangesAreBalanced(item_count: usize, worker_count: usize) bool {
-    if (worker_count == 0) return false;
-
-    var expected_start: usize = 0;
-    var min_count: usize = std.math.maxInt(usize);
-    var max_count: usize = 0;
-    for (0..worker_count) |worker_index| {
-        const range = staticRange(item_count, worker_count, worker_index);
-        if (range.start != expected_start) return false;
-        if (range.end < range.start or range.end > item_count) return false;
-
-        const count = range.len();
-        min_count = @min(min_count, count);
-        max_count = @max(max_count, count);
-        expected_start = range.end;
-    }
-
-    if (expected_start != item_count) return false;
-    if (item_count == 0) return max_count == 0;
-    return max_count - min_count <= 1;
-}
-
-// hot path:
-//   when: sampling and forward-prefetch schedulers choose worker count for a batch
-//   work: resolves CPU count and configured worker limit into an item-count-based worker count
-//   data: item count, minimum items per worker, CPU count, worker-limit environment value
-//   math: workers = min(max_workers, min(available_workers, max(1, floor(item_count / min_items_per_worker))))
-//   follow: preferredWorkerCountForCpuCount and caller chunk/range ownership
 pub fn preferredWorkerCount(item_count: usize, min_items_per_worker: usize) usize {
+    // preferredWorkerCount ---------------------------------------------------------------------------------- |
+    // Resolves CPU count and configured worker limit into a batch worker count.                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Sampling and forward-prefetch schedulers call this before creating worker-owned ranges or queues.     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   workers = min(max_workers, available_workers, max(1, item_count / min_items_per_worker))              |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const cpu_count = std.Thread.getCpuCount() catch 1;
     return preferredWorkerCountForCpuCount(
         item_count,

@@ -11,19 +11,68 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: support_sublayers=16 B, strong_line_states=16 B, lower_altitude_km=8 B, upper_altitude_km=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: support_sublayers carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
+// pseudo_spherical.zig --------------------------------------------------------------------------------------|
+// Builds the direct-beam attenuation support grid used when LABOS runs with pseudo-spherical correction.     |
+// The forward input still carries ordinary transport layers; this file adds the altitude samples used by     |
+// attenuation.zig while it integrates curved solar/view paths through each interval.                         |
+//                                                                                                            |
+// called by                                                                                                  |
+//   instrument_grid/grid_calculation/forward_input.zig calls the carrier-cache route for each RTM wavelength |
+//   when rtm_controls.use_spherical_correction is enabled. It then attaches a borrowed PseudoSphericalGrid   |
+//   to ForwardInput. LABOS attenuation builders read that grid while computing top-to-level direct-beam      |
+//   attenuation.                                                                                             |
+//                                                                                                            |
+// route order                                                                                                |
+//   shared layer inputs : reuse cached SharedRtmGeometry plus already-filled LayerInput optical depths.      |
+//   wavelength route    : evaluate PreparedSublayer support rows with a ProfileNodeSpectroscopyCache.        |
+//   carrier route       : reuse WavelengthCarrierCache built by forward_input, falling back to the           |
+//                         spectroscopy-cache route only when the solver is not using a shared RTM grid.      |
+//                                                                                                            |
+// grid shape                                                                                                 |
+//   level_altitudes_km[level] is the altitude of each solver boundary.                                       |
+//   level_sample_starts[level] points into attenuation_samples; the final entry is the live sample count.    |
+//   attenuation_samples[start[level]..start[level+1]] are the support samples used for that level interval.  |
+//   PseudoSphericalSample stores only altitude, thickness, and optical depth; geometry factors are applied   |
+//   later by LABOS using Earth radius and the local direction cosine.                                        |
+//                                                                                                            |
+// row handoff                                                                                                |
+//   LayerInput optical_depth is used only after forward_layers has filled the same layer order consumed by   |
+//   LABOS. Shared geometry supplies level altitudes and support spans. Output arrays are caller-owned worker |
+//   scratch from spectral_forward/storage and are borrowed by ForwardInput for one RTM solve.                |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Runs per integrated-source wavelength when spherical correction is enabled; no allocation or file I/O.   |
+//   The shared-layer route reads LayerInput.optical_depth at [40..47] from each 176 B row by pointer. The    |
+//   same transport slice remains the LABOS layer handoff. The carrier route reuses the wavelength cache      |
+//   already populated by forward_input.                                                                      |
+//                                                                                                            |
+// math                                                                                                       |
+//   sample_tau_i = k_ext(lambda, z_i) * dz_i                                                                 |
+//   shared midpoint route uses the transport layer optical depth already integrated by forward_layers.       |
+//   non-shared subgrid route maps Gauss nodes from [-1, 1] onto the support interval [z_low, z_high].        |
+// -----------------------------------------------------------------------------------------------------------|
+
+// PseudoSphericalInterval -----------------------------------------------------------------------------------|
+// Borrowed prepared support rows and altitude bounds for one attenuation interval.                           |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 48 B (0.047 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0..15] support_sublayers : []const PreparedSublayer                                                      |
+// [16..31] strong_line_states: ?[]const StrongLinePreparedState                                              |
+// [32..39] lower_altitude_km : f64                                                                           |
+// [40..47] upper_altitude_km : f64                                                                           |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: per instance = 48 B; support row and strong-line storage are borrowed                           |
 const PseudoSphericalInterval = struct {
     support_sublayers: []const State.PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,
     lower_altitude_km: f64,
     upper_altitude_km: f64,
 };
+// -----------------------------------------------------------------------------------------------------------|
 
 pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     self: *const PreparedOpticalState,
@@ -33,6 +82,24 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
 ) bool {
+    // fillSharedPseudoSphericalGridFromLayerInputs --------------------------------------------------------- |
+    // Build the pseudo-spherical grid from already-filled transport LayerInput rows.                         |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Called after shared RTM geometry and layer optical depths are available for this wavelength. The     |
+    //   output is the per-interval sample grid consumed by LABOS direct-beam attenuation.                    |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   layer_inputs has the same order as SharedRtmGeometry.layers and the ForwardInput layer slice.        |
+    //   This route reads only LayerInput.optical_depth at [40..47] because geometry carries altitude and     |
+    //   thickness.                                                                                           |
+    //   output samples, level starts, and level altitudes are caller-owned worker scratch arrays.            |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   This route reads one f64 from each 176 B LayerInput and uses pointer capture, so transport rows stay |
+    //   in place while the same layer slice continues into the LABOS solve.                                  |
+    // -------------------------------------------------------------------------------------------------------|
+
     const geometry = shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len) orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = layer_inputs.len * subgrid_divisions;
@@ -88,34 +155,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     return true;
 }
 
-pub fn fillPseudoSphericalGridAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    solver_layer_count: usize,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    level_sample_starts: []usize,
-    level_altitudes_km: []f64,
-) bool {
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        solver_layer_count,
-        attenuation_samples,
-        level_sample_starts,
-        level_altitudes_km,
-        &profile_cache,
-    );
-}
-
-// hot path:
-//   when: pseudo-spherical attenuation grids are built without a wavelength carrier cache
-//   work: expands solver layers into altitude/attenuation samples over support rows or subgrid divisions
-//   data: prepared sublayers, profile spectroscopy cache, attenuation sample arrays
-//   math: sample optical_depth = k_ext(lambda,z_i) * dz_i; non-shared subgrid uses Gauss z_i = z_low + 0.5*(x_i+1)*span and dz_i = 0.5*w_i*span
-//   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithSpectroscopyCache
 pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -126,20 +165,40 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     level_altitudes_km: []f64,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) bool {
+    // fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache --------------------------------------------- |
+    // Build pseudo-spherical attenuation samples without a wavelength carrier cache.                         |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Expands solver layers into altitude/attenuation samples over support rows or subgrid divisions.      |
+    //   Uses prepared sublayers, the optional profile spectroscopy cache, and caller-owned output arrays.    |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // sample optical_depth = k_ext(lambda, z_i) * dz_i                                                       |
+    // non-shared subgrid: z_i = z_low + 0.5 * (x_i + 1) * span, dz_i = 0.5 * w_i * span                      |
+    //                                                                                                        |
+    // calls                                                                                                  |
+    //   shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRows                                       |
+    //   carrier_eval.sharedOpticalCarrierAtAltitudeWithSpectroscopyCache                                     |
+    // -------------------------------------------------------------------------------------------------------|
+
     const sublayers = self.sublayers orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
+    const output_shape_mismatch =
+        attenuation_samples.len < sample_count or
         level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
-    {
+        level_altitudes_km.len != solver_layer_count + 1;
+    if (output_shape_mismatch) {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    const matches_sublayers = solver_layer_count == sublayers.len;
+    const matches_layers = solver_layer_count == self.layers.len;
+    if (!matches_sublayers and !matches_layers) {
         return false;
     }
-    if (shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, solver_layer_count);
+    if (use_shared_grid) {
         if (shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count)) |geometry| {
             for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
                 altitude_km.* = level_geometry.altitude_km;
@@ -182,6 +241,10 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     } else {
         level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
         for (1..solver_layer_count) |ilevel| {
+
+            // Solver-level boundaries come from PreparedLayer support spans. This is an index-only read, but
+            // keeping the span on PreparedLayer keeps pseudo-spherical, forward-layer, and RTM quadrature
+            // fallback routes aligned to the same support-row contract.
             const layer = &self.layers[ilevel];
             const start_index: usize = @intCast(layer.sublayer_start_index);
             level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, start_index);
@@ -190,28 +253,39 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     }
 
     for (0..solver_layer_count) |solver_level| {
-        const interval = if (solver_layer_count == sublayers.len)
-            PseudoSphericalInterval{
-                .support_sublayers = sublayers[solver_level .. solver_level + 1],
-                .strong_line_states = if (self.strong_line_states) |states|
+        const interval = choose_interval: {
+            if (solver_layer_count == sublayers.len) {
+                const strong_line_state = if (self.strong_line_states) |states|
                     states[solver_level .. solver_level + 1]
                 else
-                    null,
-                .lower_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, solver_level),
-                .upper_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, solver_level + 1),
+                    null;
+
+                break :choose_interval PseudoSphericalInterval{
+                    .support_sublayers = sublayers[solver_level .. solver_level + 1],
+                    .strong_line_states = strong_line_state,
+                    .lower_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, solver_level),
+                    .upper_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, solver_level + 1),
+                };
             }
-        else blk: {
+
             const layer = &self.layers[solver_level];
+
+            // The direct fallback expands one PreparedLayer support span into attenuation samples. The wide
+            // row is read by pointer so the span stays in the same layer order used by forward_layers and
+            // rtm_quadrature.
             const start: usize = @intCast(layer.sublayer_start_index);
             const count: usize = @intCast(layer.sublayer_count);
             if (count == 0) return false;
+
             const stop = start + count;
-            break :blk PseudoSphericalInterval{
+            const strong_line_state = if (self.strong_line_states) |states|
+                states[start..stop]
+            else
+                null;
+
+            break :choose_interval PseudoSphericalInterval{
                 .support_sublayers = sublayers[start..stop],
-                .strong_line_states = if (self.strong_line_states) |states|
-                    states[start..stop]
-                else
-                    null,
+                .strong_line_states = strong_line_state,
                 .lower_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, start),
                 .upper_altitude_km = shared_geometry.levelAltitudeFromSublayers(sublayers, stop),
             };
@@ -287,12 +361,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     return true;
 }
 
-// hot path:
-//   when: pseudo-spherical attenuation grids are built for a cached wavelength solve
-//   work: expands shared RTM support rows into altitude/attenuation samples through WavelengthCarrierCache
-//   data: shared geometry, support sublayers, carrier cache, attenuation sample arrays
-//   math: cached samples use optical_depth_i = cached_total_k_ext_i * support_weight_km_i
-//   follow: shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache
 pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -303,20 +371,38 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     level_altitudes_km: []f64,
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
 ) bool {
+    // fillPseudoSphericalGridAtWavelengthWithCarrierCache ---------------------------------------------------|
+    // Build pseudo-spherical attenuation samples for a cached wavelength solve.                              |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // expands shared RTM support rows into altitude/attenuation samples through WavelengthCarrierCache.      |
+    //                                                                                                        |
+    // math                                                                                                   |
+    // cached sample optical_depth_i = cached_total_k_ext_i * support_weight_km_i                             |
+    //                                                                                                        |
+    // calls                                                                                                  |
+    // shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache                         |
+    // fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache fallback                                      |
+    // -------------------------------------------------------------------------------------------------------|
+
     const sublayers = self.sublayers orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
+    const output_shape_mismatch =
+        attenuation_samples.len < sample_count or
         level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
-    {
+        level_altitudes_km.len != solver_layer_count + 1;
+    if (output_shape_mismatch) {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    const matches_sublayers = solver_layer_count == sublayers.len;
+    const matches_layers = solver_layer_count == self.layers.len;
+    if (!matches_sublayers and !matches_layers) {
         return false;
     }
-    if (!shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, solver_layer_count);
+    if (!use_shared_grid) {
         return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             self,
             scene,

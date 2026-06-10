@@ -14,7 +14,7 @@ from ..atmosphere import Atmosphere
 from ..geometry import Geometry, Surface
 from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
-from ..shared import json_value, object_dict, object_dict_list, to_float
+from ..shared import json_value, object_dict, to_float
 from ..spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
 from .optimisation import O2AOptimisation
 
@@ -22,11 +22,6 @@ from .optimisation import O2AOptimisation
 def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
     return object_dict(data[key])
-
-
-def _object_list(data: dict[str, object], key: str) -> list[dict[str, object]]:
-
-    return object_dict_list(data.get(key, []))
 
 
 @dataclass
@@ -46,8 +41,6 @@ class O2AInput(NotebookDisplay):
     o2_lines: O2LineByLine
     collision_induced_absorption: OxygenCollisionInducedAbsorption
     radiative_transfer: RadiativeTransferControls
-    outputs: list[dict[str, object]]
-    validation: dict[str, object]
     optimisation: O2AOptimisation = field(default_factory=O2AOptimisation.defaults)
 
     @property
@@ -145,6 +138,11 @@ class O2AInput(NotebookDisplay):
     def from_dict(cls, data: dict[str, object]) -> Self:
         """Turn the validation-file shape into typed scene parts."""
 
+        removed_metadata = {"outputs", "validation"}.intersection(data)
+        if removed_metadata:
+            joined = ", ".join(sorted(removed_metadata))
+            raise ValueError(f"unsupported O2 A input fields: {joined}")
+
         return cls(
             metadata=_object_dict(data, "metadata"),
             plan=_object_dict(data, "plan"),
@@ -166,8 +164,6 @@ class O2AInput(NotebookDisplay):
             radiative_transfer=RadiativeTransferControls.from_dict(
                 object_dict(data["rtm_controls"])
             ),
-            outputs=_object_list(data, "outputs"),
-            validation=_object_dict(data, "validation"),
             optimisation=O2AOptimisation.from_dict(object_dict(data.get("optimisation", {}))),
         )
 
@@ -206,8 +202,6 @@ class O2AInput(NotebookDisplay):
             "o2": self.o2_lines.to_dict(),
             "o2o2": self.collision_induced_absorption.to_dict(),
             "rtm_controls": self.radiative_transfer.to_dict(),
-            "outputs": self.outputs,
-            "validation": self.validation,
         }
 
     def to_json_bytes(self) -> bytes:

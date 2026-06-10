@@ -6,13 +6,59 @@ const Scene = @import("../input/Scene.zig").Scene;
 const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
-// layout(64-bit):
-//   size: 112 B, align: 8 B
-//   field storage: 112 B across 16 fields; largest: wavelength_nm=8 B, altitude_km=8 B, pressure_hpa=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   cache span: 2 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count
+// o2_o2_cia.zig ----------------------------------------------------------------------------------------------|
+// O2-O2 collision-induced absorption diagnostics derived from the atmospheric-budget table. This output view  |
+// projects prepared optical state into CIA-focused rows.                                                      |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.zig exposes buildO2O2CIADiagnostics for Zig callers. api/c.zig uses the same builder, copies the     |
+//   rows into Context-owned C ABI storage, and frees the native temporary rows before returning.              |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   build         -> atmospheric_budget.build -> allocate CIA rows -> rowFromBudget                           |
+//   rowFromBudget -> derive pair-path cross section and CIA share columns from one budget row                 |
+//                                                                                                             |
+// relation to atmospheric_budget.zig                                                                          |
+//   AtmosphericBudgetRow already contains the wavelength, vertical-row identity, oxygen density, path length, |
+//   CIA optical depth, and total optical-depth columns. This file only projects those values into a smaller   |
+//   CIA-focused export row.                                                                                   |
+//                                                                                                             |
+// math                                                                                                        |
+//   pair path          = oxygen_number_density_cm3^2 * path_length_cm                                         |
+//   CIA cross section  = cia_optical_depth / pair path                                                        |
+//   CIA share columns  = cia_optical_depth / total absorption or total optical depth                          |
+//                                                                                                             |
+// memory                                                                                                      |
+//   The temporary atmospheric-budget slice is freed before returning. The returned CIA row slice is owned by  |
+//   the caller and contains value rows with no referenced storage.                                            |
+// ------------------------------------------------------------------------------------------------------------|
+
+// O2O2CIARow -------------------------------------------------------------------------------------------------|
+// Stores one CIA diagnostic row for one wavelength and one layer or sublayer.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 112 B (0.109 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] wavelength_nm                      : f64                                                         |
+// [  8.. 15] altitude_km                        : f64                                                         |
+// [ 16.. 23] pressure_hpa                       : f64                                                         |
+// [ 24.. 31] temperature_k                      : f64                                                         |
+// [ 32.. 39] oxygen_number_density_cm3          : f64                                                         |
+// [ 40.. 47] path_length_cm                     : f64                                                         |
+// [ 48.. 55] cia_cross_section_cm5_per_molecule2: f64                                                         |
+// [ 56.. 63] cia_optical_depth                  : f64                                                         |
+// [ 64.. 71] total_absorption_optical_depth     : f64                                                         |
+// [ 72.. 79] total_optical_depth                : f64                                                         |
+// [ 80.. 87] cia_share_of_total_absorption      : f64                                                         |
+// [ 88.. 95] cia_share_of_total_optical_depth   : f64                                                         |
+// [ 96.. 99] layer_index                        : u32                                                         |
+// [100..103] sublayer_index                     : u32                                                         |
+// [104..107] global_sublayer_index              : u32                                                         |
+// [108..111] interval_index_1based              : u32                                                         |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 112 B (0.109 KiB); total = per instance * live instance count                     |
 pub const O2O2CIARow = struct {
     wavelength_nm: f64,
     layer_index: u32,
@@ -31,18 +77,27 @@ pub const O2O2CIARow = struct {
     cia_share_of_total_absorption: f64,
     cia_share_of_total_optical_depth: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
-// hot path:
-//   when: O2-O2 CIA diagnostics are requested over wavelength by vertical row
-//   work: reuses atmospheric budget rows and materializes CIA share/cross-section fields
-//   data: budget rows, CIA optical depth fields, output CIA rows
-//   follow: atmospheric_budget.build and rowFromBudget
 pub fn build(
     allocator: Allocator,
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
     wavelengths_nm: []const f64,
 ) ![]O2O2CIARow {
+    // build --------------------------------------------------------------------------------------------------|
+    // Builds CIA diagnostics from the atmospheric-budget table for the same wavelength and vertical rows.     |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : O2-O2 CIA diagnostics over wavelength x vertical-row grids                                 |
+    //   costly   : atmospheric_budget.build; this file only maps rows and derives ratios                      |
+    //   memory   : temporary budget slice plus caller-owned CIA output slice                                  |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   atmospheric_budget.build                                                                              |
+    //   rowFromBudget                                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     const budget = try atmospheric_budget.build(allocator, scene, prepared, wavelengths_nm);
     defer allocator.free(budget);
 

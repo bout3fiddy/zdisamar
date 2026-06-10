@@ -47,6 +47,11 @@ const phase_timing = @import("phase_timing.zig");
 //   empty_layer_optical_depth_floor treats vanishing optical depth as inactive                                |
 //   layer_direction_cosine_floor keeps exp(-tau / mu) finite for grazing directions                           |
 //   tangent_step is the central-difference step for layer RT derivatives                                      |
+//                                                                                                             |
+// memory model                                                                                                |
+//   The main entry points write caller-owned []LayerRT rows and optional workspace-owned phase-row caches.    |
+//   A LayerRT row is intentionally wide because orders.zig consumes the R/T matrices together; active masks   |
+//   let later stages skip rows without clearing or splitting the 2.3 KiB payload.                             |
 // ------------------------------------------------------------------------------------------------------------|
 
 const phase_normalization_floor: f64 = 1.0e-30;
@@ -572,8 +577,7 @@ fn doDouble(
         // and leaves out the tiny R-D product.                                                                |
         //                                                                                                     |
         // The gate is abs(trace(R) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_rd_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 563,874 / 24,518,833 hits and measured max reflectance delta 1.050e-06.  |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: R-D gate -----------------------------------------------------------|
         // captures: R-D product gate evaluations                                                              |
@@ -598,8 +602,7 @@ fn doDouble(
         const rd_nonzero = Perturbation.decision(
             .qseries_rd_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_rd_product_suppression) and
-                @abs(trace_r * trace_d) > threshold_mul,
+            @abs(trace_r * trace_d) > threshold_mul,
         );
         // end instrumentation: perturbation: R-D product gate ------------------------------------------------|
 
@@ -637,8 +640,7 @@ fn doDouble(
         // tiny, the code uses a scale/add update and drops the small T-U product.                             |
         //                                                                                                     |
         // The gate is abs(trace(T) * trace(U)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_tu_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 396,775 / 24,518,833 hits and measured max reflectance delta 1.002e-06.  |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: T-U gate -----------------------------------------------------------|
         // captures: T-U product gate evaluations                                                              |
@@ -652,8 +654,7 @@ fn doDouble(
         const tu_nonzero = Perturbation.decision(
             .qseries_tu_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_tu_product_suppression) and
-                @abs(trace_t * trace_u) > threshold_mul,
+            @abs(trace_t * trace_u) > threshold_mul,
         );
         // end instrumentation: perturbation: T-U product gate ------------------------------------------------|
 
@@ -688,9 +689,7 @@ fn doDouble(
         // uses the cheaper transmission update and drops the small T-D product.                               |
         //                                                                                                     |
         // The gate is abs(trace(T) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default   |
-        // and 1.0e-8 in O2 A. qzero_td_product_suppression defaults to false; the perturbation report         |
-        // forced this q-zero skip in 1,143,287 / 24,518,666 hits and measured max reflectance delta           |
-        // 3.540e-06.                                                                                          |
+        // and 1.0e-8 in O2 A.                                                                                 |
 
         // instrumentation: trace counter: T-D gate -----------------------------------------------------------|
         // captures: T-D product gate evaluations                                                              |
@@ -704,8 +703,7 @@ fn doDouble(
         const td_nonzero = Perturbation.decision(
             .qseries_td_product,
             downstream_coord,
-            !(q_is_zero and thresholds.qzero_td_product_suppression) and
-                @abs(trace_t * trace_d) > threshold_mul,
+            @abs(trace_t * trace_d) > threshold_mul,
         );
         // end instrumentation: perturbation: T-D product gate ------------------------------------------------|
 
@@ -1022,8 +1020,7 @@ inline fn doDouble12x10Step(
     // below the cutoff, the code uses the cheaper semul path and drops the tiny R-D contribution.             |
     //                                                                                                         |
     // The gate is abs(trace(R) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_rd_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 563,874 / 24,518,833 hits and measured max reflectance delta 1.050e-06.                  |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed R-D gate ---------------------------------------------------------|
     // captures: fixed-size R-D product gate evaluations                                                       |
@@ -1045,11 +1042,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed R-D product gate --------------------------------------------------|
     // captures: fixed R-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this hot-path product.                                       |
-    const rd_gate_enabled = if (q_is_zero) !thresholds.qzero_rd_product_suppression else true;
     const rd_nonzero = Perturbation.decision(
         .qseries_rd_product,
         downstream_coord,
-        rd_gate_enabled and @abs(trace_r * trace_d) > threshold_mul,
+        @abs(trace_r * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed R-D product gate ----------------------------------------------|
 
@@ -1106,8 +1102,7 @@ inline fn doDouble12x10Step(
     // small to matter at the configured cutoff. The cost is that the small T-U contribution is not added.     |
     //                                                                                                         |
     // The gate is abs(trace(T) * trace(U)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_tu_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 396,775 / 24,518,833 hits and measured max reflectance delta 1.002e-06.                  |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed T-U gate ---------------------------------------------------------|
     // captures: fixed-size T-U product gate evaluations                                                       |
@@ -1118,11 +1113,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-U product gate --------------------------------------------------|
     // captures: fixed T-U product retention decision                                                          |
     // why: test whether q-zero branches can skip this reflectance update product.                             |
-    const tu_gate_enabled = if (q_is_zero) !thresholds.qzero_tu_product_suppression else true;
     const tu_nonzero = Perturbation.decision(
         .qseries_tu_product,
         downstream_coord,
-        tu_gate_enabled and @abs(trace_t * trace_u) > threshold_mul,
+        @abs(trace_t * trace_u) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-U product gate ----------------------------------------------|
 
@@ -1177,8 +1171,7 @@ inline fn doDouble12x10Step(
     // The cost is that a tiny transmission contribution is not added for this doubled sublayer.               |
     //                                                                                                         |
     // The gate is abs(trace(T) * trace(D)) > threshold_mul. threshold_mul is 1.0e-12 by generic default and   |
-    // 1.0e-8 in O2 A. qzero_td_product_suppression defaults to false; the perturbation report forced this     |
-    // q-zero skip in 1,143,287 / 24,518,666 hits and measured max reflectance delta 3.540e-06.                |
+    // 1.0e-8 in O2 A.                                                                                         |
 
     // instrumentation: trace counter: fixed T-D gate ---------------------------------------------------------|
     // captures: fixed-size T-D product gate evaluations                                                       |
@@ -1189,11 +1182,10 @@ inline fn doDouble12x10Step(
     // instrumentation: perturbation: fixed T-D product gate --------------------------------------------------|
     // captures: fixed T-D product retention decision                                                          |
     // why: test whether q-zero branches can skip this transmission update product.                            |
-    const td_gate_enabled = if (q_is_zero) !thresholds.qzero_td_product_suppression else true;
     const td_nonzero = Perturbation.decision(
         .qseries_td_product,
         downstream_coord,
-        td_gate_enabled and @abs(trace_t * trace_d) > threshold_mul,
+        @abs(trace_t * trace_d) > threshold_mul,
     );
     // end instrumentation: perturbation: fixed T-D product gate ----------------------------------------------|
 
@@ -1358,11 +1350,26 @@ pub fn fillLayerEffectiveScatteringSuffixes(
     }
 }
 
+// LayerDoublingDecision --------------------------------------------------------------------------------------|
+// Small return row for the layer-doubling branch chosen from optical depth and effective scattering depth.    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] start_optical_depth : f64                                                                          |
+// [ 8..15] doubling_count      : usize                                                                        |
+// [16..16] uses_doubling       : bool                                                                         |
+// [17..23] trailing padding     : 7 B                                                                         |
+//                                                                                                             |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
+// footprint: per instance = 24 B (0.023 KiB); stack return value                                              |
 pub const LayerDoublingDecision = struct {
     start_optical_depth: f64,
     doubling_count: usize,
     uses_doubling: bool,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn classifyLayerDoubling(
     scattering: common.ScatteringMode,
@@ -1411,7 +1418,7 @@ pub fn classifyLayerDoubling(
     // Each extra split halves the starting optical depth and adds another matrix-squaring step. The hard cap  |
     // is 60 splits. It is far beyond normal LABOS layers, but still matters as a hard stop for pathological   |
     // inputs. If an extreme layer still fails threshold_doubl after 60 splits, the solver uses the best       |
-    // capped split count instead of spending unbounded time chasing a thinner starting layer.                 |
+    // capped split count that bounds setup time while still refining the starting layer.                      |
     var count_i32: i32 = if (exponent >= 60) 60 else @max(1, exponent + 1);
     var count: usize = @intCast(count_i32);
     var start = math.ldexp(optical_depth, -count_i32);
@@ -1860,7 +1867,7 @@ fn cachePhaseKernelViewRow(
     // cachePhaseKernelViewRow --------------------------------------------------------------------------------|
     // Cache the phase-kernel row needed by the viewing direction.                                             |
     //                                                                                                         |
-    // Integrated-source reflectance can reuse this row instead of rereading the full Zplus/Zmin matrices.     |
+    // Integrated-source reflectance can reuse this row during boundary weighting.                             |
     // --------------------------------------------------------------------------------------------------------|
 
     const n = z.Zplus.n;

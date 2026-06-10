@@ -8,6 +8,8 @@ const Evaluation = @import("evaluation.zig");
 const shared_geometry = @import("shared_geometry.zig");
 const shared_carrier = @import("shared_carrier.zig");
 const carrier_eval = @import("carrier_eval.zig");
+const Scalar = @import("state_scalar.zig");
+const OpticalDepth = @import("state_optical_depth.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 const jacobian = transport_common.Jacobian;
 
@@ -16,39 +18,34 @@ const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
 
 const centimeters_per_kilometer = 1.0e5;
 
-fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
-    const transport_dphi_deg = @mod(180.0 - relative_azimuth_deg, 360.0);
-    // math: LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
-    return std.math.degreesToRadians(transport_dphi_deg);
-}
-
-pub fn toForwardInputWithLayers(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    layer_inputs: ?[]transport_common.LayerInput,
-) transport_common.ForwardInput {
-    return toForwardInputAtWavelengthWithLayers(
-        prepared,
-        scene,
-        (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,
-        layer_inputs,
-    );
-}
-
-pub fn toForwardInputAtWavelengthWithLayers(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    layer_inputs: ?[]transport_common.LayerInput,
-) transport_common.ForwardInput {
-    return toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
-        prepared,
-        scene,
-        wavelength_nm,
-        layer_inputs,
-        null,
-    );
-}
+// forward_layers.zig ----------------------------------------------------------------------------------------|
+// Turns PreparedOpticalState into the LayerInput rows and scalar ForwardInput that LABOS consumes.           |
+//                                                                                                            |
+// called by                                                                                                  |
+//   forward_input.configuredForwardInput for every high-resolution wavelength miss.                          |
+//   diagnostics and scalar report helpers when they need layer-resolved or total optical depths.             |
+//                                                                                                            |
+// main paths                                                                                                 |
+//   scalar route : evaluate OpticalDepthBreakdown and build a layer-free ForwardInput.                       |
+//   shared route : reduce cached shared RTM support rows into one LayerInput per transport layer.            |
+//   direct route : evaluate prepared layers or sublayers when shared geometry is not active.                 |
+//   cache route  : reuse ProfileNodeSpectroscopyCache or WavelengthCarrierCache across the wavelength work.  |
+//                                                                                                            |
+// row handoff                                                                                                |
+//   LayerInput is the transport row: optical-depth pieces, Jacobian vectors, mu values, and phase mix.       |
+//   PreparedLayer supplies support spans and fallback physical fields; PreparedSublayer holds support rows.  |
+//   The same LayerInput slice is passed on to RTM quadrature, pseudo-spherical grids, and LABOS execution.   |
+//                                                                                                            |
+// hot path                                                                                                   |
+//   Runs per high-resolution wavelength. Caller-owned layer_inputs are refreshed without allocation.         |
+//   Index-only PreparedLayer loops use pointer capture and read support spans at [192..207] without copying  |
+//   the 208 B row. The span stays beside physical fields because direct paths also read altitude and aerosol |
+//   fields from the same row.                                                                                |
+//                                                                                                            |
+// math                                                                                                       |
+//   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda).                                    |
+//   omega0 = scattering optical depth / tau_ext, clamped into physical bounds.                               |
+// -----------------------------------------------------------------------------------------------------------|
 
 pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
     prepared: *const PreparedOpticalState,
@@ -57,23 +54,36 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
     layer_inputs: ?[]transport_common.LayerInput,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) transport_common.ForwardInput {
-    const optical_depths = if (layer_inputs) |owned_layers|
-        fillForwardLayersAtWavelengthWithSpectroscopyCache(
-            prepared,
-            scene,
-            wavelength_nm,
-            owned_layers,
-            profile_cache,
-            true,
-        )
-    else
-        prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    // toForwardInputAtWavelengthWithLayersAndSpectroscopyCache --------------------------------------------- |
+    // Choose between the scalar optical-depth route and the caller-owned LayerInput route.                   |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Wavelength workers pass layer_inputs so this fills transport rows once, then reuses the same slice   |
+    //   for RTM quadrature, pseudo-spherical correction, and LABOS execution.                                |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const optical_depths = choose_optical_depths: {
+        if (layer_inputs) |owned_layers| {
+            break :choose_optical_depths fillForwardLayersAtWavelengthWithSpectroscopyCache(
+                prepared,
+                scene,
+                wavelength_nm,
+                owned_layers,
+                profile_cache,
+                true,
+            );
+        }
+
+        break :choose_optical_depths OpticalDepth.opticalDepthBreakdownAtWavelength(prepared, wavelength_nm);
+    };
+
+    const resolved_layers = if (layer_inputs) |owned_layers| owned_layers else &.{};
     return forwardInputFromOpticalDepths(
         prepared,
         scene,
         wavelength_nm,
         optical_depths,
-        if (layer_inputs) |owned_layers| owned_layers else &.{},
+        resolved_layers,
     );
 }
 
@@ -84,6 +94,11 @@ pub fn forwardInputFromOpticalDepths(
     optical_depths: OpticalDepthBreakdown,
     layers: []transport_common.LayerInput,
 ) transport_common.ForwardInput {
+    // forwardInputFromOpticalDepths ------------------------------------------------------------------------ |
+    // Copy scalar optical-depth totals, geometry, surface, spectral weight, and optional layer slice into    |
+    // the RTM public input row. This is the last optical-preparation step before radiative_transfer/root.zig.|
+    // -------------------------------------------------------------------------------------------------------|
+
     const mu0 = scene.geometry.solarCosineAtAltitude(0.0);
     const muv = scene.geometry.viewingCosineAtAltitude(0.0);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
@@ -91,14 +106,23 @@ pub fn forwardInputFromOpticalDepths(
         @max(span_nm, 1.0e-6)
     else
         span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
-    // math: scalar forward input carries tau_ext, omega0, mu0/muv, and spectral quadrature weight dlambda.
+
+    // Scalar forward input carries tau_ext, omega0, mu0/muv, and spectral quadrature weight dlambda.
+    const single_scatter_albedo = if (optical_depths.totalOpticalDepth() > 0.0)
+        optical_depths.singleScatterAlbedo()
+    else
+        prepared.effective_single_scatter_albedo;
+
+    // LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
+    const transport_dphi_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0));
+
     return .{
         .wavelength_nm = wavelength_nm,
         .spectral_weight = @max(spectral_weight, 1.0e-6),
         .air_mass_factor = prepared.effective_air_mass_factor,
         .mu0 = mu0,
         .muv = muv,
-        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
+        .relative_azimuth_rad = transport_dphi_rad,
         .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
         .gas_absorption_optical_depth = optical_depths.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = optical_depths.gas_scattering_optical_depth,
@@ -106,37 +130,11 @@ pub fn forwardInputFromOpticalDepths(
         .aerosol_optical_depth = optical_depths.aerosol_optical_depth,
         .aerosol_scattering_optical_depth = optical_depths.aerosol_scattering_optical_depth,
         .optical_depth = optical_depths.totalOpticalDepth(),
-        .single_scatter_albedo = if (optical_depths.totalOpticalDepth() > 0.0)
-            optical_depths.singleScatterAlbedo()
-        else
-            prepared.effective_single_scatter_albedo,
+        .single_scatter_albedo = single_scatter_albedo,
         .layers = layers,
     };
 }
 
-pub fn fillForwardLayersAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    layer_inputs: []transport_common.LayerInput,
-) OpticalDepthBreakdown {
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillForwardLayersAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        layer_inputs,
-        &profile_cache,
-        true,
-    );
-}
-
-// hot path:
-//   when: forward input construction fills transport layers without a wavelength carrier cache
-//   work: reduces prepared layers or support rows into layer input optical-depth fields
-//   data: prepared layers/sublayers, profile spectroscopy cache, layer input array
-//   math: layer rows carry tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda), omega0 = tau_sca / tau_ext
-//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -145,10 +143,34 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     compute_jacobian: bool,
 ) OpticalDepthBreakdown {
-    if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    // fillForwardLayersAtWavelengthWithSpectroscopyCache ----------------------------------------------------|
+    // Fill transport LayerInput rows when only the profile spectroscopy cache is available.                  |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Called while building forward inputs for each high-resolution wavelength sample.                     |
+    //   Shared geometry reduces support rows; direct branches evaluate PreparedLayer or PreparedSublayer.    |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   Writes the exact LayerInput slice later passed to RTM quadrature, source interfaces, and LABOS.      |
+    //   PreparedLayer provides support spans, representative altitude, and fallback aerosol profile fields.  |
+    //   PreparedSublayer rows carry the fine thermodynamic/support data used for spectroscopy and CIA.       |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   The support-span loops read sublayer_start_index at [192..195], sublayer_count at [204..207], and    |
+    //   sometimes altitude_km at [24..31] from 208 B PreparedLayer rows, all by pointer. Keeping span        |
+    //   indexes beside physical layer fields makes the forward-input boundary the single owner of layer      |
+    //   shape; retained benchmark evidence belongs at that boundary before changing the layout.              |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda)                                 |
+    //   omega0  = tau_sca / tau_ext                                                                          |
+    // -------------------------------------------------------------------------------------------------------|
+
+    if (layer_inputs.len == 0) return OpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
@@ -161,12 +183,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         support_count,
                     );
 
-                    // PARITY:
-                    //   DISAMAR forms radiative transfer-layer optical thickness from
-                    //   the already prepared RTM support rows and their
-                    //   `RTMweightSub` values. Re-integrating a new Gauss
-                    //   subgrid here changes line-shoulder absorption even
-                    //   when the support grid itself matches.
+                    // DISAMAR forms radiative-transfer layer optical thickness from the already prepared RTM
+                    // support rows and their RTMweightSub values. Re-integrating a new Gauss subgrid here
+                    // changes line-shoulder absorption even when the support grid itself matches.
                     const breakdown = shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
                         self,
                         scene,
@@ -185,8 +204,13 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             }
 
             var totals: OpticalDepthBreakdown = .{};
-            const layers: []const State.PreparedLayer = self.layers;
-            for (layers, layer_inputs) |*layer, *layer_input| {
+            for (self.layers, layer_inputs) |*layer, *layer_input| {
+
+                // This fallback reads the support tail plus altitude fields from PreparedLayer:
+                // sublayer_start_index [192..195], sublayer_count [204..207], altitude_km [24..31],
+                // bottom_altitude_km [8..15], and top_altitude_km [176..183]. These fields stay with the
+                // physical row so shared geometry, forward layers, and diagnostics slice the same support
+                // rows through one retained owner.
                 const start_index: usize = @intCast(layer.sublayer_start_index);
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
@@ -218,13 +242,19 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         if (layer_inputs.len == sublayers.len) {
             var totals: OpticalDepthBreakdown = .{};
             for (sublayers, 0..) |sublayer, sublayer_index| {
-                const evaluated = self.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                const strong_line_state = if (self.strong_line_states) |states|
+                    states[sublayer_index .. sublayer_index + 1]
+                else
+                    null;
+
+                const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                    self,
                     scene,
                     sublayer.altitude_km,
                     wavelength_nm,
                     sublayer_index,
                     sublayers[sublayer_index .. sublayer_index + 1],
-                    if (self.strong_line_states) |states| states[sublayer_index .. sublayer_index + 1] else null,
+                    strong_line_state,
                     profile_cache,
                 );
                 layer_inputs[sublayer_index] = Evaluation.layerInputFromEvaluated(evaluated);
@@ -235,17 +265,27 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         }
 
         var totals: OpticalDepthBreakdown = .{};
-        const layers: []const State.PreparedLayer = self.layers;
-        for (layers, layer_inputs) |*layer, *layer_input| {
+        for (self.layers, layer_inputs) |*layer, *layer_input| {
+
+            // Non-shared layer mode consumes more of PreparedLayer than just the support span:
+            // sublayer_start_index [192..195], sublayer_count [204..207], altitude_km [24..31], CIA totals,
+            // aerosol profile fields, gas/scattering totals, and phase support all come from this row.
+            // Pointer capture keeps the 208 B row from being copied while preserving locality.
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
-            const evaluated = self.evaluateLayerAtWavelengthWithSpectroscopyCache(
+            const strong_line_state = if (self.strong_line_states) |states|
+                states[start_index..end_index]
+            else
+                null;
+
+            const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                self,
                 scene,
                 layer.altitude_km,
                 wavelength_nm,
                 start_index,
                 sublayers[start_index..end_index],
-                if (self.strong_line_states) |states| states[start_index..end_index] else null,
+                strong_line_state,
                 profile_cache,
             );
             layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
@@ -256,15 +296,35 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     }
 
     const aerosol_single_scatter_albedo = self.resolvedAerosolSingleScatterAlbedo();
+    const AerosolProfile = struct {
+        reference_wavelength_nm: f64,
+        angstrom_exponent: f64,
+        single_scatter_albedo: f64,
+    };
 
     var totals: OpticalDepthBreakdown = .{};
-    const layers: []const State.PreparedLayer = self.layers;
-    for (layers, layer_inputs) |*layer, *layer_input| {
-        const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
+    for (self.layers, layer_inputs) |*layer, *layer_input| {
+        const aerosol_profile: AerosolProfile = choose_aerosol_profile: {
+            if (self.has_aerosol_profile_properties) {
+                break :choose_aerosol_profile .{
+                    .reference_wavelength_nm = layer.aerosol_reference_wavelength_nm,
+                    .angstrom_exponent = layer.aerosol_angstrom_exponent,
+                    .single_scatter_albedo = layer.aerosol_single_scatter_albedo,
+                };
+            }
+
+            break :choose_aerosol_profile .{
+                .reference_wavelength_nm = self.aerosol_reference_wavelength_nm,
+                .angstrom_exponent = self.aerosol_angstrom_exponent,
+                .single_scatter_albedo = aerosol_single_scatter_albedo,
+            };
+        };
+
+        const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
             layer.aerosol_optical_depth,
             layer.aerosol_base_optical_depth,
-            if (self.has_aerosol_profile_properties) layer.aerosol_reference_wavelength_nm else self.aerosol_reference_wavelength_nm,
-            if (self.has_aerosol_profile_properties) layer.aerosol_angstrom_exponent else self.aerosol_angstrom_exponent,
+            aerosol_profile.reference_wavelength_nm,
+            aerosol_profile.angstrom_exponent,
             self.aerosol_fraction_control,
             wavelength_nm,
         );
@@ -273,21 +333,25 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             layer.gas_optical_depth - gas_scattering_optical_depth,
             0.0,
         );
-        const aerosol_scattering_optical_depth = aerosol_optical_depth *
-            if (self.has_aerosol_profile_properties)
-                layer.aerosol_single_scatter_albedo
-            else
-                aerosol_single_scatter_albedo;
-        // math: tau_ext = tau_gas_abs + tau_gas_sca + tau_cia + tau_aerosol.
+        const aerosol_scattering_optical_depth =
+            aerosol_optical_depth * aerosol_profile.single_scatter_albedo;
+
+        // tau_ext = tau_gas_abs + tau_gas_sca + tau_cia + tau_aerosol.
         const optical_depth =
             gas_absorption_optical_depth +
             gas_scattering_optical_depth +
             layer.cia_optical_depth +
             aerosol_optical_depth;
-        // math: tau_sca = tau_gas_sca + tau_aerosol * omega0_aerosol.
+
+        // tau_sca = tau_gas_sca + tau_aerosol * omega0_aerosol.
         const scattering_optical_depth =
             gas_scattering_optical_depth +
             aerosol_scattering_optical_depth;
+        const single_scatter_albedo = if (optical_depth > 0.0)
+            std.math.clamp(scattering_optical_depth / optical_depth, 0.0, 1.0)
+        else
+            0.0;
+
         layer_input.* = .{
             .gas_absorption_optical_depth = gas_absorption_optical_depth,
             .gas_scattering_optical_depth = gas_scattering_optical_depth,
@@ -296,10 +360,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             .aerosol_scattering_optical_depth = aerosol_scattering_optical_depth,
             .optical_depth = optical_depth,
             .scattering_optical_depth = scattering_optical_depth,
-            .single_scatter_albedo = if (optical_depth > 0.0)
-                std.math.clamp(scattering_optical_depth / optical_depth, 0.0, 1.0)
-            else
-                0.0,
+            .single_scatter_albedo = single_scatter_albedo,
             .solar_mu = scene.geometry.solarCosineAtAltitude(layer.altitude_km),
             .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
             .phase = PhaseFunctions.PhaseMixture.fromUnitPhase(&self.aerosol_phase_coefficients),
@@ -314,12 +375,6 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     return totals;
 }
 
-// hot path:
-//   when: forward input construction fills transport layers for a cached wavelength solve
-//   work: reduces shared support rows through WavelengthCarrierCache and writes layer inputs
-//   data: shared RTM geometry, support sublayers, carrier cache, layer input array
-//   math: cached path preserves the same layer optical-depth sums while avoiding repeated sigma*n*path recomputation
-//   follow: shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache
 pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -328,10 +383,41 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     wavelength_cache: *carrier_eval.WavelengthCarrierCache,
     compute_jacobian: bool,
 ) OpticalDepthBreakdown {
-    if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    // fillForwardLayersAtWavelengthWithCarrierCache ---------------------------------------------------------|
+    // Fill transport LayerInput rows for a cached wavelength solve.                                          |
+    //                                                                                                        |
+    // call path                                                                                              |
+    //   forward_input.configuredForwardInput calls this after WavelengthCarrierCache has prepared support    |
+    //   row scalars for the same high-resolution wavelength miss.                                            |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   layer_inputs is caller-owned ForwardInput storage. The shared route writes one 176 B LayerInput per  |
+    //   transport layer; RTM quadrature, pseudo-spherical grids, source interfaces, and LABOS read the same  |
+    //   slice later in the wavelength solve.                                                                 |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Runs once per high-resolution wavelength. The cache route reduces shared support rows into transport |
+    //   rows without repeating sigma * density * path work already stored in WavelengthCarrierCache.         |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   Shared geometry supplies support spans; support sublayers and cached carriers remain borrowed from   |
+    //   PreparedOpticalState and WavelengthCarrierCache. This function only rewrites caller-owned LayerInput |
+    //   rows and falls back to the profile-cache route when shared RTM geometry is not active.               |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   tau_ext and phase terms are integrated over the support rows, then stored as the layer-level         |
+    //   transport row consumed by LABOS.                                                                     |
+    //                                                                                                        |
+    // calls                                                                                                  |
+    //   shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache                                  |
+    //   fillForwardLayersAtWavelengthWithSpectroscopyCache fallback                                          |
+    // -------------------------------------------------------------------------------------------------------|
+
+    if (layer_inputs.len == 0) return OpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
@@ -376,18 +462,32 @@ fn attachAerosolOpticalDepthJacobian(
     scene: *const Scene,
     layer_input: *transport_common.LayerInput,
 ) void {
+    // attachAerosolOpticalDepthJacobian -------------------------------------------------------------------- |
+    // Fill aerosol optical-depth Jacobian slots on an already-built LayerInput row. The derivative is stored |
+    // beside the scalar layer values because LABOS and RTM quadrature read the row as one transport unit.    |
+    // -------------------------------------------------------------------------------------------------------|
+
     const aerosol_tau = scene.aerosol.optical_depth;
     if (aerosol_tau <= 0.0) return;
     const optical_derivative = layer_input.aerosol_optical_depth / aerosol_tau;
     const scattering_derivative = layer_input.aerosol_scattering_optical_depth / aerosol_tau;
     jacobian.set(&layer_input.optical_depth_jacobian, .aerosol_optical_depth, optical_derivative);
-    jacobian.set(&layer_input.scattering_optical_depth_jacobian, .aerosol_optical_depth, scattering_derivative);
+    jacobian.set(
+        &layer_input.scattering_optical_depth_jacobian,
+        .aerosol_optical_depth,
+        scattering_derivative,
+    );
+
     const optical_depth = layer_input.optical_depth;
     if (optical_depth > 0.0) {
         const derivative =
             (scattering_derivative * optical_depth -
                 layer_input.scattering_optical_depth * optical_derivative) /
             (optical_depth * optical_depth);
-        jacobian.set(&layer_input.single_scatter_albedo_jacobian, .aerosol_optical_depth, derivative);
+        jacobian.set(
+            &layer_input.single_scatter_albedo_jacobian,
+            .aerosol_optical_depth,
+            derivative,
+        );
     }
 }

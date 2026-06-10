@@ -159,12 +159,6 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
             integrate_source_function=True,
             renorm_phase_function=True,
         ),
-        outputs=[],
-        validation={
-            "strict_unknown_fields": True,
-            "require_resolved_assets": True,
-            "require_resolved_stage_references": True,
-        },
     )
 
 

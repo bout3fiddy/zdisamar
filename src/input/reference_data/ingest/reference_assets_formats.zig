@@ -1,5 +1,53 @@
 const std = @import("std");
 
+// reference_assets_formats.zig -------------------------------------------------------------------------------|
+// Format adapters that turn reference-asset bytes into one generic numeric table.                             |
+//                                                                                                             |
+// caller route                                                                                                |
+//   reference_assets.zig owns file I/O, embedded-asset lookup, manifest parsing, and hash validation. After   |
+//   it knows the asset format and expected columns, it calls parseAssetTable here. The returned ParsedTable   |
+//   is copied into LoadedAsset, then reference_assets_loaded_asset.zig converts the rows into typed           |
+//   ReferenceData owners used by the forward model.                                                           |
+//                                                                                                             |
+// external route                                                                                              |
+//   o2a_reference/run.zig can pass caller-provided vendor files through loadExternalAsset. That path maps     |
+//   asset_format/kind to the same AssetSpec schemas, so external HITRAN, BIRA CIA, LISA SDF/RMF, profiles,    |
+//   cross sections, and airmass LUTs share the bundled conversion checks.                                     |
+//                                                                                                             |
+// parser responsibilities                                                                                     |
+//   csv           : borrow the file header as column order and parse every row as dense f64 cells.            |
+//   hitran_160    : read fixed-width HITRAN fields, derive isotope abundance and line-mixing coefficients,    |
+//                   convert cm^-1 centers/widths/shifts into nm fields, and attach optional O2 A branch       |
+//                   metadata from inline vendor columns or the O2 A branch-token fallback.                    |
+//   bira_cia_poly : read the three numeric BIRA header rows, keep the file-scale factor, and repeat that      |
+//                   scale with each polynomial row so the later typed converter can recover one table owner.  |
+//   lisa_sdf      : parse strong-line sidecar rows, validate the vendor HWT0 field, reconstruct the vendor    |
+//                   reference half width from branch/Nf, and emit both cm^-1 source values and nm values.     |
+//   lisa_rmf      : parse the relaxation-matrix sidecar as a flat row list; the typed converter later checks  |
+//                   that the row count forms a square matrix.                                                 |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file knows byte layouts, vendor columns, and unit normalization. It does not know JSON manifests,    |
+//   paths, hashes, final ReferenceData allocation, or forward-model physics. Bad rows fail here as syntax or  |
+//   asset-format errors before any typed physics table is materialized.                                       |
+//                                                                                                             |
+// table layout                                                                                                |
+//   ParsedTable.values is row-major: values[row * column_count + column]. CSV column names come from the      |
+//   asset header; fixed-format column names are duplicated from the AssetSpec selected by the manifest or     |
+//   external asset kind. Column indexes are therefore the contract between this parser layer and              |
+//   LoadedAsset.to* conversion methods.                                                                       |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   These parsers run during input/reference-data preparation, not inside RTM evaluation. The important cost  |
+//   is avoiding ownership ambiguity and per-row object churn while loading large line lists, so rows are      |
+//   appended into one flat f64 buffer and column-name storage is duplicated exactly once.                     |
+//                                                                                                             |
+// verification                                                                                                |
+//   tests/unit/input/reference_data/ingest/reference_assets_test.zig exercises bundled HITRAN O2 A vendor     |
+//   metadata fallback, LISA SDF/RMF sidecars, and BIRA CIA scaling. LoadedAsset conversion tests cover the    |
+//   downstream column-index contract.                                                                         |
+// ------------------------------------------------------------------------------------------------------------|
+
 const helpers = struct {
     pub fn dupColumns(allocator: std.mem.Allocator, columns: []const []const u8) ![]const []const u8 {
         const owned_columns = try allocator.alloc([]const u8, columns.len);
@@ -64,6 +112,10 @@ const helpers = struct {
         );
     }
 
+    pub fn optionalU16ToTableValue(value: ?u16) f64 {
+        return if (value) |present| @as(f64, @floatFromInt(present)) else std.math.nan(f64);
+    }
+
     pub fn deriveIsotopicAbundanceFraction(gas_index: u16, isotope_number: u16) f64 {
         return switch (gas_index) {
             1 => switch (isotope_number) {
@@ -75,6 +127,7 @@ const helpers = struct {
                 6 => 1.15853e-7,
                 else => 1.0e-8,
             },
+
             2 => switch (isotope_number) {
                 1 => 0.984204,
                 2 => 1.10574e-2,
@@ -84,6 +137,7 @@ const helpers = struct {
                 6 => 8.24623e-6,
                 else => 1.0e-8,
             },
+
             5 => switch (isotope_number) {
                 1 => 0.986544,
                 2 => 1.10836e-2,
@@ -93,36 +147,43 @@ const helpers = struct {
                 6 => 4.13292e-6,
                 else => 1.0e-8,
             },
+
             6 => switch (isotope_number) {
                 1 => 0.988274,
                 2 => 1.11031e-2,
                 3 => 6.15751e-4,
                 else => 1.0e-8,
             },
+
             7 => switch (isotope_number) {
                 1 => 0.995262,
                 2 => 3.99141e-3,
                 3 => 7.42235e-4,
                 else => 1.0e-8,
             },
+
             11 => switch (isotope_number) {
                 1 => 0.995872,
                 2 => 3.66129e-3,
                 else => 1.0e-8,
             },
+
             10 => switch (isotope_number) {
                 1 => 0.991,
                 2 => 0.006,
                 3 => 0.003,
                 else => 1.0e-8,
             },
+
             else => 1.0,
         };
     }
 
     pub fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8) !i32 {
         if (branch_token.len != 1) return error.InvalidAssetFormat;
+
         const nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
+
         return switch (branch_token[0]) {
             'P' => -nf,
             'R' => nf + 1,
@@ -132,50 +193,116 @@ const helpers = struct {
 
     pub fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
         if (branch_token.len != 1) return error.InvalidAssetFormat;
+
         const raw_nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
         const vendor_nf = switch (branch_token[0]) {
             'P' => raw_nf - 1,
             'R' => raw_nf + 1,
             else => return error.InvalidAssetFormat,
         };
+
         const vendor_nf_f64 = @as(f64, @floatFromInt(vendor_nf));
         const sbhw = 0.02204 + 0.03749 /
             (1.0 + 0.05428 * vendor_nf_f64 - 1.19e-3 * vendor_nf_f64 * vendor_nf_f64 +
                 2.073e-6 * std.math.pow(f64, vendor_nf_f64, 4.0));
+
         return 1.023 * 1.012 * sbhw /
             std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
     }
 
-    // layout(64-bit):
-    //   size: 6 B, align: 2 B
-    //   field storage: branch_ic1=2 B, branch_ic2=2 B, rotational_nf=2 B; padding: 0 B (0 bits)
-    //   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-    //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-    //   footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count
+    // VendorO2ABranchMetadata --------------------------------------------------------------------------------|
+    // Optional HITRAN O2 A branch metadata recovered from inline vendor fields or the branch token fallback.  |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 6 B (0.006 KiB), align: 2 B                                                                       |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [0..1] branch_ic1    : u16                                                                              |
+    // [2..3] branch_ic2    : u16                                                                              |
+    // [4..5] rotational_nf : u16                                                                              |
+    //                                                                                                         |
+    // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                  |
+    // footprint: per instance = 6 B (0.006 KiB); total = per instance * live instance count                   |
     pub const VendorO2ABranchMetadata = struct {
         branch_ic1: u16,
         branch_ic2: u16,
         rotational_nf: u16,
     };
 
+    // ParsedVendorO2ABranchMetadata --------------------------------------------------------------------------|
+    // Working row used while choosing inline or fallback HITRAN O2 A branch metadata.                         |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 14 B (0.014 KiB), align: 2 B                                                                      |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    // [ 0.. 3] branch_ic1                 : ?u16                                                              |
+    // [ 4.. 7] branch_ic2                 : ?u16                                                              |
+    // [ 8..11] rotational_nf              : ?u16                                                              |
+    // [12..12] from_inline_vendor_fields  : bool                                                              |
+    // [13..13] padding                    : 1 B                                                               |
+    //                                                                                                         |
+    // unused bits: 8 padding + 7 bool-storage slack = 15 bits                                                 |
+    // footprint: per instance = 14 B (0.014 KiB); stack/local row                                             |
+    pub const ParsedVendorO2ABranchMetadata = struct {
+        branch_ic1: ?u16 = null,
+        branch_ic2: ?u16 = null,
+        rotational_nf: ?u16 = null,
+        from_inline_vendor_fields: bool = false,
+
+        pub fn fromBranchMetadata(metadata: VendorO2ABranchMetadata) ParsedVendorO2ABranchMetadata {
+            return .{
+                .branch_ic1 = metadata.branch_ic1,
+                .branch_ic2 = metadata.branch_ic2,
+                .rotational_nf = metadata.rotational_nf,
+            };
+        }
+    };
+
+    pub fn inlineVendorO2ABranchMetadata(
+        has_inline_vendor_fields: bool,
+        line: []const u8,
+    ) !ParsedVendorO2ABranchMetadata {
+        if (!has_inline_vendor_fields) return .{};
+
+        const branch_ic1 = try parseOptionalFixedInt(line[67..70]);
+        const branch_ic2 = try parseOptionalFixedInt(line[70..73]);
+        const rotational_nf = try parseOptionalFixedInt(line[83..85]);
+
+        return .{
+            .branch_ic1 = branch_ic1,
+            .branch_ic2 = branch_ic2,
+            .rotational_nf = rotational_nf,
+            .from_inline_vendor_fields = branch_ic1 != null and
+                branch_ic2 != null and
+                rotational_nf != null,
+        };
+    }
+
     pub fn fallbackVendorO2ABranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorO2ABranchMetadata {
         if (center_wavenumber_cm1 < 12800.0 or center_wavenumber_cm1 > 13250.0) return null;
+
         var tokens = std.mem.tokenizeAny(u8, line, " \t");
         while (tokens.next()) |branch_token| {
             if (branch_token.len != 1 or branch_token[0] != 'P') continue;
+
             const upper_token = tokens.next() orelse return null;
             const lower_token = tokens.next() orelse return null;
+
             if (upper_token.len < 2) return null;
 
             const branch_kind = upper_token[upper_token.len - 1];
             if (branch_kind != 'P' and branch_kind != 'Q') return null;
+
             const rotational_prefix = upper_token[0 .. upper_token.len - 1];
             if (rotational_prefix.len == 0) return null;
 
             const upper_nf = std.fmt.parseInt(u16, rotational_prefix, 10) catch return error.InvalidNumber;
             const lower_nf = std.fmt.parseInt(u16, lower_token, 10) catch return error.InvalidNumber;
+
             if (upper_nf == 0 or upper_nf > 35 or (upper_nf % 2) == 0) return null;
             if (!(lower_nf == upper_nf or lower_nf + 1 == upper_nf)) return null;
+
             return .{
                 .branch_ic1 = 5,
                 .branch_ic2 = 1,
@@ -186,25 +313,43 @@ const helpers = struct {
     }
 };
 
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage: format=16 B, columns=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: format, columns carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
+// AssetSpec --------------------------------------------------------------------------------------------------|
+// Borrowed manifest instruction for one parser call.                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] format  : []const u8                                                                               |
+// [16..31] columns : []const []const u8                                                                       |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   format and columns point at manifest-owned strings.                                                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above                    |
 pub const AssetSpec = struct {
     format: []const u8,
     columns: []const []const u8,
 };
 
-// layout(64-bit):
-//   size: 40 B, align: 8 B
-//   field storage: column_names=16 B, values=16 B, row_count=4 B; padding: 4 B (32 bits)
-//   unused bits: 32 padding + 0 bool-storage slack = 32 bits
-//   out-of-line: column_names, values carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above
+// ParsedTable ------------------------------------------------------------------------------------------------|
+// Owned row-major numeric table emitted by a format parser.                                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] column_names : []const []const u8                                                                  |
+// [16..31] values       : []f64                                                                               |
+// [32..35] row_count    : u32                                                                                 |
+// [36..39] padding      : 4 B                                                                                 |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   column_names and values are owned out-of-line buffers returned to the caller.                             |
+//                                                                                                             |
+// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
+// footprint: per instance = 40 B (0.039 KiB); total also includes referenced storage above                    |
 pub const ParsedTable = struct {
     column_names: []const []const u8,
     values: []f64,
@@ -227,18 +372,23 @@ pub fn parseAssetTable(
     if (std.mem.eql(u8, asset.format, "csv")) {
         return parseNumericCsv(allocator, contents);
     }
+
     if (std.mem.eql(u8, asset.format, "hitran_160")) {
         return parseHitran160(allocator, contents, asset.columns);
     }
+
     if (std.mem.eql(u8, asset.format, "bira_cia_poly")) {
         return parseBiraCiaPolynomial(allocator, contents, asset.columns);
     }
+
     if (std.mem.eql(u8, asset.format, "lisa_sdf")) {
         return parseLisaSdf(allocator, contents, asset.columns);
     }
+
     if (std.mem.eql(u8, asset.format, "lisa_rmf")) {
         return parseLisaRmf(allocator, contents, asset.columns);
     }
+
     return error.UnsupportedFormat;
 }
 
@@ -280,13 +430,17 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
         var column_index: usize = 0;
         while (token_iter.next()) |token| {
             if (column_index >= header_names.items.len) return error.InvalidCsv;
-            const value = std.fmt.parseFloat(f64, helpers.trimWhitespace(token)) catch return error.InvalidNumber;
+
+            const trimmed_token = helpers.trimWhitespace(token);
+            const value = std.fmt.parseFloat(f64, trimmed_token) catch return error.InvalidNumber;
             try values.append(allocator, value);
             column_index += 1;
         }
+
         if (column_index != header_names.items.len) return error.InvalidCsv;
         row_count += 1;
     }
+
     if (row_count == 0) return error.InvalidCsv;
 
     const columns = try allocator.alloc([]const u8, header_names.items.len);
@@ -340,44 +494,33 @@ fn parseHitran160(
         const pressure_shift_cm1 = try helpers.parseFixedFloat(line[59..67]);
         const has_inline_vendor_fields = has_vendor_o2a_fields and line.len >= 85;
 
-        // UNITS:
-        //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
-        //   spectroscopy loader.
+        // The fixed-width cm^-1 fields are converted to the nm values expected by the typed
+        // spectroscopy loader.
         const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
-        const line_mixing_coefficient = helpers.deriveLineMixingCoefficient(air_half_width_cm1, pressure_shift_cm1);
-        const inline_branch_ic1 = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[67..70]) else null;
-        const inline_branch_ic2 = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[70..73]) else null;
-        const inline_rotational_nf = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[83..85]) else null;
-        const fallback_vendor_metadata = if (has_vendor_o2a_fields and
-            inline_branch_ic1 == null and
-            inline_branch_ic2 == null and
-            inline_rotational_nf == null)
+        const line_mixing_coefficient = helpers.deriveLineMixingCoefficient(
+            air_half_width_cm1,
+            pressure_shift_cm1,
+        );
+
+        const inline_vendor_metadata = try helpers.inlineVendorO2ABranchMetadata(
+            has_inline_vendor_fields,
+            line,
+        );
+        const inline_vendor_metadata_absent = inline_vendor_metadata.branch_ic1 == null and
+            inline_vendor_metadata.branch_ic2 == null and
+            inline_vendor_metadata.rotational_nf == null;
+
+        const fallback_vendor_metadata = if (has_vendor_o2a_fields and inline_vendor_metadata_absent)
             try helpers.fallbackVendorO2ABranchMetadata(line, center_wavenumber_cm1)
         else
             null;
-        const branch_ic1 = if (inline_branch_ic1) |value|
-            value
-        else if (fallback_vendor_metadata) |metadata|
-            metadata.branch_ic1
+
+        const vendor_metadata = if (fallback_vendor_metadata) |metadata|
+            helpers.ParsedVendorO2ABranchMetadata.fromBranchMetadata(metadata)
         else
-            null;
-        const branch_ic2 = if (inline_branch_ic2) |value|
-            value
-        else if (fallback_vendor_metadata) |metadata|
-            metadata.branch_ic2
-        else
-            null;
-        const rotational_nf = if (inline_rotational_nf) |value|
-            value
-        else if (fallback_vendor_metadata) |metadata|
-            metadata.rotational_nf
-        else
-            null;
-        const vendor_filter_metadata_from_source = inline_branch_ic1 != null and
-            inline_branch_ic2 != null and
-            inline_rotational_nf != null;
+            inline_vendor_metadata;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
@@ -385,37 +528,46 @@ fn parseHitran160(
             helpers.deriveIsotopicAbundanceFraction(gas_index, isotope_number),
             center_wavelength_nm,
         });
+
         if (emit_source_cm1_fields) {
             try values.append(allocator, center_wavenumber_cm1);
         }
+
         try values.appendSlice(allocator, &.{
             line_strength,
             air_half_width_nm,
         });
+
         if (emit_source_cm1_fields) {
             try values.append(allocator, air_half_width_cm1);
         }
+
         try values.appendSlice(allocator, &.{
             temperature_exponent,
             lower_state_energy_cm1,
             pressure_shift_nm,
         });
+
         if (emit_source_cm1_fields) {
             try values.append(allocator, pressure_shift_cm1);
         }
+
         try values.appendSlice(allocator, &.{
             line_mixing_coefficient,
         });
+
         if (has_vendor_o2a_fields) {
             try values.appendSlice(allocator, &.{
-                if (branch_ic1) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
-                if (branch_ic2) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
-                if (rotational_nf) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
-                if (vendor_filter_metadata_from_source) 1.0 else 0.0,
+                helpers.optionalU16ToTableValue(vendor_metadata.branch_ic1),
+                helpers.optionalU16ToTableValue(vendor_metadata.branch_ic2),
+                helpers.optionalU16ToTableValue(vendor_metadata.rotational_nf),
+                if (vendor_metadata.from_inline_vendor_fields) 1.0 else 0.0,
             });
         }
+
         row_count += 1;
     }
+
     if (row_count == 0) return error.InvalidAssetFormat;
 
     return .{
@@ -464,12 +616,15 @@ fn parseBiraCiaPolynomial(
         }
 
         const wavelength_nm = std.fmt.parseFloat(f64, first_token) catch return error.InvalidNumber;
-        const a0 = std.fmt.parseFloat(f64, token_iter.next() orelse return error.InvalidAssetFormat) catch return error.InvalidNumber;
-        const a1 = std.fmt.parseFloat(f64, token_iter.next() orelse return error.InvalidAssetFormat) catch return error.InvalidNumber;
-        const a2 = std.fmt.parseFloat(f64, token_iter.next() orelse return error.InvalidAssetFormat) catch return error.InvalidNumber;
+        const a0_token = token_iter.next() orelse return error.InvalidAssetFormat;
+        const a1_token = token_iter.next() orelse return error.InvalidAssetFormat;
+        const a2_token = token_iter.next() orelse return error.InvalidAssetFormat;
 
-        // DECISION:
-        //   Preserve the vendor row layout exactly so the scale factor stays table-scoped.
+        const a0 = std.fmt.parseFloat(f64, a0_token) catch return error.InvalidNumber;
+        const a1 = std.fmt.parseFloat(f64, a1_token) catch return error.InvalidNumber;
+        const a2 = std.fmt.parseFloat(f64, a2_token) catch return error.InvalidNumber;
+
+        // Preserve the vendor row layout exactly by carrying the file-scoped scale factor with each row.
         try values.appendSlice(allocator, &.{
             wavelength_nm,
             a0,
@@ -520,18 +675,21 @@ fn parseLisaSdf(
         const pressure_shift_cm1 = try helpers.parseFixedFloat(line[71..79]);
         const branch_token = helpers.trimWhitespace(line[83..84]);
         const nf_token = helpers.trimWhitespace(line[84..87]);
-        const rotational_index_m1 = helpers.rotationalIndexFromLisaBranch(branch_token, nf_token) catch return error.InvalidAssetFormat;
+        const rotational_index_m1 = helpers.rotationalIndexFromLisaBranch(
+            branch_token,
+            nf_token,
+        ) catch return error.InvalidAssetFormat;
 
-        // PARITY:
-        //   `HITRANModule::readSDF` does not trust the tabulated `HWT0` field. It reconstructs
-        //   the reference half-width from the LISA branch/Nf quantum numbers using the
-        //   Tran/Hartmann-Yang parameterization before any temperature scaling happens.
+        // Parse HWT0 only to reject malformed rows. HITRANModule::readSDF reconstructs the reference
+        // half-width from the LISA branch/Nf numbers before any temperature scaling happens.
         _ = try helpers.parseFixedFloat(line[58..63]);
-        const air_half_width_cm1 = helpers.vendorLisaReferenceHalfWidthCm1(branch_token, nf_token) catch return error.InvalidAssetFormat;
+        const air_half_width_cm1 = helpers.vendorLisaReferenceHalfWidthCm1(
+            branch_token,
+            nf_token,
+        ) catch return error.InvalidAssetFormat;
 
-        // UNITS:
-        //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
-        //   expects wavelength-like values.
+        // Strong-line fields are stored in cm^-1 and converted to nm where the typed loader expects
+        // wavelength-like values.
         const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);

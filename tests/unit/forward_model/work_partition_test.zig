@@ -16,23 +16,21 @@ test "static worker ranges cover work without overlap" {
     const item_count: usize = 3874;
     const worker_count: usize = 10;
     var expected_start: usize = 0;
+    var min_count: usize = std.math.maxInt(usize);
+    var max_count: usize = 0;
 
     for (0..worker_count) |worker_index| {
         const range = work_partition.staticRange(item_count, worker_count, worker_index);
         try std.testing.expectEqual(expected_start, range.start);
         try std.testing.expect(range.end >= range.start);
+        const count = range.len();
+        min_count = @min(min_count, count);
+        max_count = @max(max_count, count);
         expected_start = range.end;
     }
 
     try std.testing.expectEqual(item_count, expected_start);
-}
-
-test "static worker ranges stay balanced" {
-    try std.testing.expect(work_partition.rangesAreBalanced(3874, 10));
-    try std.testing.expect(work_partition.rangesAreBalanced(32, 4));
-    try std.testing.expect(work_partition.rangesAreBalanced(1, 1));
-    try std.testing.expect(work_partition.rangesAreBalanced(0, 4));
-    try std.testing.expect(!work_partition.rangesAreBalanced(1, 0));
+    try std.testing.expect(max_count - min_count <= 1);
 }
 
 test "preferred worker count stays single-threaded below threshold" {

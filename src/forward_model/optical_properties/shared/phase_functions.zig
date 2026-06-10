@@ -2,6 +2,29 @@ const std = @import("std");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 
+// phase_functions.zig ---------------------------------------------------------------------------------------  |
+// Builds Rayleigh, aerosol, and mixed phase-coefficient rows for optical state and LABOS transport.            |
+//                                                                                                              |
+// called by                                                                                                    |
+//   radiative_transfer/root.zig re-exports phase_coefficient_count and LayerPhase                              |
+//   state_build/context.zig prepares aerosol HG coefficients from Scene controls                               |
+//   shared_carrier.zig, carrier_eval.zig, rtm_quadrature.zig, and forward_layers.zig store PhaseMixture rows   |
+//   LABOS phase_basis.zig reads the final coefficient arrays and max retained phase index                      |
+//                                                                                                              |
+// main paths                                                                                                   |
+//   phaseCoefficientsFromCompact expands short input rows into the fixed [151] coefficient layout              |
+//   hgPhaseCoefficients builds truncated Henyey-Greenstein aerosol coefficients                                |
+//   PhaseMixture stores gas/aerosol mixture weights plus a borrowed aerosol coefficient pointer                |
+//   weightedPhaseCoefficient reads one mixed coefficient without materializing the full row                    |
+//                                                                                                              |
+// hot path                                                                                                     |
+//   Carrier and layer-accumulation paths keep mixture weights plus a borrowed pointer to prepared aerosol      |
+//   coefficients. LABOS expands the [151]f64 row only where its basis and layer math consume it.               |
+//                                                                                                              |
+// memory                                                                                                       |
+//   The full phase row is [151]f64. PhaseMixture is a 24 B borrowed view over shared prepared coefficients.    |
+// ------------------------------------------------------------------------------------------------------------ |
+
 pub const compact_phase_coefficient_count: usize = 4;
 pub const vendor_hg_max_phase_index: usize = 150;
 pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
@@ -15,15 +38,23 @@ pub fn zeroPhaseCoefficients() [phase_coefficient_count]f64 {
 
 const default_phase_mixture_coefficients = zeroPhaseCoefficients();
 
-// Encoded phase-coefficient mixture for rows that are a gas/aerosol blend.
-// layout(64-bit):
-//   size: 24 B, align: 8 B
-//   field storage: 24 B across 3 fields; largest: aerosol_weight=8 B, rayleigh2_weight=8 B, aerosol_phase_coefficients=8 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: aerosol_phase_coefficients points at shared prepared phase rows; referenced storage is not included in size
-//   cache span: 1 cache line(s) at 64 B per line
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 24 B (0.023 KiB); total also includes referenced storage above
+// PhaseMixture ----------------------------------------------------------------------------------------------  |
+// Encoded phase-coefficient mixture for rows that are a gas/aerosol blend.                                     |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 24 B (0.023 KiB), align: 8 B                                                                           |
+//                                                                                                              |
+// memory                                                                                                       |
+// [ 0.. 7] aerosol_weight              : f64                                                                   |
+// [ 8..15] rayleigh2_weight            : f64                                                                   |
+// [16..23] aerosol_phase_coefficients  : *const [151]f64                                                       |
+//                                                                                                              |
+// out-of-line                                                                                                  |
+//   aerosol_phase_coefficients points at shared prepared phase rows; referenced storage is not included.       |
+//                                                                                                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
+// cache span: 1 cache line at 64 B per line                                                                    |
+// footprint: per instance = 24 B plus borrowed coefficient storage                                             |
 pub const PhaseMixture = struct {
     aerosol_weight: f64 = 0.0,
     rayleigh2_weight: f64 = 0.0,
@@ -46,7 +77,7 @@ pub const PhaseMixture = struct {
         if (total_scattering <= 0.0) {
             return .{ .rayleigh2_weight = rayleigh_coef2 };
         }
-        // math: aerosol_weight = tau_sca_aer / tau_sca_total; rayleigh2_weight = tau_sca_gas / tau_sca_total * P2_rayleigh
+
         const inv_total = 1.0 / total_scattering;
         const aerosol_weight = aerosol_scattering * inv_total;
         const rayleigh2_weight = gas_scattering * inv_total * rayleigh_coef2;
@@ -86,6 +117,7 @@ pub const PhaseMixture = struct {
         return values;
     }
 };
+// ------------------------------------------------------------------------------------------------------------ |
 
 pub fn phaseCoefficientsFromCompact(
     compact_coefficients: [compact_phase_coefficient_count]f64,
@@ -113,8 +145,16 @@ pub fn weightedPhaseCoefficient(
     aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
     index: usize,
 ) f64 {
+    // weightedPhaseCoefficient --------------------------------------------------------------------------------|
+    // Reads one coefficient from the compact gas/aerosol mixture without materializing the full [151]f64 row.  |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   P_l = aerosol_weight * P_l,aerosol + rayleigh2_weight when l = 2                                       |
+    //   P_0 = 1                                                                                                |
+    // -------------------------------------------------------------------------------------------------------- |
+
     if (index == 0) return 1.0;
-    // math: P_l = aerosol_weight * P_l,aerosol + 1[l=2] * rayleigh2_weight
+
     var coefficient = aerosol_weight * aerosol_phase_coefficients[index];
     if (index == 2) coefficient += rayleigh2_weight;
     return coefficient;
@@ -133,10 +173,6 @@ pub fn maxWeightedPhaseCoefficientIndex(
     return max_index;
 }
 
-pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
-    return gasPhaseCoefficientsFromRayleigh2(rayleighPhaseCoefficient2AtWavelength(wavelength_nm));
-}
-
 pub fn gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
     coefficients[2] = rayleigh_coef2;
@@ -144,22 +180,48 @@ pub fn gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2: f64) [phase_coefficient
 }
 
 pub fn rayleighPhaseCoefficient2AtWavelength(wavelength_nm: f64) f64 {
+    // rayleighPhaseCoefficient2AtWavelength ------------------------------------------------------------------ |
+    // Converts wavelength-dependent air depolarization to the Rayleigh l=2 phase coefficient.                  |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   eps = 45 * depolarization / (6 - 7 * depolarization)                                                   |
+    //   P2  = (45 + eps) / (90 + 20 * eps)                                                                     |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const depolarization = Rayleigh.depolarizationFactorAir(wavelength_nm);
     const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
-    // math: P2_rayleigh = (45 + eps) / (90 + 20 eps), eps = 45 delta / (6 - 7 delta)
     return (45.0 + eps) / (90.0 + 20.0 * eps);
 }
 
 pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
+    // computeSingleScatterAlbedo ----------------------------------------------------------------------------- |
+    // Blends the gas floor and aerosol single-scatter albedo into the effective scene value.                   |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   effective SSA = clamp(gas_weight * gas_ssa + aerosol_weight * aerosol_ssa, 0.3, 0.999)                 |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const gas_ssa: f64 = 0.92;
-    const aerosol_ssa = if (scene.atmosphere.has_aerosols) scene.aerosol.single_scatter_albedo else gas_ssa;
-    const aerosol_fraction = if (scene.aerosol.fraction.enabled)
-        scene.aerosol.fraction.valueAtWavelength(wavelength_nm)
-    else
-        1.0;
-    const aerosol_weight: f64 = if (scene.atmosphere.has_aerosols) 0.20 * aerosol_fraction else 0.0;
+
+    const aerosol_ssa = choose_aerosol_ssa: {
+        if (scene.atmosphere.has_aerosols) break :choose_aerosol_ssa scene.aerosol.single_scatter_albedo;
+        break :choose_aerosol_ssa gas_ssa;
+    };
+
+    const aerosol_fraction = choose_aerosol_fraction: {
+        if (scene.aerosol.fraction.enabled) {
+            break :choose_aerosol_fraction scene.aerosol.fraction.valueAtWavelength(wavelength_nm);
+        }
+        break :choose_aerosol_fraction 1.0;
+    };
+
+    const aerosol_weight: f64 = choose_aerosol_weight: {
+        if (scene.atmosphere.has_aerosols) break :choose_aerosol_weight 0.20 * aerosol_fraction;
+        break :choose_aerosol_weight 0.0;
+    };
+
     const gas_weight: f64 = 1.0 - aerosol_weight;
-    // math: effective omega0 = clamp(gas_weight*gas_ssa + aerosol_weight*aerosol_ssa, 0.3, 0.999).
+
     return std.math.clamp(gas_weight * gas_ssa + aerosol_weight * aerosol_ssa, 0.3, 0.999);
 }
 
@@ -167,16 +229,22 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
     return hgPhaseCoefficientsWithThreshold(asymmetry_factor, vendor_hg_truncation_threshold);
 }
 
-// hot path:
-//   when: optical-state preparation builds particle phase coefficients
-//   work: fills Henyey-Greenstein coefficient tail until the truncation threshold
-//   data: asymmetry factor, truncation threshold, coefficient array
-//   math: P_l = (2l + 1) * g^l; truncation tail *= |g| * (2l - 1) / (2l + 1)
-//   follow: combinePhaseCoefficientsWithRayleigh2 and LABOS phase-basis builders
 pub fn hgPhaseCoefficientsWithThreshold(
     asymmetry_factor: f64,
     truncation_threshold: f64,
 ) [phase_coefficient_count]f64 {
+    // hgPhaseCoefficientsWithThreshold ----------------------------------------------------------------------  |
+    // Fills the Henyey-Greenstein coefficient tail until the truncation threshold.                             |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Runs during optical-state preparation, before wavelength-time LABOS phase-basis builders consume the   |
+    //   prepared coefficient rows.                                                                             |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   P_l = (2l + 1) * g^l                                                                                   |
+    //   truncation_tail *= |g| * (2l - 1) / (2l + 1)                                                           |
+    // -------------------------------------------------------------------------------------------------------  |
+
     var coefficients = zeroPhaseCoefficients();
     const truncation_g = @abs(asymmetry_factor);
     if (truncation_g <= 0.0) return coefficients;
@@ -194,62 +262,24 @@ pub fn hgPhaseCoefficientsWithThreshold(
     return coefficients;
 }
 
-pub fn combinePhaseCoefficients(
-    wavelength_nm: f64,
-    gas_scattering_optical_depth: f64,
-    aerosol_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-) [phase_coefficient_count]f64 {
-    return combinePhaseCoefficientsWithRayleigh2(
-        rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
-        gas_scattering_optical_depth,
-        aerosol_scattering_optical_depth,
-        aerosol_phase_coefficients,
-    );
-}
-
-// hot path:
-//   when: layer/sublayer carrier evaluation combines gas and aerosol scattering
-//   work: blends Rayleigh and aerosol phase coefficients by scattering optical depth
-//   data: scattering optical depths, Rayleigh coefficient, aerosol coefficient array
-//   math: P_l = (tau_sca_aer / tau_sca_total) * P_l,aerosol + 1[l=2] * (tau_sca_gas / tau_sca_total) * P2_rayleigh; P_0 = 1
-//   follow: layer_accumulation phase writes and LABOS phase matrix construction
-pub fn combinePhaseCoefficientsWithRayleigh2(
-    rayleigh_coef2: f64,
-    gas_scattering_optical_depth: f64,
-    aerosol_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-) [phase_coefficient_count]f64 {
-    const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth;
-    if (total_scattering == 0.0) return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
-    if (aerosol_scattering_optical_depth == 0.0) {
-        return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
-    }
-
-    var combined: [phase_coefficient_count]f64 = undefined;
-    const inv_total = 1.0 / total_scattering;
-    const gas_weight = gas_scattering_optical_depth * inv_total;
-    const aerosol_weight = aerosol_scattering_optical_depth * inv_total;
-
-    for (0..phase_coefficient_count) |index| {
-        // math: beta_l = aerosol_fraction * aerosol_beta_l, with Rayleigh l=2 added below.
-        combined[index] = aerosol_weight * aerosol_phase_coefficients[index];
-    }
-    combined[0] = 1.0;
-    combined[2] += gas_weight * rayleigh_coef2;
-    return combined;
-}
-
 pub fn computeLayerDepolarization(
     scene: *const Scene,
     gas_scattering_tau: f64,
     aerosol_scattering_tau: f64,
 ) f64 {
+    // computeLayerDepolarization ----------------------------------------------------------------------------- |
+    // Blends gas and aerosol depolarization by scattering optical depth.                                       |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   depol = gas_fraction * 0.0279 + aerosol_fraction * (0.04 + 0.02 * (1 - asymmetry_factor))              |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const total = gas_scattering_tau + aerosol_scattering_tau;
     if (total == 0.0) return 0.0;
+
     const gas_fraction = gas_scattering_tau / total;
     const aerosol_fraction = aerosol_scattering_tau / total;
-    // math: layer depolarization = gas_fraction*0.0279 + aerosol_fraction*(0.04 + 0.02*(1-g)).
+
     return gas_fraction * 0.0279 +
         aerosol_fraction * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor));
 }
