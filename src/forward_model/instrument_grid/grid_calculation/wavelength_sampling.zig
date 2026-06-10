@@ -186,6 +186,52 @@ const WavelengthSamplingWorker = struct {
     error_state: *WavelengthSamplingErrorState,
     worker_index: usize,
 };
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// WavelengthSamplingWorkerLease -----------------------------------------------------------------------------------------|
+// Owns the temporary worker and thread rows for one parallel wavelength-plan fill. The fill path borrows this            |
+// lease so allocation and release stay visibly in setup/teardown instead of being mixed into row construction.           |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] workers : []WavelengthSamplingWorker                                                                          |
+// [16..31] threads : []std.Thread                                                                                        |
+//                                                                                                                        |
+// out-of-line storage: workers and threads are heap slices owned by this lease.                                          |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 32 B (0.031 KiB); total also includes worker/thread slice backing storage                    |
+const WavelengthSamplingWorkerLease = struct {
+    workers: []WavelengthSamplingWorker = &.{},
+    threads: []std.Thread = &.{},
+
+    fn init(allocator: Allocator, worker_count: usize) Error!WavelengthSamplingWorkerLease {
+        // WavelengthSamplingWorkerLease.init ----------------------------------------------------------------------------|
+        // Allocate the temporary parallel worker rows used by fillWavelengthSamplingPlans. Single-threaded               |
+        // fills do not create this lease.                                                                                |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const workers = try allocator.alloc(WavelengthSamplingWorker, worker_count);
+        errdefer allocator.free(workers);
+        const threads = try allocator.alloc(std.Thread, worker_count - 1);
+        errdefer allocator.free(threads);
+        return .{
+            .workers = workers,
+            .threads = threads,
+        };
+    }
+
+    fn deinit(self: *WavelengthSamplingWorkerLease, allocator: Allocator) void {
+        // WavelengthSamplingWorkerLease.deinit --------------------------------------------------------------------------|
+        // Release the temporary worker rows after all started threads have joined.                                       |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        allocator.free(self.threads);
+        allocator.free(self.workers);
+        self.* = .{};
+    }
+};
 
 // KernelStorageBuilder --------------------------------------------------------------------------------------------------|
 // Temporary side-array builder for large integration kernels.                                                            |
@@ -388,15 +434,13 @@ fn fillWavelengthSamplingPlans(
     }
 
     var error_state = WavelengthSamplingErrorState{};
-    const workers = try allocator.alloc(WavelengthSamplingWorker, worker_count);
-    defer allocator.free(workers);
-    const threads = try allocator.alloc(std.Thread, worker_count - 1);
-    defer allocator.free(threads);
+    var worker_lease = try WavelengthSamplingWorkerLease.init(allocator, worker_count);
+    defer worker_lease.deinit(allocator);
 
     var queue = work_partition.ChunkQueue.init(output.plans.len, wavelength_sampling_chunk_size);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
-        workers[worker_index] = .{
+        worker_lease.workers[worker_index] = .{
             .allocator = allocator,
             .request = request,
             .output = output,
@@ -406,21 +450,21 @@ fn fillWavelengthSamplingPlans(
         };
 
         if (worker_index + 1 < worker_count) {
-            threads[started_thread_count] = std.Thread.spawn(
+            worker_lease.threads[started_thread_count] = std.Thread.spawn(
                 .{},
                 wavelengthSamplingWorkerMain,
-                .{&workers[worker_index]},
+                .{&worker_lease.workers[worker_index]},
             ) catch {
-                wavelengthSamplingWorkerMain(&workers[worker_index]);
+                wavelengthSamplingWorkerMain(&worker_lease.workers[worker_index]);
 
                 continue;
             };
             started_thread_count += 1;
         } else {
-            wavelengthSamplingWorkerMain(&workers[worker_index]);
+            wavelengthSamplingWorkerMain(&worker_lease.workers[worker_index]);
         }
     }
-    for (threads[0..started_thread_count]) |thread| thread.join();
+    for (worker_lease.threads[0..started_thread_count]) |thread| thread.join();
 
     if (error_state.err) |err| return err;
 }
