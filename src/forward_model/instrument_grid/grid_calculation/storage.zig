@@ -271,20 +271,20 @@ pub const ProductStorage = struct {
         if (self.forward_prefetch_pool_valid) {
             self.forward_prefetch_pool.deinit();
         }
-        freeBuffer(allocator, self.wavelengths);
-        freeBuffer(allocator, self.radiance);
-        freeBuffer(allocator, self.irradiance);
-        freeBuffer(allocator, self.reflectance);
-        freeBuffer(allocator, self.scratch);
-        freeBuffer(allocator, self.scratch_aux);
-        freeForwardResultBuffer(allocator, self.forward_results);
-        freeLayerBuffer(allocator, self.layer_inputs);
-        freeSourceInterfaceBuffer(allocator, self.source_interfaces);
-        freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
-        freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
-        freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
-        freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
-        freeBuffer(allocator, self.jacobian);
+        freeTypedBuffer(f64, allocator, self.wavelengths);
+        freeTypedBuffer(f64, allocator, self.radiance);
+        freeTypedBuffer(f64, allocator, self.irradiance);
+        freeTypedBuffer(f64, allocator, self.reflectance);
+        freeTypedBuffer(f64, allocator, self.scratch);
+        freeTypedBuffer(f64, allocator, self.scratch_aux);
+        freeTypedBuffer(Types.ForwardIntegratedSample, allocator, self.forward_results);
+        freeTypedBuffer(common.LayerInput, allocator, self.layer_inputs);
+        freeTypedBuffer(common.SourceInterfaceInput, allocator, self.source_interfaces);
+        freeTypedBuffer(common.RtmQuadratureLevel, allocator, self.rtm_quadrature_levels);
+        freeTypedBuffer(common.PseudoSphericalSample, allocator, self.pseudo_spherical_samples);
+        freeTypedBuffer(usize, allocator, self.pseudo_spherical_level_starts);
+        freeTypedBuffer(f64, allocator, self.pseudo_spherical_level_altitudes);
+        freeTypedBuffer(f64, allocator, self.jacobian);
         if (self.evaluation_cache) |*cache| cache.deinit();
         self.wavelength_sampling.deinit(allocator);
         self.forward_miss_plan.deinit(allocator);
@@ -406,7 +406,7 @@ pub const ProductStorage = struct {
         // avoids repeated allocation across retrieval iterations with similar wavelength plans.                          |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        try ensureForwardResultCapacity(allocator, &self.forward_results, capacity);
+        try ensureTypedBufferCapacity(Types.ForwardIntegratedSample, allocator, &self.forward_results, capacity);
         return self.forward_results[0..capacity];
     }
 
@@ -448,45 +448,56 @@ pub const ProductStorage = struct {
         const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
         const wants_jacobian = active_jacobian_count != 0;
 
-        try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
-        try ensureBufferCapacity(allocator, &self.radiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch, sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.wavelengths, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.radiance, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.irradiance, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.reflectance, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.scratch, sample_count);
+        try ensureTypedBufferCapacity(f64, allocator, &self.scratch_aux, sample_count);
 
-        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
+        try ensureTypedBufferCapacity(common.LayerInput, allocator, &self.layer_inputs, layer_count);
         if (needs_source_interfaces) {
-            try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
+            try ensureTypedBufferCapacity(
+                common.SourceInterfaceInput,
+                allocator,
+                &self.source_interfaces,
+                layer_count + 1,
+            );
         } else {
-            freeSourceInterfaceBuffer(allocator, self.source_interfaces);
+            freeTypedBuffer(common.SourceInterfaceInput, allocator, self.source_interfaces);
             self.source_interfaces = &.{};
         }
         if (needs_rtm_quadrature) {
-            try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
+            try ensureTypedBufferCapacity(
+                common.RtmQuadratureLevel,
+                allocator,
+                &self.rtm_quadrature_levels,
+                layer_count + 1,
+            );
         } else {
-            freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
+            freeTypedBuffer(common.RtmQuadratureLevel, allocator, self.rtm_quadrature_levels);
             self.rtm_quadrature_levels = &.{};
         }
         if (needs_pseudo_spherical_grid) {
-            try ensurePseudoSphericalSampleBufferCapacity(
+            try ensureTypedBufferCapacity(
+                common.PseudoSphericalSample,
                 allocator,
                 &self.pseudo_spherical_samples,
                 pseudo_spherical_sample_count,
             );
-            try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
-            try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
+            try ensureTypedBufferCapacity(usize, allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
+            try ensureTypedBufferCapacity(f64, allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
         } else {
-            freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
+            freeTypedBuffer(common.PseudoSphericalSample, allocator, self.pseudo_spherical_samples);
 
-            freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
-            freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
+            freeTypedBuffer(usize, allocator, self.pseudo_spherical_level_starts);
+            freeTypedBuffer(f64, allocator, self.pseudo_spherical_level_altitudes);
             self.pseudo_spherical_samples = &.{};
             self.pseudo_spherical_level_starts = &.{};
             self.pseudo_spherical_level_altitudes = &.{};
         }
         if (wants_jacobian) {
-            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
+            try ensureTypedBufferCapacity(f64, allocator, &self.jacobian, sample_count * active_jacobian_count);
         }
 
         const source_interface_view: []common.SourceInterfaceInput = if (needs_source_interfaces)
@@ -677,149 +688,27 @@ pub fn validateBuffers(
 
 pub fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) Error!void {
     // ensureBufferCapacity ----------------------------------------------------------------------------------------------|
-    // Grow an f64 scratch/output buffer without preserving old values. Simulation fills the returned view                |
-    // before reading it.                                                                                                 |
+    // Public f64 helper retained for tests and callers that only own scalar scratch.                                     |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    try ensureTypedBufferCapacity(f64, allocator, buffer, capacity);
+}
+
+fn ensureTypedBufferCapacity(comptime T: type, allocator: Allocator, buffer: *[]T, capacity: usize) Error!void {
+    // ensureTypedBufferCapacity -----------------------------------------------------------------------------------------|
+    // Grow ProductStorage-owned buffers without preserving old values. Empty sentinels are not allocator-owned,          |
+    // so the paired free helper skips zero-length slices.                                                                |
     // -------------------------------------------------------------------------------------------------------------------|
 
     if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(f64, capacity);
-    freeBuffer(allocator, buffer.*);
+    const replacement = try allocator.alloc(T, capacity);
+    freeTypedBuffer(T, allocator, buffer.*);
     buffer.* = replacement;
 }
 
-fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput, capacity: usize) Error!void {
-    // ensureLayerBufferCapacity -----------------------------------------------------------------------------------------|
-    // Grow the wavelength-specific LayerInput buffer. Existing contents are scratch data and are discarded.              |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(common.LayerInput, capacity);
-    freeLayerBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn ensureForwardResultCapacity(
-    allocator: Allocator,
-    buffer: *[]Types.ForwardIntegratedSample,
-    capacity: usize,
-) Error!void {
-    // ensureForwardResultCapacity ---------------------------------------------------------------------------------------|
-    // Grow the dense forward-result staging buffer used between prefetch and nominal integration.                        |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(Types.ForwardIntegratedSample, capacity);
-    freeForwardResultBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn ensureSourceInterfaceBufferCapacity(
-    allocator: Allocator,
-    buffer: *[]common.SourceInterfaceInput,
-    capacity: usize,
-) Error!void {
-    // ensureSourceInterfaceBufferCapacity -------------------------------------------------------------------------------|
-    // Grow the coarse source-interface buffer used by the integrated-source fallback route.                              |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(common.SourceInterfaceInput, capacity);
-    freeSourceInterfaceBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn ensureRtmQuadratureBufferCapacity(
-    allocator: Allocator,
-    buffer: *[]common.RtmQuadratureLevel,
-    capacity: usize,
-) Error!void {
-    // ensureRtmQuadratureBufferCapacity ---------------------------------------------------------------------------------|
-    // Grow the RTM-native quadrature buffer used by integrated-source evaluation.                                        |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(common.RtmQuadratureLevel, capacity);
-    freeRtmQuadratureBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn ensurePseudoSphericalSampleBufferCapacity(
-    allocator: Allocator,
-    buffer: *[]common.PseudoSphericalSample,
-    capacity: usize,
-) Error!void {
-    // ensurePseudoSphericalSampleBufferCapacity -------------------------------------------------------------------------|
-    // Grow the pseudo-spherical support sample buffer used by geometric-correction attenuation.                          |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(common.PseudoSphericalSample, capacity);
-    freePseudoSphericalSampleBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: usize) Error!void {
-    // ensureIndexBufferCapacity -----------------------------------------------------------------------------------------|
-    // Grow a usize index buffer, currently used for pseudo-spherical level starts.                                       |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.*.len >= capacity) return;
-    const replacement = try allocator.alloc(usize, capacity);
-    freeIndexBuffer(allocator, buffer.*);
-    buffer.* = replacement;
-}
-
-fn freeBuffer(allocator: Allocator, buffer: []f64) void {
-    // freeBuffer --------------------------------------------------------------------------------------------------------|
-    // Free a possibly empty f64 buffer. Empty slice sentinels are not allocator-owned.                                   |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
-    // freeLayerBuffer ---------------------------------------------------------------------------------------------------|
-    // Free a possibly empty LayerInput buffer.                                                                           |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freeForwardResultBuffer(allocator: Allocator, buffer: []Types.ForwardIntegratedSample) void {
-    // freeForwardResultBuffer -------------------------------------------------------------------------------------------|
-    // Free a possibly empty forward-result staging buffer.                                                               |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freeSourceInterfaceBuffer(allocator: Allocator, buffer: []common.SourceInterfaceInput) void {
-    // freeSourceInterfaceBuffer -----------------------------------------------------------------------------------------|
-    // Free a possibly empty source-interface buffer.                                                                     |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freeRtmQuadratureBuffer(allocator: Allocator, buffer: []common.RtmQuadratureLevel) void {
-    // freeRtmQuadratureBuffer -------------------------------------------------------------------------------------------|
-    // Free a possibly empty RTM quadrature buffer.                                                                       |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freePseudoSphericalSampleBuffer(allocator: Allocator, buffer: []common.PseudoSphericalSample) void {
-    // freePseudoSphericalSampleBuffer -----------------------------------------------------------------------------------|
-    // Free a possibly empty pseudo-spherical sample buffer.                                                              |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (buffer.len != 0) allocator.free(buffer);
-}
-
-fn freeIndexBuffer(allocator: Allocator, buffer: []usize) void {
-    // freeIndexBuffer ---------------------------------------------------------------------------------------------------|
-    // Free a possibly empty usize index buffer.                                                                          |
+fn freeTypedBuffer(comptime T: type, allocator: Allocator, buffer: []T) void {
+    // freeTypedBuffer ---------------------------------------------------------------------------------------------------|
+    // Free one ProductStorage backing slice when it actually came from the allocator.                                    |
     // -------------------------------------------------------------------------------------------------------------------|
 
     if (buffer.len != 0) allocator.free(buffer);
