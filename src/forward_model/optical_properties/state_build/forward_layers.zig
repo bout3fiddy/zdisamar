@@ -8,6 +8,8 @@ const Evaluation = @import("evaluation.zig");
 const shared_geometry = @import("shared_geometry.zig");
 const shared_carrier = @import("shared_carrier.zig");
 const carrier_eval = @import("carrier_eval.zig");
+const Scalar = @import("state_scalar.zig");
+const OpticalDepth = @import("state_optical_depth.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 const jacobian = transport_common.Jacobian;
 
@@ -72,7 +74,7 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
             );
         }
 
-        break :choose_optical_depths prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
+        break :choose_optical_depths OpticalDepth.opticalDepthBreakdownAtWavelength(prepared, wavelength_nm);
     };
 
     const resolved_layers = if (layer_inputs) |owned_layers| owned_layers else &.{};
@@ -164,7 +166,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     //   omega0  = tau_sca / tau_ext                                                                          |
     // -------------------------------------------------------------------------------------------------------|
 
-    if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    if (layer_inputs.len == 0) return OpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
 
     if (self.sublayers) |sublayers| {
         const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
@@ -245,7 +247,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 else
                     null;
 
-                const evaluated = self.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                    self,
                     scene,
                     sublayer.altitude_km,
                     wavelength_nm,
@@ -275,7 +278,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             else
                 null;
 
-            const evaluated = self.evaluateLayerAtWavelengthWithSpectroscopyCache(
+            const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
+                self,
                 scene,
                 layer.altitude_km,
                 wavelength_nm,
@@ -316,7 +320,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             };
         };
 
-        const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
+        const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
             layer.aerosol_optical_depth,
             layer.aerosol_base_optical_depth,
             aerosol_profile.reference_wavelength_nm,
@@ -409,7 +413,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     //   fillForwardLayersAtWavelengthWithSpectroscopyCache fallback                                          |
     // -------------------------------------------------------------------------------------------------------|
 
-    if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    if (layer_inputs.len == 0) return OpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
 
     if (self.sublayers) |sublayers| {
         const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);

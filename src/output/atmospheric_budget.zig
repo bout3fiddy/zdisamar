@@ -2,6 +2,8 @@ const std = @import("std");
 const Scene = @import("../input/Scene.zig").Scene;
 const Optics = @import("../forward_model/optical_properties/root.zig");
 const Rayleigh = @import("../input/reference/rayleigh.zig");
+const OpticalDepth = @import("../forward_model/optical_properties/state_build/state_optical_depth.zig");
+const Scalar = @import("../forward_model/optical_properties/state_build/state_scalar.zig");
 const Spectroscopy = @import("../forward_model/optical_properties/state_build/state_spectroscopy.zig");
 const StateTypes = @import("../forward_model/optical_properties/state_build/state.zig");
 
@@ -180,7 +182,8 @@ fn sublayerRow(
         break :choose_strong_line_states states[sublayer_index .. sublayer_index + 1];
     };
 
-    const evaluated = prepared.evaluateLayerAtWavelengthWithSpectroscopyCache(
+    const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
+        prepared,
         scene,
         sublayer.altitude_km,
         wavelength_nm,
@@ -234,7 +237,7 @@ fn layerRow(
     layer: PreparedLayer,
 ) AtmosphericBudgetRow {
     const aerosol_single_scatter_albedo = prepared.resolvedAerosolSingleScatterAlbedo();
-    const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
+    const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
         layer.aerosol_optical_depth,
         layer.aerosol_base_optical_depth,
         prepared.aerosol_reference_wavelength_nm,

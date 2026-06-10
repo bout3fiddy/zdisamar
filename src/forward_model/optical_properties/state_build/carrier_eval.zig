@@ -1410,7 +1410,8 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
     };
 
     if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
-        const o2_evaluation = self.weightedSpectroscopyEvaluationAtWavelength(
+        const o2_evaluation = SpectroscopyState.weightedSpectroscopyEvaluationAtWavelength(
+            self,
             wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
@@ -1573,7 +1574,8 @@ fn spectroscopySigmaAtSupportRow(
         ).total_sigma_cm2_per_molecule;
     }
 
-    return self.spectroscopySigmaAtAltitudeWithCache(
+    return SpectroscopyState.spectroscopySigmaAtAltitudeWithCache(
+        self,
         wavelength_nm,
         sublayer.temperature_k,
         sublayer.pressure_hpa,
@@ -1607,7 +1609,8 @@ fn ciaSigmaAtSupportRow(
         return coefficients.sigmaAtTemperature(sublayer.temperature_k);
     }
 
-    return self.ciaSigmaAtWavelength(
+    return SpectroscopyState.ciaSigmaAtWavelength(
+        self,
         wavelength_nm,
         sublayer.temperature_k,
         sublayer.pressure_hpa,
@@ -1755,7 +1758,8 @@ fn spectroscopySigmaAtCarrierAltitude(
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) f64 {
     if (self.line_absorbers.len != 0) {
-        return self.weightedSpectroscopyEvaluationAtAltitude(
+        return SpectroscopyState.weightedSpectroscopyEvaluationAtAltitude(
+            self,
             wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
@@ -1765,7 +1769,8 @@ fn spectroscopySigmaAtCarrierAltitude(
         ).total_sigma_cm2_per_molecule;
     }
 
-    return self.spectroscopySigmaAtAltitudeWithCache(
+    return SpectroscopyState.spectroscopySigmaAtAltitudeWithCache(
+        self,
         wavelength_nm,
         state.temperature_k,
         state.pressure_hpa,
@@ -1783,7 +1788,8 @@ fn continuumDensityAtCarrierAltitude(
 ) f64 {
     if (self.cross_section_absorbers.len != 0) return 0.0;
 
-    return self.continuumCarrierDensityAtAltitude(
+    return Scalar.continuumCarrierDensityAtAltitude(
+        self,
         sublayers,
         altitude_km,
         state.absorber_number_density_cm3,
@@ -1826,7 +1832,7 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
 
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
     const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
-    const prepared_state = State.PreparedOpticalState.preparedStrongLineStateAtAltitude(
+    const prepared_state = SpectroscopyState.preparedStrongLineStateAtAltitude(
         sublayers,
         strong_line_states,
         altitude_km,
@@ -1844,7 +1850,7 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
     for (self.cross_section_absorbers) |cross_section_absorber| {
-        const absorber_density_cm3 = State.PreparedOpticalState.interpolatePreparedScalarAtAltitude(
+        const absorber_density_cm3 = Scalar.interpolatePreparedScalarAtAltitude(
             sublayers,
             cross_section_absorber.number_densities_cm3,
             altitude_km,
@@ -1861,7 +1867,8 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
             absorber_density_cm3 *
             centimeters_per_kilometer;
     }
-    const line_absorber_density_cm3 = self.lineSpectroscopyCarrierDensity(
+    const line_absorber_density_cm3 = Scalar.lineSpectroscopyCarrierDensity(
+        self,
         state.absorber_number_density_cm3,
         state.oxygen_number_density_cm3,
         cross_section_density_cm3,
@@ -1885,7 +1892,8 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         state.number_density_cm3 *
         centimeters_per_kilometer;
     const cia_optical_depth_per_km =
-        self.ciaSigmaAtWavelength(
+        SpectroscopyState.ciaSigmaAtWavelength(
+            self,
             wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
