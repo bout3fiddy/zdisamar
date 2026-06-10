@@ -8,33 +8,45 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
 // integration.zig ------------------------------------------------------------------------------------------- |
-// Builds instrument-response integration kernels for one Scene channel at one nominal wavelength. This is the |
-// route boundary between observation-model controls and product wavelength sampling: it chooses the response  |
-// model, writes relative wavelength offsets, normalizes weights, and marks whether later slit convolution is  |
-// allowed to run.                                                                                             |
+// Turns Scene instrument-response controls into one offsets/weights kernel for one channel and one nominal    |
+// wavelength. This file is the decision point between input metadata and product sampling: it chooses the     |
+// response route, writes relative wavelength offsets, normalizes weights, and tells simulation when the old   |
+// five-tap slit convolution must stay out of the way. It does not run LABOS or sample solar/RTM values; later |
+// wavelength-plan and spectral-evaluation code consume the compact rows produced from this builder output.    |
 //                                                                                                             |
 // called by                                                                                                   |
-//   wavelength_sampling.zig calls this twice per output wavelength: radiance then irradiance. It compacts the |
-//   active kernel prefix into retained plan rows or side arrays.                                              |
-//   simulate.zig asks usesIntegratedInstrumentSampling before applying legacy five-tap slit convolution, so   |
-//   measured/operational channels do not integrate the same line shape twice.                                 |
+//   simulate.zig resolves channel flags with usesIntegratedInstrumentSampling, then calls                     |
+//   wavelength_sampling.zig when its retained ProductStorage plan is cold or invalid.                         |
+//   wavelength_sampling.zig calls this twice per output wavelength, radiance then irradiance, reusing one     |
+//   32 KiB IntegrationKernel scratch row before compacting the active prefix into retained plan storage.      |
 //   output/instrument_response.zig expands the same kernels into diagnostic rows exposed through the API.     |
-//   input/o2a_reference/run.zig samples start/end kernels to compute DISAMAR parity support bounds.           |
+//   input/o2a_reference/run.zig samples start/end kernels to compute DISAMAR parity support bounds for the    |
+//   O2 A reference loader.                                                                                    |
 //                                                                                                             |
 // inputs                                                                                                      |
 //   Scene supplies sampling mode, per-channel response controls, line-shape tables, high-resolution grid      |
-//   controls, adaptive controls, and fallback FWHM metadata. PreparedOpticalState is optional because DISAMAR |
-//   high-resolution grids can be realized from prepared strong-line intervals when available, or from         |
-//   scene-only operational controls when only reference support is being built.                               |
+//   controls, adaptive controls, and fallback FWHM metadata. PreparedOpticalState supplies prepared O2 line   |
+//   positions for strong-line-aware adaptive grids. It is optional because DISAMAR high-resolution grids can  |
+//   also be realized from scene-only operational controls while reference support is being built.             |
 //                                                                                                             |
-// kernel shape                                                                                                |
-//   IntegrationKernel is a caller-owned 32 KiB builder row from types.zig. offsets_nm and weights are         |
-//   parallel [2048]f64 arrays; only [0..sample_count] is meaningful after this file returns. enabled=false    |
-//   means direct sampling at the nominal wavelength; enabled=true means the product row is already integrated |
-//   over response weights and later slit convolution must not repeat that work.                               |
-//   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
-//   storage. spectral_eval.zig then reads only the compact WavelengthSampling view during radiance and        |
-//   irradiance gather; it does not call back into this file from the per-forward-sample RTM path.             |
+// file contents                                                                                               |
+//   usesIntegratedInstrumentSampling : channel-level double-convolution guard used by simulate.zig            |
+//   integrationForWavelengthChecked  : public one-kernel route with no retained adaptive interval cache       |
+//   integrationForWavelengthWithAdaptiveCacheChecked : cached route used by wavelength-plan workers           |
+//   prepareAdaptiveKernelCache       : one retained interval plan per channel for adaptive strong-line grids  |
+//   slitKernelForScene               : legacy five-tap convolution kernel for native/synthetic FWHM-only runs |
+//                                                                                                             |
+// builder row                                                                                                 |
+//   IntegrationKernel is caller-owned scratch from types.zig: 32 KiB with parallel [2048]f64 offsets_nm and   |
+//   weights arrays. Only [0..sample_count] is meaningful after this file returns. enabled=false means direct  |
+//   sampling at the shifted channel wavelength. enabled=true means this row carries a normalized integration  |
+//   kernel and compactIntegrationKernel should store inline samples or side-array samples.                    |
+//                                                                                                             |
+// convolution guard                                                                                           |
+//   The per-row enabled flag is not the whole "skip convolution" rule. simulate.zig uses                      |
+//   usesIntegratedInstrumentSampling to skip legacy slit convolution for measured/operational channels even   |
+//   when this file returns an identity direct-sample row because no explicit line-shape metadata was present. |
+//   That keeps measured product rows from being broadened by a fallback kernel the input did not request.     |
 //                                                                                                             |
 // route order                                                                                                 |
 //   integrationForWavelengthWithAdaptiveCacheChecked chooses one route and stops:                             |
@@ -46,10 +58,15 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //     6. adaptive strong-line-aware Gauss integration                                                         |
 //     7. legacy five-point response-weighted fallback for native/synthetic channels with FWHM only            |
 //                                                                                                             |
+// handoff                                                                                                     |
+//   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
+//   storage. spectral_eval.zig later reads only the compact WavelengthSampling view during radiance and       |
+//   irradiance gather; it does not call back into this file from the per-forward-sample RTM path.             |
+//                                                                                                             |
 // module split                                                                                                |
 //   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |
 //   construction, Gauss sample emission, strong-line splitting, and validation support grids. This file keeps |
-//   the public route order, normalization boundary, and double-convolution guard in one place.                |
+//   the public route order, normalization boundary, error boundary, and convolution guard in one place.       |
 //                                                                                                             |
 // weight contract                                                                                             |
 //   IntegrationKernel offsets are relative to nominal_wavelength_nm and weights are normalized before return. |
@@ -164,6 +181,11 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     //   5. explicit high-resolution lattice                                                                   |
     //   6. adaptive strong-line-aware Gauss integration                                                       |
     //   7. five-tap fallback for native/synthetic channels with only FWHM metadata                            |
+    //                                                                                                         |
+    // row result                                                                                              |
+    //   kernel.enabled controls compact row shape: disabled means one direct sample; enabled means offsets    |
+    //   and weights are meaningful. simulate.zig separately uses usesIntegratedInstrumentSampling to decide   |
+    //   whether legacy slit convolution is allowed after the nominal gather.                                  |
     //                                                                                                         |
     // hot path                                                                                                |
     //   Wavelength-plan workers call this once for radiance and once for irradiance per nominal sample. The   |
