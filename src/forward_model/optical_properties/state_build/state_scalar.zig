@@ -92,37 +92,17 @@ pub fn interpolatePreparedScalarAtAltitude(
     return preparedScalarForSublayer(values, last);
 }
 
-fn lineAbsorberDensityForSpeciesAtSublayer(
+fn lineAbsorberNumberDensitiesForSpecies(
     self: *const PreparedOpticalState,
     species: AbsorberModel.AbsorberSpecies,
-    global_sublayer_index: usize,
-) f64 {
+) ?[]const f64 {
     for (self.line_absorbers) |line_absorber| {
         if (line_absorber.species != species) continue;
 
-        if (global_sublayer_index >= line_absorber.number_densities_cm3.len) return 0.0;
-
-        return line_absorber.number_densities_cm3[global_sublayer_index];
+        return line_absorber.number_densities_cm3;
     }
 
-    return 0.0;
-}
-
-fn lineAbsorberDensityForSpeciesAtAltitude(
-    self: *const PreparedOpticalState,
-    species: AbsorberModel.AbsorberSpecies,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
-) f64 {
-    for (self.line_absorbers) |line_absorber| {
-        if (line_absorber.species != species) continue;
-        return interpolatePreparedScalarAtAltitude(
-            sublayers,
-            line_absorber.number_densities_cm3,
-            altitude_km,
-        );
-    }
-    return 0.0;
+    return null;
 }
 
 pub fn continuumCarrierDensityAtSublayer(
@@ -133,10 +113,15 @@ pub fn continuumCarrierDensityAtSublayer(
     if (self.line_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
 
     const owner_species = self.continuum_owner_species orelse return sublayer.absorber_number_density_cm3;
-    if (self.operational_o2_lut.enabled() and owner_species == .o2) {
+    const use_operational_o2_density = self.operational_o2_lut.enabled() and owner_species == .o2;
+    if (use_operational_o2_density) {
         return sublayer.oxygen_number_density_cm3;
     }
-    return lineAbsorberDensityForSpeciesAtSublayer(self, owner_species, global_sublayer_index);
+
+    const number_densities_cm3 = lineAbsorberNumberDensitiesForSpecies(self, owner_species) orelse return 0.0;
+    if (global_sublayer_index >= number_densities_cm3.len) return 0.0;
+
+    return number_densities_cm3[global_sublayer_index];
 }
 
 fn crossSectionCarrierDensityAtSublayer(
@@ -208,10 +193,18 @@ pub fn continuumCarrierDensityAtAltitude(
     if (self.line_absorbers.len == 0) return absorber_density_cm3;
 
     const owner_species = self.continuum_owner_species orelse return absorber_density_cm3;
-    if (self.operational_o2_lut.enabled() and owner_species == .o2) {
+    const use_operational_o2_density = self.operational_o2_lut.enabled() and owner_species == .o2;
+    if (use_operational_o2_density) {
         return oxygen_density_cm3;
     }
-    return lineAbsorberDensityForSpeciesAtAltitude(self, owner_species, sublayers, altitude_km);
+
+    const number_densities_cm3 = lineAbsorberNumberDensitiesForSpecies(self, owner_species) orelse return 0.0;
+
+    return interpolatePreparedScalarAtAltitude(
+        sublayers,
+        number_densities_cm3,
+        altitude_km,
+    );
 }
 
 fn fractionAtWavelength(control: AtmosphereModel.FractionControl, wavelength_nm: f64) f64 {
