@@ -7,8 +7,8 @@ const dense = @import("small_dense.zig");
 // polynomial fit system, duplicates the normal matrix, factors that copy in place, and solves for baseline    |
 // coefficients.                                                                                               |
 //                                                                                                             |
-// The code stays slice-based because the caller already owns the fit scratch and the systems are small        |
-// enough that a separate matrix object would mostly add ownership noise.                                      |
+// The code stays slice-based because the caller already owns the fit scratch: matrix, rhs, factor copy, and   |
+// output all move through the same small row-major route.                                                     |
 //                                                                                                             |
 // called by                                                                                                   |
 //   input/reference/cross_sections.zig:differentialVector removes a weighted polynomial baseline from         |

@@ -1341,8 +1341,8 @@ pub fn interpolateQuadratureStateAtAltitude(
     // Finds the prepared support interval that brackets an arbitrary altitude.                                 |
     //                                                                                                          |
     // testing                                                                                                  |
-    //   Kept pub so internal.zig can re-export this helper. Extracting the body would also require lifting     |
-    //   interpolateQuadratureStateBetweenSublayers and opticalDepthPerKilometer, both used only here.          |
+    //   pub allows internal.zig to re-export this altitude interpolation helper for focused tests while its    |
+    //   interval interpolation and optical-depth helpers stay local to this file.                              |
     // -------------------------------------------------------------------------------------------------------- |
 
     if (sublayers.len == 0) return null;

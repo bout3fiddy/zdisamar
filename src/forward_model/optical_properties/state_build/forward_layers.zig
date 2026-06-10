@@ -219,8 +219,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     // memory                                                                                                 |
     //   The support-span loops read sublayer_start_index at [192..195], sublayer_count at [204..207], and    |
     //   sometimes altitude_km at [24..31] from 208 B PreparedLayer rows, all by pointer. Keeping span        |
-    //   indexes beside physical layer fields avoids synchronizing a second layer-shape array. A column split |
-    //   needs retained benchmark proof at the forward-input boundary before it is safer.                     |
+    //   indexes beside physical layer fields makes the forward-input boundary the single owner of layer      |
+    //   shape; retained benchmark evidence belongs at that boundary before changing the layout.              |
     //                                                                                                        |
     // math                                                                                                   |
     //   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda)                                 |

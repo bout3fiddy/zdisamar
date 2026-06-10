@@ -420,8 +420,8 @@ pub const SolveConfig = struct {
 // hot reads                                                                                                   |
 //   Narrow scans read optical_depth at [40..47], scattering_optical_depth at [48..55], aerosol totals at      |
 //   [24..39], or scattering_optical_depth_jacobian at [88..111]. These walks use pointer capture, so the      |
-//   176 B row is not copied. The row stays whole because the same slice is the transport contract passed to   |
-//   LABOS immediately after those narrow helpers run; side columns would add synchronization work.            |
+//   176 B row is not copied. The row stays whole as the transport contract passed to LABOS immediately after  |
+//   those helpers run, keeping helper-derived quantities attached to their layer row.                         |
 pub const LayerInput = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,

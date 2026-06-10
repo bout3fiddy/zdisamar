@@ -393,8 +393,8 @@ pub const PreparedSupportRowKind = enum {
 //                                                                                                             |
 // hot path                                                                                                    |
 // Shared-carrier and reduced RTM routes read thermodynamics, optical depths, aerosol fields, and density      |
-// indexes from the same support row. The row is wide, but each pass usually needs several neighboring         |
-// physical fields; splitting only one or two columns would add ownership and stitching costs.                 |
+// indexes from the same support row. The grouped fields keep each support row under one owner while these     |
+// routes advance spectroscopy, CIA, aerosol, and layer-density calculations.                                  |
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
