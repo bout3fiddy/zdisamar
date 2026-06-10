@@ -12,19 +12,36 @@ const max_spectroscopy_profile_nodes: usize = 64;
 const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]ReferenceData.StrongLineAnchorIndex;
 
 // state_spectroscopy.zig -------------------------------------------------------------------------------------|
-// Wavelength and altitude spectroscopy helpers for PreparedOpticalState.                                      |
+// PreparedOpticalState spectroscopy read side. This file turns the retained line list, operational O2 LUT,    |
+// continuum tables, CIA table, prepared strong-line states, and optional profile-node state into              |
+// wavelength-local cross sections for layer, support-row, diagnostic, and output paths.                       |
 //                                                                                                             |
 // called by                                                                                                   |
-//   carrier evaluation, optical-depth evaluation, diagnostics, and scalar forward-input builders.             |
+//   carrier_eval.zig, shared_carrier.zig, forward_layers.zig, source_interfaces.zig, rtm_quadrature.zig,      |
+//   pseudo_spherical.zig, and state_optical_depth.zig call the altitude helpers while building RTM inputs.    |
+//   simulate.zig can prebuild one ProfileNodeSpectroscopyCache per forward miss. output/atmospheric_budget    |
+//   uses the same cache route for diagnostic sublayer reports.                                                |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   profile-node cache : reuse sigma_total over altitude for support-row carrier evaluation.                  |
-//   weighted absorbers : density/column-weight multiple active line absorbers.                                |
-//   direct spectroscopy: evaluate operational O2 or the retained line list at one wavelength.                 |
+// route map                                                                                                   |
+//   scalar wavelength route : effective thermodynamics -> continuum + line/operational O2 + CIA helpers       |
+//   altitude route          : support-row thermodynamics -> profile cache -> profile-node cache               |
+//                              -> direct evaluation                                                           |
+//   weighted absorber route : multiple prepared absorbers -> column-density weighted SpectroscopyEvaluation   |
+//   prepared state route    : sublayer altitude -> nearest prepared strong-line state                         |
+//                                                                                                             |
+// cache contract                                                                                              |
+//   ProfileNodeSpectroscopyCache is caller-owned storage for one wavelength. It stores sigma_total at up to   |
+//   64 spectroscopy profile nodes plus spline second derivatives, and carries no allocator. Empty cache rows  |
+//   mean "fall back to direct evaluation"; callers do not need a separate validity flag.                      |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Support-row carrier loops call the altitude helpers per wavelength. Keep cache checks explicit and        |
-//   allocation-free on the prepared-state side.                                                               |
+//   Forward-prefetch workers and support-row carrier builders call these helpers per high-resolution          |
+//   wavelength. The profile cache removes repeated full line-list evaluation across support rows, while       |
+//   direct fallbacks stay allocation-free and keep prepared-state ownership in prepared_state.zig/state.zig.  |
+//                                                                                                             |
+// memory                                                                                                      |
+//   PreparedOpticalState owns or borrows the out-of-line line/LUT/profile arrays. This file only borrows      |
+//   those slices, writes caller-owned ProfileNodeSpectroscopyCache rows, and returns scalar evaluations.      |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ProfileNodeSpectroscopyCache -------------------------------------------------------------------------------|
@@ -34,9 +51,9 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 // size: 1032 B (1.008 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// node_count: usize                                                                                           |
-// total_values: [64]f64 = 512 B                                                                               |
-// total_second: [64]f64 = 512 B                                                                               |
+// [   0..   7] node_count   : usize                                                                           |
+// [   8.. 519] total_values : [64]f64                                                                         |
+// [ 520..1031] total_second : [64]f64                                                                         |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 17 cache lines at 64 B per line                                                                 |
@@ -173,6 +190,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
         altitudes_km: []const f64,
         altitude_km: f64,
     ) ?ReferenceData.SpectroscopyEvaluation {
+        // ProfileNodeSpectroscopyCache.evaluationAtAltitude ------------------------------------------------- |
+        // Return a full spectroscopy evaluation wrapper when the cache can provide sigma_total at altitude.   |
+        // The cache stores only total sigma, so weak/strong split fields are zero in this route.              |
+        // --------------------------------------------------------------------------------------------------- |
+
         const sigma = self.totalSigmaAtAltitude(altitudes_km, altitude_km) orelse return null;
         return spectroscopyEvaluationWithTotalSigma(sigma);
     }
@@ -186,6 +208,16 @@ fn sampleCachedEndpointSecant(
     klo: usize,
     khi: usize,
 ) f64 {
+    // sampleCachedEndpointSecant ---------------------------------------------------------------------------  |
+    // Evaluate one cached cubic-spline segment using second derivatives prepared by spline.zig.               |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   h = x_hi - x_lo                                                                                       |
+    //   a = (x_hi - x) / h                                                                                    |
+    //   b = (x - x_lo) / h                                                                                    |
+    //   y(x) = a*y_lo + b*y_hi + ((a^3-a)*second_lo + (b^3-b)*second_hi) * h^2 / 6                            |
+    // ------------------------------------------------------------------------------------------------------  |
+
     const h = x[khi] - x[klo];
     if (h == 0.0) return y[klo];
     const a = (x[khi] - target_x) / h;
@@ -257,6 +289,10 @@ pub fn effectiveSpectroscopyEvaluationAtWavelength(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
 ) ReferenceData.SpectroscopyEvaluation {
+    // effectiveSpectroscopyEvaluationAtWavelength ----------------------------------------------------------  |
+    // Resolve spectroscopy at the prepared state's effective temperature and pressure.                        |
+    // ------------------------------------------------------------------------------------------------------  |
+
     return weightedSpectroscopyEvaluationAtWavelength(
         self,
         wavelength_nm,
@@ -266,6 +302,10 @@ pub fn effectiveSpectroscopyEvaluationAtWavelength(
 }
 
 pub fn collisionInducedSigmaAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+    // collisionInducedSigmaAtWavelength --------------------------------------------------------------------  |
+    // Resolve O2-O2 CIA sigma from the operational LUT when available, otherwise from the prepared table.     |
+    // ------------------------------------------------------------------------------------------------------  |
+
     if (self.operational_o2o2_lut.enabled()) {
         return self.operational_o2o2_lut.sigmaAt(
             wavelength_nm,
@@ -406,6 +446,10 @@ pub fn spectroscopyEvaluationAtAltitude(
     altitude_km: f64,
     prepared_state: ?*const ReferenceData.StrongLinePreparedState,
 ) ReferenceData.SpectroscopyEvaluation {
+    // spectroscopyEvaluationAtAltitude ---------------------------------------------------------------------  |
+    // No-cache wrapper for callers that need one altitude-resolved spectroscopy evaluation.                   |
+    // ------------------------------------------------------------------------------------------------------  |
+
     return spectroscopyEvaluationAtAltitudeWithCache(
         self,
         wavelength_nm,
@@ -450,6 +494,10 @@ pub fn spectroscopySigmaAtAltitude(
     altitude_km: f64,
     prepared_state: ?*const ReferenceData.StrongLinePreparedState,
 ) f64 {
+    // spectroscopySigmaAtAltitude --------------------------------------------------------------------------  |
+    // No-cache wrapper for callers that need only sigma_total at one altitude.                                |
+    // ------------------------------------------------------------------------------------------------------  |
+
     return spectroscopyEvaluationAtAltitudeWithCache(
         self,
         wavelength_nm,
@@ -498,6 +546,17 @@ pub fn preparedStrongLineStateAtAltitude(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
 ) ?*const ReferenceData.StrongLinePreparedState {
+    // preparedStrongLineStateAtAltitude --------------------------------------------------------------------  |
+    // Choose the prepared strong-line state nearest to a requested altitude. Sublayer order supplies the      |
+    // vertical coordinate; the strong-line state slice must match that sublayer storage one-for-one.          |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   Support-row carrier helpers call this while resolving altitude-specific line state. The loop walks    |
+    //   PreparedSublayer by value today; each row is 256 B, but this route is only used when prepared strong  |
+    //   line states are present and it needs adjacent altitude pairs. Any narrower side column needs a        |
+    //   measured repeated-boundary win before adding another ownership surface.                               |
+    // ------------------------------------------------------------------------------------------------------  |
+
     const states = strong_line_states orelse return null;
     if (states.len == 0 or states.len != sublayers.len) return null;
     if (states.len == 1) return &states[0];
@@ -522,11 +581,19 @@ fn profileNodeSpectroscopyEvaluationAtAltitude(
     wavelength_nm: f64,
     altitude_km: f64,
 ) ?ReferenceData.SpectroscopyEvaluation {
+    // profileNodeSpectroscopyEvaluationAtAltitude ----------------------------------------------------------  |
+    // Build a local profile-node cache for one wavelength and sample it at altitude.                          |
+    // ------------------------------------------------------------------------------------------------------  |
+
     var cache = ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
     return cache.evaluationAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km);
 }
 
 fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
+    // zeroSpectroscopyEvaluation ---------------------------------------------------------------------------  |
+    // Shared zero row for routes with no active line or operational O2 spectroscopy.                          |
+    // ------------------------------------------------------------------------------------------------------  |
+
     return .{
         .weak_line_sigma_cm2_per_molecule = 0.0,
         .strong_line_sigma_cm2_per_molecule = 0.0,
@@ -538,6 +605,11 @@ fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
 }
 
 fn spectroscopyEvaluationWithTotalSigma(total_sigma_cm2_per_molecule: f64) ReferenceData.SpectroscopyEvaluation {
+    // spectroscopyEvaluationWithTotalSigma -----------------------------------------------------------------  |
+    // Wrap cached sigma_total in the full evaluation shape. Split line fields stay zero because the profile   |
+    // cache stores only the total profile.                                                                    |
+    // ------------------------------------------------------------------------------------------------------  |
+
     var evaluation = zeroSpectroscopyEvaluation();
     evaluation.total_sigma_cm2_per_molecule = total_sigma_cm2_per_molecule;
     return evaluation;
@@ -549,6 +621,17 @@ pub fn weightedSpectroscopyEvaluationAtWavelength(
     temperature_k: f64,
     pressure_hpa: f64,
 ) ReferenceData.SpectroscopyEvaluation {
+    // weightedSpectroscopyEvaluationAtWavelength -----------------------------------------------------------  |
+    // Combine operational O2 and prepared line absorbers into one column-density weighted evaluation.         |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   weighted_sigma = sum_k sigma_k * column_density_factor_k / sum_k column_density_factor_k              |
+    //                                                                                                         |
+    // route note                                                                                              |
+    //   Operational O2 replaces O2 line absorbers when enabled, so O2 rows are skipped in the line absorber   |
+    //   loop after their operational contribution has been added.                                             |
+    // ------------------------------------------------------------------------------------------------------  |
+
     var total_weight: f64 = 0.0;
     var weighted: ReferenceData.SpectroscopyEvaluation = .{
         .weak_line_sigma_cm2_per_molecule = 0.0,
