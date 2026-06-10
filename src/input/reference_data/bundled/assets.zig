@@ -267,9 +267,7 @@ pub fn hasExplicitCiaBindings(scene: *const Scene) bool {
     return false;
 }
 
-pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecies {
-    return AbsorberModel.resolvedAbsorberSpecies(absorber);
-}
+pub const resolvedAbsorberSpecies = AbsorberModel.resolvedAbsorberSpecies;
 
 pub fn cloneResolvedSpectroscopyLineList(
     allocator: Allocator,

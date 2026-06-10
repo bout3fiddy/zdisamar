@@ -45,9 +45,7 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //   tag stays beside the prepared line payload used by later evaluation modules.                              |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
-    return AbsorberModel.resolvedAbsorberSpecies(absorber);
-}
+pub const resolvedAbsorberSpecies = AbsorberModel.resolvedAbsorberSpecies;
 
 pub fn resolveActiveLineSpecies(
     active_line_absorber: ?State.ActiveLineAbsorber,

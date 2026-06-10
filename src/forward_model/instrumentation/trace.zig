@@ -90,9 +90,7 @@ pub inline fn staticZone(comptime src: SourceLocation, comptime name: [*:0]const
     return .{ .ctx = ztracy.ZoneN(src, name) };
 }
 
-pub inline fn deepStaticZone(comptime src: SourceLocation, comptime name: [*:0]const u8) Zone {
-    return staticZone(src, name);
-}
+pub const deepStaticZone = staticZone;
 
 pub inline fn namedZone(comptime src: SourceLocation, name: []const u8) Zone {
     if (!enabled) return .{};
@@ -101,9 +99,7 @@ pub inline fn namedZone(comptime src: SourceLocation, name: []const u8) Zone {
     return .{ .ctx = ctx };
 }
 
-pub inline fn deepNamedZone(comptime src: SourceLocation, name: []const u8) Zone {
-    return namedZone(src, name);
-}
+pub const deepNamedZone = namedZone;
 
 pub inline fn setThreadName(name: [*:0]const u8) void {
     if (enabled) ztracy.SetThreadName(name);

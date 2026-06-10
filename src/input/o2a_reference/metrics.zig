@@ -659,9 +659,4 @@ pub fn computeComparisonMetrics(
     };
 }
 
-pub fn loadResolvedO2ASpectroscopyLineList(
-    allocator: std.mem.Allocator,
-    spec: LineGasSpec,
-) !ReferenceDataModel.SpectroscopyLineList {
-    return runtime.loadResolvedVendorO2ALineList(allocator, spec);
-}
+pub const loadResolvedO2ASpectroscopyLineList = runtime.loadResolvedVendorO2ALineList;
