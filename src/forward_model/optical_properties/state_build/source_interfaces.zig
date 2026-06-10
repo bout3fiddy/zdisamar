@@ -31,6 +31,64 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //   borrows prepared sublayers, shared geometry, spectroscopy/cache rows, and the caller's output slice.     |
 // -----------------------------------------------------------------------------------------------------------|
 
+// SourceInterfaceSpectroscopyRequest ------------------------------------------------------------------------|
+// Borrowed inputs for source-interface rows that evaluate carriers through a profile spectroscopy cache.     |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 56 B (0.055 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared          : *const PreparedOpticalState                                                   |
+// [ 8..15] wavelength_nm     : f64                                                                           |
+// [16..31] layer_inputs      : []const LayerInput                                                            |
+// [32..47] source_interfaces : []SourceInterfaceInput                                                        |
+// [48..55] profile_cache     : ?*const ProfileNodeSpectroscopyCache                                          |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Prepared optical rows, layer inputs, source-interface output rows, and optional profile cache are        |
+//   borrowed. The caller owns source_interfaces and this file only refreshes that slice in place.            |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per fill call = 56 B (0.055 KiB); referenced storage stays with the caller                      |
+const SourceInterfaceSpectroscopyRequest = struct {
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: []const transport_common.LayerInput,
+    source_interfaces: []transport_common.SourceInterfaceInput,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
+// SourceInterfaceCarrierRequest -----------------------------------------------------------------------------|
+// Borrowed inputs for source-interface rows that reuse a wavelength carrier cache.                           |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 56 B (0.055 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared          : *const PreparedOpticalState                                                   |
+// [ 8..15] wavelength_nm     : f64                                                                           |
+// [16..31] layer_inputs      : []const LayerInput                                                            |
+// [32..47] source_interfaces : []SourceInterfaceInput                                                        |
+// [48..55] wavelength_cache  : *WavelengthCarrierCache                                                       |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   Prepared optical rows, layer inputs, source-interface output rows, and the wavelength cache are          |
+//   borrowed. The cache remains owned by the forward-input worker scratch.                                   |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per fill call = 56 B (0.055 KiB); referenced storage stays with the caller                      |
+const SourceInterfaceCarrierRequest = struct {
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: []const transport_common.LayerInput,
+    source_interfaces: []transport_common.SourceInterfaceInput,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn fillSourceInterfacesAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -38,13 +96,14 @@ pub fn fillSourceInterfacesAtWavelengthWithLayers(
     source_interfaces: []transport_common.SourceInterfaceInput,
 ) void {
     var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
-        self,
-        wavelength_nm,
-        layer_inputs,
-        source_interfaces,
-        &profile_cache,
-    );
+    const request = SourceInterfaceSpectroscopyRequest{
+        .prepared = self,
+        .wavelength_nm = wavelength_nm,
+        .layer_inputs = layer_inputs,
+        .source_interfaces = source_interfaces,
+        .profile_cache = &profile_cache,
+    };
+    fillSourceInterfacesAtWavelengthWithSpectroscopyRequest(&request);
 }
 
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
@@ -66,22 +125,75 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     // transport_common.fillSourceInterfacesFromLayers fallback                                               |
     // -------------------------------------------------------------------------------------------------------|
 
+    const request = SourceInterfaceSpectroscopyRequest{
+        .prepared = self,
+        .wavelength_nm = wavelength_nm,
+        .layer_inputs = layer_inputs,
+        .source_interfaces = source_interfaces,
+        .profile_cache = profile_cache,
+    };
+    fillSourceInterfacesAtWavelengthWithSpectroscopyRequest(&request);
+}
+
+pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
+    self: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: []const transport_common.LayerInput,
+    source_interfaces: []transport_common.SourceInterfaceInput,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) void {
+    // fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache -------------------------------------------- |
+    // Fill source-interface rows for a cached wavelength solve.                                              |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    // shared-grid routes evaluate boundary carriers through WavelengthCarrierCache.                          |
+    // fallback: profile-cache route above when the transport layers cannot use shared RTM geometry.          |
+    //                                                                                                        |
+    // calls                                                                                                  |
+    // carrier_eval.fillSourceInterfaceAtLevelWithCarrierCache                                                |
+    // fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache fallback                                |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const request = SourceInterfaceCarrierRequest{
+        .prepared = self,
+        .wavelength_nm = wavelength_nm,
+        .layer_inputs = layer_inputs,
+        .source_interfaces = source_interfaces,
+        .wavelength_cache = wavelength_cache,
+    };
+    fillSourceInterfacesAtWavelengthWithCarrierRequest(&request);
+}
+
+fn fillSourceInterfacesAtWavelengthWithSpectroscopyRequest(
+    request: *const SourceInterfaceSpectroscopyRequest,
+) void {
+    // fillSourceInterfacesAtWavelengthWithSpectroscopyRequest -----------------------------------------------|
+    // Implements source-interface filling from a borrowed request row.                                       |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Runs once per wavelength when integrated-source RTM needs interface rows. Shared-grid routes call    |
+    //   carrier_eval for boundary carrier scalars; fallback rows are derived from existing LayerInput rows.  |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const prepared = request.prepared;
+    const layer_inputs = request.layer_inputs;
+    const source_interfaces = request.source_interfaces;
     if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
 
-    if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
-            if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
-                const strong_line_states = if (self.strong_line_states) |states| states else null;
+    if (prepared.sublayers) |sublayers| {
+        if (shared_geometry.usesSharedRtmGrid(prepared, layer_inputs.len)) {
+            if (shared_geometry.cachedSharedRtmGeometry(prepared, layer_inputs.len)) |geometry| {
+                const strong_line_states = if (prepared.strong_line_states) |states| states else null;
 
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
                     carrier_eval.fillSourceInterfaceAtLevelWithSpectroscopyCache(
-                        self,
-                        wavelength_nm,
+                        prepared,
+                        request.wavelength_nm,
                         sublayers,
                         strong_line_states,
                         level_geometry,
                         level_geometry.weight_km,
-                        profile_cache,
+                        request.profile_cache,
                         source_interface,
                     );
                 }
@@ -95,7 +207,7 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
 
     transport_common.fillSourceInterfacesFromLayers(layer_inputs, source_interfaces);
 
-    if (self.sublayers) |sublayers| {
+    if (prepared.sublayers) |sublayers| {
         if (layer_inputs.len == sublayers.len) {
             for (1..layer_inputs.len) |ilevel| {
                 const layer_input = layer_inputs[ilevel];
@@ -123,9 +235,9 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
             return;
         }
 
-        if (self.layers.len != layer_inputs.len) return;
+        if (prepared.layers.len != layer_inputs.len) return;
         for (1..layer_inputs.len) |ilevel| {
-            const layer = &self.layers[ilevel];
+            const layer = &prepared.layers[ilevel];
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const sublayer_count: usize = @intCast(layer.sublayer_count);
 
@@ -162,41 +274,32 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     }
 }
 
-pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []const transport_common.LayerInput,
-    source_interfaces: []transport_common.SourceInterfaceInput,
-    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+fn fillSourceInterfacesAtWavelengthWithCarrierRequest(
+    request: *const SourceInterfaceCarrierRequest,
 ) void {
-    // fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache -------------------------------------------- |
-    // Fill source-interface rows for a cached wavelength solve.                                              |
-    //                                                                                                        |
-    // hot path                                                                                               |
-    // shared-grid routes evaluate boundary carriers through WavelengthCarrierCache.                          |
-    // fallback: profile-cache route above when the transport layers cannot use shared RTM geometry.          |
-    //                                                                                                        |
-    // calls                                                                                                  |
-    // carrier_eval.fillSourceInterfaceAtLevelWithCarrierCache                                                |
-    // fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache fallback                                |
+    // fillSourceInterfacesAtWavelengthWithCarrierRequest ----------------------------------------------------|
+    // Implements source-interface filling after WavelengthCarrierCache has prepared wavelength-local rows.   |
     // -------------------------------------------------------------------------------------------------------|
 
+    const prepared = request.prepared;
+    const layer_inputs = request.layer_inputs;
+    const source_interfaces = request.source_interfaces;
     if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
 
-    if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
-            if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
-                const strong_line_states = if (self.strong_line_states) |states| states else null;
+    if (prepared.sublayers) |sublayers| {
+        if (shared_geometry.usesSharedRtmGrid(prepared, layer_inputs.len)) {
+            if (shared_geometry.cachedSharedRtmGeometry(prepared, layer_inputs.len)) |geometry| {
+                const strong_line_states = if (prepared.strong_line_states) |states| states else null;
 
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
                     carrier_eval.fillSourceInterfaceAtLevelWithCarrierCache(
-                        self,
-                        wavelength_nm,
+                        prepared,
+                        request.wavelength_nm,
                         sublayers,
                         strong_line_states,
                         level_geometry,
                         level_geometry.weight_km,
-                        wavelength_cache,
+                        request.wavelength_cache,
                         source_interface,
                     );
                 }
@@ -208,11 +311,12 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
         }
     }
 
-    fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
-        self,
-        wavelength_nm,
-        layer_inputs,
-        source_interfaces,
-        wavelength_cache.profile_cache,
-    );
+    const spectroscopy_request = SourceInterfaceSpectroscopyRequest{
+        .prepared = prepared,
+        .wavelength_nm = request.wavelength_nm,
+        .layer_inputs = layer_inputs,
+        .source_interfaces = source_interfaces,
+        .profile_cache = request.wavelength_cache.profile_cache,
+    };
+    fillSourceInterfacesAtWavelengthWithSpectroscopyRequest(&spectroscopy_request);
 }
