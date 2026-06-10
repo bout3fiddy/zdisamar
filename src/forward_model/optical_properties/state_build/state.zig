@@ -12,17 +12,24 @@ const Allocator = std.mem.Allocator;
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
 // state.zig --------------------------------------------------------------------------------------------------|
-// Repeated optical-property row definitions used after Scene controls have been reduced into prepared state.  |
-// prepared_state.zig owns the final PreparedOpticalState header; this file owns the row payloads that         |
-// layer_accumulation writes during setup and wavelength-time builders read through that header.               |
+// Repeated optical-property payload rows used after Scene controls have been reduced into prepared state.     |
+// This is the companion to prepared_state.zig: prepared_state owns the final header, ownership flags, deinit  |
+// contract, and method facade; this file owns the compiler-measured rows that setup writes and                |
+// wavelength-time builders read through that header.                                                          |
 //                                                                                                             |
-// build route                                                                                                 |
+// call chain                                                                                                  |
+//   optical_properties/root.zig re-exports these rows as the public preparation data shapes.                  |
 //   Context owns mutable preparation arrays while Scene controls are reduced.                                 |
 //   Absorbers build active absorber rows and density columns.                                                 |
 //   layer_accumulation writes PreparedLayer and PreparedSublayer rows.                                        |
-//   finalize moves those rows into PreparedOpticalState, which is defined in prepared_state.zig.              |
-//   forward_layers, rtm_quadrature, shared_carrier, diagnostics, and retrieval read these rows for each       |
-//   wavelength.                                                                                               |
+//   finalize moves the row slices into PreparedOpticalState.                                                  |
+//   forward_layers, rtm_quadrature, shared_carrier, diagnostics, output reports, and retrieval read these     |
+//   rows for each wavelength after preparation.                                                               |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file defines row storage and small row methods. It does not decide which reference assets to load,   |
+//   assemble the PreparedOpticalState header, build wavelength plans, run LABOS, or own hidden global state.  |
+//   Ownership handoff lives in finalize.zig and prepared_state.zig; wavelength math lives in read-side files. |
 //                                                                                                             |
 // common fast path                                                                                            |
 //   Per wavelength, forward_layers, rtm_quadrature, shared_carrier, and state_optical_depth walk these rows   |
