@@ -4,15 +4,31 @@ const dense = @import("../../common/math/linalg/small_dense.zig");
 const Allocator = std.mem.Allocator;
 
 // cross_sections.zig -----------------------------------------------------------------------------------------|
-// Table-backed cross-section sampling and differential baseline removal.                                      |
+// Continuum and absorber cross-section helpers used after reference data has been loaded into typed rows.     |
 //                                                                                                             |
-// data                                                                                                        |
-//   CrossSectionPoint stores one wavelength/sigma pair. CrossSectionTable is a slice header over sorted       |
-//   point storage owned by the table loader.                                                                  |
+// called by                                                                                                   |
+//   ReferenceData.zig re-exports these rows as the public reference-data table shape.                         |
+//   input/reference_data/ingest and bundled loaders build owned CrossSectionTable values from manifests or    |
+//   external O2 A assets. o2a_reference/run.zig can also produce the zero-continuum fallback table.           |
+//   optical_properties/state_build/context.zig either borrows the incoming continuum table or clones its      |
+//   points so PreparedOpticalState can own the support data it will later expose.                             |
+//   absorbers.zig, state_spectroscopy.zig, carrier_eval.zig, state_optical_depth.zig, and accumulation.zig    |
+//   sample the table while preparing absorber means or per-wavelength support rows.                           |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   CrossSectionTable.interpolateSigma brackets one wavelength and linearly interpolates sigma.               |
+//   meanSigmaInRange scans an interval for setup-time band means, with midpoint interpolation as fallback.    |
+//   differentialVector removes a weighted polynomial baseline from diagnostic/effective cross-section rows.   |
+//   effectiveCrossSectionFromSensitivity normalizes by air mass before using the same differential fit.       |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   The table is only a slice header over sorted out-of-line points. It owns that point storage when built by |
+//   loaders or clones, and otherwise it is borrowed through Scene/PreparedOpticalState ownership flags.       |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   interpolateSigma brackets one wavelength and linearly interpolates sigma. differentialVector builds a     |
-//   small weighted polynomial fit and subtracts the baseline from spectral samples.                           |
+//   Wavelength-time evaluation repeatedly calls interpolateSigma through prepared absorber rows. The helper   |
+//   allocates nothing and reads only the bracketed point rows. The polynomial differential route allocates    |
+//   its normal-system scratch because it is used for diagnostics/effective spectra, not inside LABOS kernels. |
 //                                                                                                             |
 // math                                                                                                        |
 //   The differential fit uses a compact polynomial basis over wavelength normalized to roughly [-1, 1].       |
