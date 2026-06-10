@@ -129,18 +129,8 @@ pub const SpectroscopyLineList = struct {
         };
     }
 
-    pub fn attachStrongLineSidecars(
-        self: *SpectroscopyLineList,
-        allocator: Types.Allocator,
-        strong_lines: Types.SpectroscopyStrongLineSet,
-        relaxation_matrix: Types.RelaxationMatrix,
-    ) !void {
-        return line_list_module.attachStrongLineSidecars(self, allocator, strong_lines, relaxation_matrix);
-    }
-
-    pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.Allocator) !void {
-        return line_list_module.buildStrongLineMatchIndex(self, allocator);
-    }
+    pub const attachStrongLineSidecars = line_list_module.attachStrongLineSidecars;
+    pub const buildStrongLineMatchIndex = line_list_module.buildStrongLineMatchIndex;
 
     pub fn sigmaAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) f64 {
         return line_list_module.totalSigmaAt(
@@ -151,25 +141,7 @@ pub const SpectroscopyLineList = struct {
         ).total_sigma_cm2_per_molecule;
     }
 
-    pub fn applyRuntimeControls(
-        self: *SpectroscopyLineList,
-        allocator: Types.Allocator,
-        gas_index: ?u16,
-        active_isotopes: []const u8,
-        threshold_line_scale: ?f64,
-        cutoff_cm1: ?f64,
-        line_mixing_factor: f64,
-    ) !void {
-        return line_list_module.applyRuntimeControls(
-            self,
-            allocator,
-            gas_index,
-            active_isotopes,
-            threshold_line_scale,
-            cutoff_cm1,
-            line_mixing_factor,
-        );
-    }
+    pub const applyRuntimeControls = line_list_module.applyRuntimeControls;
 
     pub fn sigmaAtPrepared(
         self: SpectroscopyLineList,
@@ -213,84 +185,15 @@ pub const SpectroscopyLineList = struct {
         return self.strong_lines != null and self.relaxation_matrix != null;
     }
 
-    pub fn prepareStrongLineState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) !?Types.StrongLinePreparedState {
-        return line_list_module.prepareStrongLineState(self, allocator, temperature_k, pressure_hpa);
-    }
-
-    pub fn allocStrongLinePreparedState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-    ) !?Types.StrongLinePreparedState {
-        return line_list_module.allocStrongLinePreparedState(self, allocator);
-    }
-
-    pub fn prepareStrongLineStateInto(
-        self: SpectroscopyLineList,
-        prepared: *Types.StrongLinePreparedState,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareStrongLineStateInto(self, prepared, temperature_k, pressure_hpa);
-    }
-
-    pub fn prepareStrongLineStateIntoWithScratch(
-        self: SpectroscopyLineList,
-        prepared: *Types.StrongLinePreparedState,
-        relaxation_weights: []f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareStrongLineStateIntoWithScratch(
-            self,
-            prepared,
-            relaxation_weights,
-            temperature_k,
-            pressure_hpa,
-        );
-    }
-
-    pub fn strongLinePreparedWeightCount(self: SpectroscopyLineList) usize {
-        return line_list_module.strongLinePreparedWeightCount(self);
-    }
-
-    pub fn prepareWeakLineState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) !Types.WeakLinePreparedState {
-        return line_list_module.prepareWeakLineState(self, allocator, temperature_k, pressure_hpa);
-    }
-
-    pub fn allocWeakLinePreparedState(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-    ) !Types.WeakLinePreparedState {
-        return line_list_module.allocWeakLinePreparedState(self, allocator);
-    }
-
-    pub fn prepareWeakLineStateInto(
-        self: SpectroscopyLineList,
-        prepared: *Types.WeakLinePreparedState,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) void {
-        return line_list_module.prepareWeakLineStateInto(self, prepared, temperature_k, pressure_hpa);
-    }
-
-    pub fn evaluateAt(
-        self: SpectroscopyLineList,
-        wavelength_nm: f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) Types.SpectroscopyEvaluation {
-        return line_list_module.evaluateAt(self, wavelength_nm, temperature_k, pressure_hpa);
-    }
+    pub const prepareStrongLineState = line_list_module.prepareStrongLineState;
+    pub const allocStrongLinePreparedState = line_list_module.allocStrongLinePreparedState;
+    pub const prepareStrongLineStateInto = line_list_module.prepareStrongLineStateInto;
+    pub const prepareStrongLineStateIntoWithScratch = line_list_module.prepareStrongLineStateIntoWithScratch;
+    pub const strongLinePreparedWeightCount = line_list_module.strongLinePreparedWeightCount;
+    pub const prepareWeakLineState = line_list_module.prepareWeakLineState;
+    pub const allocWeakLinePreparedState = line_list_module.allocWeakLinePreparedState;
+    pub const prepareWeakLineStateInto = line_list_module.prepareWeakLineStateInto;
+    pub const evaluateAt = line_list_module.evaluateAt;
 };
 
 // StrongLineWavelengthWindow -------------------------------------------------------------------------------- |
