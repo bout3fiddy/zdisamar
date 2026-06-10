@@ -132,13 +132,16 @@ pub fn configuredForwardInput(
         defer zone.end();
         // end instrumentation: trace zone: forward layers ---------------------------------------------------------------|
 
+        const forward_layer_request = OpticsPreparation.forward_layers.ForwardLayerCarrierRequest{
+            .prepared = request.prepared,
+            .scene = request.scene,
+            .layer_inputs = scratch.layer_inputs,
+            .wavelength_cache = &wavelength_cache,
+            .wavelength_nm = request.wavelength_nm,
+            .compute_jacobian = compute_jacobian,
+        };
         break :optical_depths OpticsPreparation.forward_layers.fillForwardLayersAtWavelengthWithCarrierCache(
-            request.prepared,
-            request.scene,
-            request.wavelength_nm,
-            scratch.layer_inputs,
-            &wavelength_cache,
-            compute_jacobian,
+            &forward_layer_request,
         );
     };
 
