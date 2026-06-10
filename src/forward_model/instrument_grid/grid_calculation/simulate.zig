@@ -594,8 +594,8 @@ const JacobianProcessingRequest = struct {
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 };
 
-// JacobianSampleBuffers -------------------------------------------------------------------------------------------------|
-// Borrowed Jacobian output and scratch rows needed by postprocessing.                                                    |
+// JacobianRows ----------------------------------------------------------------------------------------------------------|
+// Borrowed derivative output and scratch rows needed by postprocessing.                                                  |
 //                                                                                                                        |
 // layout(64-bit)                                                                                                         |
 // size: 40 B (0.039 KiB), align: 8 B                                                                                     |
@@ -610,7 +610,7 @@ const JacobianProcessingRequest = struct {
 // unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
 // cache span: 1 cache line at 64 B per line                                                                              |
 // footprint: per instance = 40 B (0.039 KiB); total excludes borrowed product buffers                                    |
-const JacobianSampleBuffers = struct {
+const JacobianRows = struct {
     jacobian: ?[]f64,
     jacobian_state_mask: jacobian.StateMask,
     scratch_aux: []f64,
@@ -998,12 +998,12 @@ pub fn simulateInternal(
         .setup = &setup,
         .trace_phase_timing = trace_phase_timing,
     };
-    const jacobian_buffers = JacobianSampleBuffers{
+    const jacobian_rows = JacobianRows{
         .jacobian = buffers.jacobian,
         .jacobian_state_mask = buffers.jacobian_state_mask,
         .scratch_aux = buffers.scratch_aux,
     };
-    const mean_jacobian = try processJacobianSamples(jacobian_request, jacobian_buffers, &summary);
+    const mean_jacobian = try processJacobianSamples(jacobian_request, jacobian_rows, &summary);
     return summary.toInstrumentGridSummary(
         setup.sample_count,
         buffers.wavelengths,
@@ -1527,7 +1527,7 @@ fn assembleReflectance(
 
 fn processJacobianSamples(
     request: JacobianProcessingRequest,
-    buffers: JacobianSampleBuffers,
+    rows: JacobianRows,
     summary: *RunningSummary,
 ) Storage.Error!?jacobian.Vector {
     // processJacobianSamples --------------------------------------------------------------------------------------------|
@@ -1543,7 +1543,7 @@ fn processJacobianSamples(
     //   mean_jacobian[x] = sum_i J_out_i(x) / sample_count                                                               |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    if (buffers.jacobian) |jacobian_buffer| {
+    if (rows.jacobian) |jacobian_buffer| {
         {
 
             // instrumentation: trace zone: Jacobian processing --------------------------------------------------------- |
@@ -1555,7 +1555,7 @@ fn processJacobianSamples(
             defer zone.end();
             // end instrumentation: trace zone: Jacobian processing ----------------------------------------------------- |
 
-            const active_jacobians = ActiveJacobianStates.fromMask(buffers.jacobian_state_mask);
+            const active_jacobians = ActiveJacobianStates.fromMask(rows.jacobian_state_mask);
             if (active_jacobians.count == 0 or
                 jacobian_buffer.len != request.setup.sample_count * active_jacobians.count)
             {
@@ -1567,8 +1567,8 @@ fn processJacobianSamples(
 
                     if (!jacobian.includes(request.derivative_state_mask, state)) return error.ShapeMismatch;
                     const column = jacobianColumn(jacobian_buffer, request.setup.sample_count, active_index);
-                    try convolution.apply(column, request.setup.radiance_slit_kernel[0..], buffers.scratch_aux);
-                    @memcpy(column, buffers.scratch_aux);
+                    try convolution.apply(column, request.setup.radiance_slit_kernel[0..], rows.scratch_aux);
+                    @memcpy(column, rows.scratch_aux);
                 }
             }
             for (0..active_jacobians.count) |active_index| {
