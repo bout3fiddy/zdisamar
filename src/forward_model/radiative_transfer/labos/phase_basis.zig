@@ -87,7 +87,7 @@ pub const PhaseKernel = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PhaseKernelRow ---------------------------------------------------------------------------------------------|
-// One row from Z+ and one row from Z-. Used when reflectance weighting needs rows instead of full matrices.   |
+// One row from Z+ and one row from Z-. Used when reflectance weighting needs row-local values.                |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 200 B (0.195 KiB), align: 8 B                                                                         |
@@ -902,8 +902,7 @@ fn fillZplusZminRowFromWeightedPhaseLimited12(
     // fillZplusZminRowFromWeightedPhaseLimited12 -------------------------------------------------------------|
     // Fixed 12-stream row builder for mixed aerosol/Rayleigh phase.                                           |
     //                                                                                                         |
-    // Keeps the column loop in fillPhaseRow12. The caller gets one Z+ row and one Z- row instead of a full    |
-    // PhaseKernel.                                                                                            |
+    // Keeps the column loop in fillPhaseRow12. The caller gets one Z+ row and one Z- row for weighting.       |
     // --------------------------------------------------------------------------------------------------------|
 
     const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);

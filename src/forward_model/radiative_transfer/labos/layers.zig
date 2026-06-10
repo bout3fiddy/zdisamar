@@ -1403,7 +1403,7 @@ pub fn classifyLayerDoubling(
     // Each extra split halves the starting optical depth and adds another matrix-squaring step. The hard cap  |
     // is 60 splits. It is far beyond normal LABOS layers, but still matters as a hard stop for pathological   |
     // inputs. If an extreme layer still fails threshold_doubl after 60 splits, the solver uses the best       |
-    // capped split count instead of spending unbounded time chasing a thinner starting layer.                 |
+    // capped split count that bounds setup time while still refining the starting layer.                      |
     var count_i32: i32 = if (exponent >= 60) 60 else @max(1, exponent + 1);
     var count: usize = @intCast(count_i32);
     var start = math.ldexp(optical_depth, -count_i32);
@@ -1852,7 +1852,7 @@ fn cachePhaseKernelViewRow(
     // cachePhaseKernelViewRow --------------------------------------------------------------------------------|
     // Cache the phase-kernel row needed by the viewing direction.                                             |
     //                                                                                                         |
-    // Integrated-source reflectance can reuse this row instead of rereading the full Zplus/Zmin matrices.     |
+    // Integrated-source reflectance can reuse this row during boundary weighting.                             |
     // --------------------------------------------------------------------------------------------------------|
 
     const n = z.Zplus.n;

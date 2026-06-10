@@ -31,11 +31,11 @@ const math = std.math;
 //   UD_fc/UDsumLocal_fc: LABOS radiation fields from orders.zig; this file only reads them.                   |
 //                                                                                                             |
 // layout reads                                                                                                |
-//   The DOD-warning scans are intentional setup/weighting scans over the transport-layer row slice.           |
+//   The row-scan helpers below are intentional setup/weighting scans over the transport-layer row slice.      |
 //   totalScatteringOpticalDepth reads LayerInput.scattering_optical_depth at [48..55].                        |
 //   aerosolSingleScatteringAlbedo reads aerosol_optical_depth at [24..31] and aerosol_scattering at           |
-//   [32..39]. Both use pointer capture, so no 176 B row is copied. A side column would need to stay in sync   |
-//   with the exact rows used by orders, reflectance weighting, and Jacobian weighting.                        |
+//   [32..39]. Both use pointer capture, so no 176 B row is copied. LayerInput remains the shared row passed   |
+//   through orders, reflectance weighting, and Jacobian weighting.                                            |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Runs inside the Fourier/order solve for every high-resolution wavelength. The caller supplies caches and  |
@@ -961,8 +961,7 @@ pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     //                                                                                                         |
     // memory                                                                                                  |
     //   LayerInput is a 176 B transport row. This scan reads scattering_optical_depth at [48..55] by          |
-    //   pointer, so rows are not copied. The same layer slice is immediately consumed by LABOS transport; a   |
-    //   side column would need sync proof.                                                                    |
+    //   pointer, so rows are not copied. The same layer slice is immediately consumed by LABOS transport.     |
     //                                                                                                         |
     // math                                                                                                    |
     //   total scattering optical depth = sum(max(layer scattering optical depth, 0))                          |
@@ -1657,7 +1656,7 @@ fn interfaceWeightingFromPhaseRows(
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : active aerosol interfaces in paired derivative rtm_config                                  |
-    //   memory   : reuses PhaseRowCache instead of rebuilding Zplus/Zmin rows                                 |
+    //   memory   : reuses PhaseRowCache for Zplus/Zmin rows                                                   |
     //                                                                                                         |
     // math                                                                                                    |
     //   scattering coefficient weighting = scattering source weighting + absorption weighting                 |

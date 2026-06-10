@@ -54,8 +54,7 @@ const layer_phase_signature_index_shift: u6 = 56;
 // resizing rule                                                                                              |
 //   ensureCapacity allocates a replacement buffer and does not copy old values. That is safe because every   |
 //   caller either rebuilds the returned slice before reading it or resets the matching validity flags after  |
-//   growth. This rule is why cache validity is documented beside the storage owner instead of hidden in the  |
-//   individual call sites.                                                                                   |
+//   growth. This rule keeps cache-validity comments beside the storage owner and the reuse call sites.       |
 // -----------------------------------------------------------------------------------------------------------|
 
 // Workspace -------------------------------------------------------------------------------------------------|

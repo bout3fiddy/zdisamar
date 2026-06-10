@@ -432,7 +432,7 @@ fn applyPseudoSphericalRuntimeTopToLevelWithGrid(
     // Use the prepared-grid fast path only for <= 65 levels and <= 512 support samples.                       |
     // --------------------------------------------------------------------------------------------------------|
     // The fallback below writes the same top-to-level attenuation values. The cap keeps the precomputed       |
-    // radius arrays bounded; larger support grids use the generic loop instead of oversized stack arrays.     |
+    // radius arrays bounded; larger support grids use the generic loop with caller-owned storage.             |
     if (top_level + 1 <= max_levels and pseudo_spherical_grid.samples.len <= max_pseudo_spherical_fast_samples) {
         applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid(
             top_to_level,
@@ -683,8 +683,8 @@ pub fn fillAttenuationTangentDynamic(
     //                                                                                                         |
     // d exp(-tau / mu) = exp(-tau / mu) * (-(d tau) / mu)                                                     |
     //                                                                                                         |
-    // This is the tangent path for layer optical-depth changes, not the                                       |
-    // pseudo-spherical support-grid correction.                                                               |
+    // This tangent path is for layer optical-depth changes. The pseudo-spherical support-grid correction      |
+    // owns the curved-path attenuation route.                                                                 |
     //                                                                                                         |
     // hot path                                                                                                |
     //   runs     : LABOS tangent routes request derivative attenuation                                        |
@@ -926,7 +926,7 @@ fn fillDynamicAttenuationFromLayerCache(
     // T(from - 1 -> to) = T(from -> to) * T_layer(from - 1)                                                   |
     //                                                                                                         |
     // Once this table is filled, later transport code can read attenuation with one                           |
-    // index calculation instead of multiplying layers inside the transport loop.                              |
+    // index calculation before the transport loop starts.                                                     |
     //                                                                                                         |
     // hot path                                                                                                |
     //   runs     : dynamic attenuation expands adjacent layer transmittance into all level pairs              |

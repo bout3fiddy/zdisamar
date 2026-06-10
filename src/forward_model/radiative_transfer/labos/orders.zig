@@ -1107,7 +1107,7 @@ fn ordersScatInternal(
     // --------------------------------------------------------------------------------------------------------|
     // threshold_conv_first = 1.0e-6 by generic default and 1.5e-7 in O2 A. Lower values keep more             |
     // scattering-order work. Higher values stop earlier and drop more weak multiple-scattering feedback.      |
-    // If scattering is not multiple, the return is requested physics rather than a tolerance shortcut.        |
+    // In the single-scattering route, this return is the requested physics for the solve.                     |
 
     // instrumentation: perturbation: initial stop ------------------------------------------------------------|
     // captures: initial-order convergence decision                                                            |
