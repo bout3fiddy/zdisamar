@@ -7,22 +7,28 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 const PreparedOpticalState = State.PreparedOpticalState;
 
 // source_interfaces.zig -------------------------------------------------------------------------------------|
-// Fills SourceInterfaceInput rows for integrated-source RTM transport.                                       |
+// Builds source-interface transport rows for integrated-source RTM solves.                                   |
 //                                                                                                            |
 // called by                                                                                                  |
-//   forward input construction after LayerInput rows exist for the same wavelength.                          |
+//   instrument_grid/grid_calculation/forward_input.zig calls this after forward_layers has filled the        |
+//   LayerInput slice for the same wavelength and before the ForwardInput is handed to LABOS.                 |
 //                                                                                                            |
-// main paths                                                                                                 |
-//   shared-grid route : evaluate carriers on cached shared RTM level geometry.                               |
-//   layer fallback    : derive interface values from adjacent LayerInput rows and prepared sublayer weights. |
+// route map                                                                                                  |
+//   profile-cache route : build or borrow ProfileNodeSpectroscopyCache, then evaluate carriers on cached     |
+//                         SharedRtmGeometry boundary levels.                                                 |
+//   carrier-cache route : reuse WavelengthCarrierCache so boundary carrier scalars share the same            |
+//                         wavelength-local constants as forward layers and RTM quadrature.                   |
+//   layer fallback      : copy boundary rows from adjacent LayerInput values, then replace interior weights  |
+//                         from PreparedSublayer spans when shared geometry is unavailable.                   |
 //                                                                                                            |
-// hot path                                                                                                   |
-//   Runs per wavelength only for integrated-source solves. The function favors borrowed slices and caller    |
-//   output storage so it can sit next to the transport setup without allocating.                             |
+// row contract                                                                                               |
+//   source_interfaces must have layer_inputs.len + 1 rows. Storage is caller-owned and refreshed in place.   |
+//   If a shared-grid route was requested but the cached geometry is missing, rows are zeroed so stale output |
+//   cannot leak into the transport input.                                                                    |
 //                                                                                                            |
-// memory                                                                                                     |
-//   SourceInterfaceInput storage belongs to the caller; prepared sublayers, shared geometry, and spectroscopy|
-//   cache rows are borrowed.                                                                                 |
+// hot path and memory                                                                                        |
+//   Runs per high-resolution wavelength only for integrated-source solves. This file allocates nothing; it   |
+//   borrows prepared sublayers, shared geometry, spectroscopy/cache rows, and the caller's output slice.     |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn fillSourceInterfacesAtWavelengthWithLayers(
