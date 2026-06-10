@@ -8,52 +8,55 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
 // integration.zig ------------------------------------------------------------------------------------------- |
-// Converts one scene/channel/nominal wavelength into the instrument-response samples used by product          |
-// wavelength planning. This is the router between observation-model controls and the fixed IntegrationKernel  |
-// row: it decides which response model is active, writes offsets relative to the nominal wavelength,          |
-// normalizes weights, and tells later code whether legacy slit convolution must be skipped.                   |
+// Builds instrument-response integration kernels for one Scene channel at one nominal wavelength. This is the |
+// route boundary between observation-model controls and product wavelength sampling: it chooses the response  |
+// model, writes relative wavelength offsets, normalizes weights, and marks whether later slit convolution is  |
+// allowed to run.                                                                                             |
 //                                                                                                             |
 // called by                                                                                                   |
-//   wavelength_sampling.zig builds retained radiance and irradiance integration rows for every output sample  |
-//   simulate.zig asks usesIntegratedInstrumentSampling before deciding whether to run five-tap convolution    |
-//   output/instrument_response.zig expands the same kernels into diagnostic support rows                      |
-//   input/o2a_reference/run.zig samples endpoint kernels for DISAMAR parity support bounds                    |
+//   wavelength_sampling.zig calls this twice per output wavelength: radiance then irradiance. It compacts the |
+//   active kernel prefix into retained plan rows or side arrays.                                              |
+//   simulate.zig asks usesIntegratedInstrumentSampling before applying legacy five-tap slit convolution, so   |
+//   measured/operational channels do not integrate the same line shape twice.                                 |
+//   output/instrument_response.zig expands the same kernels into diagnostic rows exposed through the API.     |
+//   input/o2a_reference/run.zig samples start/end kernels to compute DISAMAR parity support bounds.           |
 //                                                                                                             |
 // inputs                                                                                                      |
-//   Scene supplies observation-model sampling mode, channel response controls, line-shape tables, and         |
-//   fallback FWHM metadata. PreparedOpticalState is optional because DISAMAR high-resolution grids can be     |
-//   realized either from prepared strong-line intervals or from scene-only operational controls.              |
+//   Scene supplies sampling mode, per-channel response controls, line-shape tables, high-resolution grid      |
+//   controls, adaptive controls, and fallback FWHM metadata. PreparedOpticalState is optional because DISAMAR |
+//   high-resolution grids can be realized from prepared strong-line intervals when available, or from         |
+//   scene-only operational controls when only reference support is being built.                               |
 //                                                                                                             |
-// output row                                                                                                  |
-//   IntegrationKernel is caller-owned 32 KiB scratch from types.zig. Only the active prefix                   |
-//   offsets_nm[0..sample_count] and weights[0..sample_count] is meaningful after this file returns.           |
-//   Disabled kernels are still a valid direct-sample contract: offset 0, weight 1, enabled=false.             |
+// kernel shape                                                                                                |
+//   IntegrationKernel is a caller-owned 32 KiB builder row from types.zig. offsets_nm and weights are         |
+//   parallel [2048]f64 arrays; only [0..sample_count] is meaningful after this file returns. enabled=false    |
+//   means direct sampling at the nominal wavelength; enabled=true means the product row is already integrated |
+//   over response weights and later slit convolution must not repeat that work.                               |
 //                                                                                                             |
-// main path                                                                                                   |
-//   integrationForWavelengthWithAdaptiveCacheChecked chooses exactly one route, in this order:                |
-//     direct sample when the channel is native/synthetic and has no broadening metadata                       |
-//     measured line-shape table keyed by nominal wavelength                                                   |
-//     explicit caller-provided line-shape kernel                                                              |
-//     DISAMAR-style high-resolution grid with strong-line intervals when prepared data exists                 |
-//     explicit high-resolution lattice from operational-band controls                                         |
-//     adaptive strong-line-aware Gauss integration                                                            |
-//     legacy five-point response-weighted fallback                                                            |
+// route order                                                                                                 |
+//   integrationForWavelengthWithAdaptiveCacheChecked chooses one route and stops:                             |
+//     1. identity direct sample when no integrated response is configured                                     |
+//     2. measured line-shape table keyed by nominal wavelength                                                |
+//     3. explicit caller-provided line-shape kernel                                                           |
+//     4. DISAMAR high-resolution grid, using prepared strong-line intervals when available                    |
+//     5. explicit high-resolution lattice from operational-band controls                                      |
+//     6. adaptive strong-line-aware Gauss integration                                                         |
+//     7. legacy five-point response-weighted fallback for native/synthetic channels with FWHM only            |
 //                                                                                                             |
 // module split                                                                                                |
 //   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |
 //   construction, Gauss sample emission, strong-line splitting, and validation support grids. This file keeps |
 //   the public route order, normalization boundary, and double-convolution guard in one place.                |
 //                                                                                                             |
-// contract                                                                                                    |
+// weight contract                                                                                             |
 //   IntegrationKernel offsets are relative to nominal_wavelength_nm and weights are normalized before return. |
-//   kernel.enabled means wavelength sampling already integrated the response. Disabled kernels still mean one |
-//   direct sample at offset 0 with weight 1. usesIntegratedInstrumentSampling keeps measured/operational      |
-//   channels from applying the line shape twice in the later slit-convolution stage.                          |
+//   Table, explicit, DISAMAR, adaptive, and fallback kernels all use the same compact row contract, so later  |
+//   code never needs to know which route produced the samples.                                                |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Wavelength-plan workers call this twice per nominal row, once for radiance and once for irradiance. The   |
-//   caller supplies the 32 KiB IntegrationKernel scratch. Adaptive caches keep the 20 KiB interval plan out   |
-//   of repeated per-wavelength planning when the response can share strong-line boundaries.                   |
+//   Wavelength-plan workers call this inside the output-sample loop. The 32 KiB IntegrationKernel is reused   |
+//   by pointer so workers only rewrite the active prefix. AdaptiveKernelCache stores one 20 KiB interval plan |
+//   per channel, keeping strong-line boundary planning out of repeated per-wavelength kernel construction.    |
 //                                                                                                             |
 // math names                                                                                                  |
 //   lambda_i : nominal output wavelength                                                                      |
@@ -90,6 +93,14 @@ pub const AdaptiveKernelCache = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralChannel) bool {
+    // usesIntegratedInstrumentSampling -----------------------------------------------------------------------|
+    // Return whether this channel's product samples already include instrument-response integration.          |
+    //                                                                                                         |
+    // call sites                                                                                              |
+    //   simulate.zig uses this as the double-convolution guard before applying legacy slit convolution.       |
+    //   The answer is channel-specific because radiance and irradiance can carry different response controls. |
+    // --------------------------------------------------------------------------------------------------------|
+
     const response = scene.observation_model.resolvedChannelControls(channel).response;
 
     // DECISION:
@@ -113,6 +124,11 @@ pub fn integrationForWavelengthChecked(
     nominal_wavelength_nm: f64,
     kernel: *IntegrationKernel,
 ) Error!void {
+    // integrationForWavelengthChecked ------------------------------------------------------------------------|
+    // Public no-cache entry point for callers that need one realized kernel and cannot retain adaptive state. |
+    // It delegates to the cached route with null cache so all response modes use the same route order.        |
+    // --------------------------------------------------------------------------------------------------------|
+
     try integrationForWavelengthWithAdaptiveCacheChecked(
         scene,
         prepared,
@@ -275,6 +291,12 @@ fn writeDisamarHighResolutionKernel(
     cached_adaptive_kernel: ?*const AdaptiveKernelCache,
     kernel: *IntegrationKernel,
 ) bool {
+    // writeDisamarHighResolutionKernel -----------------------------------------------------------------------|
+    // Realize the DISAMAR-style high-resolution response route. Prepared state wins because it can split      |
+    // around strong-line intervals; scene-only operational controls are the fallback used while building      |
+    // reference support before a full PreparedOpticalState exists.                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (prepared) |prepared_state| {
         return adaptiveIntegrationFromPrepared(
             scene,
@@ -300,6 +322,11 @@ fn writeExplicitGridKernel(
     response: InstrumentModel.SpectralResponse,
     kernel: *IntegrationKernel,
 ) bool {
+    // writeExplicitGridKernel --------------------------------------------------------------------------------|
+    // Emit a uniform high-resolution lattice from response controls and normalize response weights in place.  |
+    // Returns false when the requested step/span cannot produce a finite non-empty kernel.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (response.high_resolution_step_nm <= 0.0 or response.high_resolution_half_span_nm <= 0.0) {
         return false;
     }
@@ -342,6 +369,12 @@ fn adaptiveIntegrationFromPrepared(
     cached_adaptive_kernel: ?*const AdaptiveKernelCache,
     kernel: *IntegrationKernel,
 ) bool {
+    // adaptiveIntegrationFromPrepared ------------------------------------------------------------------------|
+    // Build a strong-line-aware adaptive kernel from PreparedOpticalState, using a retained interval plan     |
+    // when wavelength_sampling.zig prepared one for this channel. The fallback computes the plan and samples  |
+    // in one call for callers that do not carry AdaptiveKernelCache.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (cached_adaptive_kernel) |cache| {
         if (buildAdaptiveIntegrationKernelFromCache(
             response,
@@ -397,6 +430,11 @@ fn buildAdaptiveIntegrationKernelFromCache(
     apply_disamar_midpoint_bias: bool,
     kernel: *types.IntegrationKernel,
 ) bool {
+    // buildAdaptiveIntegrationKernelFromCache ----------------------------------------------------------------|
+    // Reuse cached interval boundaries and emit the nominal-wavelength-specific offsets/weights. The cache    |
+    // stores geometry; this function still applies the current response weights and final normalization.      |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (!cache.ready) return false;
 
     var sample_count: usize = 0;
@@ -423,6 +461,12 @@ fn buildAdaptiveIntegrationKernelFromCache(
 }
 
 pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 {
+    // slitKernelForScene -------------------------------------------------------------------------------------|
+    // Build the legacy five-tap convolution kernel used only when integrated sampling did not already realize |
+    // the instrument response. This keeps native/synthetic FWHM-only scenes compatible with the older         |
+    // convolution path while measured/operational routes use IntegrationKernel rows instead.                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     const response = scene.observation_model.resolvedChannelControls(channel).response;
 
     // PARITY:
