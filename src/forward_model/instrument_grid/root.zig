@@ -50,40 +50,8 @@ pub const InstrumentGridProductView = types.InstrumentGridProductView;
 pub const ProductStorage = storage.ProductStorage;
 pub const Error = storage.Error;
 
-pub fn simulateSummary(
-    allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: SolveConfig,
-    prepared: *const PreparedOpticalState,
-) !InstrumentGridSummary {
-    // simulateSummary ---------------------------------------------------------------------------------------------------|
-    // Run the summary route with temporary storage. Use this when the caller only needs scalar mean values               |
-    // and does not want to retain product arrays.                                                                        |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    return simulate.simulateSummary(allocator, scene, rtm_config, prepared);
-}
-
-pub fn simulateSummaryWithWorkspace(
-    allocator: Allocator,
-    product_workspace: *ProductStorage,
-    scene: *const Scene,
-    rtm_config: SolveConfig,
-    prepared: *const PreparedOpticalState,
-) !InstrumentGridSummary {
-    // simulateSummaryWithWorkspace --------------------------------------------------------------------------------------|
-    // Run summary mode while reusing ProductStorage. The workspace keeps buffers, wavelength plans, and                  |
-    // profile caches warm across repeated retrieval iterations.                                                          |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    return simulate.simulateSummaryWithWorkspace(
-        allocator,
-        product_workspace,
-        scene,
-        rtm_config,
-        prepared,
-    );
-}
+pub const simulateSummary = simulate.simulateSummary;
+pub const simulateSummaryWithWorkspace = simulate.simulateSummaryWithWorkspace;
 
 pub fn simulateProduct(
     allocator: Allocator,
