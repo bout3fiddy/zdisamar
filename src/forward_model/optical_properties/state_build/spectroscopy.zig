@@ -139,9 +139,9 @@ pub fn resolveContinuumOwnerSpecies(
     //   otherwise O2 is preferred if one prepared line absorber is O2.                                        |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The fallback scan reads only PreparedLineAbsorber.species at [272..272] of each 280 B row. Pointer    |
-    //   capture avoids copying the row, and this setup-time choice is not repeated per wavelength. A side     |
-    //   species column would add ownership/deinit surface for one rare ambiguous-continuum decision.          |
+    //   The fallback scan reads only PreparedLineAbsorber.species at [272..272] of each 280 B row. This       |
+    //   index-only setup-time choice is not repeated per wavelength. A side species column would add          |
+    //   ownership/deinit surface for one rare ambiguous-continuum decision.                                   |
     // --------------------------------------------------------------------------------------------------------|
 
     if (operational_o2_lut.enabled()) return .o2;
@@ -150,8 +150,8 @@ pub fn resolveContinuumOwnerSpecies(
 
     if (line_absorbers.len == 1) return line_absorbers[0].species;
 
-    for (line_absorbers) |*line_absorber| {
-        if (line_absorber.species == .o2) return .o2;
+    for (0..line_absorbers.len) |line_absorber_index| {
+        if (line_absorbers[line_absorber_index].species == .o2) return .o2;
     }
 
     return null;
