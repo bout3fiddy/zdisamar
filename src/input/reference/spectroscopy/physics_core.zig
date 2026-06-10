@@ -198,59 +198,23 @@ pub fn prepareWeakLineVoigtState(
     //   stores the reusable pieces and avoids rebuilding them for every wavelength.                           |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const Strong = @import("strong_lines.zig");
-
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
+    const prepared_line = prepareWeakLinePreparedLineStateFromSafe(
+        line,
+        safe_temperature,
+        safe_pressure,
+        reference_temperature_k,
+    );
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
-    const center_wavenumber_cm1 = lineCenterWavenumberCm1(&line);
-    const temperature_ratio = reference_temperature_k / safe_temperature;
-    const pressure_shift_cm1 = linePressureShiftCm1(&line);
-    const shifted_center_wavenumber_cm1 = @max(
-        center_wavenumber_cm1 + pressure_shift_cm1 * safe_pressure,
-        1.0,
-    );
-    const half_width_cm1_at_t = @max(
-        lineAirHalfWidthCm1(&line) *
-            std.math.pow(f64, temperature_ratio, line.temperature_exponent),
-        1.0e-6,
-    );
-    const doppler_width_cm1 = @max(
-        dopplerWidthCm1(
-            safe_temperature,
-            shifted_center_wavenumber_cm1,
-            Strong.molecularWeightForLine(line),
-        ),
-        1.0e-6,
-    );
-    const cte = @sqrt(@log(2.0)) / doppler_width_cm1;
     const cpf = complexProbabilityFunction(
-        (shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1) * cte,
-        half_width_cm1_at_t * safe_pressure * cte,
+        (prepared_line.shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1) * prepared_line.cte,
+        prepared_line.line_shape_y,
     );
-
-    var converted_strength = line.line_strength_cm2_per_molecule *
-        Strong.partitionRatioT0OverT(line, safe_temperature, reference_temperature_k) *
-        @exp(
-            Types.hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
-                ((1.0 / reference_temperature_k) - (1.0 / safe_temperature)),
-        ) /
-        shifted_center_wavenumber_cm1;
-    converted_strength *= 0.1013 /
-        Types.hitran_boltzmann_constant_j_per_k /
-        safe_temperature /
-        @max(
-            1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * shifted_center_wavenumber_cm1 / reference_temperature_k),
-            1.0e-12,
-        );
 
     const stimulated_emission_scale = evaluation_wavenumber_cm1 *
         (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature));
-    const prefactor = @sqrt(@log(2.0)) /
-        doppler_width_cm1 /
-        @sqrt(Types.hitran_pi) *
-        safe_pressure *
-        converted_strength *
+    const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
         safe_temperature *
         Types.hitran_boltzmann_constant_cm3_hpa_per_k /
@@ -286,7 +250,7 @@ pub fn prepareWeakLinePreparedLineState(
     );
 }
 
-pub fn prepareWeakLinePreparedLineStateFromSafe(
+pub inline fn prepareWeakLinePreparedLineStateFromSafe(
     line: Types.SpectroscopyLine,
     safe_temperature: f64,
     safe_pressure: f64,
