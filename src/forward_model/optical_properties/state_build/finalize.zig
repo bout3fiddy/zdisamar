@@ -6,27 +6,39 @@ const Context = @import("context.zig").PreparationContext;
 const State = @import("state.zig");
 
 // finalize.zig -----------------------------------------------------------------------------------------------|
-// Ownership handoff from mutable optical-preparation storage to the stable PreparedOpticalState header. This  |
-// file is intentionally narrow: it copies scalar means, moves prepared rows and owned reference payloads,     |
-// writes cache identity keys, and clears the moved-from setup objects so their deferred cleanup cannot free   |
-// buffers now owned by PreparedOpticalState.                                                                  |
+// One-way handoff from mutable optical-preparation storage to the stable PreparedOpticalState header. This    |
+// file is the last step of Scene -> prepared optics: it copies scalar summaries, moves prepared rows and      |
+// owned reference payloads, writes cache identity keys, and clears each moved-from owner before setup         |
+// errdefer/deinit paths can run.                                                                              |
 //                                                                                                             |
 // called by                                                                                                   |
-//   root.prepare calls assemble after Context.init, Absorbers.build, and Accumulation.accumulate have         |
-//   succeeded. prepared_state.zig owns the final deinit contract for the header built here.                   |
+//   optical_properties/root.zig calls assemble after Context.init, Absorbers.build, and                       |
+//   Accumulation.accumulate have all succeeded. instrument-grid simulation, O2 A reference setup,             |
+//   diagnostics, and retrieval code then read through PreparedOpticalState; they never see Context or         |
+//   AbsorberBuildState directly. prepared_state.zig owns the final deinit contract for the header built here. |
 //                                                                                                             |
-// route map                                                                                                   |
-//   PreparedMeans      -> scalar optical-depth, thermodynamic, column, and band-mean summaries                |
-//   Context            -> layer rows, support rows, continuum/CIA payloads, profile arrays, LUT headers       |
-//   AbsorberBuildState -> absorber rows, owned line list, strong-line states, profile spectroscopy states     |
-//   Scene              -> aerosol constants, interval semantics, retrieval interval index, phase support tag  |
-//   cache keys         -> borrowed keys when input data supplied them, otherwise computed from final state    |
-//   reset block        -> zero moved owners before Context/AbsorberBuildState.deinit run                      |
+// incoming state                                                                                              |
+//   Context            owns or borrows layer rows, sublayer rows, continuum/CIA payloads, profile arrays,     |
+//                      aerosol fraction controls, and operational LUT copies.                                 |
+//   AbsorberBuildState owns line/cross-section absorber rows, owned line lists, strong-line states, and       |
+//                      profile spectroscopy state arrays.                                                     |
+//   PreparedMeans      is a by-value summary of optical depths, thermodynamics, columns, and band means.      |
+//   Scene              is borrowed; only scalar controls and semantics are copied into the final header.      |
+//                                                                                                             |
+// handoff order                                                                                               |
+//   1. build the PreparedOpticalState header from copied scalars and moved owner/view headers                 |
+//   2. compute missing spectroscopy cache keys from the assembled final state                                 |
+//   3. clear moved Context and AbsorberBuildState owners so their deinit methods release only leftovers       |
+//                                                                                                             |
+// cache identity                                                                                              |
+//   Prepared profile-cache routes can pass borrowed keys from reusable input state. When those keys are       |
+//   absent, assemble computes keys after all moved line/LUT/profile fields have landed in                     |
+//   PreparedOpticalState, so the cache identity hashes the exact retained state used later.                   |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   This file does not allocate or clone. A field is either copied by value or moved as an owner/view header  |
-//   into PreparedOpticalState. The reset block is part of correctness: removing it would make setup cleanup   |
-//   race the final state's deinit over the same buffers.                                                      |
+//   This file does not allocate, clone, or run wavelength-time physics. A field is either copied by value or  |
+//   moved as an owner/view header into PreparedOpticalState. The reset block is part of correctness: removing |
+//   it would make setup cleanup and PreparedOpticalState.deinit both believe they own the same buffers.       |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn assemble(
@@ -35,22 +47,21 @@ pub fn assemble(
     means: Accumulation.PreparedMeans,
 ) State.PreparedOpticalState {
     // assemble -----------------------------------------------------------------------------------------------|
-    // Move owned preparation buffers into the final PreparedOpticalState and clear the source owners.         |
+    // Build the final prepared-state header and make the setup owners safe to deinitialize.                   |
     //                                                                                                         |
-    // transfer groups                                                                                         |
-    //   Context            -> layer rows, support rows, continuum/CIA payloads, profile arrays, LUTs          |
-    //   AbsorberBuildState -> line/cross-section absorber rows and spectroscopy state arrays                  |
-    //   PreparedMeans      -> scalar optical-depth, thermodynamic, column, and band-mean summaries            |
-    //   Scene              -> aerosol constants, interval semantics, and retrieval interval index             |
+    // writes                                                                                                  |
+    //   moved owners : layers, sublayers, continuum/CIA payloads, spectroscopy line lists, absorber rows,     |
+    //                  profile arrays, strong/weak spectroscopy states, operational LUT handles               |
+    //   copied values : scalar means, aerosol constants, interval semantics, fit interval                     |
+    //   derived keys  : spectroscopy_plan_key and spectroscopy_profile_cache_inputs_key                       |
     //                                                                                                         |
     // ownership                                                                                               |
-    //   After this returns, PreparedOpticalState owns the arrays it references and context/absorbers no       |
-    //   longer free those moved buffers. The reset block at the end is part of the ownership contract, not    |
-    //   cleanup polish.                                                                                       |
+    //   After this returns, PreparedOpticalState owns the moved buffers. context and absorbers are left in a  |
+    //   moved-from shape where their deinit methods can only release storage that was not transferred.        |
     //                                                                                                         |
     // cache keys                                                                                              |
-    //   Bundled/reference-data routes can provide stable borrowed keys. Otherwise the final state computes    |
-    //   keys from the moved rows after every owner/view header has landed in PreparedOpticalState.            |
+    //   Borrowed keys win when profile-cache input supplied them. Otherwise the keys are computed from        |
+    //   prepared after the moved rows are attached, so hashing sees the same state as later evaluators.       |
     // --------------------------------------------------------------------------------------------------------|
 
     const scene = context.scene;
@@ -142,6 +153,12 @@ pub fn assemble(
         break :choose_profile_cache_inputs_key prepared.computeSpectroscopyProfileCacheInputsKey();
     };
     prepared.spectroscopy_profile_cache_inputs_key = spectroscopy_profile_cache_inputs_key;
+
+    // moved-from reset ---------------------------------------------------------------------------------------|
+    // Context.deinit and AbsorberBuildState.deinit still run after assemble returns. Clear every owner/view   |
+    // header moved above so those cleanup paths cannot free buffers that now belong to PreparedOpticalState.  |
+    // The bools are reset with the moved slices because ownership is encoded by header plus owns_* flag.      |
+    // --------------------------------------------------------------------------------------------------------|
 
     context.layers = &.{};
     context.sublayers = &.{};
