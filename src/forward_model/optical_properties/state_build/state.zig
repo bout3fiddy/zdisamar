@@ -52,7 +52,8 @@ pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 // hot rows                                                                                                    |
 //   PreparedLayer and PreparedSublayer are intentionally row-shaped even when some loops read only support    |
 //   indexes. Nearby RTM and carrier builders read thermodynamics, aerosol fields, optical depths, and support |
-//   spans from the same arrays; splitting columns needs benchmark evidence because it adds ownership surface. |
+//   spans from the same arrays. Keep those fields in one retained row until a measured workload shows that a  |
+//   narrower owned shape is faster and simpler to keep synchronized.                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ActiveLineAbsorber -----------------------------------------------------------------------------------------|
@@ -301,9 +302,9 @@ pub const PreparedCrossSectionAbsorber = struct {
 //                                                                                                             |
 // hot path                                                                                                    |
 // Span-only loops read sublayer_start_index at [192..195] and sublayer_count at [204..207] by pointer.        |
-// Mixed layer loops also read altitude_km at [24..31] and optical-depth/aerosol fields nearby. The row stays  |
-// whole because these paths share one retained layer array; a separate span column needs a measured           |
-// repeated-boundary win before it is worth another synchronized owner.                                        |
+// Mixed layer loops also read altitude_km at [24..31] and optical-depth/aerosol fields nearby. These paths    |
+// share one retained layer array; separate span storage needs a measured repeated-boundary win and one clear  |
+// owner before it belongs in this shape.                                                                      |
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,

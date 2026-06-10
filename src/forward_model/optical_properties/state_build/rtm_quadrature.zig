@@ -228,8 +228,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     // memory                                                                                                 |
     //   No allocation here. The caller owns rtm_levels, LayerInput rows, and the optional profile cache.     |
     //   The fallback reads PreparedLayer.sublayer_start_index at [192..195] and sublayer_count at            |
-    //   [204..207] from each 208 B row. A separate support-index column needs a retained benchmark showing   |
-    //   this fallback dominates before it is worth another synchronized shape.                               |
+    //   [204..207] from each 208 B row. Keep those indexes on PreparedLayer until a retained benchmark shows |
+    //   this fallback dominates and a narrower owner is simpler to keep synchronized.                        |
     //                                                                                                        |
     // math                                                                                                   |
     //   non-shared fallback samples k_sca(lambda, z_i) at Gauss nodes and weights by dz_i.                   |
@@ -299,8 +299,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
 
         // The fallback reads the PreparedLayer support tail only: sublayer_start_index at [192..195] and
         // sublayer_count at [204..207]. That span is the same layer identity used by forward-layer and
-        // pseudo-spherical builders, so keep this as a pointer walk until a retained benchmark proves a side
-        // span column improves this boundary.
+        // pseudo-spherical builders, so this boundary stays a pointer walk unless a retained benchmark shows
+        // a faster and simpler span owner.
         const start: usize = @intCast(layer.sublayer_start_index);
         const count: usize = @intCast(layer.sublayer_count);
         if (count == 0) continue;

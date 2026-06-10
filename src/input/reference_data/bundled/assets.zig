@@ -323,8 +323,8 @@ fn normalizeResolvedLineGasIndex(
     //                                                                                                         |
     // memory                                                                                                  |
     //   The loop reads and may write gas_index at [88..89] of each 104 B SpectroscopyLine row. It uses        |
-    //   pointer capture, does not copy rows, and avoids a side index because this one-time normalization      |
-    //   must keep the public line-list row intact for later spectroscopy evaluation and cache-key hashing.    |
+    //   pointer capture, does not copy rows, and keeps the public line-list row intact for later              |
+    //   spectroscopy evaluation and cache-key hashing.                                                        |
     // --------------------------------------------------------------------------------------------------------|
 
     const species = maybe_species orelse return;

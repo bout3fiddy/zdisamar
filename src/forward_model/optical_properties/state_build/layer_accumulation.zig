@@ -90,8 +90,8 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 // hot path                                                                                                       |
 //   Profile-aerosol preparation writes this compact row once, then later rows read it by pointer while filling   |
 //   support rows and building the equivalent phase row. The phase collapse reads optical-depth scaling fields    |
-//   through profileScatteringAtMidpoint, then reads asymmetry_factor at [40..47]; keeping one row avoids a       |
-//   separate phase-only column that would duplicate the ownership path used by support-row fill.                 |
+//   through profileScatteringAtMidpoint, then reads asymmetry_factor at [40..47]. One row keeps the profile      |
+//   aerosol owner and support-row fill path synchronized.                                                        |
 const AerosolSublayerProperties = struct {
     optical_depth: f64 = 0.0,
     base_optical_depth: f64 = 0.0,

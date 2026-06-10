@@ -270,7 +270,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 // sublayer_start_index [192..195], sublayer_count [204..207], altitude_km [24..31],
                 // bottom_altitude_km [8..15], and top_altitude_km [176..183]. These fields stay with the
                 // physical row so shared geometry, forward layers, and diagnostics slice the same support
-                // rows. A side span table needs workload proof before it becomes simpler.
+                // rows through one retained owner.
                 const start_index: usize = @intCast(layer.sublayer_start_index);
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;

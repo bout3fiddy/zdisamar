@@ -71,8 +71,8 @@ pub fn opticalDepthBreakdownAtWavelength(
     //                                                                                                        |
     // memory                                                                                                 |
     //   The PreparedLayer loop uses pointer capture; no 208 B row is copied while reading                    |
-    //   sublayer_start_index [192..195], sublayer_count [204..207], and altitude_km [24..31]. A standalone   |
-    //   span column would duplicate the slicing contract already carried by PreparedLayer.                   |
+    //   sublayer_start_index [192..195], sublayer_count [204..207], and altitude_km [24..31]. The slice      |
+    //   contract stays on PreparedLayer, which is already the owner-facing transport-grid row.               |
     //                                                                                                        |
     // math                                                                                                   |
     //   tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                       |

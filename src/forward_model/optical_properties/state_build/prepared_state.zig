@@ -76,7 +76,8 @@ const Allocator = std.mem.Allocator;
 //   PreparedLayer use pointer capture so no 208 B row is copied. The shared-RTM shape check reads             |
 //   sublayer_count at [204..207] only, while forward_layers, rtm_quadrature, pseudo_spherical, and            |
 //   shared_geometry read the same row's support tail plus altitude, pressure, aerosol, and optical-depth      |
-//   fields nearby. A side span column should be added only with benchmark evidence and a simpler owner model. |
+//   fields nearby. Keep the span fields in PreparedLayer until a measured repeated-boundary workload shows    |
+//   that separate retained span storage is faster and simpler to own.                                         |
 //                                                                                                             |
 // header layout                                                                                               |
 //   The inline [151]f64 aerosol phase array takes 1208 B and dominates this 2136 B header. Slice and optional |
