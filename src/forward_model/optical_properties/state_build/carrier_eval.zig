@@ -1508,20 +1508,6 @@ fn spectroscopySigmaAtSupportRow(
     );
 }
 
-fn continuumDensityAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-) f64 {
-    if (self.cross_section_absorbers.len != 0) return 0.0;
-
-    return Scalar.continuumCarrierDensityAtSublayer(
-        self,
-        sublayer,
-        global_sublayer_index,
-    );
-}
-
 fn ciaSigmaAtSupportRow(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1575,6 +1561,7 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
         profile_cache,
     );
 
+    const has_cross_section_absorbers = self.cross_section_absorbers.len != 0;
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
     for (self.cross_section_absorbers) |cross_section_absorber| {
@@ -1599,11 +1586,15 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
         sublayer,
         global_sublayer_index,
     );
-    const continuum_density_cm3 = continuumDensityAtSupportRow(
-        self,
-        sublayer,
-        global_sublayer_index,
-    );
+    const continuum_density_cm3 =
+        if (has_cross_section_absorbers)
+            0.0
+        else
+            Scalar.continuumCarrierDensityAtSublayer(
+                self,
+                sublayer,
+                global_sublayer_index,
+            );
     const gas_absorption_optical_depth_per_km =
         continuum_sigma * continuum_density_cm3 * centimeters_per_kilometer +
         cross_section_absorption_optical_depth_per_km +
@@ -1693,39 +1684,6 @@ fn spectroscopySigmaAtCarrierAltitude(
     );
 }
 
-fn continuumDensityAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
-    state: InterpolatedQuadratureState,
-) f64 {
-    if (self.cross_section_absorbers.len != 0) return 0.0;
-
-    return Scalar.continuumCarrierDensityAtAltitude(
-        self,
-        sublayers,
-        altitude_km,
-        state.absorber_number_density_cm3,
-        state.oxygen_number_density_cm3,
-    );
-}
-
-fn aerosolReferenceWavelengthAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
-    state: InterpolatedQuadratureState,
-) f64 {
-    if (self.has_aerosol_profile_properties) return state.aerosol_reference_wavelength_nm;
-    return self.aerosol_reference_wavelength_nm;
-}
-
-fn aerosolAngstromExponentAtCarrierAltitude(
-    self: *const State.PreparedOpticalState,
-    state: InterpolatedQuadratureState,
-) f64 {
-    if (self.has_aerosol_profile_properties) return state.aerosol_angstrom_exponent;
-    return self.aerosol_angstrom_exponent;
-}
-
 pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1744,6 +1702,7 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
     // -------------------------------------------------------------------------------------------------------  |
 
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
+    const has_cross_section_absorbers = self.cross_section_absorbers.len != 0;
     const continuum_sigma = continuumSigmaAtWavelength(self, wavelength_nm);
     const prepared_state = SpectroscopyState.preparedStrongLineStateAtAltitude(
         sublayers,
@@ -1786,12 +1745,17 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         state.oxygen_number_density_cm3,
         cross_section_density_cm3,
     );
-    const continuum_density_cm3 = continuumDensityAtCarrierAltitude(
-        self,
-        sublayers,
-        altitude_km,
-        state,
-    );
+    const continuum_density_cm3 =
+        if (has_cross_section_absorbers)
+            0.0
+        else
+            Scalar.continuumCarrierDensityAtAltitude(
+                self,
+                sublayers,
+                altitude_km,
+                state.absorber_number_density_cm3,
+                state.oxygen_number_density_cm3,
+            );
     const gas_absorption_optical_depth_per_km =
         continuum_sigma *
         continuum_density_cm3 *
@@ -1813,10 +1777,21 @@ pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         ) *
         state.ciaPairDensityCm6() *
         centimeters_per_kilometer;
+    const has_profile_aerosol_properties = self.has_aerosol_profile_properties;
+    const aerosol_reference_wavelength_nm =
+        if (has_profile_aerosol_properties)
+            state.aerosol_reference_wavelength_nm
+        else
+            self.aerosol_reference_wavelength_nm;
+    const aerosol_angstrom_exponent =
+        if (has_profile_aerosol_properties)
+            state.aerosol_angstrom_exponent
+        else
+            self.aerosol_angstrom_exponent;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         state.aerosol_optical_depth_per_km,
-        aerosolReferenceWavelengthAtCarrierAltitude(self, state),
-        aerosolAngstromExponentAtCarrierAltitude(self, state),
+        aerosol_reference_wavelength_nm,
+        aerosol_angstrom_exponent,
         wavelength_nm,
     );
     const aerosol_scattering_optical_depth_per_km =
