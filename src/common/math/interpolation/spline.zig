@@ -16,13 +16,11 @@ const max_spline_point_count = 256;
 //   sampleEndpointSecant             builds DISAMAR-compatible endpoint-secant second derivatives             |
 //   endpointSecantSecondDerivatives  writes second derivatives for one series                                 |
 //   endpointSecantSecondDerivatives3 writes second derivatives for three colocated series                     |
-//   endpointSecantSecondDerivatives5 writes second derivatives for five colocated series                      |
 //   sampleWithSecondDerivatives      samples a precomputed second-derivative spline                           |
 //                                                                                                             |
 // route choice                                                                                                |
-//   sampleEndpointSecant is the one-shot path for small reference windows. endpointSecantSecondDerivatives*   |
-//   prepares reusable curvature for profile caches. The 3-series and 5-series variants share interval and     |
-//   diagonal work across colocated series so cache preparation does one tridiagonal setup per altitude grid.  |
+//   sampleEndpointSecant is the one-shot path for small reference windows. endpointSecantSecondDerivatives3   |
+//   prepares reusable curvature for profile caches and shares interval/diagonal work across colocated series. |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Sampling is repeated by profile caches after forward misses and by reference interpolation. Preparation   |
@@ -225,104 +223,6 @@ pub fn endpointSecantSecondDerivatives3(
     }
 
     inline for (0..3) |series| {
-        seconds[series][0] = -0.5 * c3[series][1];
-        for (1..x.len - 1) |index| {
-            seconds[series][index] = c3[series][index];
-        }
-        seconds[series][x.len - 1] = -0.5 * c3[series][x.len - 2];
-    }
-}
-
-pub fn endpointSecantSecondDerivatives5(
-    x: []const f64,
-    y0: []const f64,
-    y1: []const f64,
-    y2: []const f64,
-    y3: []const f64,
-    y4: []const f64,
-    second0: []f64,
-    second1: []f64,
-    second2: []f64,
-    second3: []f64,
-    second4: []f64,
-) Error!void {
-    // endpointSecantSecondDerivatives5 -----------------------------------------------------------------------|
-    // Computes DISAMAR-compatible endpoint-secant second derivatives for five colocated profile series.       |
-    //                                                                                                         |
-    // hot path                                                                                                |
-    //   repeated : profile spectroscopy cache preparation on a forward miss                                   |
-    //   costly   : one tridiagonal setup shared across five value series                                      |
-    //   memory   : caller-owned outputs plus stack arrays capped at 256 points                                |
-    //                                                                                                         |
-    // data                                                                                                    |
-    //   x is the shared altitude grid. y0 through y4 are sampled at the same x points.                        |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const values = [_][]const f64{ y0, y1, y2, y3, y4 };
-    const seconds = [_][]f64{ second0, second1, second2, second3, second4 };
-
-    inline for (values, seconds) |y, second| {
-        if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
-    }
-
-    if (x.len < 3) return Error.NotEnoughPoints;
-    if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
-
-    var intervals: [max_spline_point_count]f64 = undefined;
-    var diagonal: [max_spline_point_count]f64 = undefined;
-    var slopes: [5][max_spline_point_count]f64 = undefined;
-    var c2: [5][max_spline_point_count]f64 = undefined;
-    var c3: [5][max_spline_point_count]f64 = undefined;
-
-    intervals[0] = 0.0;
-    diagonal[0] = 1.0;
-    inline for (0..5) |series| {
-        slopes[series][0] = 1.0;
-        c2[series][0] = (values[series][1] - values[series][0]) / (x[1] - x[0]);
-        c2[series][x.len - 1] =
-            (values[series][x.len - 1] - values[series][x.len - 2]) /
-            (x[x.len - 1] - x[x.len - 2]);
-    }
-
-    for (1..x.len) |index| {
-        intervals[index] = x[index] - x[index - 1];
-        inline for (0..5) |series| {
-            slopes[series][index] =
-                (values[series][index] - values[series][index - 1]) / intervals[index];
-        }
-    }
-
-    for (1..x.len - 1) |index| {
-        const g = -intervals[index + 1] / diagonal[index - 1];
-        inline for (0..5) |series| {
-            c2[series][index] = g * c2[series][index - 1] +
-                3.0 * (intervals[index] * slopes[series][index + 1] +
-                    intervals[index + 1] * slopes[series][index]);
-        }
-        diagonal[index] = g * intervals[index - 1] +
-            2.0 * (intervals[index] + intervals[index + 1]);
-    }
-
-    var solve_index = x.len - 1;
-    while (solve_index > 0) {
-        solve_index -= 1;
-        inline for (0..5) |series| {
-            c2[series][solve_index] =
-                (c2[series][solve_index] - intervals[solve_index] * c2[series][solve_index + 1]) /
-                diagonal[solve_index];
-        }
-    }
-
-    for (1..x.len) |index| {
-        const dtau = intervals[index];
-        inline for (0..5) |series| {
-            const divdf1 = slopes[series][index];
-            const divdf3 = c2[series][index - 1] + c2[series][index] - 2.0 * divdf1;
-            c3[series][index - 1] = 2.0 * (divdf1 - c2[series][index - 1] - divdf3) / dtau;
-        }
-    }
-
-    inline for (0..5) |series| {
         seconds[series][0] = -0.5 * c3[series][1];
         for (1..x.len - 1) |index| {
             seconds[series][index] = c3[series][index];
