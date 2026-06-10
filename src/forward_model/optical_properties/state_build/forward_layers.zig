@@ -45,43 +45,6 @@ const centimeters_per_kilometer = 1.0e5;
 //   omega0 = scattering optical depth / tau_ext, clamped into physical bounds.                               |
 // -----------------------------------------------------------------------------------------------------------|
 
-pub fn toForwardInputWithLayers(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    layer_inputs: ?[]transport_common.LayerInput,
-) transport_common.ForwardInput {
-    // toForwardInputWithLayers ----------------------------------------------------------------------------- |
-    // Build a ForwardInput at the scene midpoint wavelength. This is the simple route for diagnostics and    |
-    // scalar callers; high-resolution workers call the wavelength-specific route below.                      |
-    // -------------------------------------------------------------------------------------------------------|
-
-    return toForwardInputAtWavelengthWithLayers(
-        prepared,
-        scene,
-        (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,
-        layer_inputs,
-    );
-}
-
-pub fn toForwardInputAtWavelengthWithLayers(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    layer_inputs: ?[]transport_common.LayerInput,
-) transport_common.ForwardInput {
-    // toForwardInputAtWavelengthWithLayers ----------------------------------------------------------------- |
-    // Build a ForwardInput for one wavelength when no caller-owned profile spectroscopy cache is available.  |
-    // -------------------------------------------------------------------------------------------------------|
-
-    return toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
-        prepared,
-        scene,
-        wavelength_nm,
-        layer_inputs,
-        null,
-    );
-}
-
 pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -170,28 +133,6 @@ pub fn forwardInputFromOpticalDepths(
     };
 }
 
-pub fn fillForwardLayersAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    layer_inputs: []transport_common.LayerInput,
-) OpticalDepthBreakdown {
-    // fillForwardLayersAtWavelength ------------------------------------------------------------------------ |
-    // Convenience route for callers that need transport rows but do not already hold a profile cache.        |
-    // The cache is per wavelength and is shared by every layer evaluation in the delegated route.            |
-    // -------------------------------------------------------------------------------------------------------|
-
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillForwardLayersAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        layer_inputs,
-        &profile_cache,
-        true,
-    );
-}
-
 pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -226,7 +167,8 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
@@ -470,7 +412,8 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {

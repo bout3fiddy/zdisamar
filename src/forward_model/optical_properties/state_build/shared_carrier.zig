@@ -238,25 +238,6 @@ fn fillLayerInputFromSharedCarrier(
     );
 }
 
-pub fn evaluateReducedLayerFromSupportRows(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-) EvaluatedLayer {
-    return evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        support_sublayers,
-        strong_line_states,
-        layer_geometry,
-        null,
-    );
-}
-
 pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -559,27 +540,6 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
     return sample_index;
 }
 
-pub fn evaluateSharedLayerOnSubgrid(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    scratch: *shared_geometry.GaussRuleScratch,
-) EvaluatedLayer {
-    return evaluateSharedLayerOnSubgridWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        support_sublayers,
-        strong_line_states,
-        layer_geometry,
-        scratch,
-        null,
-    );
-}
-
 pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -629,31 +589,6 @@ pub fn evaluateSharedLayerOnSubgridWithSpectroscopyCache(
         layer_geometry.midpoint_altitude_km,
         breakdown,
         &self.aerosol_phase_coefficients,
-    );
-}
-
-pub fn fillSharedPseudoSphericalSamplesOnSubgrid(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    sample_index_start: usize,
-    scratch: *shared_geometry.GaussRuleScratch,
-) usize {
-    return fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        support_sublayers,
-        strong_line_states,
-        layer_geometry,
-        attenuation_samples,
-        sample_index_start,
-        scratch,
-        null,
     );
 }
 

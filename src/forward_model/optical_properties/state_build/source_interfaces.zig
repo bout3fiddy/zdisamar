@@ -31,22 +31,6 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //   borrows prepared sublayers, shared geometry, spectroscopy/cache rows, and the caller's output slice.     |
 // -----------------------------------------------------------------------------------------------------------|
 
-pub fn fillSourceInterfacesAtWavelengthWithLayers(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []const transport_common.LayerInput,
-    source_interfaces: []transport_common.SourceInterfaceInput,
-) void {
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
-        self,
-        wavelength_nm,
-        layer_inputs,
-        source_interfaces,
-        &profile_cache,
-    );
-}
-
 pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -66,10 +50,12 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
     // transport_common.fillSourceInterfacesFromLayers fallback                                               |
     // -------------------------------------------------------------------------------------------------------|
 
-    if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
+    const invalid_output_shape = layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1;
+    if (invalid_output_shape) return;
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 const strong_line_states = if (self.strong_line_states) |states| states else null;
 
@@ -181,10 +167,12 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
     // fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache fallback                                |
     // -------------------------------------------------------------------------------------------------------|
 
-    if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
+    const invalid_output_shape = layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1;
+    if (invalid_output_shape) return;
 
     if (self.sublayers) |sublayers| {
-        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+        if (use_shared_grid) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 const strong_line_states = if (self.strong_line_states) |states| states else null;
 

@@ -155,33 +155,6 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     return true;
 }
 
-pub fn fillPseudoSphericalGridAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    solver_layer_count: usize,
-    attenuation_samples: []transport_common.PseudoSphericalSample,
-    level_sample_starts: []usize,
-    level_altitudes_km: []f64,
-) bool {
-    // fillPseudoSphericalGridAtWavelength ------------------------------------------------------------------ |
-    // Convenience route for pseudo-spherical attenuation when the caller does not already hold a profile     |
-    // spectroscopy cache. The delegated route owns the shared/direct geometry choice.                        |
-    // -------------------------------------------------------------------------------------------------------|
-
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        wavelength_nm,
-        solver_layer_count,
-        attenuation_samples,
-        level_sample_starts,
-        level_altitudes_km,
-        &profile_cache,
-    );
-}
-
 pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -211,17 +184,21 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     const sublayers = self.sublayers orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
+    const output_shape_mismatch =
+        attenuation_samples.len < sample_count or
         level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
-    {
+        level_altitudes_km.len != solver_layer_count + 1;
+    if (output_shape_mismatch) {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    const matches_sublayers = solver_layer_count == sublayers.len;
+    const matches_layers = solver_layer_count == self.layers.len;
+    if (!matches_sublayers and !matches_layers) {
         return false;
     }
-    if (shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, solver_layer_count);
+    if (use_shared_grid) {
         if (shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count)) |geometry| {
             for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
                 altitude_km.* = level_geometry.altitude_km;
@@ -411,17 +388,21 @@ pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
     const sublayers = self.sublayers orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = solver_layer_count * subgrid_divisions;
-    if (attenuation_samples.len < sample_count or
+    const output_shape_mismatch =
+        attenuation_samples.len < sample_count or
         level_sample_starts.len != solver_layer_count + 1 or
-        level_altitudes_km.len != solver_layer_count + 1)
-    {
+        level_altitudes_km.len != solver_layer_count + 1;
+    if (output_shape_mismatch) {
         return false;
     }
 
-    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+    const matches_sublayers = solver_layer_count == sublayers.len;
+    const matches_layers = solver_layer_count == self.layers.len;
+    if (!matches_sublayers and !matches_layers) {
         return false;
     }
-    if (!shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, solver_layer_count);
+    if (!use_shared_grid) {
         return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             self,
             scene,

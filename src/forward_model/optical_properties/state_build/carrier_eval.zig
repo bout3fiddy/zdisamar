@@ -634,23 +634,6 @@ fn particleBoundaryCarrierFromIndex(
     return particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[row_index]);
 }
 
-pub fn sharedBoundaryCarrierAtLevel(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    level_geometry: SharedRtmLevelGeometry,
-) SharedBoundaryCarrier {
-    return sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        level_geometry,
-        null,
-    );
-}
-
 pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1138,23 +1121,6 @@ fn fillZeroRtmQuadratureLevel(
     rtm_level.phase_rayleigh2_weight = 0.0;
 }
 
-pub fn sharedActiveCarrierAtLevel(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    level_geometry: SharedRtmLevelGeometry,
-) SharedOpticalCarrier {
-    return sharedActiveCarrierAtLevelWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        level_geometry,
-        null,
-    );
-}
-
 pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1385,23 +1351,6 @@ pub fn interpolateQuadratureStateAtAltitude(
     return null;
 }
 
-pub fn quadratureCarrierAtAltitude(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    altitude_km: f64,
-) PreparedQuadratureCarrier {
-    return quadratureCarrierAtAltitudeWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        altitude_km,
-        null,
-    );
-}
-
 pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     self: *const State.PreparedOpticalState,
     wavelength_nm: f64,
@@ -1521,23 +1470,6 @@ fn normalizeSpectroscopyEvaluation(
     weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
     weighted.total_sigma_cm2_per_molecule /= total_weight;
     weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
-}
-
-pub fn sharedOpticalCarrierAtSupportRow(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
-) SharedOpticalCarrier {
-    return sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayer,
-        global_sublayer_index,
-        strong_line_state,
-        null,
-    );
 }
 
 pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
@@ -1810,23 +1742,6 @@ pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
         sublayer,
         global_sublayer_index,
         strong_line_state,
-    );
-}
-
-pub fn sharedOpticalCarrierAtAltitude(
-    self: *const State.PreparedOpticalState,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    altitude_km: f64,
-) SharedOpticalCarrier {
-    return sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
-        self,
-        wavelength_nm,
-        sublayers,
-        strong_line_states,
-        altitude_km,
-        null,
     );
 }
 

@@ -179,32 +179,6 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     }
 }
 
-pub fn fillRtmQuadratureAtWavelengthWithLayers(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer_inputs: []const transport_common.LayerInput,
-    rtm_levels: []transport_common.RtmQuadratureLevel,
-) bool {
-    // fillRtmQuadratureAtWavelengthWithLayers ---------------------------------------------------------------|
-    // Convenience route for callers that do not already hold a profile spectroscopy cache. It builds one     |
-    // cache for this wavelength and then uses the shared prepared implementation below.                      |
-    //                                                                                                        |
-    // hot path                                                                                               |
-    //   Avoid this wrapper when a caller is already filling forward layers or pseudo-spherical rows for the  |
-    //   same wavelength; pass the existing cache so profile-node spectroscopy is not repeated.               |
-    // -------------------------------------------------------------------------------------------------------|
-
-    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
-        self,
-        wavelength_nm,
-        layer_inputs,
-        rtm_levels,
-        &profile_cache,
-        true,
-    );
-}
-
 pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -243,7 +217,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     const sublayers = self.sublayers orelse return false;
     if (rtm_levels.len != layer_inputs.len + 1) return false;
 
-    if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+    if (use_shared_grid) {
         if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
             for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
                 carrier_eval.fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
@@ -424,7 +399,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     const sublayers = self.sublayers orelse return false;
     if (rtm_levels.len != layer_inputs.len + 1) return false;
 
-    if (!shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+    const use_shared_grid = shared_geometry.usesSharedRtmGrid(self, layer_inputs.len);
+    if (!use_shared_grid) {
         return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             self,
             wavelength_nm,

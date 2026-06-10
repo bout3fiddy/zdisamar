@@ -11,7 +11,6 @@ const Rayleigh = internal.reference.rayleigh;
 const SpectroscopyState = preparation.state_spectroscopy;
 const source_interfaces_module = preparation.source_interfaces;
 const PreparedOpticalState = preparation.PreparedOpticalState;
-const fillSourceInterfacesAtWavelengthWithLayers = source_interfaces_module.fillSourceInterfacesAtWavelengthWithLayers;
 
 test "shared RTM boundaries keep boundary gas and explicit rows above and below" {
     const allocator = std.testing.allocator;
@@ -219,7 +218,14 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
 
     const layer_inputs = [_]transport_common.LayerInput{ .{}, .{} };
     var source_interfaces: [3]transport_common.SourceInterfaceInput = undefined;
-    fillSourceInterfacesAtWavelengthWithLayers(&prepared, wavelength_nm, &layer_inputs, &source_interfaces);
+    var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(&prepared, wavelength_nm);
+    source_interfaces_module.fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
+        &prepared,
+        wavelength_nm,
+        &layer_inputs,
+        &source_interfaces,
+        &profile_cache,
+    );
 
     const gas_bottom = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[0].number_density_cm3 * 1.0e5;
     const gas_middle = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[2].number_density_cm3 * 1.0e5;
