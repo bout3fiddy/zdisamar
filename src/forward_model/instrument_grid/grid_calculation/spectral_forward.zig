@@ -206,6 +206,162 @@ const ForwardScratchRequirements = struct {
     }
 };
 
+fn emptyMutableSlice(comptime T: type) []T {
+    // emptyMutableSlice -------------------------------------------------------------------------------------------------|
+    // Return the shared zero-length slice used for optional scratch buffers that are not needed for this route.          |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    return @constCast(&[_]T{});
+}
+
+fn allocScratchSlice(comptime T: type, allocator: Allocator, count: usize) ![]T {
+    // allocScratchSlice -------------------------------------------------------------------------------------------------|
+    // Allocate a scratch slice only when the batch route needs rows of this type.                                        |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (count == 0) return emptyMutableSlice(T);
+    return allocator.alloc(T, count);
+}
+
+fn freeScratchSlice(comptime T: type, allocator: Allocator, rows: []T) void {
+    // freeScratchSlice --------------------------------------------------------------------------------------------------|
+    // Release an optional scratch slice allocated by allocScratchSlice.                                                  |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (rows.len == 0) return;
+    allocator.free(rows);
+}
+
+// ForwardScratchBuffers -------------------------------------------------------------------------------------------------|
+// Worker-local transport buffers reused for every high-resolution forward miss assigned to one worker.                   |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 136 B (0.133 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0.. 15] layer_inputs                     : []common.LayerInput                                                      |
+// [ 16.. 31] source_interfaces                : []common.SourceInterfaceInput                                            |
+// [ 32.. 47] rtm_quadrature_levels            : []common.RtmQuadratureLevel                                              |
+// [ 48.. 63] pseudo_spherical_samples         : []common.PseudoSphericalSample                                           |
+// [ 64.. 79] pseudo_spherical_level_starts    : []usize                                                                  |
+// [ 80.. 95] pseudo_spherical_level_altitudes : []f64                                                                    |
+// [ 96..135] support_carrier_cache            : CarrierEval.SupportRowScalarCache                                        |
+//                                                                                                                        |
+// referenced storage: all slices and the support carrier cache are owned by this row and released together.              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 3 cache lines at 64 B per line                                                                             |
+// footprint: per worker = 136 B (0.133 KiB); total also includes referenced scratch arrays                               |
+const ForwardScratchBuffers = struct {
+    layer_inputs: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    pseudo_spherical_level_altitudes: []f64,
+    support_carrier_cache: CarrierEval.SupportRowScalarCache,
+
+    fn init(
+        allocator: Allocator,
+        requirements: ForwardScratchRequirements,
+    ) !ForwardScratchBuffers {
+        // ForwardScratchBuffers.init ------------------------------------------------------------------------------------|
+        // Allocate the transport rows needed by a worker-local scratch bundle. Empty optional routes keep                |
+        // zero-length shared slices, so deinit has one clear ownership table to release.                                 |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const layer_inputs = try allocator.alloc(common.LayerInput, requirements.layer_count);
+        errdefer allocator.free(layer_inputs);
+
+        const source_interfaces = try allocScratchSlice(
+            common.SourceInterfaceInput,
+            allocator,
+            requirements.source_interface_count,
+        );
+        errdefer freeScratchSlice(common.SourceInterfaceInput, allocator, source_interfaces);
+
+        const rtm_quadrature_levels = try allocScratchSlice(
+            common.RtmQuadratureLevel,
+            allocator,
+            requirements.rtm_quadrature_level_count,
+        );
+        errdefer freeScratchSlice(common.RtmQuadratureLevel, allocator, rtm_quadrature_levels);
+
+        const pseudo_spherical_samples = try allocScratchSlice(
+            common.PseudoSphericalSample,
+            allocator,
+            requirements.pseudo_spherical_sample_count,
+        );
+        errdefer freeScratchSlice(common.PseudoSphericalSample, allocator, pseudo_spherical_samples);
+
+        const pseudo_spherical_level_starts = try allocScratchSlice(
+            usize,
+            allocator,
+            requirements.pseudo_spherical_level_count,
+        );
+        errdefer freeScratchSlice(usize, allocator, pseudo_spherical_level_starts);
+
+        const pseudo_spherical_level_altitudes = try allocScratchSlice(
+            f64,
+            allocator,
+            requirements.pseudo_spherical_level_count,
+        );
+        errdefer freeScratchSlice(f64, allocator, pseudo_spherical_level_altitudes);
+
+        var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(
+            allocator,
+            requirements.support_cache_count,
+        );
+        errdefer support_carrier_cache.deinit(allocator);
+
+        return .{
+            .layer_inputs = layer_inputs,
+            .source_interfaces = source_interfaces,
+            .rtm_quadrature_levels = rtm_quadrature_levels,
+            .pseudo_spherical_samples = pseudo_spherical_samples,
+            .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
+            .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
+            .support_carrier_cache = support_carrier_cache,
+        };
+    }
+
+    fn deinit(self: *ForwardScratchBuffers, allocator: Allocator) void {
+        // ForwardScratchBuffers.deinit ----------------------------------------------------------------------------------|
+        // Release every transport scratch allocation owned by this worker.                                               |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        allocator.free(self.layer_inputs);
+        freeScratchSlice(common.SourceInterfaceInput, allocator, self.source_interfaces);
+        freeScratchSlice(common.RtmQuadratureLevel, allocator, self.rtm_quadrature_levels);
+        freeScratchSlice(common.PseudoSphericalSample, allocator, self.pseudo_spherical_samples);
+        freeScratchSlice(usize, allocator, self.pseudo_spherical_level_starts);
+        freeScratchSlice(f64, allocator, self.pseudo_spherical_level_altitudes);
+        self.support_carrier_cache.deinit(allocator);
+        self.* = undefined;
+    }
+
+    fn forwardInputScratch(
+        self: *ForwardScratchBuffers,
+        profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    ) ForwardInput.ForwardInputScratch {
+        // ForwardScratchBuffers.forwardInputScratch ---------------------------------------------------------------------|
+        // Return the borrowed buffer view needed by forward_input.zig. The worker keeps owning all backing               |
+        // arrays; this view only names the subset refreshed for one wavelength.                                          |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        return .{
+            .layer_inputs = self.layer_inputs,
+            .source_interfaces = self.source_interfaces,
+            .rtm_quadrature_levels = self.rtm_quadrature_levels,
+            .pseudo_spherical_samples = self.pseudo_spherical_samples,
+            .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts,
+            .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes,
+            .support_carrier_cache = &self.support_carrier_cache,
+            .profile_spectroscopy_cache = profile_spectroscopy_cache,
+        };
+    }
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // ForwardSampleScratch --------------------------------------------------------------------------------------------------|
 // Worker-local scratch storage for repeated high-resolution forward misses.                                              |
 //                                                                                                                        |
@@ -213,13 +369,7 @@ const ForwardScratchRequirements = struct {
 // size: 3304 B (3.227 KiB) normally; 3320 B (3.242 KiB) with trace phase timing, align: 8 B                              |
 //                                                                                                                        |
 // memory                                                                                                                 |
-// [   0..  15] layer_inputs                     : []common.LayerInput                                                    |
-// [  16..  31] source_interfaces                : []common.SourceInterfaceInput                                          |
-// [  32..  47] rtm_quadrature_levels            : []common.RtmQuadratureLevel                                            |
-// [  48..  63] pseudo_spherical_samples         : []common.PseudoSphericalSample                                         |
-// [  64..  79] pseudo_spherical_level_starts    : []usize                                                                |
-// [  80..  95] pseudo_spherical_level_altitudes : []f64                                                                  |
-// [  96.. 135] support_carrier_cache            : CarrierEval.SupportRowScalarCache                                      |
+// [   0.. 135] buffers                          : ForwardScratchBuffers                                                  |
 // [ 136..3303] labos_workspace                  : labos.Workspace                                                        |
 //                                                                                                                        |
 // trace phase timing build                                                                                               |
@@ -231,13 +381,7 @@ const ForwardScratchRequirements = struct {
 // cache span: 52 cache lines at 64 B per line                                                                            |
 // footprint: per instance = 3304 B (3.227 KiB) normally; 3320 B (3.242 KiB) with trace phase timing                      |
 const ForwardSampleScratch = struct {
-    layer_inputs: []common.LayerInput,
-    source_interfaces: []common.SourceInterfaceInput,
-    rtm_quadrature_levels: []common.RtmQuadratureLevel,
-    pseudo_spherical_samples: []common.PseudoSphericalSample,
-    pseudo_spherical_level_starts: []usize,
-    pseudo_spherical_level_altitudes: []f64,
-    support_carrier_cache: CarrierEval.SupportRowScalarCache,
+    buffers: ForwardScratchBuffers,
     labos_workspace: labos.Workspace,
 
     fn initInto(
@@ -253,67 +397,10 @@ const ForwardSampleScratch = struct {
         //   workspace state private to the worker.                                                                       |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        const layer_inputs = try allocator.alloc(common.LayerInput, requirements.layer_count);
-        errdefer allocator.free(layer_inputs);
-        var source_interfaces: []common.SourceInterfaceInput = @constCast(&[_]common.SourceInterfaceInput{});
-        if (requirements.source_interface_count != 0) {
-            source_interfaces = try allocator.alloc(
-                common.SourceInterfaceInput,
-                requirements.source_interface_count,
-            );
-        }
-
-        errdefer if (source_interfaces.len != 0) allocator.free(source_interfaces);
-        var rtm_quadrature_levels: []common.RtmQuadratureLevel = @constCast(&[_]common.RtmQuadratureLevel{});
-        if (requirements.rtm_quadrature_level_count != 0) {
-            rtm_quadrature_levels = try allocator.alloc(
-                common.RtmQuadratureLevel,
-                requirements.rtm_quadrature_level_count,
-            );
-        }
-        errdefer if (rtm_quadrature_levels.len != 0) allocator.free(rtm_quadrature_levels);
-
-        var pseudo_spherical_samples: []common.PseudoSphericalSample =
-            @constCast(&[_]common.PseudoSphericalSample{});
-        if (requirements.pseudo_spherical_level_count != 0) {
-            pseudo_spherical_samples = try allocator.alloc(
-                common.PseudoSphericalSample,
-                requirements.pseudo_spherical_sample_count,
-            );
-        }
-        errdefer if (pseudo_spherical_samples.len != 0) allocator.free(pseudo_spherical_samples);
-        var pseudo_spherical_level_starts: []usize = @constCast(&[_]usize{});
-        if (requirements.pseudo_spherical_level_count != 0) {
-            pseudo_spherical_level_starts = try allocator.alloc(
-                usize,
-                requirements.pseudo_spherical_level_count,
-            );
-        }
-
-        errdefer if (pseudo_spherical_level_starts.len != 0) allocator.free(pseudo_spherical_level_starts);
-        var pseudo_spherical_level_altitudes: []f64 = @constCast(&[_]f64{});
-        if (requirements.pseudo_spherical_level_count != 0) {
-            pseudo_spherical_level_altitudes = try allocator.alloc(
-                f64,
-                requirements.pseudo_spherical_level_count,
-            );
-        }
-        errdefer if (pseudo_spherical_level_altitudes.len != 0) allocator.free(pseudo_spherical_level_altitudes);
-
-        var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(
-            allocator,
-            requirements.support_cache_count,
-        );
-        errdefer support_carrier_cache.deinit(allocator);
+        const buffers = try ForwardScratchBuffers.init(allocator, requirements);
 
         self.* = .{
-            .layer_inputs = layer_inputs,
-            .source_interfaces = source_interfaces,
-            .rtm_quadrature_levels = rtm_quadrature_levels,
-            .pseudo_spherical_samples = pseudo_spherical_samples,
-            .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
-            .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
-            .support_carrier_cache = support_carrier_cache,
+            .buffers = buffers,
             .labos_workspace = labos.Workspace.init(allocator),
         };
     }
@@ -324,14 +411,7 @@ const ForwardSampleScratch = struct {
         // ---------------------------------------------------------------------------------------------------------------|
 
         self.labos_workspace.deinit();
-        allocator.free(self.layer_inputs);
-        if (self.source_interfaces.len != 0) allocator.free(self.source_interfaces);
-        if (self.rtm_quadrature_levels.len != 0) allocator.free(self.rtm_quadrature_levels);
-        if (self.pseudo_spherical_samples.len != 0) allocator.free(self.pseudo_spherical_samples);
-
-        if (self.pseudo_spherical_level_starts.len != 0) allocator.free(self.pseudo_spherical_level_starts);
-        if (self.pseudo_spherical_level_altitudes.len != 0) allocator.free(self.pseudo_spherical_level_altitudes);
-        self.support_carrier_cache.deinit(allocator);
+        self.buffers.deinit(allocator);
         self.* = undefined;
     }
 
@@ -340,20 +420,10 @@ const ForwardSampleScratch = struct {
         profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     ) ForwardInput.ForwardInputScratch {
         // ForwardSampleScratch.forwardInputScratch ----------------------------------------------------------------------|
-        // Return the borrowed buffer view needed by forward_input.zig. The worker keeps owning all backing               |
-        // arrays; this view only names the subset refreshed for one wavelength.                                          |
+        // Return the borrowed buffer view owned by ForwardScratchBuffers.                                                |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        return .{
-            .layer_inputs = self.layer_inputs,
-            .source_interfaces = self.source_interfaces,
-            .rtm_quadrature_levels = self.rtm_quadrature_levels,
-            .pseudo_spherical_samples = self.pseudo_spherical_samples,
-            .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts,
-            .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes,
-            .support_carrier_cache = &self.support_carrier_cache,
-            .profile_spectroscopy_cache = profile_spectroscopy_cache,
-        };
+        return self.buffers.forwardInputScratch(profile_spectroscopy_cache);
     }
 };
 
