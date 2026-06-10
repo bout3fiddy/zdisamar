@@ -148,6 +148,11 @@ pub fn fillPseudoSphericalGridAtWavelength(
     level_sample_starts: []usize,
     level_altitudes_km: []f64,
 ) bool {
+    // fillPseudoSphericalGridAtWavelength ------------------------------------------------------------------ |
+    // Convenience route for pseudo-spherical attenuation when the caller does not already hold a profile     |
+    // spectroscopy cache. The delegated route owns the shared/direct geometry choice.                        |
+    // -------------------------------------------------------------------------------------------------------|
+
     var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
     return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
         self,
@@ -243,6 +248,10 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     } else {
         level_altitudes_km[0] = shared_geometry.levelAltitudeFromSublayers(sublayers, 0);
         for (1..solver_layer_count) |ilevel| {
+
+            // Solver-level boundaries come from PreparedLayer support spans. This is an index-only read, but
+            // keeping the span on PreparedLayer keeps pseudo-spherical, forward-layer, and RTM quadrature
+            // fallback routes aligned to the same support-row contract.
             const layer = &self.layers[ilevel];
             const start_index: usize = @intCast(layer.sublayer_start_index);
             level_altitudes_km[ilevel] = shared_geometry.levelAltitudeFromSublayers(sublayers, start_index);
@@ -267,6 +276,10 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             }
 
             const layer = &self.layers[solver_level];
+
+            // The direct fallback expands one PreparedLayer support span into attenuation samples. The wide
+            // row is read by pointer and is not copied; a separate span column would need to be kept in sync
+            // with the exact same layer order used by forward_layers and rtm_quadrature.
             const start: usize = @intCast(layer.sublayer_start_index);
             const count: usize = @intCast(layer.sublayer_count);
             if (count == 0) return false;

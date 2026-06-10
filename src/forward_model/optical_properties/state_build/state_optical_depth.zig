@@ -147,6 +147,11 @@ pub fn evaluateLayerAtWavelength(
     sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
 ) EvaluatedLayer {
+    // evaluateLayerAtWavelength ---------------------------------------------------------------------------- |
+    // Evaluate one layer/support span without a caller-owned profile cache. This is the simple public helper;|
+    // repeated wavelength routes should pass the cache to the implementation below.                          |
+    // -------------------------------------------------------------------------------------------------------|
+
     return evaluateLayerAtWavelengthWithSpectroscopyCache(
         self,
         scene,
@@ -173,8 +178,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     // Evaluate one physical layer or support-row span at one wavelength.                                     |
     //                                                                                                        |
     // hot path                                                                                               |
-    // used by atmospheric budgets and non-shared layer routes.                                               |
-    // work: accumulate sublayer absorption, scattering, CIA, particles, and phase numerator fields.          |
+    //   Used by atmospheric budgets and non-shared layer routes. The loop walks PreparedSublayer rows and    |
+    //   accumulates absorption, scattering, CIA, particle, and phase numerator fields into one result row.   |
     //                                                                                                        |
     // math                                                                                                   |
     // per sublayer tau_abs = sigma_cont*N_cont + sigma_xs*N_xs + sigma_line*N_line                           |
