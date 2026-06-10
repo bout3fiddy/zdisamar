@@ -57,6 +57,8 @@ const Allocator = std.mem.Allocator;
 //   row payload maps live in state.zig beside their writers/readers. PreparedLayer is 208 B, PreparedSublayer |
 //   is 256 B, SharedRtmGeometry is a 32 B slice header, and GeneratedLutAsset is 216 B. Keeping those layout  |
 //   boxes beside the row definitions prevents this owner/view file from becoming a stale duplicate.           |
+//   tests/unit/forward_model/optical_properties/state_build/root_test.zig guards this header's size,          |
+//   alignment, and offsets with @sizeOf/@alignOf/@offsetOf.                                                   |
 //                                                                                                             |
 // hot reads                                                                                                   |
 //   Repeated wavelength paths read this header for layer/support rows, aerosol phase coefficients,            |

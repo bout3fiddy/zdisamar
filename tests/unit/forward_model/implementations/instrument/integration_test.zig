@@ -12,6 +12,13 @@ const usesIntegratedInstrumentSampling = integration.usesIntegratedInstrumentSam
 const ReferenceData = internal.reference_data;
 const default_integration_sample_count = integration.default_integration_sample_count;
 
+test "adaptive kernel cache layout matches documented comments" {
+    try std.testing.expectEqual(@as(usize, 20512), @sizeOf(integration.AdaptiveKernelCache));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(integration.AdaptiveKernelCache));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(integration.AdaptiveKernelCache, "plan"));
+    try std.testing.expectEqual(@as(usize, 20504), @offsetOf(integration.AdaptiveKernelCache, "ready"));
+}
+
 test "high-resolution integration retains the full symmetric sampling span" {
     const support = [_]Instrument.OperationalBandSupport{.{
         .id = "primary",
