@@ -2,23 +2,36 @@ const errors = @import("../common/errors.zig");
 const units = @import("../common/units.zig");
 
 // Spectrum.zig -----------------------------------------------------------------------------------------------|
-// Public spectral-grid request row for nominal scene wavelengths.                                             |
+// Public nominal wavelength-grid row carried by Scene. It is the small input-side description of how many     |
+// product samples the caller wants and, when no measured wavelength vector is present, where those nominal    |
+// samples are placed. It is not the dense forward-sample plan used by the RTM.                                |
 //                                                                                                             |
-// used by                                                                                                     |
-//   Scene carries SpectralGrid as the fallback nominal wavelength axis                                        |
-//   wavelength_sampling.zig resolves it with optional measured wavelengths into product rows                  |
-//   instrument integration and O2 A validation use start/end/sample_count for support and shape checks        |
-//   Scene.lutCompatibilityKey records uniform-grid count or measured-wavelength hashes for LUT selection      |
+// route                                                                                                       |
+//   Scene.spectral_grid                                                                                       |
+//     -> Scene.validate rejects empty or invalid nominal axes                                                 |
+//     -> simulate.buildSimulationSetup copies the row into grid.SpectralGrid and grid.ResolvedAxis            |
+//     -> wavelength_sampling builds retained product rows and forward-cache misses                            |
+//     -> output summaries, diagnostics, and validation helpers report or truncate the product sample count    |
 //                                                                                                             |
-// main path                                                                                                   |
-//   validate delegates wavelength bounds to common units and rejects zero sample_count                        |
+// measured-wavelength boundary                                                                                |
+//   SpectralGrid is the fallback uniform nominal axis. ObservationModel.measured_wavelengths_nm can replace   |
+//   the effective sample locations, but Scene.validate still requires the measured vector length to match     |
+//   sample_count. LUT keys hash either the uniform count or the measured-wavelength hash so retained assets   |
+//   cannot be reused for a different product axis.                                                            |
 //                                                                                                             |
-// boundary                                                                                                    |
-//   SpectralGrid describes a uniform nominal axis only. Explicit measured wavelength vectors live in          |
-//   ObservationModel and override these start/end values where the product path asks for effective samples.   |
+// setup consumers                                                                                             |
+//   wavelengthPlanKey hashes start_nm, end_nm, and sample_count before deciding whether ProductStorage can    |
+//   reuse a wavelength plan. band_means walks the uniform axis when no operational reference grid is present. |
+//   forward_layers uses the span and sample_count to form the scalar spectral quadrature weight passed to RTM.|
+//                                                                                                             |
+// validation contract                                                                                         |
+//   common.units.WavelengthRange checks finite start/end in nanometers and start < end. This file adds the    |
+//   non-empty sample-count requirement because a product grid with zero rows cannot size output buffers,      |
+//   retained wavelength plans, or validation spectra.                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-//   This is a 24 B value row with no referenced storage, so it can be copied freely in setup code.            |
+//   This is a 24 B value row with no referenced storage or deinit path. It can be copied freely in setup code;|
+//   repeated wavelength loops use prepared sampling rows instead of rereading this public input shape.        |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralGrid -----------------------------------------------------------------------------------------------|
@@ -41,6 +54,17 @@ pub const SpectralGrid = struct {
     sample_count: u32 = 0,
 
     pub fn validate(self: SpectralGrid) errors.Error!void {
+        // SpectralGrid.validate ------------------------------------------------------------------------------|
+        // Validate the nominal axis before Scene builds wavelength plans or output buffers.                   |
+        //                                                                                                     |
+        // checks                                                                                              |
+        //   WavelengthRange : finite nanometer bounds with start_nm < end_nm                                  |
+        //   sample_count    : at least one product sample                                                     |
+        //                                                                                                     |
+        // error map                                                                                           |
+        //   unit-level InvalidRange/InvalidValue both become the public InvalidRequest error used by Scene.   |
+        // ----------------------------------------------------------------------------------------------------|
+
         (units.WavelengthRange{
             .start_nm = self.start_nm,
             .end_nm = self.end_nm,
