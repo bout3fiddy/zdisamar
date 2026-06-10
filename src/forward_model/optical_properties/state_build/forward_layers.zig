@@ -45,13 +45,6 @@ const centimeters_per_kilometer = 1.0e5;
 //   omega0 = scattering optical depth / tau_ext, clamped into physical bounds.                               |
 // -----------------------------------------------------------------------------------------------------------|
 
-fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
-    const transport_dphi_deg = @mod(180.0 - relative_azimuth_deg, 360.0);
-
-    // LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
-    return std.math.degreesToRadians(transport_dphi_deg);
-}
-
 pub fn toForwardInputWithLayers(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -155,13 +148,16 @@ pub fn forwardInputFromOpticalDepths(
     else
         prepared.effective_single_scatter_albedo;
 
+    // LABOS transport azimuth uses radians of (180 deg - relative_azimuth) mod 360.
+    const transport_dphi_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0));
+
     return .{
         .wavelength_nm = wavelength_nm,
         .spectral_weight = @max(spectral_weight, 1.0e-6),
         .air_mass_factor = prepared.effective_air_mass_factor,
         .mu0 = mu0,
         .muv = muv,
-        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
+        .relative_azimuth_rad = transport_dphi_rad,
         .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
         .gas_absorption_optical_depth = optical_depths.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = optical_depths.gas_scattering_optical_depth,

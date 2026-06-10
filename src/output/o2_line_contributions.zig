@@ -185,22 +185,41 @@ pub fn build(
     //   memory   : ArrayList grows to max_rows; total_row_count tracks the untruncated row count              |
     //                                                                                                         |
     // calls                                                                                                   |
-    //   primaryO2LineList                                                                                     |
     //   appendRowsForWavelength                                                                               |
     // --------------------------------------------------------------------------------------------------------|
 
     if (wavelengths_nm.len == 0) return error.EmptyWavelengths;
     if (max_rows == 0) return error.InvalidRowLimit;
 
-    const line_list = primaryO2LineList(prepared) orelse return error.O2LineListUnavailable;
+    const line_list = prepared.spectroscopy_lines orelse find_o2_line_list: {
+        for (prepared.line_absorbers) |line_absorber| {
+            if (line_absorber.species == .o2) break :find_o2_line_list line_absorber.line_list;
+        }
+
+        return error.O2LineListUnavailable;
+    };
+
+    const strong_line_count = if (line_list.hasStrongLineSidecars())
+        @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars)
+    else
+        0;
 
     var rows = std.ArrayList(O2LineContributionRow).empty;
     errdefer rows.deinit(allocator);
-    try rows.ensureTotalCapacity(allocator, @min(max_rows, line_list.lines.len + strongLineCount(line_list)));
+    try rows.ensureTotalCapacity(allocator, @min(max_rows, line_list.lines.len + strong_line_count));
 
     var total_row_count: usize = 0;
+    const profile_node_count = count_profile_nodes: {
+        const node_count = prepared.spectroscopy_profile_altitudes_km.len;
+        if (node_count == 0) break :count_profile_nodes null;
+        if (prepared.spectroscopy_profile_pressures_hpa.len != node_count) break :count_profile_nodes null;
+        if (prepared.spectroscopy_profile_temperatures_k.len != node_count) break :count_profile_nodes null;
+
+        break :count_profile_nodes node_count;
+    };
+
     for (wavelengths_nm) |wavelength_nm| {
-        if (profileNodeCount(prepared)) |node_count| {
+        if (profile_node_count) |node_count| {
             for (0..node_count) |node_index| {
                 try appendRowsForWavelength(
                     allocator,
@@ -240,27 +259,6 @@ pub fn build(
         .total_row_count = total_row_count,
         .truncated = total_row_count > max_rows,
     };
-}
-
-fn primaryO2LineList(prepared: *const PreparedOpticalState) ?SpectroscopyLineList {
-    if (prepared.spectroscopy_lines) |line_list| return line_list;
-    for (prepared.line_absorbers) |line_absorber| {
-        if (line_absorber.species == .o2) return line_absorber.line_list;
-    }
-    return null;
-}
-
-fn profileNodeCount(prepared: *const PreparedOpticalState) ?usize {
-    const node_count = prepared.spectroscopy_profile_altitudes_km.len;
-    if (node_count == 0) return null;
-    if (prepared.spectroscopy_profile_pressures_hpa.len != node_count) return null;
-    if (prepared.spectroscopy_profile_temperatures_k.len != node_count) return null;
-    return node_count;
-}
-
-fn strongLineCount(line_list: SpectroscopyLineList) usize {
-    if (!line_list.hasStrongLineSidecars()) return 0;
-    return @min(line_list.strong_lines.?.len, SpectroscopyTypes.max_strong_line_sidecars);
 }
 
 fn appendRowsForWavelength(
@@ -393,6 +391,7 @@ fn weakLineRow(
         if (contribution.total_sigma_cm2_per_molecule == 0.0) break :choose_status .weak_zero_after_cutoff;
         break :choose_status .weak_included;
     };
+    const matched_strong_line_index: u32 = if (matched_strong_index) |index| @intCast(index) else missing_index;
 
     return .{
         .wavelength_nm = wavelength_nm,
@@ -402,7 +401,7 @@ fn weakLineRow(
         .status = status,
         .line_index = @intCast(start_index + line_index),
         .strong_line_index = missing_index,
-        .matched_strong_line_index = optionalIndex(matched_strong_index),
+        .matched_strong_line_index = matched_strong_line_index,
         .gas_index = line.gas_index,
         .isotope_number = line.isotope_number,
         .isotopologue_code = SpectroscopyStrongLines.deriveIsotopologueCode(line.gas_index, line.isotope_number),
@@ -578,10 +577,6 @@ fn strongAnchorLine(
         .line = &relevant_lines[relevant_index_usize],
         .line_index = @intCast(relevant_start_index + relevant_index_usize),
     };
-}
-
-fn optionalIndex(index: ?usize) u32 {
-    return if (index) |value| @intCast(value) else missing_index;
 }
 
 fn zeroEvaluation() ReferenceData.SpectroscopyEvaluation {

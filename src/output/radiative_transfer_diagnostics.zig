@@ -141,7 +141,9 @@ pub fn build(
     const rows = try allocator.alloc(RadiativeTransferDiagnosticRow, budget.len);
     errdefer allocator.free(rows);
 
-    const airmass = airmassFactor(scene);
+    const mu0 = @max(scene.geometry.solarCosineAtAltitude(0.0), 0.05);
+    const muv = @max(scene.geometry.viewingCosineAtAltitude(0.0), 0.05);
+    const airmass = (1.0 / mu0) + (1.0 / muv);
     var row_index: usize = 0;
     while (row_index < budget.len) {
         const wavelength_nm = budget[row_index].wavelength_nm;
@@ -238,10 +240,4 @@ fn interpolateSpectrum(spectrum: ?SpectrumView, column: SpectrumColumn, waveleng
     if (denominator == 0.0) return values[upper_index];
     const blend = (wavelength_nm - lower_wavelength) / denominator;
     return values[lower_index] + blend * (values[upper_index] - values[lower_index]);
-}
-
-fn airmassFactor(scene: *const Scene) f64 {
-    const mu0 = @max(scene.geometry.solarCosineAtAltitude(0.0), 0.05);
-    const muv = @max(scene.geometry.viewingCosineAtAltitude(0.0), 0.05);
-    return (1.0 / mu0) + (1.0 / muv);
 }

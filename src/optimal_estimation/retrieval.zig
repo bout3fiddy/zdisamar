@@ -426,7 +426,10 @@ pub const BatchResult = struct {
         result.state = try allocator.alloc(f64, run_count * state_count);
         result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
 
-        initializeBatchOutput(result.output());
+        const batch = result.output();
+        for (0..batch.run_count) |run_index| {
+            markBatchRunPending(batch, run_index);
+        }
         return result;
     }
 
@@ -499,12 +502,6 @@ const BatchOutput = struct {
     history_state: []f64,
 };
 // -----------------------------------------------------------------------------------------------------------|
-
-fn initializeBatchOutput(batch: BatchOutput) void {
-    for (0..batch.run_count) |run_index| {
-        markBatchRunPending(batch, run_index);
-    }
-}
 
 fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
     for (0..result.run_count) |run_index| {
@@ -716,11 +713,6 @@ const StateSpace = struct {
 const ProfilePreparationSession = struct {
     borrowed: OpticsPrepare.BorrowedProfilePreparation = .{},
     captured: bool = false,
-
-    fn borrowedPreparation(self: *const ProfilePreparationSession) ?*const OpticsPrepare.BorrowedProfilePreparation {
-        if (!self.captured) return null;
-        return &self.borrowed;
-    }
 
     fn captureFromPrepared(
         self: *ProfilePreparationSession,
@@ -1263,6 +1255,8 @@ fn runO2ABatchRange(
         if (batch.status[run_index] != @intFromEnum(BatchRunStatus.pending)) continue;
 
         const state_offset = run_index * state_template.len;
+        const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
+            batch.state_count;
         const summary = runPreparedO2AStartSummary(
             allocator,
             prepared_case,
@@ -1272,7 +1266,7 @@ fn runO2ABatchRange(
             controls,
             run_index + 1,
             range_context,
-            batchHistoryState(batch.*, run_index),
+            batch.history_state[history_offset .. history_offset + batch.history_capacity * batch.state_count],
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => {
@@ -1319,19 +1313,14 @@ fn runPreparedO2AStartSummary(
     );
     Telemetry.setContext(start_context);
     defer Telemetry.setContext(previous_context);
-    return runPreparedO2ASummary(
+    return runPreparedO2ACore(
         allocator,
         prepared_case,
         run_specs_buffer[0..state_template.len],
         controls,
+        null,
         history_state,
     );
-}
-
-fn batchHistoryState(batch: BatchOutput, run_index: usize) []f64 {
-    const history_offset = (run_index * batch.history_stride + batch.history_start_offset) *
-        batch.state_count;
-    return batch.history_state[history_offset .. history_offset + batch.history_capacity * batch.state_count];
 }
 
 // Worker descriptor for one contiguous slice of a native OE start batch.
@@ -1513,16 +1502,6 @@ fn runPreparedO2A(
         empty_history[0..],
     );
     return result;
-}
-
-fn runPreparedO2ASummary(
-    allocator: Allocator,
-    prepared_case: *RetrievalPreparedCase,
-    state_specs: []const StateSpec,
-    controls: Controls,
-    history_state: []f64,
-) !RunSummary {
-    return runPreparedO2ACore(allocator, prepared_case, state_specs, controls, null, history_state);
 }
 
 fn runPreparedO2ACore(
@@ -1947,13 +1926,17 @@ fn evaluateO2AState(
         // The mutable scene is retrieval-owned. Solar rewindow support is
         // derived from the instrument grid and line-list plan, so it is
         // installed once and then reused while optical state is refreshed.
+        const borrowed_profile_preparation = if (prepared_case.profile_preparation.captured)
+            &prepared_case.profile_preparation.borrowed
+        else
+            null;
         break :prepared_runtime_optics try o2a_runtime.prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
             allocator,
             &prepared_case.scene,
             &prepared_case.loaded_inputs,
             &prepared_case.weak_cutoff_grid,
             &prepared_case.solar_rewindowed,
-            prepared_case.profile_preparation.borrowedPreparation(),
+            borrowed_profile_preparation,
         );
     };
     defer prepared_optics.deinit(allocator);

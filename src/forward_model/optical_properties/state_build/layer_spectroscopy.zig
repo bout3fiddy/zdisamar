@@ -265,7 +265,10 @@ fn fillProfileSpectroscopyCacheValues(
     // worker and chunk zones expose parallel cache-fill cost in timeline traces.                              |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
+    const worker_count = work_partition.preferredWorkerCount(
+        cache.node_count,
+        min_parallel_profile_cache_node_count,
+    );
     if (worker_count == 1) {
         fillProfileSpectroscopyCacheValueRange(
             cache,
@@ -405,10 +408,6 @@ fn fillProfileSpectroscopyCacheValueRange(
         cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
         cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
     }
-}
-
-fn preferredProfileCacheWorkerCount(node_count: usize) usize {
-    return work_partition.preferredWorkerCount(node_count, min_parallel_profile_cache_node_count);
 }
 
 fn sampleCachedEndpointSecant(

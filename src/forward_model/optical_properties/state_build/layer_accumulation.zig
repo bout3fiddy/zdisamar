@@ -496,26 +496,6 @@ const LayerSums = struct {
         self.aerosol_reference_wavelength_sum += terms.aerosol_optical_depth * terms.aerosol_reference_wavelength_nm;
         self.aerosol_angstrom_sum += terms.aerosol_optical_depth * terms.aerosol_angstrom_exponent;
     }
-
-    fn temperature(self: LayerSums) f64 {
-        return if (self.density_weight == 0.0) 0.0 else self.temperature_weighted / self.density_weight;
-    }
-
-    fn pressure(self: LayerSums) f64 {
-        return if (self.density_weight == 0.0) 0.0 else self.pressure_weighted / self.density_weight;
-    }
-
-    fn meanLineSigma(self: LayerSums, sublayer_count: u32) f64 {
-        return self.line_sigma / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
-
-    fn meanLineMixing(self: LayerSums, sublayer_count: u32) f64 {
-        return self.line_mixing / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
-
-    fn meanTemperatureDerivative(self: LayerSums, sublayer_count: u32) f64 {
-        return self.d_cross_section_d_temperature / @as(f64, @floatFromInt(@max(sublayer_count, 1)));
-    }
 };
 // ------------------------------------------------------------------------------------------------------------   |
 
@@ -931,7 +911,10 @@ fn populateParitySupportRowsParallel(
     //   reduceParityLayer                                                                                        |
     // ---------------------------------------------------------------------------------------------------------  |
 
-    const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
+    const worker_count = work_partition.preferredWorkerCount(
+        context.sublayers.len,
+        min_parallel_parity_support_row_count,
+    );
     if (worker_count == 1) {
         return populateParitySupportRows(
             allocator,
@@ -985,7 +968,11 @@ fn populateParitySupportRowsParallel(
     if (error_state.err) |err| return err;
 
     for (workers) |worker| {
-        mergeParitySupportTotals(totals, worker.totals);
+        totals.air_column_density_factor += worker.totals.air_column_density_factor;
+        totals.oxygen_column_density_factor += worker.totals.oxygen_column_density_factor;
+        totals.column_density_factor += worker.totals.column_density_factor;
+        totals.cia_pair_path_factor_cm5 += worker.totals.cia_pair_path_factor_cm5;
+        totals.total_d_optical_depth_d_temperature += worker.totals.total_d_optical_depth_d_temperature;
     }
 }
 
@@ -1092,10 +1079,6 @@ fn canParallelPopulateParitySupportRows(
         absorbers.strong_line_states == null;
 }
 
-fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
-    return work_partition.preferredWorkerCount(row_count, min_parallel_parity_support_row_count);
-}
-
 fn seedParitySupportRowLayerIndices(context: *Context) void {
     if (context.layers.len == 0) return;
     var layer_index: usize = 0;
@@ -1112,14 +1095,6 @@ fn seedParitySupportRowLayerIndices(context: *Context) void {
         else
             0);
     }
-}
-
-fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
-    total.air_column_density_factor += local.air_column_density_factor;
-    total.oxygen_column_density_factor += local.oxygen_column_density_factor;
-    total.column_density_factor += local.column_density_factor;
-    total.cia_pair_path_factor_cm5 += local.cia_pair_path_factor_cm5;
-    total.total_d_optical_depth_d_temperature += local.total_d_optical_depth_d_temperature;
 }
 
 fn reduceParityLayer(
@@ -1294,8 +1269,12 @@ fn populateLayer(
     }
 
     const density = layer_sums.density;
-    const temperature = layer_sums.temperature();
-    const pressure = layer_sums.pressure();
+    const density_weight = layer_sums.density_weight;
+    const density_weight_reciprocal = if (density_weight == 0.0) 0.0 else 1.0 / density_weight;
+    const temperature = layer_sums.temperature_weighted * density_weight_reciprocal;
+    const pressure = layer_sums.pressure_weighted * density_weight_reciprocal;
+    const sublayer_count_f64 = @as(f64, @floatFromInt(@max(geometry.sublayer_count, 1)));
+
     const gas_optical_depth = layer_sums.gas_optical_depth;
     const aerosol_optical_depth = layer_sums.aerosol_optical_depth;
     const aerosol_base_optical_depth = layer_sums.aerosol_base_optical_depth;
@@ -1337,7 +1316,7 @@ fn populateLayer(
     totals.total_aerosol_base_optical_depth += aerosol_base_optical_depth;
     totals.total_scattering_optical_depth += scattering;
     totals.depolarization_weighted += depolarization * optical_depth;
-    const layer_temperature_derivative = layer_sums.meanTemperatureDerivative(geometry.sublayer_count);
+    const layer_temperature_derivative = layer_sums.d_cross_section_d_temperature / sublayer_count_f64;
 
     layer.* = .{
         .layer_index = @intCast(index),
@@ -1348,8 +1327,8 @@ fn populateLayer(
         .temperature_k = temperature,
         .number_density_cm3 = density,
         .continuum_cross_section_cm2_per_molecule = absorbers.mean_sigma,
-        .line_cross_section_cm2_per_molecule = layer_sums.meanLineSigma(geometry.sublayer_count),
-        .line_mixing_cross_section_cm2_per_molecule = layer_sums.meanLineMixing(geometry.sublayer_count),
+        .line_cross_section_cm2_per_molecule = layer_sums.line_sigma / sublayer_count_f64,
+        .line_mixing_cross_section_cm2_per_molecule = layer_sums.line_mixing / sublayer_count_f64,
         .cia_optical_depth = layer_sums.cia_optical_depth,
         .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_temperature_derivative,
         .gas_optical_depth = gas_optical_depth,

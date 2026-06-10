@@ -235,7 +235,9 @@ pub const OperationalSolarSpectrum = struct {
         if (wavelength_nm < self.wavelengths_nm[0]) return null;
         if (wavelength_nm > self.wavelengths_nm[self.wavelengths_nm.len - 1]) return null;
 
-        if (self.splineReady()) {
+        const has_prepared_spline = self.spline_second_derivatives.len == self.wavelengths_nm.len and
+            self.wavelengths_nm.len >= 3;
+        if (has_prepared_spline) {
             return self.interpolatePreparedSplineWithinBounds(wavelength_nm);
         }
 
@@ -325,11 +327,6 @@ pub const OperationalSolarSpectrum = struct {
             slot.* = measured_value * target_irradiance / @max(source_irradiance, 1.0e-12);
         }
         return corrected;
-    }
-
-    fn splineReady(self: *const OperationalSolarSpectrum) bool {
-        return self.spline_second_derivatives.len == self.wavelengths_nm.len and
-            self.wavelengths_nm.len >= 3;
     }
 
     fn clearSplineState(self: *OperationalSolarSpectrum, allocator: Allocator) void {

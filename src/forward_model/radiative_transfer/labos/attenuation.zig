@@ -178,21 +178,14 @@ pub const RuntimeAttenArray = struct {
     nmutot: usize,
     nlevel: usize,
 
-    inline fn nlayer(self: *const RuntimeAttenArray) usize {
-        // RuntimeAttenArray.nlayer ---------------------------------------------------------------------------|
-        // nlevel includes the surface/bottom level and the top boundary; nlayer is                            |
-        // one less than that.                                                                                 |
-        // ----------------------------------------------------------------------------------------------------|
-
-        return self.nlevel - 1;
-    }
-
     pub inline fn adjacent(self: *const RuntimeAttenArray, imu: usize, layer_index: usize) f64 {
         // RuntimeAttenArray.adjacent -------------------------------------------------------------------------|
         // Adjacent layer lookup uses [direction, layer] storage.                                              |
         // ----------------------------------------------------------------------------------------------------|
 
-        return self.layer_transmittance[layerTransmittanceIndex(self.nlayer(), imu, layer_index)];
+        // nlevel includes the surface/bottom level and the top boundary; nlayer is one less than that.
+        const layer_count = self.nlevel - 1;
+        return self.layer_transmittance[layerTransmittanceIndex(layer_count, imu, layer_index)];
     }
 
     pub fn get(self: *const RuntimeAttenArray, imu: usize, from: usize, to: usize) f64 {

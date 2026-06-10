@@ -111,7 +111,11 @@ pub fn build(
     const channels = [_]SpectralChannel{ .radiance, .irradiance };
     for (nominal_wavelengths_nm) |nominal_wavelength_nm| {
         for (channels) |channel| {
-            if ((channel_mask & channelMask(channel)) == 0) continue;
+            const channel_bit: u32 = switch (channel) {
+                .radiance => channel_mask_radiance,
+                .irradiance => channel_mask_irradiance,
+            };
+            if ((channel_mask & channel_bit) == 0) continue;
             try appendResponseRows(
                 allocator,
                 &rows,
@@ -156,6 +160,10 @@ fn appendResponseRows(
     };
 
     const nominal_index = nearestNominalIndex(scene, nominal_wavelength_nm);
+    const channel_code: u32 = switch (channel) {
+        .radiance => 0,
+        .irradiance => 1,
+    };
 
     for (0..support_count) |sample_index| {
         const offset_nm = if (response_sampling.sample_count == 0) 0.0 else response_sampling.offsets_nm[sample_index];
@@ -167,7 +175,7 @@ fn appendResponseRows(
         try rows.append(allocator, .{
             .nominal_index = nominal_index,
             .nominal_wavelength_nm = nominal_wavelength_nm,
-            .channel = channelCode(channel),
+            .channel = channel_code,
             .sample_index = @intCast(sample_index),
             .support_count = @intCast(support_count),
             .offset_nm = offset_nm,
@@ -181,20 +189,6 @@ fn appendResponseRows(
             .response_enabled = if (response_sampling.enabled) 1 else 0,
         });
     }
-}
-
-fn channelMask(channel: SpectralChannel) u32 {
-    return switch (channel) {
-        .radiance => channel_mask_radiance,
-        .irradiance => channel_mask_irradiance,
-    };
-}
-
-fn channelCode(channel: SpectralChannel) u32 {
-    return switch (channel) {
-        .radiance => 0,
-        .irradiance => 1,
-    };
 }
 
 fn nearestNominalIndex(scene: *const Scene, nominal_wavelength_nm: f64) i32 {

@@ -196,7 +196,9 @@ pub const ProfileNodeSpectroscopyCache = struct {
         // --------------------------------------------------------------------------------------------------- |
 
         const sigma = self.totalSigmaAtAltitude(altitudes_km, altitude_km) orelse return null;
-        return spectroscopyEvaluationWithTotalSigma(sigma);
+        var evaluation = zeroSpectroscopyEvaluation();
+        evaluation.total_sigma_cm2_per_molecule = sigma;
+        return evaluation;
     }
 };
 
@@ -482,7 +484,10 @@ pub fn spectroscopyEvaluationAtAltitudeWithCache(
             return evaluation;
         }
     }
-    if (profileNodeSpectroscopyEvaluationAtAltitude(self, wavelength_nm, altitude_km)) |evaluation| return evaluation;
+    var local_profile_cache = ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
+    if (local_profile_cache.evaluationAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km)) |evaluation| {
+        return evaluation;
+    }
     return spectroscopyEvaluationAtWavelength(self, wavelength_nm, temperature_k, pressure_hpa, prepared_state);
 }
 
@@ -576,19 +581,6 @@ pub fn preparedStrongLineStateAtAltitude(
     return &states[states.len - 1];
 }
 
-fn profileNodeSpectroscopyEvaluationAtAltitude(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    altitude_km: f64,
-) ?ReferenceData.SpectroscopyEvaluation {
-    // profileNodeSpectroscopyEvaluationAtAltitude ----------------------------------------------------------  |
-    // Build a local profile-node cache for one wavelength and sample it at altitude.                          |
-    // ------------------------------------------------------------------------------------------------------  |
-
-    var cache = ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
-    return cache.evaluationAtAltitude(self.spectroscopy_profile_altitudes_km, altitude_km);
-}
-
 fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
     // zeroSpectroscopyEvaluation ---------------------------------------------------------------------------  |
     // Shared zero row for routes with no active line or operational O2 spectroscopy.                          |
@@ -602,17 +594,6 @@ fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
         .total_sigma_cm2_per_molecule = 0.0,
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
-}
-
-fn spectroscopyEvaluationWithTotalSigma(total_sigma_cm2_per_molecule: f64) ReferenceData.SpectroscopyEvaluation {
-    // spectroscopyEvaluationWithTotalSigma -----------------------------------------------------------------  |
-    // Wrap cached sigma_total in the full evaluation shape. Split line fields stay zero because the profile   |
-    // cache stores only the total profile.                                                                    |
-    // ------------------------------------------------------------------------------------------------------  |
-
-    var evaluation = zeroSpectroscopyEvaluation();
-    evaluation.total_sigma_cm2_per_molecule = total_sigma_cm2_per_molecule;
-    return evaluation;
 }
 
 pub fn weightedSpectroscopyEvaluationAtWavelength(

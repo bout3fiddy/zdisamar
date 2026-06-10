@@ -324,7 +324,8 @@ fn fillWavelengthSamplingPlans(
     // Fill all plan rows either on the current thread or across worker chunks when the output grid is large.             |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const worker_count = preferredWavelengthSamplingWorkerCount(plans.len);
+    // Keep small output grids single-threaded and use the shared work-partition threshold for larger grids.
+    const worker_count = work_partition.preferredWorkerCount(plans.len, min_parallel_wavelength_sample_count);
     if (worker_count == 1) {
         return fillWavelengthSamplingPlanRange(
             allocator,
@@ -516,7 +517,17 @@ fn buildWavelengthSamplingPlan(
     //   applied to the center wavelength stored in the plan, then offsets are added later when building misses.          |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const nominal_wavelength_nm = resolvedSampleAtAssumeValid(resolved_axis, index);
+    const nominal_wavelength_nm = if (resolved_axis.explicit_wavelengths_nm.len != 0)
+        resolved_axis.explicit_wavelengths_nm[index]
+    else sample: {
+        const sample_count = resolved_axis.base.sample_count;
+
+        // math: lambda_i = lambda_start + i * (lambda_end - lambda_start) / (N - 1).
+        const step = (resolved_axis.base.end_nm - resolved_axis.base.start_nm) /
+            @as(f64, @floatFromInt(sample_count - 1));
+        break :sample resolved_axis.base.start_nm + step * @as(f64, @floatFromInt(index));
+    };
+
     if (can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
             scene,
@@ -535,7 +546,9 @@ fn buildWavelengthSamplingPlan(
             integration_scratch,
         );
     }
+
     const radiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, integration_scratch);
+
     if (can_cache_adaptive_plan) {
         try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
             scene,
@@ -554,7 +567,9 @@ fn buildWavelengthSamplingPlan(
             integration_scratch,
         );
     }
+
     const irradiance_integration = try compactIntegrationKernel(allocator, kernel_storage_builder, integration_scratch);
+
     return .{
         .nominal_wavelength_nm = nominal_wavelength_nm,
         .radiance_wavelength_nm = calibration.shiftedWavelength(
@@ -643,29 +658,6 @@ fn recordWavelengthSamplingPlan(plans: []const WavelengthSampling, side_sample_c
 
 }
 
-fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: usize) f64 {
-    // resolvedSampleAtAssumeValid ---------------------------------------------------------------------------------------|
-    // Fast sample lookup after the caller has validated the axis. Explicit measured wavelengths win over the             |
-    // uniform base grid.                                                                                                 |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    if (resolved_axis.explicit_wavelengths_nm.len != 0) return resolved_axis.explicit_wavelengths_nm[index];
-    const sample_count = resolved_axis.base.sample_count;
-
-    // math: lambda_i = lambda_start + i * (lambda_end - lambda_start) / (N - 1).
-    const step = (resolved_axis.base.end_nm - resolved_axis.base.start_nm) /
-        @as(f64, @floatFromInt(sample_count - 1));
-    return resolved_axis.base.start_nm + step * @as(f64, @floatFromInt(index));
-}
-
-fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
-    // preferredWavelengthSamplingWorkerCount ----------------------------------------------------------------------------|
-    // Keep small output grids single-threaded and use the shared work-partition threshold for larger grids.              |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    return work_partition.preferredWorkerCount(sample_count, min_parallel_wavelength_sample_count);
-}
-
 pub fn buildForwardMissPlan(
     allocator: Allocator,
     table: WavelengthSamplingTable,
@@ -689,7 +681,11 @@ pub fn buildForwardMissPlan(
     errdefer misses.deinit(allocator);
     var sample_indices = std.ArrayList(u32).empty;
     errdefer sample_indices.deinit(allocator);
-    try sample_indices.ensureTotalCapacityPrecise(allocator, radianceSampleIndexCount(table));
+    var radiance_sample_index_count: usize = 0;
+    for (table.rows) |plan| {
+        radiance_sample_index_count += plan.radiance_integration.activeSampleCount();
+    }
+    try sample_indices.ensureTotalCapacityPrecise(allocator, radiance_sample_index_count);
     const rows = try allocator.alloc(Plan.ForwardSampleIndexRef, table.rows.len);
     errdefer allocator.free(rows);
 
@@ -729,18 +725,6 @@ pub fn buildForwardMissPlan(
         .sample_indices = try sample_indices.toOwnedSlice(allocator),
         .misses = try misses.toOwnedSlice(allocator),
     };
-}
-
-fn radianceSampleIndexCount(table: WavelengthSamplingTable) usize {
-    // radianceSampleIndexCount ------------------------------------------------------------------------------------------|
-    // Count how many row-local forward-result indexes the miss plan needs before filling sample_indices.                 |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    var count: usize = 0;
-    for (table.rows) |plan| {
-        count += plan.radiance_integration.activeSampleCount();
-    }
-    return count;
 }
 
 fn castForwardSampleIndexStart(start: usize) !u32 {

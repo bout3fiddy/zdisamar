@@ -359,12 +359,14 @@ fn spectralResponse(model: *const ObservationModel) Instrument.SpectralResponse 
 
     var line_shape: InstrumentLineShape = .{};
     if (support.instrument_line_shape.sample_count > 0) {
-        line_shape = borrowedLineShape(support.instrument_line_shape);
+        line_shape = support.instrument_line_shape;
+        line_shape.owns_memory = false;
     }
 
     var line_shape_table: InstrumentLineShapeTable = .{};
     if (has_line_shape_table) {
-        line_shape_table = borrowedLineShapeTable(support.instrument_line_shape_table);
+        line_shape_table = support.instrument_line_shape_table;
+        line_shape_table.owns_memory = false;
     }
 
     const slit_index: Instrument.SlitIndex = switch (model.builtin_line_shape) {
@@ -424,16 +426,4 @@ fn resolvedHighResolutionGrid(model: *const ObservationModel) ResolvedHighResolu
         .step_nm = support.high_resolution_step_nm,
         .half_span_nm = support.high_resolution_half_span_nm,
     };
-}
-
-fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
-    var borrowed = line_shape;
-    borrowed.owns_memory = false;
-    return borrowed;
-}
-
-fn borrowedLineShapeTable(line_shape_table: InstrumentLineShapeTable) InstrumentLineShapeTable {
-    var borrowed = line_shape_table;
-    borrowed.owns_memory = false;
-    return borrowed;
 }
