@@ -8,13 +8,16 @@ const cross_section_lut = @import("instrument/cross_section_lut.zig");
 const pipeline = @import("instrument/pipeline.zig");
 
 // Instrument.zig ---------------------------------------------------------------------------------------------|
-// Public instrument input model and re-export surface for instrument support data.                            |
+// Public instrument input model and re-export surface for measured/operational support data. Scene and        |
+// ObservationModel keep these rows as typed controls; instrument integration, spectral evaluation, and        |
+// reference-data workflows later consume resolved response, solar, reference-spectrum, and LUT support.       |
 //                                                                                                             |
-// used by                                                                                                     |
-//   ObservationModel resolves scene-level and channel-level controls into SpectralResponse rows               |
-//   instrument integration builds kernels from FWHM, line-shape tables, high-resolution grids, and modes      |
-//   bundled workflows and O2 A reference builders attach operational support, solar spectra, and LUT rows     |
-//   Scene.lutCompatibilityKey hashes the effective instrument support that changes generated LUTs             |
+// call routes                                                                                                 |
+//   ObservationModel resolves Instrument plus the primary OperationalBandSupport row into per-channel         |
+//   SpectralResponse values. implementations/instrument/integration.zig builds integration kernels from       |
+//   FWHM, explicit line-shape rows, high-resolution grids, and integration modes. Bundled workflows and O2 A  |
+//   reference builders attach operational support, solar spectra, reference-spectrum grids, and LUT rows.     |
+//   Scene.lutCompatibilityKey hashes the effective instrument support that changes generated LUT assets.      |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   Id.parse/validate names the public instrument family                                                      |
@@ -22,13 +25,17 @@ const pipeline = @import("instrument/pipeline.zig");
 //   OperationalBandSupport.validate checks band-local explicit grids, line-shape tables, solar data, and LUTs |
 //   clone/deinitOwned duplicate and release nested support rows in the same ownership order                   |
 //                                                                                                             |
-// boundary                                                                                                    |
-//   This file stores controls and support headers only. Runtime sampling decisions live in ObservationModel,  |
-//   forward_model/implementations/instrument, and reference-data loaders that own parsing and asset loading.  |
+// validation boundary                                                                                         |
+//   High-resolution step/span must be paired, instrument FWHM cannot be negative, and enabled band-local      |
+//   support must carry an id. Nested line-shape, solar, reference-grid, and LUT headers validate their own    |
+//   shape. Runtime route selection lives in ObservationModel and integration.zig; this file only stores the   |
+//   typed controls and owner/view headers.                                                                    |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Instrument is a 392 B value row with nested owner/view headers. OperationalBandSupport is the band-local  |
-//   owner used when resolved O2 A inputs carry support data beside the scene.                                 |
+//   Instrument is a 392 B value row with nested owner/view headers. OperationalBandSupport is the 368 B       |
+//   band-local owner used when resolved O2 A inputs carry support data beside the scene. clone/deinitOwned    |
+//   walk the same nested order so line-shape arrays, solar rows, reference grids, LUT tables, and owned band  |
+//   ids have one release boundary.                                                                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const max_line_shape_samples = constants.max_line_shape_samples;

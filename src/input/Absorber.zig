@@ -6,13 +6,17 @@ const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 
 // Absorber.zig -----------------------------------------------------------------------------------------------|
-// Public absorber, spectroscopy binding, and resolved absorption payload model.                               |
+// Public gas absorber, spectroscopy binding, and resolved absorption-payload input model. Scene owns these    |
+// rows before optical preparation; setup code later turns them into compact prepared line/cross-section       |
+// absorber rows so wavelength-time carrier evaluation does not inspect public bindings or asset names.        |
 //                                                                                                             |
-// used by                                                                                                     |
-//   Scene stores AbsorberSet as the gas/continuum/line input surface                                          |
-//   reference_data/bundled workflows attach concrete line, CIA, cross-section, and LUT payloads               |
-//   optical_properties/state_build/absorbers.zig turns validated rows into prepared absorber state            |
-//   Scene.lutCompatibilityKey hashes active line-gas controls and spectroscopy bindings                       |
+// call routes                                                                                                 |
+//   Scene stores AbsorberSet as the gas/continuum/line input surface and validates every absorber before      |
+//   preparation. reference_data/bundled workflows either attach concrete line, CIA, cross-section, and LUT    |
+//   payloads or leave explicit asset bindings for selection code to reject. optical_properties/state_build/   |
+//   absorbers.zig reads validated rows, prepares active line/cross-section descriptors, and moves owned       |
+//   spectroscopy state toward PreparedOpticalState. Scene.lutCompatibilityKey hashes active line-gas          |
+//   controls and spectroscopy bindings so generated LUTs are not reused after absorber controls change.       |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   resolveAbsorberSpeciesName normalizes public and vendor O2/O2-O2 names                                    |
@@ -20,13 +24,17 @@ const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSec
 //   LineGasControls.active chooses simulation or retrieval stage controls for prepared spectroscopy           |
 //   clone/deinitOwned duplicate and release binding names plus resolved reference payloads                    |
 //                                                                                                             |
-// boundary                                                                                                    |
-//   This file stores typed references and optional resolved payloads. It does not load files or parse assets; |
-//   loaders either attach a matching payload, reject invalid combinations, or leave inactive fields empty.    |
+// validation boundary                                                                                         |
+//   mode=.none must have no bindings, controls, or resolved payloads attached. line_by_line, cia, and         |
+//   cross_sections payloads are legal only with their matching mode, and cross-section table/LUT routes are   |
+//   mutually exclusive. Unknown species names are rejected by Absorber.validate; vendor aliases are resolved  |
+//   before absorber preparation sees typed species.                                                           |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Absorber and Spectroscopy are public value headers over nested bindings and optional owned payloads.      |
-//   Clone deep-copies names, isotope selections, and resolved tables so prepared scenes can own their inputs. |
+//   Absorber is 944 B and Spectroscopy is 832 B; both are public value headers over out-of-line binding       |
+//   names, VMR profile rows, isotope selections, and optional resolved reference payloads. clone deep-copies  |
+//   those payloads when a scene needs ownership, while AbsorptionRepresentation is only a borrowed pointer    |
+//   view used during setup.                                                                                   |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const AbsorberSpecies = enum {

@@ -12,25 +12,31 @@ const selection = @import("selection.zig");
 const Allocator = std.mem.Allocator;
 
 // workflows.zig ----------------------------------------------------------------------------------------------|
-// Applies reference-data LUT workflow controls to a working scene before optical preparation.                 |
+// Applies reference-data LUT workflow controls to a working Scene before optical preparation. This is the     |
+// mutation layer between selected bundled/reference inputs and PreparedOpticalState: it may generate LUTs,    |
+// clone only the scene subtrees that must change, and record generated-asset metadata for later reports.      |
 //                                                                                                             |
-// called by                                                                                                   |
-//   load.zig after bundled reference assets are loaded and before OpticsPrepare.prepare()                     |
+// call route                                                                                                  |
+//   load.zig builds a shallow working Scene copy, loads or clones selected continuum/CIA/spectroscopy rows,   |
+//   then calls applyLutWorkflows before OpticsPrepare.prepare(). The source scene stays borrowed. When a      |
+//   workflow needs to replace an absorber-specific LUT or primary operational-band LUT, this file clones      |
+//   only that absorber set or operational-band-support slice into working-scene owned storage.                |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   reflectance/correction workflows record direct or generated LUT execution labels                          |
-//   O2 line-by-line controls can consume an operational O2 LUT or generate one from filtered HITRAN lines     |
-//   O2-O2 CIA controls can consume or generate an operational CIA LUT                                         |
-//   generic cross-section absorbers can consume a resolved LUT or generate one from a resolved xsec table     |
+// workflow routes                                                                                             |
+//   reflectance/correction : record direct or generated LUT execution labels                                  |
+//   O2 line-by-line        : consume an operational O2 LUT or generate one from filtered HITRAN lines         |
+//   O2-O2 CIA              : consume or generate an operational CIA LUT                                       |
+//   generic cross-section  : consume a resolved LUT or generate one from a resolved cross-section table       |
 //                                                                                                             |
-// boundary shape                                                                                              |
-//   The source scene remains borrowed. When generation needs mutation, this file clones the absorber set or   |
-//   operational band support into owned working-scene storage, replaces only the requested LUT payload, and   |
-//   records generated asset metadata for the prepared optical state.                                          |
+// failure boundary                                                                                            |
+//   direct records the active non-LUT route when no operational LUT is present. consume requires an already   |
+//   resolved LUT. generate requires the source line/CIA/cross-section table needed to build one. Missing      |
+//   requested inputs fail here instead of silently falling back to direct spectroscopy.                       |
 //                                                                                                             |
-// memory                                                                                                      |
-//   Generated LUTs are first owned by temporary outputs from load.zig, then cloned into the working scene or  |
-//   generated asset list. Execution labels and GeneratedLutAsset strings are owned by the caller allocator.   |
+// memory and hot path                                                                                         |
+//   This is setup work, not a wavelength-time path. Generated LUTs are first owned by temporary outputs from  |
+//   load.zig, then cloned into the working Scene or generated asset list. Execution labels and                |
+//   GeneratedLutAsset strings are caller-owned and later moved into PreparedOpticalState.                     |
 // ------------------------------------------------------------------------------------------------------------|
 
 const PrimaryOperationalBandSupportLut = enum {

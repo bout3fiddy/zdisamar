@@ -8,11 +8,14 @@ const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 // selection.zig ---------------------------------------------------------------------------------------------|
-// Scene-to-reference selection rules used before optical preparation and LUT generation.                     |
+// Scene-to-reference selection rules used before optical preparation and LUT generation. This file answers   |
+// which reference rows a Scene is allowed to use; assets.zig performs concrete loads/clones and workflows.zig|
+// may mutate a working Scene copy after this policy has selected the inputs.                                 |
 //                                                                                                            |
-// called by                                                                                                  |
-//   bundled/load.zig calls the asset selectors while hydrating the working Scene used by prepare().          |
-//   bundled/workflows.zig calls sampleSceneWavelengthsOwned when generated O2 or O2-O2 LUTs need support     |
+// call routes                                                                                                |
+//   bundled/load.zig calls loadContinuumForScene, loadSpectroscopyForScene, and                              |
+//   loadCollisionInducedAbsorptionForScene while hydrating the Data owner used by prepare().                 |
+//   bundled/workflows.zig calls sampleSceneWavelengthsOwned only for generated LUT modes that need support   |
 //   wavelengths shaped like the source scene.                                                                |
 //                                                                                                            |
 // selection order                                                                                            |
@@ -25,13 +28,16 @@ const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 //   wavelengths : generated LUTs prefer high-resolution LUT sampling, then measured wavelengths, then a      |
 //                 uniform scene grid from spectral_grid start/end/sample_count.                              |
 //                                                                                                            |
-// no-silent-fallback rule                                                                                    |
+// failure boundary                                                                                           |
 //   If the scene explicitly asks for an asset binding, this file either returns that resolved asset or       |
 //   rejects the request. Bundled defaults are only for absent bindings on supported O2 A default paths.      |
+//   Operational O2-O2 LUT support suppresses the bundled CIA sidecar unless the current workflow is          |
+//   generating the operational LUT and therefore needs the source table.                                     |
 //                                                                                                            |
-// ownership and runtime shape                                                                                |
+// memory and ownership                                                                                       |
 //   Selectors may allocate owned tables or wavelength arrays for setup code. They do not parse files, run    |
-//   the RTM, or retain hidden global state; callers own every returned buffer and deinitialize it.           |
+//   the RTM, or retain hidden global state; callers own every returned buffer and deinitialize it. The       |
+//   wavelength support helper returns owned f64 rows and leaves the source Scene borrowed.                   |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {

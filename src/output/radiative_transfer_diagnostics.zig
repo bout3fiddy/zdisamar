@@ -9,7 +9,8 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 
 // radiative_transfer_diagnostics.zig -------------------------------------------------------------------------|
 // Radiative-transfer diagnostic table built from atmospheric-budget rows plus optional final spectrum columns.|
-// It explains the vertical RTM state used for a spectrum without running LABOS again.                         |
+// It explains the vertical RTM state used for a spectrum without running LABOS again, and deliberately keeps  |
+// proxy columns separate from transport outputs.                                                              |
 //                                                                                                             |
 // called by                                                                                                   |
 //   root.zig exposes buildRadiativeTransferDiagnostics for Zig callers. api/c.zig accepts an optional         |
@@ -26,9 +27,16 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 //   pseudo-spherical airmass, RTM stream count, integrated-source flag, and optional final spectrum values.   |
 //   These proxy columns are for inspection and regression triage; they are not alternate transport outputs.   |
 //                                                                                                             |
+// math                                                                                                        |
+//   For each wavelength group, fillWavelengthRows walks the vertical budget top-down:                         |
+//   cumulative += max(total_optical_depth, 0). Mid-layer and direct-surface transmission proxies use the      |
+//   same two-stream airmass factor, while optional final radiance/reflectance columns are interpolated from   |
+//   borrowed product slices.                                                                                  |
+//                                                                                                             |
 // memory                                                                                                      |
 //   SpectrumView borrows caller-owned product slices. atmospheric_budget.build returns a temporary owned      |
-//   slice that is freed before return. The returned diagnostic row slice is owned by the caller.              |
+//   slice that is freed before return. The returned diagnostic row slice is owned by the caller. This is      |
+//   output/reporting work, not a forward-model hot path.                                                      |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectrumView -----------------------------------------------------------------------------------------------|
