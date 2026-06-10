@@ -184,6 +184,63 @@ test "prepared optical state layout matches documented comments" {
     try expectOffset(PreparedOpticalState, "owns_lut_execution_entries", 2129);
 }
 
+test "shared RTM geometry layouts match documented comments" {
+    const State = internal.forward_model.optical_properties.state;
+    const SharedCarrier = internal.forward_model.optical_properties.shared_carrier;
+    const SharedGeometry = internal.forward_model.optical_properties.shared_geometry;
+
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(State.SharedRtmLayerGeometry));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(State.SharedRtmLayerGeometry));
+    try expectOffset(State.SharedRtmLayerGeometry, "lower_altitude_km", 0);
+    try expectOffset(State.SharedRtmLayerGeometry, "upper_altitude_km", 8);
+    try expectOffset(State.SharedRtmLayerGeometry, "midpoint_altitude_km", 16);
+    try expectOffset(State.SharedRtmLayerGeometry, "thickness_km", 24);
+    try expectOffset(State.SharedRtmLayerGeometry, "support_start_index", 32);
+    try expectOffset(State.SharedRtmLayerGeometry, "support_count", 36);
+
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(State.SharedRtmLevelGeometry));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(State.SharedRtmLevelGeometry));
+    try expectOffset(State.SharedRtmLevelGeometry, "altitude_km", 0);
+    try expectOffset(State.SharedRtmLevelGeometry, "weight_km", 8);
+    try expectOffset(State.SharedRtmLevelGeometry, "support_start_index", 16);
+    try expectOffset(State.SharedRtmLevelGeometry, "support_count", 20);
+    try expectOffset(State.SharedRtmLevelGeometry, "support_row_index", 24);
+    try expectOffset(State.SharedRtmLevelGeometry, "particle_above_support_row_index", 28);
+    try expectOffset(State.SharedRtmLevelGeometry, "particle_below_support_row_index", 32);
+
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(State.SharedRtmGeometry));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(State.SharedRtmGeometry));
+    try expectOffset(State.SharedRtmGeometry, "layers", 0);
+    try expectOffset(State.SharedRtmGeometry, "levels", 16);
+
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(SharedCarrier.SharedRtmSubgrid));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SharedCarrier.SharedRtmSubgrid));
+    try expectOffset(SharedCarrier.SharedRtmSubgrid, "altitudes_km", 0);
+    try expectOffset(SharedCarrier.SharedRtmSubgrid, "weights_km", 16);
+
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(SharedGeometry.ResolvedGaussRule));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SharedGeometry.ResolvedGaussRule));
+    try expectOffset(SharedGeometry.ResolvedGaussRule, "nodes", 0);
+    try expectOffset(SharedGeometry.ResolvedGaussRule, "weights", 16);
+
+    try std.testing.expectEqual(@as(usize, 2048), @sizeOf(SharedGeometry.GaussRuleScratch));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SharedGeometry.GaussRuleScratch));
+    try expectOffset(SharedGeometry.GaussRuleScratch, "nodes", 0);
+    try expectOffset(SharedGeometry.GaussRuleScratch, "weights", 1024);
+
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(SharedGeometry.SharedRtmInterval));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SharedGeometry.SharedRtmInterval));
+    try expectOffset(SharedGeometry.SharedRtmInterval, "lower_altitude_km", 0);
+    try expectOffset(SharedGeometry.SharedRtmInterval, "upper_altitude_km", 8);
+    try expectOffset(SharedGeometry.SharedRtmInterval, "support_sublayers", 16);
+    try expectOffset(SharedGeometry.SharedRtmInterval, "strong_line_states", 32);
+
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(SharedGeometry.SharedSupportSlices));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SharedGeometry.SharedSupportSlices));
+    try expectOffset(SharedGeometry.SharedSupportSlices, "sublayers", 0);
+    try expectOffset(SharedGeometry.SharedSupportSlices, "strong_line_states", 16);
+}
+
 fn expectOffset(comptime Struct: type, comptime field_name: []const u8, expected: usize) !void {
     try std.testing.expectEqual(expected, @offsetOf(Struct, field_name));
 }
