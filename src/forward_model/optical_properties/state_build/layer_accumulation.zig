@@ -138,23 +138,23 @@ const AerosolSublayers = union(enum) {
         };
     }
 
-    fn singleScatterAlbedo(self: AerosolSublayers, context: *const Context) f64 {
+    fn singleScatterAlbedo(self: AerosolSublayers, request: *const AerosolSetupRequest) f64 {
         return switch (self) {
-            .scalar => context.scene.aerosol.single_scatter_albedo,
-            .profile => |profile| profileMeanSingleScatterAlbedo(context, profile),
+            .scalar => request.scene.aerosol.single_scatter_albedo,
+            .profile => |profile| profileMeanSingleScatterAlbedo(request, profile),
         };
     }
 
     fn phaseCoefficients(
         self: AerosolSublayers,
-        context: *const Context,
+        request: *const AerosolSetupRequest,
     ) [PhaseFunctions.phase_coefficient_count]f64 {
         return switch (self) {
             .scalar => PhaseFunctions.hgPhaseCoefficientsWithThreshold(
-                context.scene.aerosol.asymmetry_factor,
-                context.scene.phase_function_truncation_threshold,
+                request.scene.aerosol.asymmetry_factor,
+                request.scene.phase_function_truncation_threshold,
             ),
-            .profile => |profile| profileEquivalentPhaseCoefficients(context, profile),
+            .profile => |profile| profileEquivalentPhaseCoefficients(request, profile),
         };
     }
 };
@@ -298,6 +298,36 @@ const ParitySupportRowErrorState = struct {
         defer self.mutex.unlock();
         if (self.err == null) self.err = err;
     }
+};
+// ------------------------------------------------------------------------------------------------------------   |
+
+// AerosolSetupRequest ---------------------------------------------------------------------------------------    |
+// Borrowed inputs for building aerosol support-row properties and equivalent phase rows.                         |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 192 B (0.188 KiB), align: 8 B                                                                            |
+//                                                                                                                |
+// memory                                                                                                         |
+// [  0..  7] scene                        : *const Scene                                                         |
+// [  8..135] vertical_grid                : PreparedVerticalGrid                                                 |
+// [136..151] aerosol_profile_layers       : []const ProfileLayer                                                 |
+// [152..167] sublayer_top_pressures_hpa   : []const f64                                                          |
+// [168..183] sublayer_bottom_pressures_hpa: []const f64                                                          |
+// [184..191] midpoint_nm                  : f64                                                                  |
+//                                                                                                                |
+// out-of-line                                                                                                    |
+//   scene, vertical-grid columns, pressure-bound columns, and aerosol profile rows borrow PreparationContext.    |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// cache span: 3 cache lines at 64 B per line                                                                     |
+// footprint: per population call = 192 B plus borrowed scene/grid/profile storage                                |
+const AerosolSetupRequest = struct {
+    scene: *const Scene,
+    vertical_grid: ParticleProfiles.PreparedVerticalGrid,
+    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
+    sublayer_top_pressures_hpa: []const f64,
+    sublayer_bottom_pressures_hpa: []const f64,
+    midpoint_nm: f64,
 };
 // ------------------------------------------------------------------------------------------------------------   |
 
@@ -634,6 +664,14 @@ pub fn populate(
     const layers = context.layers;
     const sublayers = context.sublayers;
     const disamar_support_grid = usesDisamarParitySupportGrid(scene);
+    const aerosol_setup = AerosolSetupRequest{
+        .scene = scene,
+        .vertical_grid = context.vertical_grid.borrow(),
+        .aerosol_profile_layers = context.aerosol_profile_layers,
+        .sublayer_top_pressures_hpa = context.vertical_grid.sublayer_top_pressures_hpa,
+        .sublayer_bottom_pressures_hpa = context.vertical_grid.sublayer_bottom_pressures_hpa,
+        .midpoint_nm = midpoint_nm,
+    };
 
     var totals: LayerAccumulation = .{
         .base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(
@@ -642,11 +680,11 @@ pub fn populate(
         ),
     };
 
-    const aerosol_sublayers = try buildAerosolSublayers(allocator, context);
+    const aerosol_sublayers = try buildAerosolSublayers(allocator, &aerosol_setup);
     defer aerosol_sublayers.deinit(allocator);
 
-    totals.aerosol_single_scatter_albedo = aerosol_sublayers.singleScatterAlbedo(context);
-    context.aerosol_phase_coefficients = aerosol_sublayers.phaseCoefficients(context);
+    totals.aerosol_single_scatter_albedo = aerosol_sublayers.singleScatterAlbedo(&aerosol_setup);
+    context.aerosol_phase_coefficients = aerosol_sublayers.phaseCoefficients(&aerosol_setup);
     var profile_spectroscopy_cache = try LayerSpectroscopy.ProfileSpectroscopyCache.init(
         context,
         absorbers,
@@ -707,22 +745,22 @@ pub fn populate(
 
 fn buildAerosolSublayers(
     allocator: Allocator,
-    context: *const Context,
+    request: *const AerosolSetupRequest,
 ) !AerosolSublayers {
-    if (context.aerosol_profile_layers.len != 0) {
-        return .{ .profile = try buildAerosolProfileSublayerProperties(allocator, context) };
+    if (request.aerosol_profile_layers.len != 0) {
+        return .{ .profile = try buildAerosolProfileSublayerProperties(allocator, request) };
     }
 
     const distribution = try ParticleProfiles.buildAerosolSublayerDistribution(
         allocator,
-        context.scene,
-        context.vertical_grid.borrow(),
+        request.scene,
+        request.vertical_grid,
     );
 
     const aerosol_fraction = choose_aerosol_fraction: {
-        break :choose_aerosol_fraction if (context.scene.aerosol.fraction.enabled)
-            context.scene.aerosol.fraction.valueAtWavelength(context.midpoint_nm)
-        else if (context.scene.aerosol.enabled)
+        break :choose_aerosol_fraction if (request.scene.aerosol.fraction.enabled)
+            request.scene.aerosol.fraction.valueAtWavelength(request.midpoint_nm)
+        else if (request.scene.aerosol.enabled)
             @as(f64, 1.0)
         else
             @as(f64, 0.0);
@@ -731,10 +769,10 @@ fn buildAerosolSublayers(
     return .{
         .scalar = .{
             .distribution = distribution,
-            .single_scatter_albedo = context.scene.aerosol.single_scatter_albedo,
-            .reference_wavelength_nm = context.scene.aerosol.reference_wavelength_nm,
-            .angstrom_exponent = context.scene.aerosol.angstrom_exponent,
-            .asymmetry_factor = context.scene.aerosol.asymmetry_factor,
+            .single_scatter_albedo = request.scene.aerosol.single_scatter_albedo,
+            .reference_wavelength_nm = request.scene.aerosol.reference_wavelength_nm,
+            .angstrom_exponent = request.scene.aerosol.angstrom_exponent,
+            .asymmetry_factor = request.scene.aerosol.asymmetry_factor,
             .fraction = aerosol_fraction,
         },
     };
@@ -742,21 +780,21 @@ fn buildAerosolSublayers(
 
 fn buildAerosolProfileSublayerProperties(
     allocator: Allocator,
-    context: *const Context,
+    request: *const AerosolSetupRequest,
 ) ![]AerosolSublayerProperties {
-    const sublayer_count = context.vertical_grid.sublayer_mid_altitudes_km.len;
+    const sublayer_count = request.vertical_grid.sublayer_mid_altitudes_km.len;
     const properties = try allocator.alloc(AerosolSublayerProperties, sublayer_count);
     errdefer allocator.free(properties);
     @memset(properties, AerosolSublayerProperties{});
 
-    for (context.aerosol_profile_layers) |profile_layer| {
+    for (request.aerosol_profile_layers) |profile_layer| {
         const layer_pressure_span = profile_layer.bottom_pressure_hpa - profile_layer.top_pressure_hpa;
         if (layer_pressure_span <= 0.0 or profile_layer.optical_depth == 0.0) continue;
         var covered_pressure_span: f64 = 0.0;
         for (
             properties,
-            context.vertical_grid.sublayer_top_pressures_hpa,
-            context.vertical_grid.sublayer_bottom_pressures_hpa,
+            request.sublayer_top_pressures_hpa,
+            request.sublayer_bottom_pressures_hpa,
         ) |*property, sublayer_top_pressure, sublayer_bottom_pressure| {
             const overlap_top = @max(profile_layer.top_pressure_hpa, sublayer_top_pressure);
 
@@ -831,7 +869,7 @@ fn profileSpectralScalingMatches(
 }
 
 fn profileScatteringAtMidpoint(
-    context: *const Context,
+    midpoint_nm: f64,
     optical_depth: f64,
     reference_wavelength_nm: f64,
     angstrom_exponent: f64,
@@ -849,13 +887,13 @@ fn profileScatteringAtMidpoint(
         optical_depth,
         reference_wavelength_nm,
         angstrom_exponent,
-        context.midpoint_nm,
+        midpoint_nm,
     );
     return scaled_optical_depth * single_scatter_albedo;
 }
 
 fn profileMeanSingleScatterAlbedo(
-    context: *const Context,
+    request: *const AerosolSetupRequest,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) f64 {
     // profileMeanSingleScatterAlbedo ----------------------------------------------------------------------------|
@@ -878,7 +916,7 @@ fn profileMeanSingleScatterAlbedo(
             property.optical_depth,
             property.reference_wavelength_nm,
             property.angstrom_exponent,
-            context.midpoint_nm,
+            request.midpoint_nm,
         );
 
         optical_depth += scaled_optical_depth;
@@ -891,7 +929,7 @@ fn profileMeanSingleScatterAlbedo(
 }
 
 fn profileEquivalentPhaseCoefficients(
-    context: *const Context,
+    request: *const AerosolSetupRequest,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) [PhaseFunctions.phase_coefficient_count]f64 {
     // profileEquivalentPhaseCoefficients ----------------------------------------------------------------------  |
@@ -916,7 +954,7 @@ fn profileEquivalentPhaseCoefficients(
 
     for (aerosol_sublayers) |*property| {
         const sublayer_scattering = profileScatteringAtMidpoint(
-            context,
+            request.midpoint_nm,
             property.optical_depth,
             property.reference_wavelength_nm,
             property.angstrom_exponent,
@@ -930,11 +968,11 @@ fn profileEquivalentPhaseCoefficients(
     const asymmetry_factor = if (scattering > 0.0)
         asymmetry_sum / scattering
     else
-        context.scene.aerosol.asymmetry_factor;
+        request.scene.aerosol.asymmetry_factor;
 
     return PhaseFunctions.hgPhaseCoefficientsWithThreshold(
         asymmetry_factor,
-        context.scene.phase_function_truncation_threshold,
+        request.scene.phase_function_truncation_threshold,
     );
 }
 
