@@ -102,25 +102,11 @@ pub fn buildAerosolSublayerDistribution(
     // -------------------------------------------------------------------------------------------------------   |
 
     const total_optical_depth = scene.aerosol.optical_depth;
-    return buildPlacementBoundDistribution(
-        allocator,
-        grid,
-        scene.atmosphere.interval_grid.enabled(),
-        scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
-        total_optical_depth,
-        scene.aerosol.placement,
-    );
-}
-
-pub fn buildPlacementBoundDistribution(
-    allocator: Allocator,
-    grid: PreparedVerticalGrid,
-    has_explicit_interval_grid: bool,
-    enabled: bool,
-    total_optical_depth: f64,
-    placement: AtmosphereModel.IntervalPlacement,
-) ![]f64 {
-    if (placement.interval_index_1based != 0) {
+    const enabled = scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0;
+    const placement = scene.aerosol.placement;
+    const uses_explicit_interval = placement.interval_index_1based != 0;
+    if (uses_explicit_interval) {
+        const has_explicit_interval_grid = scene.atmosphere.interval_grid.enabled();
         if (!has_explicit_interval_grid) return error.InvalidRequest;
         return buildIntervalMatchedDistribution(
             allocator,
@@ -141,7 +127,7 @@ pub fn buildPlacementBoundDistribution(
     );
 }
 
-pub fn buildIntervalMatchedDistribution(
+fn buildIntervalMatchedDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
     enabled: bool,
@@ -185,7 +171,7 @@ pub fn buildIntervalMatchedDistribution(
     return weights;
 }
 
-pub fn buildFiniteLayerSublayerDistribution(
+fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
     enabled: bool,
