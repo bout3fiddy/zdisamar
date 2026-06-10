@@ -67,15 +67,6 @@ pub const SharedRtmSubgrid = struct {
     weights_km: []const f64 = &.{},
 };
 
-fn strongLineStateAt(
-    states: ?[]const ReferenceData.StrongLinePreparedState,
-    local_index: usize,
-) ?*const ReferenceData.StrongLinePreparedState {
-    const owned_states = states orelse return null;
-    if (local_index >= owned_states.len) return null;
-    return &owned_states[local_index];
-}
-
 pub fn sharedRtmSubgridSampleCount(scene: *const Scene) usize {
     return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
@@ -267,7 +258,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
 
-            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+            const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, local_index);
             const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
                 self,
                 wavelength_nm,
@@ -324,7 +315,7 @@ pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
         if (weight_km <= 0.0) continue;
 
-        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+        const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, local_index);
         var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
         const scalars = wavelength_cache.cachedSupportRowScalarsRef(
             self,
@@ -367,7 +358,7 @@ pub fn fillReducedLayerInputFromSupportRowsWithCarrierCache(
             const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
             if (weight_km <= 0.0) continue;
 
-            const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+            const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, local_index);
             var fallback_scalars: carrier_eval.SharedOpticalScalars = undefined;
             const scalars = wavelength_cache.cachedSupportRowScalarsRef(
                 self,
@@ -421,7 +412,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
 
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
-        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+        const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, local_index);
         const optical_depth = choose_optical_depth: {
             if (weight_km <= 0.0) break :choose_optical_depth 0.0;
 
@@ -468,7 +459,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
 
     for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
         const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
-        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
+        const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, local_index);
         const optical_depth = choose_optical_depth: {
             if (weight_km <= 0.0) break :choose_optical_depth 0.0;
 

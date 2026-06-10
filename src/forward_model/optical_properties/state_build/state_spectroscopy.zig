@@ -45,15 +45,15 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 //   those slices, writes caller-owned ProfileNodeSpectroscopyCache rows, and returns scalar evaluations.      |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub inline fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
+pub const zeroSpectroscopyEvaluation = SpectroscopySupport.zeroEvaluation;
+
+pub inline fn strongLineStateAt(
+    states: ?[]const ReferenceData.StrongLinePreparedState,
+    local_index: usize,
+) ?*const ReferenceData.StrongLinePreparedState {
+    const owned_states = states orelse return null;
+    if (local_index >= owned_states.len) return null;
+    return &owned_states[local_index];
 }
 
 pub inline fn addWeightedSpectroscopyEvaluation(

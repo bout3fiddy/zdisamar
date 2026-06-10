@@ -505,15 +505,6 @@ fn continuumSigmaAtWavelength(
     return continuum_table.interpolateSigma(wavelength_nm);
 }
 
-fn strongLineStateAt(
-    states: ?[]const ReferenceData.StrongLinePreparedState,
-    local_index: usize,
-) ?*const ReferenceData.StrongLinePreparedState {
-    const owned_states = states orelse return null;
-    if (local_index >= owned_states.len) return null;
-    return &owned_states[local_index];
-}
-
 fn particleWavelengthScale(
     reference_wavelength_nm: f64,
     angstrom_exponent: f64,
@@ -619,7 +610,7 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
 
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -690,7 +681,7 @@ pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
 
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -765,7 +756,7 @@ pub fn fillSourceInterfaceAtLevelWithSpectroscopyCache(
         return;
     }
 
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -830,7 +821,7 @@ pub fn fillSourceInterfaceAtLevelWithCarrierCache(
         source_interface.* = .{ .rtm_weight = rtm_weight };
         return;
     }
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -935,7 +926,7 @@ pub fn fillRtmQuadratureLevelAtLevelWithSpectroscopyCache(
         return;
     }
 
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -996,7 +987,7 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
         fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
         return;
     }
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     var fallback_gas_carrier: SharedOpticalScalars = undefined;
     const gas_carrier = wavelength_cache.cachedSupportRowScalarsRef(
         self,
@@ -1104,7 +1095,7 @@ pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
 
-    const strong_line_state = strongLineStateAt(strong_line_states, boundary_row_index);
+    const strong_line_state = SpectroscopyState.strongLineStateAt(strong_line_states, boundary_row_index);
     const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
@@ -1386,7 +1377,10 @@ fn weightedSpectroscopyEvaluationAtSupportRow(
         const weight = line_absorber.number_densities_cm3[global_sublayer_index];
         if (weight <= 0.0) continue;
 
-        const prepared_state = strongLineStateAt(line_absorber.strong_line_states, global_sublayer_index);
+        const prepared_state = SpectroscopyState.strongLineStateAt(
+            line_absorber.strong_line_states,
+            global_sublayer_index,
+        );
         const evaluation = line_absorber.line_list.evaluateAtPrepared(
             wavelength_nm,
             sublayer.temperature_k,
