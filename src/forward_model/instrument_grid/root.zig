@@ -127,16 +127,20 @@ pub fn simulateProductWithWorkspace(
     //   into the view so downstream output code can report the physical state used for the spectrum.                     |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const buffers = try product_workspace.buffers(allocator, scene, rtm_config);
-    const summary = try simulate_core.simulateInternal(
-        allocator,
-        scene,
-        rtm_config,
-        prepared,
-        buffers,
-        try product_workspace.spectralCache(allocator),
-        product_workspace,
-    );
+    const buffer_request = storage.BufferHintRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+    };
+    const buffers = try product_workspace.buffersFromHint(allocator, &buffer_request);
+    const simulation_request = simulate_core.SimulationRunRequest{
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+        .buffers = buffers,
+        .evaluation_cache = try product_workspace.spectralCache(allocator),
+        .wavelength_plan_storage = product_workspace,
+    };
+    const summary = try simulate_core.simulateInternal(allocator, &simulation_request);
     const jacobian_values = if (buffers.jacobian) |values| values else null;
 
     return .{
@@ -172,7 +176,11 @@ pub fn warmProductWorkspace(
     // use allocation and plan construction out of the next measured run.                                                 |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    _ = try product_workspace.buffers(allocator, scene, rtm_config);
+    const buffer_request = storage.BufferHintRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+    };
+    _ = try product_workspace.buffersFromHint(allocator, &buffer_request);
     return simulate_core.warmWavelengthPlan(
         allocator,
         product_workspace,

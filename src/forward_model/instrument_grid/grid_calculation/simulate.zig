@@ -85,6 +85,34 @@ const SimulationSetup = struct {
     plan_key: u64,
 };
 
+// SimulationRunRequest --------------------------------------------------------------------------------------------------|
+// Borrowed inputs, output rows, and retained cache handles for one product simulation run.                               |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 328 B (0.320 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] scene                   : *const Scene                                                                      |
+// [  8.. 87] rtm_config              : common.SolveConfig                                                                |
+// [ 88.. 95] prepared                : *const OpticsPreparation.PreparedOpticalState                                     |
+// [ 96..311] buffers                 : Storage.Buffers                                                                   |
+// [312..319] evaluation_cache        : *SpectralEval.SpectralEvaluationCache                                             |
+// [320..327] wavelength_plan_storage : ?*Storage.ProductStorage                                                          |
+//                                                                                                                        |
+// out-of-line storage: scene, prepared, buffers, cache, and optional ProductStorage are borrowed from the caller.        |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 6 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 328 B (0.320 KiB); total excludes borrowed product rows and cache storage                    |
+pub const SimulationRunRequest = struct {
+    scene: *const Scene,
+    rtm_config: common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    buffers: Storage.Buffers,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // ResolvedSimulationPlan ----------------------------------------------------------------------------------------------- |
 // Borrowed or owned wavelength sampling, forward miss, and profile-cache state for one simulation.                       |
 //                                                                                                                        |
@@ -923,12 +951,7 @@ fn buildProfileSpectroscopyCaches(
 
 pub fn simulateInternal(
     allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    buffers: Storage.Buffers,
-    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
-    wavelength_plan_storage: ?*Storage.ProductStorage,
+    request: *const SimulationRunRequest,
 ) Storage.Error!Types.InstrumentGridSummary {
     // simulateInternal --------------------------------------------------------------------------------------------------|
     // Main product simulation. This function sequences plan resolution, high-resolution forward prefetch,                |
@@ -951,6 +974,11 @@ pub fn simulateInternal(
     defer simulate_zone.end();
     // end instrumentation: trace zone: product simulation -------------------------------------------------------------- |
 
+    const scene = request.scene;
+    const rtm_config = request.rtm_config;
+    const prepared = request.prepared;
+    const buffers = request.buffers;
+    const wavelength_plan_storage = request.wavelength_plan_storage;
     const trace_phase_timing = if (wavelength_plan_storage) |storage| storage.activeTracePhaseTiming() else null;
     if (trace_phase_timing) |timing| timing.reset();
 
@@ -1024,7 +1052,7 @@ pub fn simulateInternal(
         .prepared = prepared,
         .setup = setup,
         .wavelength_sampling = simulation_plan.wavelength_sampling,
-        .evaluation_cache = evaluation_cache,
+        .evaluation_cache = request.evaluation_cache,
         .trace_phase_timing = trace_phase_timing,
     };
     const irradiance_rows = IrradianceRows{
@@ -1862,7 +1890,15 @@ pub fn simulate(
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
     evaluation_cache.reset();
-    return simulateInternal(allocator, scene, rtm_config, prepared, buffers, &evaluation_cache, null);
+    const request = SimulationRunRequest{
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+        .buffers = buffers,
+        .evaluation_cache = &evaluation_cache,
+        .wavelength_plan_storage = null,
+    };
+    return simulateInternal(allocator, &request);
 }
 
 pub fn simulateSummary(
@@ -1898,13 +1934,17 @@ pub fn simulateSummaryWithWorkspace(
     if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
         summary_scene.spectral_grid.sample_count = max_summary_samples;
     }
-    return simulateInternal(
-        allocator,
-        &summary_scene,
-        rtm_config,
-        prepared,
-        try storage.buffers(allocator, &summary_scene, rtm_config),
-        try storage.spectralCache(allocator),
-        storage,
-    );
+    const buffer_request = Storage.BufferHintRequest{
+        .scene = &summary_scene,
+        .rtm_config = &rtm_config,
+    };
+    const request = SimulationRunRequest{
+        .scene = &summary_scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+        .buffers = try storage.buffersFromHint(allocator, &buffer_request),
+        .evaluation_cache = try storage.spectralCache(allocator),
+        .wavelength_plan_storage = storage,
+    };
+    return simulateInternal(allocator, &request);
 }

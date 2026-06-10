@@ -699,7 +699,27 @@ pub const ProductStorage = struct {
             .scene = scene,
             .rtm_config = &rtm_config,
         };
-        const requirements = BufferRequirements.fromSceneHint(&requirements_request);
+        return self.buffersFromHint(allocator, &requirements_request);
+    }
+
+    pub fn buffersFromHint(
+        self: *ProductStorage,
+        allocator: Allocator,
+        request: *const BufferHintRequest,
+    ) Error!Buffers {
+        // ProductStorage.buffersFromHint --------------------------------------------------------------------------------|
+        // Ensure all output and transport buffers from a named scene/config sizing request, then return trimmed          |
+        // borrowed views for one simulation run.                                                                         |
+        //                                                                                                                |
+        // allocation rule                                                                                                |
+        //   Buffers grow when needed and keep capacity across runs. Buffers for disabled RTM features are                |
+        //   freed so stale source-interface, quadrature, or pseudo-spherical data cannot be reused.                      |
+        //                                                                                                                |
+        // Jacobian layout                                                                                                |
+        //   Workspace Jacobians are state-major over active states only: [active_state][sample].                         |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const requirements = BufferRequirements.fromSceneHint(request);
 
         const product_buffers = ProductSampleBufferOwners{
             .wavelengths = &self.wavelengths,
