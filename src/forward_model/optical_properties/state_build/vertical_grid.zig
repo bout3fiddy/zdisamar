@@ -8,22 +8,34 @@ const gauss_legendre = @import("../../../common/math/quadrature/gauss_legendre.z
 const Allocator = std.mem.Allocator;
 
 // vertical_grid.zig -----------------------------------------------------------------------------------------|
-// Builds owned vertical-grid arrays before optical-property layer accumulation.                              |
+// Builds the owned layer and support-row coordinate arrays used before optical-property accumulation writes  |
+// PreparedLayer and PreparedSublayer rows. This file decides vertical placement; layer_accumulation.zig      |
+// later reads these arrays to fill thermodynamics, spectroscopy, aerosol, and interval metadata.             |
 //                                                                                                            |
 // called by                                                                                                  |
-//   context.zig during PreparationContext.init.                                                              |
+//   context.zig calls build during PreparationContext.init, then keeps OwnedVerticalGrid until               |
+//   layer_accumulation.zig has consumed it. shared particle-profile code borrows the same grid shape through |
+//   OwnedVerticalGrid.borrow.                                                                                |
 //                                                                                                            |
-// main paths                                                                                                 |
-//   explicit interval grid        : use scene atmosphere interval controls.                                  |
-//   DISAMAR-parity support grid   : expand intervals into reference-style support rows.                      |
-//   legacy evenly divided profile : split the climatology profile into the requested layer count.            |
+// route map                                                                                                  |
+//   explicit interval grid        : use scene atmosphere interval controls and profile pressure interpolation|
+//   DISAMAR-parity support grid   : expand explicit intervals into boundary plus Gauss support rows          |
+//   legacy evenly divided profile : split the climatology profile into the requested layer count             |
+//                                                                                                            |
+// grid model                                                                                                 |
+//   layer_* arrays carry transport-layer top/bottom boundaries, original interval id, and the sublayer span. |
+//   sublayer_* arrays carry support-row top/bottom/midpoint coordinates, quadrature support weights, and     |
+//   parent interval ids. The arrays are kept parallel because layer accumulation reads dense columns while   |
+//   filling much wider PreparedLayer/PreparedSublayer rows.                                                  |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs once per prepared scene, before all layer and sublayer optical-property rows are accumulated.       |
+//   Runs once per prepared scene, but O2 A retrievals rebuild it on every state evaluation. The DISAMAR      |
+//   support route uses stack scratch for common support orders and allocates temporary Gauss nodes only when |
+//   the requested order exceeds that stack storage.                                                          |
 //                                                                                                            |
-// memory                                                                                                     |
-//   OwnedVerticalGrid owns parallel arrays for layer and sublayer altitude, pressure, interval, and support  |
-//   metadata. Context deinitializes the grid unless its fields have been consumed by later preparation data. |
+// ownership                                                                                                  |
+//   OwnedVerticalGrid owns all referenced arrays. Context.deinit frees it unless later preparation has moved |
+//   or consumed the arrays. borrow returns only a view; deinit remains the release point.                    |
 // -----------------------------------------------------------------------------------------------------------|
 
 // OwnedVerticalGrid -----------------------------------------------------------------------------------------|
@@ -33,11 +45,26 @@ const Allocator = std.mem.Allocator;
 // size: 224 B (0.219 KiB), align: 8 B                                                                        |
 //                                                                                                            |
 // memory                                                                                                     |
-// [  0.. 63] layer altitude/pressure slices: 4 x []f64                                                       |
-// [ 64..111] layer interval/start/count slices: 3 x []u32                                                    |
-// [112..207] sublayer altitude/pressure/mid/support slices: 6 x []f64                                        |
-// [208..223] sublayer_interval_indices_1based: []u32                                                         |
+// [  0.. 15] layer_top_altitudes_km               : []f64                                                    |
+// [ 16.. 31] layer_bottom_altitudes_km            : []f64                                                    |
+// [ 32.. 47] layer_top_pressures_hpa              : []f64                                                    |
+// [ 48.. 63] layer_bottom_pressures_hpa           : []f64                                                    |
+// [ 64.. 79] layer_interval_indices_1based        : []u32                                                    |
+// [ 80.. 95] layer_sublayer_starts                : []u32                                                    |
+// [ 96..111] layer_sublayer_counts                : []u32                                                    |
+// [112..127] sublayer_top_altitudes_km            : []f64                                                    |
+// [128..143] sublayer_bottom_altitudes_km         : []f64                                                    |
+// [144..159] sublayer_top_pressures_hpa           : []f64                                                    |
+// [160..175] sublayer_bottom_pressures_hpa        : []f64                                                    |
+// [176..191] sublayer_mid_altitudes_km            : []f64                                                    |
+// [192..207] sublayer_support_weights_km          : []f64                                                    |
+// [208..223] sublayer_interval_indices_1based     : []u32                                                    |
 //                                                                                                            |
+// referenced storage                                                                                         |
+//   Every field is a slice header over heap arrays allocated by allocate(). Array payload bytes are not      |
+//   included in this 224 B owner header.                                                                     |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
 // cache span: 4 cache lines at 64 B per line                                                                 |
 // footprint: per instance = 224 B; referenced grid arrays are out of line                                    |
 // -----------------------------------------------------------------------------------------------------------|
@@ -58,6 +85,11 @@ pub const OwnedVerticalGrid = struct {
     sublayer_interval_indices_1based: []u32,
 
     pub fn borrow(self: *const OwnedVerticalGrid) ParticleProfiles.PreparedVerticalGrid {
+        // OwnedVerticalGrid.borrow ------------------------------------------------------------------------- |
+        // Return the subset of grid columns needed by particle profile interpolation. The returned view      |
+        // borrows this owner; it must not outlive OwnedVerticalGrid.                                         |
+        // -------------------------------------------------------------------------------------------------- |
+
         return .{
             .layer_top_altitudes_km = self.layer_top_altitudes_km,
             .layer_bottom_altitudes_km = self.layer_bottom_altitudes_km,
@@ -71,6 +103,10 @@ pub const OwnedVerticalGrid = struct {
     }
 
     pub fn deinit(self: *OwnedVerticalGrid, allocator: Allocator) void {
+        // OwnedVerticalGrid.deinit ------------------------------------------------------------------------- |
+        // Release every parallel layer and sublayer column allocated for this preparation context.           |
+        // -------------------------------------------------------------------------------------------------- |
+
         allocator.free(self.layer_top_altitudes_km);
         allocator.free(self.layer_bottom_altitudes_km);
         allocator.free(self.layer_top_pressures_hpa);
