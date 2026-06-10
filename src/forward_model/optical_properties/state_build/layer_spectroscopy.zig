@@ -1,5 +1,6 @@
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
+const SpectroscopySupport = @import("../../../input/reference/spectroscopy/support.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
@@ -479,7 +480,7 @@ pub fn resolveCachedSingleLineEvaluation(
         return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
     }
 
-    return zeroSpectroscopyEvaluation();
+    return SpectroscopySupport.zeroEvaluation();
 }
 
 pub fn resolveSpectroscopyEvaluation(
@@ -741,7 +742,7 @@ fn resolveSingleLineEvaluation(
         return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
     }
 
-    return zeroSpectroscopyEvaluation();
+    return SpectroscopySupport.zeroEvaluation();
 }
 
 fn activeLineMixingRatio(
@@ -789,16 +790,5 @@ fn operationalO2EvaluationAtContext(
             temperature,
             pressure,
         ),
-    };
-}
-
-fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
 }

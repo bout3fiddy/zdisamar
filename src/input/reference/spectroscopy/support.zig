@@ -50,7 +50,7 @@ pub fn linePressureShiftCm1(line: *const Types.SpectroscopyLine) f64 {
         -PhysicsCore.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
 }
 
-pub fn zeroEvaluation() Types.SpectroscopyEvaluation {
+pub inline fn zeroEvaluation() Types.SpectroscopyEvaluation {
     return .{
         .weak_line_sigma_cm2_per_molecule = 0.0,
         .strong_line_sigma_cm2_per_molecule = 0.0,

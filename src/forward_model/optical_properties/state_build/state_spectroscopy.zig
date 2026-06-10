@@ -1,6 +1,7 @@
 const OperationalO2 = @import("operational_o2.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const LineListEval = @import("../../../input/reference/spectroscopy/line_list.zig");
+const SpectroscopySupport = @import("../../../input/reference/spectroscopy/support.zig");
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const PreparedState = @import("prepared_state.zig");
 const Scalar = @import("state_scalar.zig");
@@ -196,7 +197,7 @@ pub const ProfileNodeSpectroscopyCache = struct {
         // --------------------------------------------------------------------------------------------------- |
 
         const sigma = self.totalSigmaAtAltitude(altitudes_km, altitude_km) orelse return null;
-        var evaluation = zeroSpectroscopyEvaluation();
+        var evaluation = SpectroscopySupport.zeroEvaluation();
         evaluation.total_sigma_cm2_per_molecule = sigma;
         return evaluation;
     }
@@ -393,7 +394,7 @@ fn spectroscopyEvaluationAtWavelength(
             );
         }
 
-        break :choose_spectroscopy_evaluation zeroSpectroscopyEvaluation();
+        break :choose_spectroscopy_evaluation SpectroscopySupport.zeroEvaluation();
     };
 }
 
@@ -579,21 +580,6 @@ pub fn preparedStrongLineStateAtAltitude(
     }
 
     return &states[states.len - 1];
-}
-
-fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
-    // zeroSpectroscopyEvaluation ---------------------------------------------------------------------------  |
-    // Shared zero row for routes with no active line or operational O2 spectroscopy.                          |
-    // ------------------------------------------------------------------------------------------------------  |
-
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
 }
 
 pub fn weightedSpectroscopyEvaluationAtWavelength(
