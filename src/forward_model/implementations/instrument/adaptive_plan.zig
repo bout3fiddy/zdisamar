@@ -281,6 +281,20 @@ pub fn buildDisamarRealizedKernel(
     apply_disamar_midpoint_bias: bool,
     kernel: *types.IntegrationKernel,
 ) bool {
+    // buildDisamarRealizedKernel -----------------------------------------------------------------------------  |
+    // Builds the DISAMAR-style high-resolution kernel without prepared strong-line splitting.                   |
+    //                                                                                                           |
+    // route                                                                                                     |
+    //   1. compute the nominal support window from scene bounds and response width                              |
+    //   2. build equal-width intervals using FWHM or explicit high-resolution step controls                     |
+    //   3. emit Gauss samples over those intervals                                                              |
+    //   4. normalize into the caller-owned IntegrationKernel                                                    |
+    //                                                                                                           |
+    // boundary                                                                                                  |
+    //   This route is used when integration.zig must realize a DISAMAR high-resolution grid from scene-only     |
+    //   operational controls, before PreparedOpticalState strong-line intervals are available.                  |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (response.fwhm_nm <= 0.0) return false;
 
     const support_window = adaptiveKernelSupportWindow(scene, response, nominal_wavelength_nm);
@@ -655,6 +669,14 @@ fn collectAdaptiveStrongLineCentersFromList(
 }
 
 fn maxAdaptiveIntervalWidth(plan: *const AdaptiveIntervalPlan) f64 {
+    // maxAdaptiveIntervalWidth -------------------------------------------------------------------------------- |
+    // Return the widest interior interval used to scale strong-line division counts.                            |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   Prefer interior intervals when they exist because edge intervals can be clipped by the expanded scene   |
+    //   support. Fall back to all intervals for tiny plans. The 1.0e-9 nm floor keeps later ratios finite.      |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (plan.count == 0) return 1.0;
 
     var max_width_nm: f64 = 0.0;
@@ -680,6 +702,18 @@ fn adaptiveIntervalDivisionCount(
     max_interval_nm: f64,
     has_strong_lines: bool,
 ) usize {
+    // adaptiveIntervalDivisionCount --------------------------------------------------------------------------- |
+    // Choose the Gauss order for one adaptive interval.                                                         |
+    //                                                                                                           |
+    // route                                                                                                     |
+    //   no strong lines : fixed points_per_fwhm for every interval                                              |
+    //   strong lines    : scale between strong_line_min_divisions and strong_line_max_divisions by width        |
+    //                                                                                                           |
+    // math                                                                                                      |
+    //   scaled = round(max_divisions * interval_width_nm / max_interval_nm)                                     |
+    //   result = clamp(max(scaled, min_divisions), min_divisions, max_divisions)                                |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (!has_strong_lines) return @max(@as(usize, adaptive.points_per_fwhm), 1);
     const min_divisions = @max(@as(usize, adaptive.strong_line_min_divisions), 1);
     const max_divisions = @max(@as(usize, adaptive.strong_line_max_divisions), min_divisions);
@@ -745,6 +779,15 @@ fn disamarIntervalDivisionCount(
     adaptive: AdaptiveReferenceGrid,
     response: InstrumentModel.SpectralResponse,
 ) usize {
+    // disamarIntervalDivisionCount ---------------------------------------------------------------------------- |
+    // Choose the per-FWHM division count for the DISAMAR realized-grid route.                                   |
+    //                                                                                                           |
+    // route                                                                                                     |
+    //   explicit adaptive points_per_fwhm wins                                                                  |
+    //   otherwise high_resolution_step_nm converts FWHM to an integer division count                            |
+    //   degenerate metadata falls back to one division so the caller can still build a finite support grid      |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (adaptive.points_per_fwhm > 0) return adaptive.points_per_fwhm;
     if (response.high_resolution_step_nm > 0.0 and response.fwhm_nm > 0.0) {
         return @max(
@@ -762,6 +805,14 @@ fn buildDisamarIntervalPlan(
     division_count: usize,
     plan: *AdaptiveIntervalPlan,
 ) bool {
+    // buildDisamarIntervalPlan -------------------------------------------------------------------------------- |
+    // Fill one regular interval plan over the expanded DISAMAR support span.                                    |
+    //                                                                                                           |
+    // memory                                                                                                    |
+    //   Writes only the active AdaptiveIntervalPlan prefix. interval_start is implicit from global_start_nm or  |
+    //   the previous interval_end_nm, so the retained plan stores one f64 boundary plus one u16 order per row.  |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (global_end_nm <= global_start_nm or interval_width_nm <= 0.0 or division_count == 0) return false;
 
     plan.reset(global_start_nm, global_end_nm);
@@ -785,6 +836,14 @@ fn appendAdaptiveSample(
     wavelength_nm: f64,
     raw_weight: f64,
 ) bool {
+    // appendAdaptiveSample ------------------------------------------------------------------------------------ |
+    // Append one finite candidate support wavelength and raw weight into parallel caller-owned arrays.          |
+    //                                                                                                           |
+    // boundary                                                                                                  |
+    //   Non-finite wavelengths, non-finite weights, and negative weights are ignored. Capacity overflow is a    |
+    //   hard false result because the caller would otherwise produce a silently truncated integration kernel.   |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(raw_weight) or raw_weight < 0.0) return true;
     if (sample_count.* >= types.max_integration_sample_count) return false;
 
@@ -800,6 +859,19 @@ fn selectVendorSupportRange(
     nominal_wavelength_nm: f64,
     support_half_span_nm: f64,
 ) AdaptiveSupportRange {
+    // selectVendorSupportRange ------------------------------------------------------------------------------   |
+    // Select the sorted candidate range that contributes to one nominal wavelength.                             |
+    //                                                                                                           |
+    // route                                                                                                     |
+    //   1. find the candidate nearest lambda_i                                                                  |
+    //   2. walk left until the first sample outside the configured half span                                    |
+    //   3. walk right until the first sample outside the configured half span                                   |
+    //                                                                                                           |
+    // boundary                                                                                                  |
+    //   The returned range intentionally includes one outside sample on each side when present. That preserves  |
+    //   the vendor support shape around steep line edges before finalizeAdaptiveKernel normalizes weights.      |
+    // --------------------------------------------------------------------------------------------------------  |
+
     std.debug.assert(sample_wavelengths_nm.len != 0);
 
     var closest_index: usize = 0;
@@ -839,6 +911,14 @@ fn selectVendorSupportRange(
 }
 
 fn insertionSortSamples(sample_wavelengths_nm: []f64, sample_raw_weights: []f64) void {
+    // insertionSortSamples ----------------------------------------------------------------------------------   |
+    // Sort the small active prefix by wavelength while keeping raw weights paired with their samples.           |
+    //                                                                                                           |
+    // hot path                                                                                                  |
+    //   Candidate counts are bounded by max_integration_sample_count and usually close to the local support     |
+    //   window, so this simple in-place sort avoids another scratch buffer in the kernel builder.               |
+    // --------------------------------------------------------------------------------------------------------  |
+
     if (sample_wavelengths_nm.len != sample_raw_weights.len) return;
     for (1..sample_wavelengths_nm.len) |index| {
         var cursor = index;
