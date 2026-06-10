@@ -126,6 +126,81 @@ const ResolvedSimulationPlan = struct {
     }
 };
 
+// SimulationSetupRequest ------------------------------------------------------------------------------------------------|
+// Borrowed inputs used to validate buffers and resolve channel constants before sampling begins.                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 296 B (0.289 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] scene               : *const Scene                                                                          |
+// [  8.. 15] prepared            : *const OpticsPreparation.PreparedOpticalState                                         |
+// [ 16.. 79] buffer_requirements : Storage.BufferRequirements                                                            |
+// [ 80..295] buffers             : Storage.Buffers                                                                       |
+//                                                                                                                        |
+// referenced storage: scene, prepared, and every slice inside buffers are borrowed; this request owns no arrays.         |
+// unused bits: inherited from nested BufferRequirements and Buffers layout                                               |
+// cache span: 5 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 296 B (0.289 KiB); total excludes borrowed buffer backing storage                            |
+const SimulationSetupRequest = struct {
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    buffer_requirements: Storage.BufferRequirements,
+    buffers: Storage.Buffers,
+};
+
+// PlanResolutionRequest -------------------------------------------------------------------------------------------------|
+// Borrowed inputs used to choose retained workspace plans or build one-shot owned sampling tables.                       |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 40 B (0.039 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene                   : *const Scene                                                                        |
+// [ 8..15] prepared                : *const OpticsPreparation.PreparedOpticalState                                       |
+// [16..23] setup                   : *const SimulationSetup                                                              |
+// [24..31] wavelength_plan_storage : ?*Storage.ProductStorage                                                            |
+// [32..39] trace_phase_timing      : ?*Storage.TracePhaseTiming                                                          |
+//                                                                                                                        |
+// referenced storage: all fields are borrowed pointers; retained plans remain owned by ProductStorage.                   |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 40 B (0.039 KiB); no out-of-line storage                                                     |
+const PlanResolutionRequest = struct {
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    setup: *const SimulationSetup,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+
+// ForwardPrefetchRequest ------------------------------------------------------------------------------------------------|
+// Borrowed inputs used to allocate or reuse dense LABOS miss results before nominal radiance gathering.                  |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 48 B (0.047 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene                   : *const Scene                                                                        |
+// [ 8..15] rtm_config              : *const common.SolveConfig                                                           |
+// [16..23] prepared                : *const OpticsPreparation.PreparedOpticalState                                       |
+// [24..31] simulation_plan         : *ResolvedSimulationPlan                                                             |
+// [32..39] wavelength_plan_storage : ?*Storage.ProductStorage                                                            |
+// [40..47] trace_phase_timing      : ?*Storage.TracePhaseTiming                                                          |
+//                                                                                                                        |
+// referenced storage: all fields are borrowed; result storage is owned by ProductStorage or ResolvedSimulationPlan.      |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 48 B (0.047 KiB); no out-of-line storage                                                     |
+const ForwardPrefetchRequest = struct {
+    scene: *const Scene,
+    rtm_config: *const common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    simulation_plan: *ResolvedSimulationPlan,
+    wavelength_plan_storage: ?*Storage.ProductStorage,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+
 inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
 
     // instrumentation: trace phase clock --------------------------------------------------------------------------------|
@@ -378,6 +453,92 @@ const IrradianceSampleBuffers = struct {
     irradiance: []f64,
 };
 // -----------------------------------------------------------------------------------------------------------------------|
+
+// ReflectanceAssemblyRequest --------------------------------------------------------------------------------------------|
+// Scalar inputs needed to convert calibrated radiance and irradiance into reflectance.                                   |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] sample_count       : usize                                                                                    |
+// [ 8..15] solar_cosine       : f64                                                                                      |
+// [16..23] trace_phase_timing : ?*Storage.TracePhaseTiming                                                               |
+//                                                                                                                        |
+// referenced storage: optional trace timing is borrowed; no spectrum buffers are owned here.                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const ReflectanceAssemblyRequest = struct {
+    sample_count: usize,
+    solar_cosine: f64,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+
+// ReflectanceSampleBuffers ----------------------------------------------------------------------------------------------|
+// Borrowed product rows touched while assembling reflectance and summary means.                                          |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 48 B (0.047 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] radiance    : []const f64                                                                                     |
+// [16..31] irradiance  : []const f64                                                                                     |
+// [32..47] reflectance : []f64                                                                                           |
+//                                                                                                                        |
+// out-of-line storage: all slices borrow ProductStorage backing arrays.                                                  |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 48 B (0.047 KiB); total excludes borrowed product buffers                                    |
+const ReflectanceSampleBuffers = struct {
+    radiance: []const f64,
+    irradiance: []const f64,
+    reflectance: []f64,
+};
+
+// JacobianProcessingRequest ---------------------------------------------------------------------------------------------|
+// Read-only controls for postprocessing state-major Jacobian columns after radiance sampling.                            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] setup                 : *const SimulationSetup                                                                |
+// [ 8..15] trace_phase_timing    : ?*Storage.TracePhaseTiming                                                            |
+// [16..16] derivative_state_mask : jacobian.StateMask                                                                    |
+// [17..23] padding               : 7 B                                                                                   |
+//                                                                                                                        |
+// referenced storage: setup and optional trace timing are borrowed; no Jacobian buffer storage is owned here.            |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const JacobianProcessingRequest = struct {
+    derivative_state_mask: jacobian.StateMask,
+    setup: *const SimulationSetup,
+    trace_phase_timing: ?*Storage.TracePhaseTiming,
+};
+
+// JacobianSampleBuffers -------------------------------------------------------------------------------------------------|
+// Borrowed Jacobian output and scratch rows needed by postprocessing.                                                    |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 40 B (0.039 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] jacobian            : ?[]f64                                                                                  |
+// [16..31] scratch_aux         : []f64                                                                                   |
+// [32..32] jacobian_state_mask : jacobian.StateMask                                                                      |
+// [33..39] padding             : 7 B                                                                                     |
+//                                                                                                                        |
+// out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 40 B (0.039 KiB); total excludes borrowed product buffers                                    |
+const JacobianSampleBuffers = struct {
+    jacobian: ?[]f64,
+    jacobian_state_mask: jacobian.StateMask,
+    scratch_aux: []f64,
+};
 
 // ProfileCacheBuildWorker -----------------------------------------------------------------------------------------------|
 // Static range assigned to a profile-spectroscopy cache worker.                                                          |
@@ -645,25 +806,35 @@ pub fn simulateInternal(
     const trace_phase_timing = if (wavelength_plan_storage) |storage| storage.activeTracePhaseTiming() else null;
     if (trace_phase_timing) |timing| timing.reset();
 
-    const setup = try buildSimulationSetup(scene, rtm_config, prepared, buffers);
-    var simulation_plan = try resolveSimulationPlan(
-        allocator,
-        scene,
-        prepared,
-        setup,
-        wavelength_plan_storage,
-        trace_phase_timing,
-    );
+    const setup_requirements_request = Storage.BufferHintRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+    };
+    const setup_request = SimulationSetupRequest{
+        .scene = scene,
+        .prepared = prepared,
+        .buffer_requirements = Storage.BufferRequirements.fromSceneHint(&setup_requirements_request),
+        .buffers = buffers,
+    };
+    const setup = try buildSimulationSetup(&setup_request);
+    const plan_resolution_request = PlanResolutionRequest{
+        .scene = scene,
+        .prepared = prepared,
+        .setup = &setup,
+        .wavelength_plan_storage = wavelength_plan_storage,
+        .trace_phase_timing = trace_phase_timing,
+    };
+    var simulation_plan = try resolveSimulationPlan(allocator, &plan_resolution_request);
     defer simulation_plan.deinit(allocator);
-    try prefetchSimulationPlan(
-        allocator,
-        scene,
-        rtm_config,
-        prepared,
-        &simulation_plan,
-        wavelength_plan_storage,
-        trace_phase_timing,
-    );
+    const forward_prefetch_request = ForwardPrefetchRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+        .prepared = prepared,
+        .simulation_plan = &simulation_plan,
+        .wavelength_plan_storage = wavelength_plan_storage,
+        .trace_phase_timing = trace_phase_timing,
+    };
+    try prefetchSimulationPlan(allocator, &forward_prefetch_request);
 
     var summary = RunningSummary.init();
     const transport_requirements_request = Storage.ResolvedBufferRequirementsRequest{
@@ -704,14 +875,28 @@ pub fn simulateInternal(
         .irradiance = buffers.irradiance,
     };
     try fillIrradianceSamples(irradiance_request, irradiance_output);
-    assembleReflectance(scene, setup.sample_count, buffers, &summary, trace_phase_timing);
-    const mean_jacobian = try processJacobianSamples(
-        rtm_config.derivative_state_mask,
-        setup,
-        buffers,
-        &summary,
-        trace_phase_timing,
-    );
+    const reflectance_request = ReflectanceAssemblyRequest{
+        .sample_count = setup.sample_count,
+        .solar_cosine = scene.geometry.solarCosineAtAltitude(0.0),
+        .trace_phase_timing = trace_phase_timing,
+    };
+    const reflectance_buffers = ReflectanceSampleBuffers{
+        .radiance = buffers.radiance,
+        .irradiance = buffers.irradiance,
+        .reflectance = buffers.reflectance,
+    };
+    assembleReflectance(reflectance_request, reflectance_buffers, &summary);
+    const jacobian_request = JacobianProcessingRequest{
+        .derivative_state_mask = rtm_config.derivative_state_mask,
+        .setup = &setup,
+        .trace_phase_timing = trace_phase_timing,
+    };
+    const jacobian_buffers = JacobianSampleBuffers{
+        .jacobian = buffers.jacobian,
+        .jacobian_state_mask = buffers.jacobian_state_mask,
+        .scratch_aux = buffers.scratch_aux,
+    };
+    const mean_jacobian = try processJacobianSamples(jacobian_request, jacobian_buffers, &summary);
     return summary.toInstrumentGridSummary(
         setup.sample_count,
         buffers.wavelengths,
@@ -719,46 +904,36 @@ pub fn simulateInternal(
     );
 }
 
-fn buildSimulationSetup(
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    buffers: Storage.Buffers,
-) Storage.Error!SimulationSetup {
+fn buildSimulationSetup(request: *const SimulationSetupRequest) Storage.Error!SimulationSetup {
     // buildSimulationSetup ----------------------------------------------------------------------------------------------|
     // Validate caller input and collect the channel-level constants needed by the rest of the simulation.                |
     // This keeps sampling/convolution code from repeatedly resolving scene controls.                                     |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    try scene.validate();
-    const buffer_requirements_request = Storage.BufferHintRequest{
-        .scene = scene,
-        .rtm_config = &rtm_config,
-    };
-    const buffer_requirements = Storage.BufferRequirements.fromSceneHint(&buffer_requirements_request);
-    const sample_count = buffer_requirements.sample_count;
-    try Storage.validateBuffers(buffer_requirements, buffers);
+    try request.scene.validate();
+    const sample_count = request.buffer_requirements.sample_count;
+    try Storage.validateBuffers(request.buffer_requirements, request.buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
-        .start_nm = scene.spectral_grid.start_nm,
-        .end_nm = scene.spectral_grid.end_nm,
-        .sample_count = scene.spectral_grid.sample_count,
+        .start_nm = request.scene.spectral_grid.start_nm,
+        .end_nm = request.scene.spectral_grid.end_nm,
+        .sample_count = request.scene.spectral_grid.sample_count,
     };
     const resolved_axis: grid.ResolvedAxis = .{
         .base = spectral_grid,
-        .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+        .explicit_wavelengths_nm = request.scene.observation_model.measured_wavelengths_nm,
     };
     try resolved_axis.validate();
 
-    const radiance_calibration = instrument_calibration.calibrationForScene(scene, .radiance);
-    const irradiance_calibration = instrument_calibration.calibrationForScene(scene, .irradiance);
-    const radiance_slit_kernel = instrument_integration.slitKernelForScene(scene, .radiance);
-    const irradiance_slit_kernel = instrument_integration.slitKernelForScene(scene, .irradiance);
+    const radiance_calibration = instrument_calibration.calibrationForScene(request.scene, .radiance);
+    const irradiance_calibration = instrument_calibration.calibrationForScene(request.scene, .irradiance);
+    const radiance_slit_kernel = instrument_integration.slitKernelForScene(request.scene, .radiance);
+    const irradiance_slit_kernel = instrument_integration.slitKernelForScene(request.scene, .irradiance);
     const uses_integrated_radiance_sampling =
-        instrument_integration.usesIntegratedInstrumentSampling(scene, .radiance);
+        instrument_integration.usesIntegratedInstrumentSampling(request.scene, .radiance);
     const uses_integrated_irradiance_sampling =
-        instrument_integration.usesIntegratedInstrumentSampling(scene, .irradiance);
-    const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
+        instrument_integration.usesIntegratedInstrumentSampling(request.scene, .irradiance);
+    const span_nm = request.scene.spectral_grid.end_nm - request.scene.spectral_grid.start_nm;
 
     // Use at least 1 nm as the support span floor for normalized carrier and support interpolation.
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
@@ -769,7 +944,7 @@ fn buildSimulationSetup(
     Trace.plotU("output_wavelengths", @intCast(sample_count));
     // end instrumentation: trace counter: output wavelengths ----------------------------------------------------------- |
 
-    const plan_key = wavelengthPlanKey(scene, prepared);
+    const plan_key = wavelengthPlanKey(request.scene, request.prepared);
 
     return .{
         .sample_count = sample_count,
@@ -787,11 +962,7 @@ fn buildSimulationSetup(
 
 fn resolveSimulationPlan(
     allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    setup: SimulationSetup,
-    wavelength_plan_storage: ?*Storage.ProductStorage,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: *const PlanResolutionRequest,
 ) Storage.Error!ResolvedSimulationPlan {
     // resolveSimulationPlan ---------------------------------------------------------------------------------------------|
     // Resolve the wavelength sampling table, forward-miss plan, and profile spectroscopy caches. Workspace               |
@@ -806,36 +977,36 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone: wavelength sampling resolution -------------------------------------------------- |
         // captures: wavelength sampling plan resolution wall time                                                        |
         // why: distinguishes cache hits, plan rebuilds, and owned one-shot sampling setup.                               |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "wavelength_sampling_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "wavelength_sampling_ns");
         const zone = Trace.staticZone(@src(), "simulate.wavelength_sampling");
         defer zone.end();
         // end instrumentation: trace zone: wavelength sampling resolution ---------------------------------------------- |
 
-        if (wavelength_plan_storage) |storage| {
-            if (storage.wavelength_plan_valid and storage.wavelength_plan_key == setup.plan_key) {
+        if (request.wavelength_plan_storage) |storage| {
+            if (storage.wavelength_plan_valid and storage.wavelength_plan_key == request.setup.plan_key) {
                 break :resolve_wavelength_sampling storage.wavelength_sampling.view();
             }
             storage.invalidateWavelengthPlan(allocator);
             storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
                 allocator,
-                scene,
-                prepared,
-                &setup.resolved_axis,
-                setup.radiance_calibration,
-                setup.irradiance_calibration,
+                request.scene,
+                request.prepared,
+                &request.setup.resolved_axis,
+                request.setup.radiance_calibration,
+                request.setup.irradiance_calibration,
             );
-            storage.wavelength_plan_key = setup.plan_key;
+            storage.wavelength_plan_key = request.setup.plan_key;
             storage.wavelength_plan_valid = true;
             break :resolve_wavelength_sampling storage.wavelength_sampling.view();
         }
         plan.owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
             allocator,
-            scene,
-            prepared,
-            &setup.resolved_axis,
-            setup.radiance_calibration,
-            setup.irradiance_calibration,
+            request.scene,
+            request.prepared,
+            &request.setup.resolved_axis,
+            request.setup.radiance_calibration,
+            request.setup.irradiance_calibration,
         );
         break :resolve_wavelength_sampling plan.owned_wavelength_sampling.view();
     };
@@ -844,13 +1015,13 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone: forward miss collection --------------------------------------------------------- |
         // captures: forward-cache miss collection wall time                                                              |
         // why: measures the unique high-resolution wavelength expansion before LABOS prefetch.                           |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "forward_miss_collection_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "forward_miss_collection_ns");
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
         defer zone.end();
         // end instrumentation: trace zone: forward miss collection ----------------------------------------------------- |
 
-        if (wavelength_plan_storage) |storage| {
+        if (request.wavelength_plan_storage) |storage| {
             if (!storage.forward_miss_plan_valid) {
                 storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
                     allocator,
@@ -871,17 +1042,17 @@ fn resolveSimulationPlan(
         // instrumentation: trace zone: profile spectroscopy cache ------------------------------------------------------ |
         // captures: profile spectroscopy cache lookup/build wall time                                                    |
         // why: isolates profile-node spectroscopy setup from transport execution.                                        |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "profile_spectroscopy_cache_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "profile_spectroscopy_cache_ns");
         const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
         defer zone.end();
         // end instrumentation: trace zone: profile spectroscopy cache -------------------------------------------------- |
 
-        if (wavelength_plan_storage) |storage| {
+        if (request.wavelength_plan_storage) |storage| {
             break :resolve_profile_spectroscopy_caches try ensureProfileSpectroscopyCaches(
                 allocator,
                 storage,
-                prepared,
+                request.prepared,
                 plan.forward_miss_plan.misses,
             );
         }
@@ -892,12 +1063,7 @@ fn resolveSimulationPlan(
 
 fn prefetchSimulationPlan(
     allocator: Allocator,
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    simulation_plan: *ResolvedSimulationPlan,
-    wavelength_plan_storage: ?*Storage.ProductStorage,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
+    request: *const ForwardPrefetchRequest,
 ) Storage.Error!void {
     // prefetchSimulationPlan --------------------------------------------------------------------------------------------|
     // Allocate or reuse the dense forward-result buffer, then compute every unique forward miss before                   |
@@ -909,44 +1075,46 @@ fn prefetchSimulationPlan(
         // instrumentation: trace zone: forward prefetch wall ----------------------------------------------------------- |
         // captures: forward prefetch wall time and miss count                                                            |
         // why: tracks the batched high-resolution LABOS work hidden behind nominal samples.                              |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "forward_prefetch_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "forward_prefetch_ns");
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
-        zone.value(@intCast(simulation_plan.forward_miss_plan.misses.len));
+        zone.value(@intCast(request.simulation_plan.forward_miss_plan.misses.len));
         defer zone.end();
         // end instrumentation: trace zone: forward prefetch wall ------------------------------------------------------- |
 
-        const worker_count = SpectralEval.preferredForwardWorkerCount(simulation_plan.forward_miss_plan.misses.len);
+        const worker_count = SpectralEval.preferredForwardWorkerCount(
+            request.simulation_plan.forward_miss_plan.misses.len,
+        );
 
         var thread_pool: ?*std.Thread.Pool = null;
         var results: []SpectralEval.ForwardIntegratedSample = undefined;
-        if (wavelength_plan_storage) |storage| {
+        if (request.wavelength_plan_storage) |storage| {
             thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
             results = try storage.forwardResultBuffer(
                 allocator,
-                simulation_plan.forward_miss_plan.misses.len,
+                request.simulation_plan.forward_miss_plan.misses.len,
             );
         } else {
             results = try allocator.alloc(
                 SpectralEval.ForwardIntegratedSample,
-                simulation_plan.forward_miss_plan.misses.len,
+                request.simulation_plan.forward_miss_plan.misses.len,
             );
-            simulation_plan.owned_forward_results = results;
+            request.simulation_plan.owned_forward_results = results;
         }
 
         try SpectralEval.prefetchForwardSamples(
             allocator,
-            scene,
-            rtm_config,
-            prepared,
-            simulation_plan.forward_miss_plan.misses,
-            simulation_plan.profile_spectroscopy_caches,
+            request.scene,
+            request.rtm_config.*,
+            request.prepared,
+            request.simulation_plan.forward_miss_plan.misses,
+            request.simulation_plan.profile_spectroscopy_caches,
             results,
             thread_pool,
-            trace_phase_timing,
+            request.trace_phase_timing,
         );
 
-        simulation_plan.forward_results = results;
+        request.simulation_plan.forward_results = results;
     }
 }
 
@@ -1170,11 +1338,9 @@ fn irradianceCacheCapacity(wavelength_sampling: WavelengthSampling.WavelengthSam
 }
 
 fn assembleReflectance(
-    scene: *const Scene,
-    sample_count: usize,
-    buffers: Storage.Buffers,
+    request: ReflectanceAssemblyRequest,
+    buffers: ReflectanceSampleBuffers,
     summary: *RunningSummary,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) void {
     // assembleReflectance -----------------------------------------------------------------------------------------------|
     // Convert calibrated radiance and irradiance into top-of-atmosphere reflectance for each output sample,              |
@@ -1197,18 +1363,17 @@ fn assembleReflectance(
         // instrumentation: trace zone: reflectance assembly ------------------------------------------------------------ |
         // captures: reflectance assembly wall time                                                                       |
         // why: isolates final radiance/irradiance-to-reflectance conversion.                                             |
-        const trace_start_ns = tracePhaseStart(trace_phase_timing);
-        defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "reflectance_assembly_ns");
+        const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+        defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "reflectance_assembly_ns");
         const zone = Trace.staticZone(@src(), "simulate.reflectance_assembly");
         defer zone.end();
         // end instrumentation: trace zone: reflectance assembly -------------------------------------------------------- |
 
-        const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
         var denominator_clamp_count: usize = 0;
         var min_denominator = std.math.inf(f64);
         var max_reflectance = -std.math.inf(f64);
-        for (0..sample_count) |index| {
-            const denominator_raw = buffers.irradiance[index] * solar_cosine;
+        for (0..request.sample_count) |index| {
+            const denominator_raw = buffers.irradiance[index] * request.solar_cosine;
             const denominator = @max(denominator_raw, 1e-9);
             buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) / denominator;
 
@@ -1234,10 +1399,10 @@ fn assembleReflectance(
         // why: stores one compact row for studying clamp incidence against scene geometry.                               |
         if (Telemetry.enabled) {
             Telemetry.reflectanceAssembly(
-                sample_count,
+                request.sample_count,
                 denominator_clamp_count,
-                if (sample_count == 0) 0.0 else min_denominator,
-                if (sample_count == 0) 0.0 else max_reflectance,
+                if (request.sample_count == 0) 0.0 else min_denominator,
+                if (request.sample_count == 0) 0.0 else max_reflectance,
             );
         }
         // end instrumentation: calculation telemetry: reflectance assembly summary ------------------------------------- |
@@ -1246,11 +1411,9 @@ fn assembleReflectance(
 }
 
 fn processJacobianSamples(
-    derivative_state_mask: jacobian.StateMask,
-    setup: SimulationSetup,
-    buffers: Storage.Buffers,
+    request: JacobianProcessingRequest,
+    buffers: JacobianSampleBuffers,
     summary: *RunningSummary,
-    trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Storage.Error!?jacobian.Vector {
     // processJacobianSamples --------------------------------------------------------------------------------------------|
     // Postprocess active radiance Jacobian columns after radiance sampling has filled the state-major buffer.            |
@@ -1271,42 +1434,42 @@ fn processJacobianSamples(
             // instrumentation: trace zone: Jacobian processing --------------------------------------------------------- |
             // captures: Jacobian convolution, calibration, and reduction wall time                                       |
             // why: separates derivative-column postprocessing from RTM evaluation.                                       |
-            const trace_start_ns = tracePhaseStart(trace_phase_timing);
-            defer tracePhaseFinish(trace_phase_timing, trace_start_ns, "jacobian_processing_ns");
+            const trace_start_ns = tracePhaseStart(request.trace_phase_timing);
+            defer tracePhaseFinish(request.trace_phase_timing, trace_start_ns, "jacobian_processing_ns");
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
             // end instrumentation: trace zone: Jacobian processing ----------------------------------------------------- |
 
             const active_jacobians = ActiveJacobianStates.init(buffers.jacobian_state_mask);
             if (active_jacobians.count == 0 or
-                jacobian_buffer.len != setup.sample_count * active_jacobians.count)
+                jacobian_buffer.len != request.setup.sample_count * active_jacobians.count)
             {
                 return error.ShapeMismatch;
             }
-            if (!setup.uses_integrated_radiance_sampling) {
+            if (!request.setup.uses_integrated_radiance_sampling) {
                 for (0..active_jacobians.count) |active_index| {
                     const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
 
-                    if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
-                    const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
-                    try convolution.apply(column, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
+                    if (!jacobian.includes(request.derivative_state_mask, state)) return error.ShapeMismatch;
+                    const column = jacobianColumn(jacobian_buffer, request.setup.sample_count, active_index);
+                    try convolution.apply(column, request.setup.radiance_slit_kernel[0..], buffers.scratch_aux);
                     @memcpy(column, buffers.scratch_aux);
                 }
             }
             for (0..active_jacobians.count) |active_index| {
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
 
-                if (!jacobian.includes(derivative_state_mask, state)) return error.ShapeMismatch;
-                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                if (!jacobian.includes(request.derivative_state_mask, state)) return error.ShapeMismatch;
+                const column = jacobianColumn(jacobian_buffer, request.setup.sample_count, active_index);
                 try calibration.applySignalDerivative(
-                    setup.radiance_calibration,
+                    request.setup.radiance_calibration,
                     column,
                     column,
                 );
             }
             for (0..active_jacobians.count) |active_index| {
                 const state = active_jacobians.at(active_index) orelse return error.ShapeMismatch;
-                const column = jacobianColumn(jacobian_buffer, setup.sample_count, active_index);
+                const column = jacobianColumn(jacobian_buffer, request.setup.sample_count, active_index);
                 const state_index = jacobian.stateIndex(state);
                 var column_sum: f64 = 0.0;
 
@@ -1327,17 +1490,21 @@ fn processJacobianSamples(
                 // captures: derivative column sum, mean, and max magnitude                                               |
                 // why: relates retrieval-state sensitivity to final spectrum impact.                                     |
                 if (Telemetry.enabled) {
+                    const column_mean = if (request.setup.sample_count == 0)
+                        0.0
+                    else
+                        column_sum / @as(f64, @floatFromInt(request.setup.sample_count));
                     Telemetry.jacobianColumn(
                         state_index,
                         column_sum,
-                        if (setup.sample_count == 0) 0.0 else column_sum / @as(f64, @floatFromInt(setup.sample_count)),
+                        column_mean,
                         column_max_abs,
                     );
                 }
                 // end instrumentation: calculation telemetry: Jacobian column summary ---------------------------------- |
 
             }
-            return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
+            return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(request.setup.sample_count)));
         }
     }
     return null;
