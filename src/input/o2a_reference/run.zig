@@ -1,7 +1,6 @@
 const std = @import("std");
 const AbsorberModel = @import("../../input/Absorber.zig");
 const AerosolModel = @import("../../input/Aerosol.zig");
-const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
@@ -548,7 +547,7 @@ fn sceneFromResolvedO2A(
     absorber_set: AbsorberModel.AbsorberSet,
     operational_band_support: []Instrument.OperationalBandSupport,
 ) Scene {
-    const aerosol = scalarAerosolView(resolved.aerosol);
+    const aerosol = sceneAerosolFromSpec(resolved.aerosol);
     const phase_function_truncation_threshold =
         resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold;
 
@@ -558,15 +557,7 @@ fn sceneFromResolvedO2A(
             .albedo = resolved.surface_albedo,
             .pressure_hpa = resolved.surface_pressure_hpa,
         },
-        .aerosol = .{
-            .enabled = true,
-            .optical_depth = aerosol.optical_depth,
-            .single_scatter_albedo = aerosol.single_scatter_albedo,
-            .asymmetry_factor = aerosol.asymmetry_factor,
-            .angstrom_exponent = aerosol.angstrom_exponent,
-            .reference_wavelength_nm = aerosol.reference_wavelength_nm,
-            .placement = aerosol.placement,
-        },
+        .aerosol = aerosol,
         .geometry = .{
             .model = resolved.geometry.model,
             .solar_zenith_deg = resolved.geometry.solar_zenith_deg,
@@ -597,40 +588,17 @@ fn sceneFromResolvedO2A(
     };
 }
 
-// ScalarAerosolView ------------------------------------------------------------------------------------------|
-// Stack value used while reducing an O2 A aerosol specification into scalar scene controls.                   |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 80 B (0.078 KiB), align: 8 B                                                                          |
-//                                                                                                             |
-// memory                                                                                                      |
-// [ 0.. 7] optical_depth          : f64                                                                       |
-// [ 8..15] single_scatter_albedo  : f64                                                                       |
-// [16..23] asymmetry_factor       : f64                                                                       |
-// [24..31] angstrom_exponent      : f64                                                                       |
-// [32..39] reference_wavelength_nm: f64                                                                       |
-// [40..79] placement              : IntervalPlacement                                                         |
-//                                                                                                             |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// footprint: per instance = 80 B (0.078 KiB); stack return value                                              |
-const ScalarAerosolView = struct {
-    optical_depth: f64,
-    single_scatter_albedo: f64,
-    asymmetry_factor: f64,
-    angstrom_exponent: f64,
-    reference_wavelength_nm: f64,
-    placement: AtmosphereModel.IntervalPlacement,
-};
-// ------------------------------------------------------------------------------------------------------------|
+fn sceneAerosolFromSpec(aerosol: AerosolSpec) AerosolModel.Aerosol {
+    const scalar_profile_layer = aerosol.profile.len == 1;
 
-fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
-    if (aerosol.profile.len == 1) {
+    if (scalar_profile_layer) {
         const layer = aerosol.profile[0];
         var placement = aerosol.placement;
         placement.top_pressure_hpa = layer.top_pressure_hpa;
         placement.bottom_pressure_hpa = layer.bottom_pressure_hpa;
 
         return .{
+            .enabled = true,
             .optical_depth = layer.optical_depth,
             .single_scatter_albedo = layer.single_scatter_albedo,
             .asymmetry_factor = layer.asymmetry_factor,
@@ -641,6 +609,7 @@ fn scalarAerosolView(aerosol: AerosolSpec) ScalarAerosolView {
     }
 
     return .{
+        .enabled = true,
         .optical_depth = aerosol.optical_depth,
         .single_scatter_albedo = aerosol.single_scatter_albedo,
         .asymmetry_factor = aerosol.asymmetry_factor,
