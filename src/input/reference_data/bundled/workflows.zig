@@ -31,11 +31,11 @@ const Allocator = std.mem.Allocator;
 // failure boundary                                                                                            |
 //   direct records the active non-LUT route when no operational LUT is present. consume requires an already   |
 //   resolved LUT. generate requires the source line/CIA/cross-section table needed to build one. Missing      |
-//   requested inputs fail here instead of silently falling back to direct spectroscopy.                       |
+//   requested inputs return an explicit workflow error at this boundary.                                      |
 //                                                                                                             |
 // memory and hot path                                                                                         |
-//   This is setup work, not a wavelength-time path. Generated LUTs are first owned by temporary outputs from  |
-//   load.zig, then cloned into the working Scene or generated asset list. Execution labels and                |
+//   This setup work runs before wavelength-time evaluation. Generated LUTs are first owned by temporary       |
+//   outputs from load.zig, then cloned into the working Scene or generated asset list. Execution labels and   |
 //   GeneratedLutAsset strings are caller-owned and later moved into PreparedOpticalState.                     |
 // ------------------------------------------------------------------------------------------------------------|
 

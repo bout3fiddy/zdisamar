@@ -34,18 +34,18 @@ const Allocator = std.mem.Allocator;
 // why this file exists                                                                                        |
 //   selection.zig decides which reference rows a Scene is allowed to use; assets.zig performs concrete asset  |
 //   loads and clones; workflows.zig applies LUT controls that may generate operational tables. This file      |
-//   keeps those setup concerns together so forward_model/optical_properties still receives a normal           |
-//   Scene + PreparationInputs shape instead of knowing about bundled asset policy or generated-LUT ownership. |
+//   keeps those setup concerns together and hands forward_model/optical_properties the normal Scene +         |
+//   PreparationInputs shape.                                                                                  |
 //                                                                                                             |
 // boundary shape                                                                                              |
 //   This module belongs to input/reference-data preparation. It may read retained asset bundles and adjust a  |
-//   working input scene, but it does not run the RTM, write reports, parse user text, or keep global state.   |
+//   working input scene. RTM execution, report writing, and user-text parsing stay at their own boundaries.   |
 //   Forward-model code receives prepared values and borrowed table pointers only through OpticsPrepare.       |
 //                                                                                                             |
 // setup cost                                                                                                  |
-//   This is not the wavelength hot loop. The performance-sensitive choice is to clone only absorber/support   |
-//   subtrees that LUT workflows actually mutate, pass large reference tables by pointer into preparation, and |
-//   move generated metadata into PreparedOpticalState instead of duplicating it.                              |
+//   This is setup-time work before the wavelength loops. The performance-sensitive choice is to clone only    |
+//   absorber/support subtrees that LUT workflows mutate, pass large reference tables by pointer into          |
+//   preparation, and move generated metadata into PreparedOpticalState.                                       |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Data owns loaded asset tables, generated LUT descriptors, execution labels, and any working-scene slices  |
@@ -242,8 +242,8 @@ pub fn buildOptics(
     // call path                                                                                               |
     //   src/root.zig calls this after load and keeps both Data and PreparedOpticalState in PreparedInput.     |
     //   prepareForScene uses the same route for one-shot internal callers.                                    |
-    //   The function accepts Data, not a separate Scene pointer, so the optical state is always prepared      |
-    //   from the working_case that owns any LUT workflow mutations.                                           |
+    //   Data carries both the working Scene and the loaded tables, so optical state is prepared from the      |
+    //   working_case that owns any LUT workflow mutations.                                                    |
     //                                                                                                         |
     // ownership                                                                                               |
     //   OpticsPrepare.prepare clones or borrows reference tables according to PreparationInputs. The          |
@@ -281,7 +281,7 @@ pub fn buildOptics(
 
 pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare.PreparedOpticalState {
     // prepareForScene ----------------------------------------------------------------------------------------|
-    // One-shot helper for callers that only need PreparedOpticalState and not the retained Data owner bundle. |
+    // One-shot helper for callers that need PreparedOpticalState with scoped Data owner cleanup.              |
     // --------------------------------------------------------------------------------------------------------|
 
     var loaded = try load(allocator, scene);

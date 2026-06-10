@@ -23,9 +23,9 @@ const reference_assets = @import("../ingest/reference_assets.zig");
 //   shouldLoadBundled* treats empty absorber lists as the bundled-default O2 A scene.                         |
 //                                                                                                             |
 // boundary                                                                                                    |
-//   This file may load retained CSV assets through the reference-asset ingest layer, but it does not parse    |
-//   user control files, choose fallback policy, run the RTM, or write diagnostics. Explicit unresolved        |
-//   bindings are rejected by selection.zig instead of silently falling back to bundled defaults.              |
+//   This file may load retained CSV assets through the reference-asset ingest layer. User control parsing,    |
+//   selection policy, RTM execution, and diagnostics stay at their own boundaries. selection.zig rejects      |
+//   explicit unresolved bindings before this file loads bundled defaults.                                     |
 //                                                                                                             |
 // row handoff                                                                                                 |
 //   SpectroscopyLineList rows returned from here are owned by the caller. Bundled O2 A rows already carry     |
@@ -286,8 +286,8 @@ pub fn cloneResolvedSpectroscopyLineList(
     // Clone the first resolved scene-provided spectroscopy line list for bundled preparation.                 |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   This is not the bundled-default path. It preserves an explicit resolved scene payload, then fills     |
-    //   missing HITRAN gas indexes from the absorber species so later spectroscopy setup sees concrete rows.  |
+    //   This path preserves an explicit resolved scene payload, then fills missing HITRAN gas indexes from    |
+    //   the absorber species so later spectroscopy setup sees concrete rows.                                  |
     //                                                                                                         |
     // ownership                                                                                               |
     //   The clone is caller-owned. The source Scene and its resolved line list remain borrowed.               |
