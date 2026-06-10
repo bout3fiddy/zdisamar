@@ -628,7 +628,7 @@ fn collectAdaptiveStrongLineCentersFromList(
     //                                                                                                           |
     // memory                                                                                                    |
     //   SpectroscopyLine is a 104 B setup row. This scan reads line_strength_cm2_per_molecule at [24..31]       |
-    //   and center_wavelength_nm at [8..15] by pointer. It writes only the compact centers_nm prefix used to    |
+    //   and center_wavelength_nm at [8..15] by index. It writes only the compact centers_nm prefix used to      |
     //   split intervals; no line data is retained here.                                                         |
     //                                                                                                           |
     // math                                                                                                      |
@@ -637,10 +637,17 @@ fn collectAdaptiveStrongLineCentersFromList(
 
     const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
 
-    for (line_list.lines) |*line| {
-        if (line.line_strength_cm2_per_molecule < threshold_strength) continue;
-        if (line.center_wavelength_nm < global_start_nm or line.center_wavelength_nm > global_end_nm) continue;
+    for (0..line_list.lines.len) |line_index| {
+        const line = line_list.lines[line_index];
+        const line_is_weak = line.line_strength_cm2_per_molecule < threshold_strength;
+        if (line_is_weak) continue;
+
+        const center_outside_support =
+            line.center_wavelength_nm < global_start_nm or line.center_wavelength_nm > global_end_nm;
+        if (center_outside_support) continue;
+
         if (center_count.* >= types.max_integration_sample_count) return false;
+
         centers_nm[center_count.*] = line.center_wavelength_nm;
         center_count.* += 1;
     }

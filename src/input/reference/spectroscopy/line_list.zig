@@ -685,7 +685,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     //                                                                                                         |
     // memory                                                                                                  |
     //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at [8..15] by             |
-    //   pointer and writes one compact ?u16 match slot with the same index order as self.lines. Vendor        |
+    //   index and writes one compact ?u16 match slot with the same index order as self.lines. Vendor          |
     //   partition mode also reads the retained metadata near [91..97] before deciding whether a row can       |
     //   match a sidecar. No line row is copied or retained here beyond the match-index side slice.            |
     //                                                                                                         |
@@ -703,7 +703,8 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     const matches = try allocator.alloc(?u16, self.lines.len);
     errdefer allocator.free(matches);
 
-    for (self.lines, 0..) |*line, line_index| {
+    for (0..self.lines.len) |line_index| {
+        const line = &self.lines[line_index];
         const should_skip_vendor_line =
             usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line);
         if (should_skip_vendor_line) {
@@ -1125,7 +1126,8 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
 
     var saw_candidate = false;
     var matched_candidate = false;
-    for (self.lines) |*line| {
+    for (0..self.lines.len) |line_index| {
+        const line = &self.lines[line_index];
         if (!Support.isVendorO2AStrongCandidateFromSource(line)) continue;
 
         saw_candidate = true;
@@ -1160,7 +1162,7 @@ fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
     //                                                                                                         |
     // memory                                                                                                  |
     //   This setup pass reads gas_index at [88..89] and vendor metadata around [91..97] from 104 B line rows  |
-    //   by pointer. It chooses retained sidecar matching mode before prepared state exists. A gas-index side  |
+    //   by index. It chooses retained sidecar matching mode before prepared state exists. A gas-index side    |
     //   column would not remove wavelength-time work because the repeated formulas still consume full lines.  |
     // ------------------------------------------------------------------------------------------------------- |
 
@@ -1170,7 +1172,8 @@ fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
         if (gas_index != 7) return false;
     }
 
-    for (self.lines) |*line| {
+    for (0..self.lines.len) |line_index| {
+        const line = &self.lines[line_index];
         if (line.gas_index != 7) continue;
         if (Support.lineHasVendorStrongLineMetadata(line)) return true;
     }

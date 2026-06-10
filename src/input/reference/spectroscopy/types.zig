@@ -314,7 +314,7 @@ pub const SpectroscopyRuntimeControls = struct {
         //                                                                                                     |
         // memory                                                                                              |
         //   Setup scans read only line_strength_cm2_per_molecule at [24..31] from 104 B SpectroscopyLine      |
-        //   rows by pointer. The row stays whole because wavelength-time evaluation consumes the full line    |
+        //   rows by index. The row stays whole because wavelength-time evaluation consumes the full line      |
         //   fields.                                                                                           |
         //                                                                                                     |
         // math                                                                                                |
@@ -325,8 +325,8 @@ pub const SpectroscopyRuntimeControls = struct {
         if (lines.len == 0) return null;
 
         var max_strength: f64 = 0.0;
-        for (lines) |*line| {
-            max_strength = @max(max_strength, line.line_strength_cm2_per_molecule);
+        for (0..lines.len) |line_index| {
+            max_strength = @max(max_strength, lines[line_index].line_strength_cm2_per_molecule);
         }
         return max_strength * scale;
     }

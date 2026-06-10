@@ -291,14 +291,14 @@ fn normalizeResolvedLineGasIndex(
     //   This is setup work after cloneResolvedSpectroscopyLineList, not per-wavelength spectroscopy.          |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The loop reads and may write gas_index at [88..89] of each 104 B SpectroscopyLine row. It uses        |
-    //   pointer capture, does not copy rows, and avoids a side index because this one-time normalization      |
+    //   The loop reads and may write gas_index at [88..89] of each 104 B SpectroscopyLine row by index.       |
+    //   It avoids a side index because this one-time normalization                                            |
     //   must keep the public line-list row intact for later spectroscopy evaluation and cache-key hashing.    |
     // --------------------------------------------------------------------------------------------------------|
 
     const species = maybe_species orelse return;
     const gas_index = species.hitranIndex() orelse return;
-    for (line_list.lines) |*line| {
-        if (line.gas_index == 0) line.gas_index = gas_index;
+    for (0..line_list.lines.len) |line_index| {
+        if (line_list.lines[line_index].gas_index == 0) line_list.lines[line_index].gas_index = gas_index;
     }
 }
