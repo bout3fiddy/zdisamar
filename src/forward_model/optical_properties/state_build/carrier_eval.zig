@@ -91,47 +91,8 @@ pub const SharedOpticalScalars = struct {
 };
 // ------------------------------------------------------------------------------------------------------------ |
 
-// SharedOpticalCarrier --------------------------------------------------------------------------------------- |
-// Public carrier row for gas, CIA, and aerosol optical-depth terms at one support or altitude sample.          |
-//                                                                                                              |
-// layout(64-bit)                                                                                               |
-// size: 40 B (0.039 KiB), align: 8 B                                                                           |
-//                                                                                                              |
-// memory                                                                                                       |
-// [ 0.. 7] gas_absorption_optical_depth_per_km        : f64                                                    |
-// [ 8..15] gas_scattering_optical_depth_per_km        : f64                                                    |
-// [16..23] cia_optical_depth_per_km                   : f64                                                    |
-// [24..31] aerosol_optical_depth_per_km               : f64                                                    |
-// [32..39] aerosol_scattering_optical_depth_per_km    : f64                                                    |
-//                                                                                                              |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                       |
-// cache span: 1 cache line at 64 B per line                                                                    |
-// footprint: per instance = 40 B; total = per instance * live row count                                        |
-pub const SharedOpticalCarrier = struct {
-    gas_absorption_optical_depth_per_km: f64 = 0.0,
-    gas_scattering_optical_depth_per_km: f64 = 0.0,
-    cia_optical_depth_per_km: f64 = 0.0,
-    aerosol_optical_depth_per_km: f64 = 0.0,
-    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
-
-    pub fn totalScatteringOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
-        return self.scalars().totalScatteringOpticalDepthPerKm();
-    }
-
-    pub fn totalOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
-        return self.scalars().totalOpticalDepthPerKm();
-    }
-
-    pub fn scalars(self: SharedOpticalCarrier) SharedOpticalScalars {
-        return .{
-            .gas_absorption_optical_depth_per_km = self.gas_absorption_optical_depth_per_km,
-            .gas_scattering_optical_depth_per_km = self.gas_scattering_optical_depth_per_km,
-            .cia_optical_depth_per_km = self.cia_optical_depth_per_km,
-            .aerosol_optical_depth_per_km = self.aerosol_optical_depth_per_km,
-            .aerosol_scattering_optical_depth_per_km = self.aerosol_scattering_optical_depth_per_km,
-        };
-    }
-};
+// Full carrier rows use the same five optical-depth terms as scalar cache rows.
+pub const SharedOpticalCarrier = SharedOpticalScalars;
 // ------------------------------------------------------------------------------------------------------------ |
 
 // SupportRowScalarCache -------------------------------------------------------------------------------------- |
@@ -269,7 +230,7 @@ pub const WavelengthCarrierCache = struct {
             strong_line_state,
             &fallback,
         );
-        return sharedOpticalCarrierFromScalars(scalars.*);
+        return scalars.*;
     }
 
     pub fn cachedSupportRowScalarsRef(
@@ -1502,7 +1463,7 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         Rayleigh.crossSectionCm2(wavelength_nm),
         ParticleWavelengthScales.init(self, wavelength_nm),
     );
-    return sharedOpticalCarrierFromScalars(scalars);
+    return scalars;
 }
 
 fn sharedOpticalScalarsAtSupportRowWithSpectroscopyCache(
@@ -1711,16 +1672,6 @@ fn fillSharedOpticalScalarsAtSupportRowWithScalarCache(
         .cia_optical_depth_per_km = cia_optical_depth_per_km,
         .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
         .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
-    };
-}
-
-fn sharedOpticalCarrierFromScalars(scalars: SharedOpticalScalars) SharedOpticalCarrier {
-    return .{
-        .gas_absorption_optical_depth_per_km = scalars.gas_absorption_optical_depth_per_km,
-        .gas_scattering_optical_depth_per_km = scalars.gas_scattering_optical_depth_per_km,
-        .cia_optical_depth_per_km = scalars.cia_optical_depth_per_km,
-        .aerosol_optical_depth_per_km = scalars.aerosol_optical_depth_per_km,
-        .aerosol_scattering_optical_depth_per_km = scalars.aerosol_scattering_optical_depth_per_km,
     };
 }
 
