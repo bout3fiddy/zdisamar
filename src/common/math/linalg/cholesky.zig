@@ -2,24 +2,37 @@ const std = @import("std");
 const dense = @import("small_dense.zig");
 
 // cholesky.zig -----------------------------------------------------------------------------------------------|
-// Cholesky factor/solve helpers for small symmetric positive-definite systems stored as flat row-major        |
-// slices. The main production caller is the cross-section polynomial baseline fit: it builds normal           |
-// equations, factors a copy in place, and solves for coefficients without introducing a heap-backed matrix    |
-// abstraction inside the preparation path.                                                                    |
+// Cholesky factor/solve route for the small symmetric positive-definite normal equations built while          |
+// preparing reference cross sections. The production path is narrow: cross_sections.zig builds a weighted     |
+// polynomial fit system, duplicates the normal matrix, factors that copy in place, and solves for baseline    |
+// coefficients.                                                                                               |
+//                                                                                                             |
+// The code stays slice-based because the caller already owns the fit scratch and the systems are small        |
+// enough that a separate matrix object would mostly add ownership noise.                                      |
 //                                                                                                             |
 // called by                                                                                                   |
-//   input/reference/cross_sections.zig solves weighted polynomial normal equations                            |
-//   unit tests cover factorization, solve reuse, and inverse reconstruction                                   |
+//   input/reference/cross_sections.zig:differentialVector removes a weighted polynomial baseline from         |
+//     diagnostic and effective cross-section vectors.                                                         |
+//   effectiveCrossSectionFromSensitivity normalizes sensitivity by air mass, then uses the same differential  |
+//     fit route.                                                                                              |
+//   unit tests cover the reusable factor + solve contract and shape/positive-definite failures.               |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   factor2x2        adapts a fixed 2x2 matrix through the in-place factorizer                                |
+// route map                                                                                                   |
+//   cross_sections.differentialVector                                                                         |
+//     -> assembles normal[row,column] and rhs[row] from weighted wavelength powers                            |
+//     -> duplicates normal into factor so the original assembled system can stay conceptually separate        |
+//     -> factorInPlace(factor, term_count)                                                                    |
+//     -> solveWithFactor(factor, term_count, rhs, coeffs)                                                     |
+//     -> evaluates the polynomial baseline and subtracts it from the result vector                            |
+//                                                                                                             |
+// exported paths                                                                                              |
 //   factorInPlace    overwrites a row-major square matrix with its lower-triangular Cholesky factor           |
-//   solveWithFactor  solves against a previously factored matrix                                              |
-//   invertFromFactor builds an inverse by solving one basis vector at a time                                  |
+//   solveWithFactor  solves one rhs against a previously factored matrix                                      |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Callers own matrix, rhs, output, and scratch slices. factorInPlace mutates the factor slice; callers      |
-//   that still need the original normal matrix must copy it first. This file does not allocate.               |
+//   that still need the original normal matrix must copy it first. solveWithFactor reuses out as the          |
+//   intermediate y vector before writing x. This file does not allocate.                                      |
 //                                                                                                             |
 // failure model                                                                                               |
 //   ShapeMismatch means the caller supplied inconsistent slice lengths. NotPositiveDefinite means the         |
@@ -31,24 +44,12 @@ pub const Error = error{
     ShapeMismatch,
 };
 
-pub fn factor2x2(matrix: [2][2]f64) Error![2][2]f64 {
-    var flat = [_]f64{
-        matrix[0][0], matrix[0][1],
-        matrix[1][0], matrix[1][1],
-    };
-    try factorInPlace(&flat, 2);
-    return .{
-        .{ flat[0], flat[1] },
-        .{ flat[2], flat[3] },
-    };
-}
-
 pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     // factorInPlace ------------------------------------------------------------------------------------------|
     // Factors one row-major square matrix in place into a lower-triangular Cholesky factor.                   |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : small polynomial fits and covariance-style helper solves                                   |
+    //   repeated : polynomial baseline fits in cross-section preparation                                      |
     //   costly   : inner product over the already factored lower triangle                                     |
     //   memory   : caller-owned row-major matrix; upper triangle is zeroed after each row                     |
     //                                                                                                         |
@@ -92,7 +93,7 @@ pub fn solveWithFactor(
     // Solves one rhs vector against a previously computed lower-triangular Cholesky factor.                   |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : coefficient solves after a small dense factorization                                       |
+    //   repeated : coefficient solves after the polynomial normal matrix has been factored                    |
     //   costly   : forward substitution followed by back substitution                                         |
     //   memory   : caller-owned rhs and output slices; output is reused for the intermediate y vector         |
     //                                                                                                         |
@@ -123,40 +124,5 @@ pub fn solveWithFactor(
             value -= factor[dense.index(inner, x_index, dimension)] * out[inner];
         }
         out[x_index] = value / factor[dense.index(x_index, x_index, dimension)];
-    }
-}
-
-pub fn invertFromFactor(
-    factor: []const f64,
-    dimension: usize,
-    out: []f64,
-    storage: []f64,
-) Error!void {
-    // invertFromFactor ---------------------------------------------------------------------------------------|
-    // Builds a dense inverse from an existing Cholesky factor by solving each basis vector.                   |
-    //                                                                                                         |
-    // hot path                                                                                                |
-    //   repeated : full-inverse callers; current checked use is inverse reconstruction coverage               |
-    //   costly   : dimension solves, each using forward and back substitution                                 |
-    //   memory   : out is row-major inverse storage; storage is split into basis and solution work slices     |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   inverse[:, column] = solve(L * L^T, e_column)                                                         |
-    // --------------------------------------------------------------------------------------------------------|
-
-    if (out.len != dimension * dimension or storage.len != 2 * dimension) return Error.ShapeMismatch;
-
-    const basis = storage[0..dimension];
-    const solution = storage[dimension .. 2 * dimension];
-
-    @memset(out, 0.0);
-    for (0..dimension) |column| {
-        @memset(basis, 0.0);
-        basis[column] = 1.0;
-        @memcpy(solution, basis);
-        try solveWithFactor(factor, dimension, basis, solution);
-        for (0..dimension) |row| {
-            out[dense.index(row, column, dimension)] = solution[row];
-        }
     }
 }
