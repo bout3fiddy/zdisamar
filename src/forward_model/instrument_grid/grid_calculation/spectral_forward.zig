@@ -84,6 +84,96 @@ const trace_worker_labos_timing_default = TracePrefetchRoute.worker_labos_timing
 const trace_single_labos_timing_default = TracePrefetchRoute.single_labos_timing_empty;
 const trace_labos_timing_storage_default: TraceLabosTimingStorage = undefined;
 
+// ForwardScratchRequirementsRequest -------------------------------------------------------------------------------------|
+// Borrowed inputs used once per prefetch batch to size worker-local scratch buffers.                                     |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene      : *const Scene                                                                                     |
+// [ 8..15] rtm_config : *const common.SolveConfig                                                                        |
+// [16..23] prepared   : *const OpticsPreparation.PreparedOpticalState                                                    |
+//                                                                                                                        |
+// referenced storage: borrowed scene, solve config, and prepared optical state; no referenced storage is owned here.     |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const ForwardScratchRequirementsRequest = struct {
+    scene: *const Scene,
+    rtm_config: *const common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+};
+
+// ForwardScratchRequirements --------------------------------------------------------------------------------------------|
+// Plain counts used by ForwardSampleScratch.initInto. This row keeps scratch allocation separate from broad              |
+// scene/prepared-state queries while preserving the same buffer sizes.                                                   |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 48 B (0.047 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] layer_count                    : usize                                                                        |
+// [ 8..15] source_interface_count         : usize                                                                        |
+// [16..23] rtm_quadrature_level_count     : usize                                                                        |
+// [24..31] pseudo_spherical_sample_count  : usize                                                                        |
+// [32..39] pseudo_spherical_level_count   : usize                                                                        |
+// [40..47] support_cache_count            : usize                                                                        |
+//                                                                                                                        |
+// referenced storage: none; this is a stack value copied by value.                                                       |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 48 B (0.047 KiB); no out-of-line storage                                                     |
+const ForwardScratchRequirements = struct {
+    layer_count: usize,
+    source_interface_count: usize,
+    rtm_quadrature_level_count: usize,
+    pseudo_spherical_sample_count: usize,
+    pseudo_spherical_level_count: usize,
+    support_cache_count: usize,
+
+    fn fromRequest(request: *const ForwardScratchRequirementsRequest) ForwardScratchRequirements {
+        // ForwardScratchRequirements.fromRequest ------------------------------------------------------------------------|
+        // Gather scratch sizes once for the batch before worker-local allocation starts.                                 |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const scene = request.scene;
+        const rtm_config = request.rtm_config.*;
+        const prepared = request.prepared;
+        const layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
+        const uses_source_interfaces = Storage.configMayUseSourceInterfaces(scene, rtm_config);
+        const uses_rtm_quadrature = Storage.configUsesRtmQuadrature(rtm_config);
+        const uses_pseudo_spherical_grid = Storage.configUsesPseudoSphericalGrid(rtm_config);
+        const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
+
+        var source_interface_count: usize = 0;
+        if (uses_source_interfaces) {
+            source_interface_count = layer_count + 1;
+        }
+
+        var rtm_quadrature_level_count: usize = 0;
+        if (uses_rtm_quadrature) {
+            rtm_quadrature_level_count = layer_count + 1;
+        }
+
+        var pseudo_spherical_sample_count: usize = 0;
+        var pseudo_spherical_level_count: usize = 0;
+        if (uses_pseudo_spherical_grid) {
+            pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
+            pseudo_spherical_level_count = layer_count + 1;
+        }
+
+        return .{
+            .layer_count = layer_count,
+            .source_interface_count = source_interface_count,
+            .rtm_quadrature_level_count = rtm_quadrature_level_count,
+            .pseudo_spherical_sample_count = pseudo_spherical_sample_count,
+            .pseudo_spherical_level_count = pseudo_spherical_level_count,
+            .support_cache_count = support_cache_count,
+        };
+    }
+};
+
 // ForwardSampleScratch --------------------------------------------------------------------------------------------------|
 // Worker-local scratch storage for repeated high-resolution forward misses.                                              |
 //                                                                                                                        |
@@ -121,61 +211,67 @@ const ForwardSampleScratch = struct {
     fn initInto(
         self: *ForwardSampleScratch,
         allocator: Allocator,
-        scene: *const Scene,
-        rtm_config: common.SolveConfig,
-        prepared: *const OpticsPreparation.PreparedOpticalState,
+        requirements: ForwardScratchRequirements,
     ) !void {
         // ForwardSampleScratch.initInto ---------------------------------------------------------------------------------|
-        // Allocate worker-local scratch buffers sized from the resolved prepared state and RTM controls.                 |
+        // Allocate worker-local scratch buffers from precomputed batch requirements.                                     |
         //                                                                                                                |
         // why                                                                                                            |
         //   A worker computes many misses. Reusing these buffers avoids per-miss allocation and keeps LABOS              |
         //   workspace state private to the worker.                                                                       |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        const layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
-        const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
-        const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
-        const needs_source_interfaces = Storage.configMayUseSourceInterfaces(scene, rtm_config);
-        const needs_rtm_quadrature = Storage.configUsesRtmQuadrature(rtm_config);
-        const needs_pseudo_spherical_grid = Storage.configUsesPseudoSphericalGrid(rtm_config);
-
-        const layer_inputs = try allocator.alloc(common.LayerInput, layer_count);
+        const layer_inputs = try allocator.alloc(common.LayerInput, requirements.layer_count);
         errdefer allocator.free(layer_inputs);
         var source_interfaces: []common.SourceInterfaceInput = @constCast(&[_]common.SourceInterfaceInput{});
-        if (needs_source_interfaces) {
-            source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1);
+        if (requirements.source_interface_count != 0) {
+            source_interfaces = try allocator.alloc(
+                common.SourceInterfaceInput,
+                requirements.source_interface_count,
+            );
         }
 
         errdefer if (source_interfaces.len != 0) allocator.free(source_interfaces);
         var rtm_quadrature_levels: []common.RtmQuadratureLevel = @constCast(&[_]common.RtmQuadratureLevel{});
-        if (needs_rtm_quadrature) {
-            rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1);
+        if (requirements.rtm_quadrature_level_count != 0) {
+            rtm_quadrature_levels = try allocator.alloc(
+                common.RtmQuadratureLevel,
+                requirements.rtm_quadrature_level_count,
+            );
         }
         errdefer if (rtm_quadrature_levels.len != 0) allocator.free(rtm_quadrature_levels);
 
         var pseudo_spherical_samples: []common.PseudoSphericalSample =
             @constCast(&[_]common.PseudoSphericalSample{});
-        if (needs_pseudo_spherical_grid) {
+        if (requirements.pseudo_spherical_level_count != 0) {
             pseudo_spherical_samples = try allocator.alloc(
                 common.PseudoSphericalSample,
-                pseudo_spherical_sample_count,
+                requirements.pseudo_spherical_sample_count,
             );
         }
         errdefer if (pseudo_spherical_samples.len != 0) allocator.free(pseudo_spherical_samples);
         var pseudo_spherical_level_starts: []usize = @constCast(&[_]usize{});
-        if (needs_pseudo_spherical_grid) {
-            pseudo_spherical_level_starts = try allocator.alloc(usize, layer_count + 1);
+        if (requirements.pseudo_spherical_level_count != 0) {
+            pseudo_spherical_level_starts = try allocator.alloc(
+                usize,
+                requirements.pseudo_spherical_level_count,
+            );
         }
 
         errdefer if (pseudo_spherical_level_starts.len != 0) allocator.free(pseudo_spherical_level_starts);
         var pseudo_spherical_level_altitudes: []f64 = @constCast(&[_]f64{});
-        if (needs_pseudo_spherical_grid) {
-            pseudo_spherical_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+        if (requirements.pseudo_spherical_level_count != 0) {
+            pseudo_spherical_level_altitudes = try allocator.alloc(
+                f64,
+                requirements.pseudo_spherical_level_count,
+            );
         }
         errdefer if (pseudo_spherical_level_altitudes.len != 0) allocator.free(pseudo_spherical_level_altitudes);
 
-        var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(allocator, support_cache_count);
+        var support_carrier_cache = try CarrierEval.SupportRowScalarCache.init(
+            allocator,
+            requirements.support_cache_count,
+        );
         errdefer support_carrier_cache.deinit(allocator);
 
         self.* = .{
@@ -261,34 +357,39 @@ const ForwardPrefetchErrorState = struct {
 // Worker context for high-resolution LABOS prefetch.                                                                     |
 //                                                                                                                        |
 // layout(64-bit)                                                                                                         |
-// size: 184 B (0.180 KiB) normally; 192 B (0.188 KiB) with trace phase timing, align: 8 B                                |
+// size: 192 B (0.188 KiB) normally; 288 B (0.281 KiB) in telemetry CLI builds, align: 8 B                                |
 //                                                                                                                        |
 // memory, normal build                                                                                                   |
 // [  0..  7] scene                        : *const Scene                                                                 |
 // [  8.. 87] rtm_config                   : common.SolveConfig                                                           |
 // [ 88.. 95] prepared                     : *const OpticsPreparation.PreparedOpticalState                                |
-// [ 96..111] misses                       : []const ForwardCacheMiss                                                     |
-// [112..127] profile_spectroscopy_caches  : []const SpectroscopyState.ProfileNodeSpectroscopyCache                       |
-// [128..143] results                      : []ForwardIntegratedSample                                                    |
-// [144..151] error_state                  : *ForwardPrefetchErrorState                                                   |
-// [152..159] start_index                  : usize                                                                        |
-// [160..167] end_index                    : usize                                                                        |
-// [168..175] queue                        : ?*work_partition.ChunkQueue                                                  |
-// [176..183] worker_index                 : usize                                                                        |
+// [ 96..103] scratch_requirements         : *const ForwardScratchRequirements                                            |
+// [104..119] misses                       : []const ForwardCacheMiss                                                     |
+// [120..135] profile_spectroscopy_caches  : []const SpectroscopyState.ProfileNodeSpectroscopyCache                       |
+// [136..151] results                      : []ForwardIntegratedSample                                                    |
+// [152..159] error_state                  : *ForwardPrefetchErrorState                                                   |
+// [160..167] start_index                  : usize                                                                        |
+// [168..175] end_index                    : usize                                                                        |
+// [176..183] queue                        : ?*work_partition.ChunkQueue                                                  |
+// [184..191] worker_index                 : usize                                                                        |
+//                                                                                                                        |
+// telemetry CLI build                                                                                                    |
+//   telemetry_context occupies [192..287], moving zero-size labos_phase_timing to offset 288.                            |
 //                                                                                                                        |
 // trace phase timing build                                                                                               |
-//   labos_phase_timing occupies [184..191]. telemetry_context is zero-size in product and trace-phase builds.            |
+//   labos_phase_timing follows the normal fields when trace phase timing is enabled.                                     |
 //                                                                                                                        |
 // pointers and slices reference external storage not included in the struct size.                                        |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
 // cache span: 3 cache lines at 64 B per line                                                                             |
-// footprint: per instance = 184 B (0.180 KiB) normally; 192 B (0.188 KiB) with trace phase timing                        |
+// footprint: per instance = 192 B (0.188 KiB) normally; 288 B (0.281 KiB) in telemetry CLI builds                        |
 // telemetry                                                                                                              |
 //   validation telemetry builds use telemetry_context for row attribution.                                               |
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     rtm_config: common.SolveConfig,
     prepared: *const OpticsPreparation.PreparedOpticalState,
+    scratch_requirements: *const ForwardScratchRequirements,
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
@@ -517,12 +618,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     const allocator = arena.allocator();
 
     var scratch: ForwardSampleScratch = undefined;
-    scratch.initInto(
-        allocator,
-        worker.scene,
-        worker.rtm_config,
-        worker.prepared,
-    ) catch |err| {
+    scratch.initInto(allocator, worker.scratch_requirements.*) catch |err| {
         worker.error_state.store(err);
         return;
     };
@@ -635,11 +731,17 @@ pub fn prefetchForwardSamples(
     // end instrumentation: trace counter: high-resolution misses ------------------------------------------------------- |
 
     const telemetry_context = Telemetry.currentContext();
+    const scratch_requirements_request = ForwardScratchRequirementsRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+        .prepared = prepared,
+    };
+    const scratch_requirements = ForwardScratchRequirements.fromRequest(&scratch_requirements_request);
 
     if (worker_count == 1) {
         var labos_phase_timing: TraceSingleLabosTiming = trace_single_labos_timing_default;
         var scratch: ForwardSampleScratch = undefined;
-        try scratch.initInto(allocator, scene, rtm_config, prepared);
+        try scratch.initInto(allocator, scratch_requirements);
 
         attachSingleTraceLabosTiming(trace_phase_timing, &scratch, &labos_phase_timing);
         defer clearTraceLabosTiming(&scratch);
@@ -693,6 +795,7 @@ pub fn prefetchForwardSamples(
             .scene = scene,
             .rtm_config = rtm_config,
             .prepared = prepared,
+            .scratch_requirements = &scratch_requirements,
             .misses = misses,
             .profile_spectroscopy_caches = profile_spectroscopy_caches,
             .results = results,
