@@ -173,10 +173,6 @@ pub fn maxWeightedPhaseCoefficientIndex(
     return max_index;
 }
 
-pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
-    return gasPhaseCoefficientsFromRayleigh2(rayleighPhaseCoefficient2AtWavelength(wavelength_nm));
-}
-
 pub fn gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
     coefficients[2] = rayleigh_coef2;

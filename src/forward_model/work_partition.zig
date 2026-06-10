@@ -136,28 +136,6 @@ pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) 
     };
 }
 
-pub fn rangesAreBalanced(item_count: usize, worker_count: usize) bool {
-    if (worker_count == 0) return false;
-
-    var expected_start: usize = 0;
-    var min_count: usize = std.math.maxInt(usize);
-    var max_count: usize = 0;
-    for (0..worker_count) |worker_index| {
-        const range = staticRange(item_count, worker_count, worker_index);
-        if (range.start != expected_start) return false;
-        if (range.end < range.start or range.end > item_count) return false;
-
-        const count = range.len();
-        min_count = @min(min_count, count);
-        max_count = @max(max_count, count);
-        expected_start = range.end;
-    }
-
-    if (expected_start != item_count) return false;
-    if (item_count == 0) return max_count == 0;
-    return max_count - min_count <= 1;
-}
-
 pub fn preferredWorkerCount(item_count: usize, min_items_per_worker: usize) usize {
     // preferredWorkerCount ---------------------------------------------------------------------------------- |
     // Resolves CPU count and configured worker limit into a batch worker count.                               |
