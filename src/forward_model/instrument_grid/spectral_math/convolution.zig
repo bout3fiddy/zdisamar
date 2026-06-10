@@ -20,9 +20,15 @@ pub const Error = error{
 //   The dense interior streams a fixed window over one caller-owned slice and uses a two-lane vector dot product.        |
 //   Boundaries are handled separately because the kernel clips at the first and last samples.                            |
 //                                                                                                                        |
+// storage contract                                                                                                       |
+//   This is not an in-place transform. The output slice must be length-matched and caller-owned, but it must not         |
+//   overlap the signal slice when convolution should use the original signal values. simulate.zig follows that           |
+//   contract by convolving scratch -> radiance/irradiance, and by convolving each Jacobian column into scratch_aux       |
+//   before copying the result back to the column.                                                                        |
+//                                                                                                                        |
 // contract                                                                                                               |
 //   Boundaries normalize by the valid part of the kernel only, so constant input stays constant at the edges.            |
-//   Interior samples reuse the full kernel norm. signal and output may be the same length-matched slice.                 |
+//   Interior samples reuse the full kernel norm. signal and output must have the same length.                            |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
@@ -42,6 +48,10 @@ pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void
     // boundary math                                                                                                      |
     //   Use the same formula, but keep only j where signal[i + j - half_width] is inside the signal. The                 |
     //   denominator uses that clipped kernel subset, so constant input stays constant at the edges.                      |
+    //                                                                                                                    |
+    // memory                                                                                                             |
+    //   Reads from signal and writes to output in ascending index order. Callers that need the original signal after     |
+    //   a write must pass separate output storage; calibration.zig owns the in-place postprocess route.                  |
     // -------------------------------------------------------------------------------------------------------------------|
 
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
