@@ -248,8 +248,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     }
 
     var has_active_quadrature = false;
-    const layers: []const State.PreparedLayer = self.layers;
-    for (layers) |*layer| {
+    for (self.layers) |*layer| {
 
         // The fallback only reads the support span from PreparedLayer here, but that span is the same layer
         // identity used by nearby forward-layer and pseudo-spherical builders. Keep this as a pointer walk

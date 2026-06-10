@@ -71,8 +71,7 @@ pub fn opticalDepthBreakdownAtWavelength(
 
     if (self.sublayers) |sublayers| {
         var totals: OpticalDepthBreakdown = .{};
-        const layers: []const Types.PreparedLayer = self.layers;
-        for (layers) |*layer| {
+        for (self.layers) |*layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
             const strong_line_state = if (self.strong_line_states) |states|

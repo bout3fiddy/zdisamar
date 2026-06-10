@@ -261,8 +261,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             }
 
             var totals: OpticalDepthBreakdown = .{};
-            const layers: []const State.PreparedLayer = self.layers;
-            for (layers, layer_inputs) |*layer, *layer_input| {
+            for (self.layers, layer_inputs) |*layer, *layer_input| {
 
                 // This fallback uses only span and altitude fields from PreparedLayer, but those fields stay
                 // with the physical layer row so shared geometry, forward layers, and diagnostics slice the
@@ -320,8 +319,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         }
 
         var totals: OpticalDepthBreakdown = .{};
-        const layers: []const State.PreparedLayer = self.layers;
-        for (layers, layer_inputs) |*layer, *layer_input| {
+        for (self.layers, layer_inputs) |*layer, *layer_input| {
 
             // Non-shared layer mode consumes more of PreparedLayer than just the support span: altitude,
             // CIA totals, aerosol profile fields, gas/scattering totals, and phase support all come from
@@ -357,8 +355,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     };
 
     var totals: OpticalDepthBreakdown = .{};
-    const layers: []const State.PreparedLayer = self.layers;
-    for (layers, layer_inputs) |*layer, *layer_input| {
+    for (self.layers, layer_inputs) |*layer, *layer_input| {
         const aerosol_profile: AerosolProfile = choose_aerosol_profile: {
             if (self.has_aerosol_profile_properties) {
                 break :choose_aerosol_profile .{
