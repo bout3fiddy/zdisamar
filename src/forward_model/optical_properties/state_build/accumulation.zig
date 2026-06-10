@@ -7,22 +7,32 @@ const Absorbers = @import("absorbers.zig");
 const Allocator = std.mem.Allocator;
 
 // accumulation.zig -------------------------------------------------------------------------------------------|
-// Reduces prepared layer rows and absorber state into the scalar means stored on PreparedOpticalState.        |
+// Scalar reduction stage for optical-property preparation. layer_accumulation.zig has already filled the      |
+// retained PreparedLayer/PreparedSublayer rows and produced running totals; this file turns those totals plus |
+// absorber state into the compact PreparedMeans row copied into PreparedOpticalState by finalize.zig.         |
 //                                                                                                             |
 // called by                                                                                                   |
-//   root.prepare after Context.init and Absorbers.build.                                                      |
+//   root.prepare calls accumulate after Context.init has allocated preparation storage and Absorbers.build    |
+//   has prepared line/cross-section absorber rows, LUT handles, density columns, and optional line states.    |
 //                                                                                                             |
-// main path                                                                                                   |
-//   LayerAccumulation.populate builds the per-layer and per-sublayer totals.                                  |
-//   computePreparedMeans folds those totals into effective thermodynamics, band means, column factors,        |
-//   optical-depth totals, aerosol means, and depolarization.                                                  |
+// route map                                                                                                   |
+//   LayerAccumulation.populate : fills layer/sublayer rows and returns optical-depth/column running totals    |
+//   computePreparedMeans       : folds totals into effective T/p, band means, column factors, and summaries   |
+//   Finalize.assemble          : copies the returned PreparedMeans into the final PreparedOpticalState header |
+//                                                                                                             |
+// reduction model                                                                                             |
+//   Layer totals provide atmosphere-weighted thermodynamics and optical depths. Absorber rows provide         |
+//   band-mean cross sections; operational O2/O2-O2 LUTs replace the corresponding line/CIA table route when   |
+//   enabled. Aerosol single-scatter albedo and depolarization are weighted by optical depth.                  |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Runs once per prepared scene. The reductions are scalar and should stay close to the layer-accumulation   |
-//   data they summarize so changes to weighting math are easy to audit.                                       |
+//   Runs once per prepared scene, but retrievals rebuild it for every trial state. The repeated heavy work    |
+//   stays in layer_accumulation and band-mean scans; PreparedMeans remains a small by-value handoff so final  |
+//   assembly does not need to reread wide layer or absorber rows.                                             |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   Reads Context and AbsorberBuildState; returns PreparedMeans by value and does not retain borrowed rows.   |
+//   Reads Context and AbsorberBuildState, allocates only through delegated band-mean helpers, and returns     |
+//   PreparedMeans by value. It does not retain borrowed rows or move ownership; finalize.zig owns that step.  |
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedMeans ----------------------------------------------------------------------------------------------|
@@ -83,13 +93,14 @@ pub fn accumulate(
     absorbers: *Absorbers.AbsorberBuildState,
 ) !PreparedMeans {
     // accumulate ---------------------------------------------------------------------------------------------|
-    // Build layer totals, particle/phase/spectroscopy support, and prepared means.                            |
+    // Build layer totals, particle/phase/spectroscopy support rows, and the PreparedMeans summary.            |
     //                                                                                                         |
     // hot path                                                                                                |
-    // optical-state preparation calls this once per prepared scene.                                           |
+    //   Optical-state preparation calls this once per prepared scene. The layer population step writes the    |
+    //   wide retained rows; the second step reduces their totals into the small by-value handoff.             |
     //                                                                                                         |
     // calls                                                                                                   |
-    // LayerAccumulation.populate -> computePreparedMeans                                                      |
+    //   LayerAccumulation.populate -> computePreparedMeans                                                    |
     // --------------------------------------------------------------------------------------------------------|
 
     const layer_totals = try LayerAccumulation.populate(allocator, context, absorbers);
@@ -111,11 +122,18 @@ fn computePreparedMeans(
     // Reduce layer/sublayer sums into effective T, p, column factors, band means, and optical-depth totals.   |
     //                                                                                                         |
     // hot path                                                                                                |
-    // runs once per optical-state preparation after all layer rows have been accumulated.                     |
+    //   Runs once per optical-state preparation after all layer rows have been accumulated. The loops over    |
+    //   absorber rows use pointer capture because absorber rows own or reference out-of-line spectroscopy     |
+    //   storage that should not be copied while computing band means.                                         |
     //                                                                                                         |
     // math                                                                                                    |
-    // T_eff = sum(T_i * n_i * w_i) / sum(n_i * w_i); p_eff uses the same weights.                             |
-    // sigma_bar = sum(sigma_k * column_k) / sum(column_k); omega0_eff = tau_sca / tau_ext.                    |
+    //   T_eff     = sum(T_i * n_i * w_i) / sum(n_i * w_i); p_eff uses the same weights.                       |
+    //   sigma_bar = sum(sigma_k * column_k) / sum(column_k).                                                  |
+    //   omega0    = tau_scattering / tau_total.                                                               |
+    //                                                                                                         |
+    // route notes                                                                                             |
+    //   Operational O2 contributes with oxygen_column_density_factor and skips prepared O2 line absorbers.    |
+    //   Operational O2-O2 contributes the CIA band mean when enabled; otherwise the prepared CIA table does.  |
     // --------------------------------------------------------------------------------------------------------|
 
     const EffectiveThermodynamics = struct {
