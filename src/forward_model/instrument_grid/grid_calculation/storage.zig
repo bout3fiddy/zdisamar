@@ -300,6 +300,93 @@ pub const BufferRequirements = struct {
     }
 };
 
+// ProductSampleBufferOwners ---------------------------------------------------------------------------------------------|
+// Mutable owner slots for sample-sized product rows. ProductStorage owns the backing arrays; this row only               |
+// groups the slots that grow together for one spectral sweep.                                                            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 48 B (0.047 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] wavelengths : *[]f64                                                                                          |
+// [ 8..15] radiance    : *[]f64                                                                                          |
+// [16..23] irradiance  : *[]f64                                                                                          |
+// [24..31] reflectance : *[]f64                                                                                          |
+// [32..39] scratch     : *[]f64                                                                                          |
+// [40..47] scratch_aux : *[]f64                                                                                          |
+//                                                                                                                        |
+// referenced storage: every field points at a ProductStorage slice slot; this row owns no backing arrays.                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 48 B (0.047 KiB); no out-of-line storage                                                     |
+const ProductSampleBufferOwners = struct {
+    wavelengths: *[]f64,
+    radiance: *[]f64,
+    irradiance: *[]f64,
+    reflectance: *[]f64,
+    scratch: *[]f64,
+    scratch_aux: *[]f64,
+};
+
+// TransportBufferOwners -------------------------------------------------------------------------------------------------|
+// Mutable owner slots for transport buffers whose capacity is decided by RTM route requirements.                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] layer_inputs          : *[]common.LayerInput                                                                  |
+// [ 8..15] source_interfaces     : *[]common.SourceInterfaceInput                                                        |
+// [16..23] rtm_quadrature_levels : *[]common.RtmQuadratureLevel                                                          |
+//                                                                                                                        |
+// referenced storage: every field points at a ProductStorage slice slot; this row owns no backing arrays.                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const TransportBufferOwners = struct {
+    layer_inputs: *[]common.LayerInput,
+    source_interfaces: *[]common.SourceInterfaceInput,
+    rtm_quadrature_levels: *[]common.RtmQuadratureLevel,
+};
+
+// PseudoSphericalBufferOwners -------------------------------------------------------------------------------------------|
+// Mutable owner slots for geometric-correction support rows. The three buffers are enabled or freed together.            |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] samples         : *[]common.PseudoSphericalSample                                                             |
+// [ 8..15] level_starts    : *[]usize                                                                                    |
+// [16..23] level_altitudes : *[]f64                                                                                      |
+//                                                                                                                        |
+// referenced storage: every field points at a ProductStorage slice slot; this row owns no backing arrays.                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const PseudoSphericalBufferOwners = struct {
+    samples: *[]common.PseudoSphericalSample,
+    level_starts: *[]usize,
+    level_altitudes: *[]f64,
+};
+
+// JacobianBufferOwners --------------------------------------------------------------------------------------------------|
+// Mutable owner slot for the optional state-major Jacobian output row.                                                   |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 8 B (0.008 KiB), align: 8 B                                                                                      |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [0..7] values : *[]f64                                                                                                 |
+//                                                                                                                        |
+// referenced storage: values points at a ProductStorage slice slot; this row owns no backing arrays.                     |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 8 B (0.008 KiB); no out-of-line storage                                                      |
+const JacobianBufferOwners = struct {
+    values: *[]f64,
+};
+
 // instrumentation: trace phase timing -----------------------------------------------------------------------------------|
 // captures: coarse product-simulation phase timings for trace-harness JSON summaries                                     |
 // why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones.             |
@@ -614,73 +701,39 @@ pub const ProductStorage = struct {
         };
         const requirements = BufferRequirements.fromSceneHint(&requirements_request);
 
-        try ensureBufferCapacity(allocator, &self.wavelengths, requirements.sample_count);
-        try ensureBufferCapacity(allocator, &self.radiance, requirements.sample_count);
-        try ensureBufferCapacity(allocator, &self.irradiance, requirements.sample_count);
-        try ensureBufferCapacity(allocator, &self.reflectance, requirements.sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch, requirements.sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch_aux, requirements.sample_count);
+        const product_buffers = ProductSampleBufferOwners{
+            .wavelengths = &self.wavelengths,
+            .radiance = &self.radiance,
+            .irradiance = &self.irradiance,
+            .reflectance = &self.reflectance,
+            .scratch = &self.scratch,
+            .scratch_aux = &self.scratch_aux,
+        };
+        const transport_buffers = TransportBufferOwners{
+            .layer_inputs = &self.layer_inputs,
+            .source_interfaces = &self.source_interfaces,
+            .rtm_quadrature_levels = &self.rtm_quadrature_levels,
+        };
+        const pseudo_spherical_buffers = PseudoSphericalBufferOwners{
+            .samples = &self.pseudo_spherical_samples,
+            .level_starts = &self.pseudo_spherical_level_starts,
+            .level_altitudes = &self.pseudo_spherical_level_altitudes,
+        };
+        const jacobian_buffers = JacobianBufferOwners{
+            .values = &self.jacobian,
+        };
 
-        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, requirements.layer_count);
-        if (requirements.source_interface_count != 0) {
-            try ensureSourceInterfaceBufferCapacity(
-                allocator,
-                &self.source_interfaces,
-                requirements.source_interface_count,
-            );
-        } else {
-            freeSourceInterfaceBuffer(allocator, self.source_interfaces);
-            self.source_interfaces = &.{};
-        }
-        if (requirements.rtm_quadrature_level_count != 0) {
-            try ensureRtmQuadratureBufferCapacity(
-                allocator,
-                &self.rtm_quadrature_levels,
-                requirements.rtm_quadrature_level_count,
-            );
-        } else {
-            freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
-            self.rtm_quadrature_levels = &.{};
-        }
-        if (requirements.pseudo_spherical_level_count != 0) {
-            try ensurePseudoSphericalSampleBufferCapacity(
-                allocator,
-                &self.pseudo_spherical_samples,
-                requirements.pseudo_spherical_sample_count,
-            );
-            try ensureIndexBufferCapacity(
-                allocator,
-                &self.pseudo_spherical_level_starts,
-                requirements.pseudo_spherical_level_count,
-            );
-            try ensureBufferCapacity(
-                allocator,
-                &self.pseudo_spherical_level_altitudes,
-                requirements.pseudo_spherical_level_count,
-            );
-        } else {
-            freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
-
-            freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
-            freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
-            self.pseudo_spherical_samples = &.{};
-            self.pseudo_spherical_level_starts = &.{};
-            self.pseudo_spherical_level_altitudes = &.{};
-        }
-        if (requirements.active_jacobian_count != 0) {
-            try ensureBufferCapacity(
-                allocator,
-                &self.jacobian,
-                requirements.sample_count * requirements.active_jacobian_count,
-            );
-        }
+        try ensureProductSampleBuffers(allocator, &product_buffers, requirements.sample_count);
+        try ensureTransportBuffers(allocator, &transport_buffers, requirements);
+        try ensurePseudoSphericalBuffers(allocator, &pseudo_spherical_buffers, requirements);
+        try ensureJacobianBuffers(allocator, &jacobian_buffers, requirements);
 
         const source_interface_view: []common.SourceInterfaceInput = if (requirements.source_interface_count != 0)
-            self.source_interfaces[0..requirements.source_interface_count]
+            transport_buffers.source_interfaces.*[0..requirements.source_interface_count]
         else
             @constCast(&[_]common.SourceInterfaceInput{});
         const rtm_quadrature_view: []common.RtmQuadratureLevel = if (requirements.rtm_quadrature_level_count != 0)
-            self.rtm_quadrature_levels[0..requirements.rtm_quadrature_level_count]
+            transport_buffers.rtm_quadrature_levels.*[0..requirements.rtm_quadrature_level_count]
         else
             @constCast(&[_]common.RtmQuadratureLevel{});
 
@@ -690,26 +743,26 @@ pub const ProductStorage = struct {
         var pseudo_spherical_altitudes_view: []f64 = @constCast(&[_]f64{});
         if (requirements.pseudo_spherical_level_count != 0) {
             pseudo_spherical_samples_view =
-                self.pseudo_spherical_samples[0..requirements.pseudo_spherical_sample_count];
+                pseudo_spherical_buffers.samples.*[0..requirements.pseudo_spherical_sample_count];
             pseudo_spherical_starts_view =
-                self.pseudo_spherical_level_starts[0..requirements.pseudo_spherical_level_count];
+                pseudo_spherical_buffers.level_starts.*[0..requirements.pseudo_spherical_level_count];
             pseudo_spherical_altitudes_view =
-                self.pseudo_spherical_level_altitudes[0..requirements.pseudo_spherical_level_count];
+                pseudo_spherical_buffers.level_altitudes.*[0..requirements.pseudo_spherical_level_count];
         }
 
         const jacobian_view = if (requirements.active_jacobian_count != 0)
-            self.jacobian[0 .. requirements.sample_count * requirements.active_jacobian_count]
+            jacobian_buffers.values.*[0 .. requirements.sample_count * requirements.active_jacobian_count]
         else
             null;
 
         return .{
-            .wavelengths = self.wavelengths[0..requirements.sample_count],
-            .radiance = self.radiance[0..requirements.sample_count],
-            .irradiance = self.irradiance[0..requirements.sample_count],
-            .reflectance = self.reflectance[0..requirements.sample_count],
-            .scratch = self.scratch[0..requirements.sample_count],
-            .scratch_aux = self.scratch_aux[0..requirements.sample_count],
-            .layer_inputs = self.layer_inputs[0..requirements.layer_count],
+            .wavelengths = product_buffers.wavelengths.*[0..requirements.sample_count],
+            .radiance = product_buffers.radiance.*[0..requirements.sample_count],
+            .irradiance = product_buffers.irradiance.*[0..requirements.sample_count],
+            .reflectance = product_buffers.reflectance.*[0..requirements.sample_count],
+            .scratch = product_buffers.scratch.*[0..requirements.sample_count],
+            .scratch_aux = product_buffers.scratch_aux.*[0..requirements.sample_count],
+            .layer_inputs = transport_buffers.layer_inputs.*[0..requirements.layer_count],
             .source_interfaces = source_interface_view,
             .rtm_quadrature_levels = rtm_quadrature_view,
             .pseudo_spherical_samples = pseudo_spherical_samples_view,
@@ -720,6 +773,111 @@ pub const ProductStorage = struct {
         };
     }
 };
+
+fn ensureProductSampleBuffers(
+    allocator: Allocator,
+    owners: *const ProductSampleBufferOwners,
+    sample_count: usize,
+) Error!void {
+    // ensureProductSampleBuffers ----------------------------------------------------------------------------------------|
+    // Grow the sample-sized product rows together. All values are scratch/output rows and old contents are               |
+    // discarded whenever capacity grows.                                                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    try ensureBufferCapacity(allocator, owners.wavelengths, sample_count);
+    try ensureBufferCapacity(allocator, owners.radiance, sample_count);
+    try ensureBufferCapacity(allocator, owners.irradiance, sample_count);
+    try ensureBufferCapacity(allocator, owners.reflectance, sample_count);
+    try ensureBufferCapacity(allocator, owners.scratch, sample_count);
+    try ensureBufferCapacity(allocator, owners.scratch_aux, sample_count);
+}
+
+fn ensureTransportBuffers(
+    allocator: Allocator,
+    owners: *const TransportBufferOwners,
+    requirements: BufferRequirements,
+) Error!void {
+    // ensureTransportBuffers --------------------------------------------------------------------------------------------|
+    // Grow transport-route buffers from the requirements row. Disabled feature buffers are freed immediately             |
+    // so stale rows cannot be observed by a later route.                                                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    try ensureLayerBufferCapacity(allocator, owners.layer_inputs, requirements.layer_count);
+    if (requirements.source_interface_count != 0) {
+        try ensureSourceInterfaceBufferCapacity(
+            allocator,
+            owners.source_interfaces,
+            requirements.source_interface_count,
+        );
+    } else {
+        freeSourceInterfaceBuffer(allocator, owners.source_interfaces.*);
+        owners.source_interfaces.* = &.{};
+    }
+    if (requirements.rtm_quadrature_level_count != 0) {
+        try ensureRtmQuadratureBufferCapacity(
+            allocator,
+            owners.rtm_quadrature_levels,
+            requirements.rtm_quadrature_level_count,
+        );
+    } else {
+        freeRtmQuadratureBuffer(allocator, owners.rtm_quadrature_levels.*);
+        owners.rtm_quadrature_levels.* = &.{};
+    }
+}
+
+fn ensurePseudoSphericalBuffers(
+    allocator: Allocator,
+    owners: *const PseudoSphericalBufferOwners,
+    requirements: BufferRequirements,
+) Error!void {
+    // ensurePseudoSphericalBuffers --------------------------------------------------------------------------------------|
+    // Grow or release geometric-correction support rows as one group. The sample, start-index, and altitude              |
+    // arrays describe the same pseudo-spherical grid and must not drift independently.                                   |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (requirements.pseudo_spherical_level_count != 0) {
+        try ensurePseudoSphericalSampleBufferCapacity(
+            allocator,
+            owners.samples,
+            requirements.pseudo_spherical_sample_count,
+        );
+        try ensureIndexBufferCapacity(
+            allocator,
+            owners.level_starts,
+            requirements.pseudo_spherical_level_count,
+        );
+        try ensureBufferCapacity(
+            allocator,
+            owners.level_altitudes,
+            requirements.pseudo_spherical_level_count,
+        );
+    } else {
+        freePseudoSphericalSampleBuffer(allocator, owners.samples.*);
+        freeIndexBuffer(allocator, owners.level_starts.*);
+        freeBuffer(allocator, owners.level_altitudes.*);
+        owners.samples.* = &.{};
+        owners.level_starts.* = &.{};
+        owners.level_altitudes.* = &.{};
+    }
+}
+
+fn ensureJacobianBuffers(
+    allocator: Allocator,
+    owners: *const JacobianBufferOwners,
+    requirements: BufferRequirements,
+) Error!void {
+    // ensureJacobianBuffers ---------------------------------------------------------------------------------------------|
+    // Grow the optional state-major Jacobian output row when derivative states are active. Disabled runs keep            |
+    // capacity for reuse but return a null Jacobian view.                                                                |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    if (requirements.active_jacobian_count == 0) return;
+    try ensureBufferCapacity(
+        allocator,
+        owners.values,
+        requirements.sample_count * requirements.active_jacobian_count,
+    );
+}
 
 pub fn transportLayerCountHint(scene: *const Scene, rtm_config: common.SolveConfig) usize {
     // transportLayerCountHint -------------------------------------------------------------------------------------------|
