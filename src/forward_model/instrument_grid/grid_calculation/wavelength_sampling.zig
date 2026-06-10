@@ -205,32 +205,6 @@ const WavelengthSamplingWorker = struct {
 const WavelengthSamplingWorkerLease = struct {
     workers: []WavelengthSamplingWorker = &.{},
     threads: []std.Thread = &.{},
-
-    fn init(allocator: Allocator, worker_count: usize) Error!WavelengthSamplingWorkerLease {
-        // WavelengthSamplingWorkerLease.init ----------------------------------------------------------------------------|
-        // Allocate the temporary parallel worker rows used by fillWavelengthSamplingPlans. Single-threaded               |
-        // fills do not create this lease.                                                                                |
-        // ---------------------------------------------------------------------------------------------------------------|
-
-        const workers = try allocator.alloc(WavelengthSamplingWorker, worker_count);
-        errdefer allocator.free(workers);
-        const threads = try allocator.alloc(std.Thread, worker_count - 1);
-        errdefer allocator.free(threads);
-        return .{
-            .workers = workers,
-            .threads = threads,
-        };
-    }
-
-    fn deinit(self: *WavelengthSamplingWorkerLease, allocator: Allocator) void {
-        // WavelengthSamplingWorkerLease.deinit --------------------------------------------------------------------------|
-        // Release the temporary worker rows after all started threads have joined.                                       |
-        // ---------------------------------------------------------------------------------------------------------------|
-
-        allocator.free(self.threads);
-        allocator.free(self.workers);
-        self.* = .{};
-    }
 };
 
 // KernelStorageBuilder --------------------------------------------------------------------------------------------------|
@@ -338,9 +312,10 @@ pub fn buildWavelengthSampling(
     //                                                                                                                    |
     // steps                                                                                                              |
     //   1. allocate one WavelengthSampling row per output wavelength                                                     |
-    //   2. prepare adaptive instrument-kernel caches when line-list data can drive them                                  |
-    //   3. fill rows, possibly in parallel                                                                               |
-    //   4. move large-kernel side arrays into the owned plan                                                             |
+    //   2. allocate temporary worker rows when the output grid will fill in parallel                                     |
+    //   3. prepare adaptive instrument-kernel caches when line-list data can drive them                                  |
+    //   4. fill rows, possibly in parallel                                                                               |
+    //   5. move large-kernel side arrays into the owned plan                                                             |
     // -------------------------------------------------------------------------------------------------------------------|
 
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
@@ -349,6 +324,20 @@ pub fn buildWavelengthSampling(
     errdefer allocator.free(plans);
     var kernel_storage_builder = KernelStorageBuilder.init(sample_count * 2);
     defer kernel_storage_builder.deinit(allocator);
+    const worker_count = preferredWavelengthSamplingWorkerCount(sample_count);
+    var worker_lease = WavelengthSamplingWorkerLease{};
+    defer {
+        allocator.free(worker_lease.threads);
+        allocator.free(worker_lease.workers);
+    }
+    if (worker_count != 1) {
+        worker_lease.workers = try allocator.alloc(WavelengthSamplingWorker, worker_count);
+        worker_lease.threads = allocator.alloc(std.Thread, worker_count - 1) catch |err| {
+            allocator.free(worker_lease.workers);
+            worker_lease.workers = &.{};
+            return err;
+        };
+    }
     const can_cache_adaptive_plan = prepared.spectroscopy_lines != null;
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
@@ -398,7 +387,7 @@ pub fn buildWavelengthSampling(
             .kernel_storage_builder = &kernel_storage_builder,
             .plans = plans,
         };
-        try fillWavelengthSamplingPlans(allocator, &sampling_request, sampling_output);
+        try fillWavelengthSamplingPlans(allocator, &sampling_request, sampling_output, worker_count, worker_lease);
     }
     const kernel_offsets_nm = try kernel_storage_builder.offsets_nm.toOwnedSlice(allocator);
     errdefer allocator.free(kernel_offsets_nm);
@@ -415,12 +404,14 @@ fn fillWavelengthSamplingPlans(
     allocator: Allocator,
     request: *const WavelengthSamplingRequest,
     output: WavelengthSamplingOutput,
+    worker_count: usize,
+    worker_lease: WavelengthSamplingWorkerLease,
 ) Error!void {
     // fillWavelengthSamplingPlans ---------------------------------------------------------------------------------------|
-    // Fill all plan rows either on the current thread or across worker chunks when the output grid is large.             |
+    // Fill all plan rows either on the current thread or across worker chunks. Parallel fills borrow worker              |
+    // rows allocated by buildWavelengthSampling, so this function has no setup ownership to release.                     |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const worker_count = preferredWavelengthSamplingWorkerCount(output.plans.len);
     if (worker_count == 1) {
         return fillWavelengthSamplingPlanRange(
             allocator,
@@ -433,9 +424,9 @@ fn fillWavelengthSamplingPlans(
         );
     }
 
+    std.debug.assert(worker_lease.workers.len == worker_count);
+    std.debug.assert(worker_lease.threads.len == worker_count - 1);
     var error_state = WavelengthSamplingErrorState{};
-    var worker_lease = try WavelengthSamplingWorkerLease.init(allocator, worker_count);
-    defer worker_lease.deinit(allocator);
 
     var queue = work_partition.ChunkQueue.init(output.plans.len, wavelength_sampling_chunk_size);
     var started_thread_count: usize = 0;
