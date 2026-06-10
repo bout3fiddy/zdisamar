@@ -10,6 +10,12 @@ const ClimatologyProfile = @import("../../../input/reference/climatology.zig").C
 // contents                                                                                                    |
 //   Re-exports state-build modules that are private to the product path but useful for focused tests.         |
 //   Keeps scalar helper constants next to the interpolation code that uses them.                              |
+//   Holds the DISAMAR-parity support-row thermodynamic helpers shared by layer_accumulation and tests.        |
+//                                                                                                             |
+// parity helpers                                                                                              |
+//   pressureFromParitySupportBounds interpolates pressure in log-pressure space between layer bounds.         |
+//   paritySupportThermodynamicsFromProfile samples the climatology profile and converts pressure/temperature  |
+//   into number density for explicit support rows.                                                            |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   No runtime preparation route depends on this module; it is an inspection and test surface only.           |
@@ -37,6 +43,9 @@ pub const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 // [ 0.. 7] pressure_hpa  : f64                                                                                |
 // [ 8..15] temperature_k : f64                                                                                |
 // [16..23] density_cm3   : f64                                                                                |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); stack or caller-owned value row                                 |
 // ------------------------------------------------------------------------------------------------------------|
 pub const ParitySupportThermodynamics = struct {
     pressure_hpa: f64,
@@ -51,6 +60,17 @@ pub fn pressureFromParitySupportBounds(
     top_pressure_hpa: f64,
     altitude_km: f64,
 ) f64 {
+    // pressureFromParitySupportBounds ------------------------------------------------------------------------|
+    // Interpolate pressure for one parity support altitude using the layer's boundary pressure values.        |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   w = clamp((z - z_bottom) / (z_top - z_bottom), 0, 1)                                                  |
+    //   p(z) = exp(log(p_bottom) + w * (log(p_top) - log(p_bottom)))                                          |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Degenerate altitude or pressure bounds fall back to the available endpoint pressure.                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     const safe_bottom_pressure_hpa = @max(bottom_pressure_hpa, 1.0e-9);
     const safe_top_pressure_hpa = @max(top_pressure_hpa, 1.0e-9);
     const altitude_span_km = top_altitude_km - bottom_altitude_km;
@@ -73,6 +93,17 @@ pub fn paritySupportThermodynamicsFromProfile(
     profile: *const ClimatologyProfile,
     altitude_km: f64,
 ) ParitySupportThermodynamics {
+    // paritySupportThermodynamicsFromProfile -----------------------------------------------------------------|
+    // Sample climatology pressure and temperature for one explicit support row, then derive number density.   |
+    //                                                                                                         |
+    // called by                                                                                               |
+    //   layer_accumulation when DISAMAR-parity support rows need thermodynamics at support altitudes that     |
+    //   are not original layer midpoints.                                                                     |
+    //                                                                                                         |
+    // units                                                                                                   |
+    //   density_cm3 = pressure_hpa / temperature_k / boltzmann_hpa_cm3_per_k                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     const pressure_hpa = profile.interpolatePressureLogSpline(altitude_km);
     const temperature_k = profile.interpolateTemperatureSpline(altitude_km);
 
