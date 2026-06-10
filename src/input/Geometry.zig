@@ -18,6 +18,10 @@ const earth_radius_km = 6371.0;
 //   solarCosineAtAltitude and viewingCosineAtAltitude share propagationCosineAtAltitude                       |
 //   plane_parallel keeps the base cosine; pseudo_spherical/spherical adjust for Earth radius and altitude     |
 //                                                                                                             |
+// runtime shape                                                                                               |
+//   Geometry is a small value row stored inside Scene and copied into compatibility keys. It owns no buffers, |
+//   allocates nothing, and leaves all altitude-dependent work as scalar math in the methods below.            |
+//                                                                                                             |
 // math                                                                                                        |
 //   radius_ratio = R_earth / (R_earth + altitude). Near-horizon paths keep a cosine floor of 0.05 so path     |
 //   lengths remain bounded and parity-sensitive long slant paths do not explode numerically.                  |

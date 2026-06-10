@@ -32,6 +32,11 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //   Runs per high-resolution wavelength. Profile caches prevent repeating spectroscopy over pressure nodes.  |
 //   The PreparedLayer loop reads a few index/altitude fields by pointer; it does not copy the 208 B row.     |
 //                                                                                                            |
+// memory                                                                                                     |
+//   These helpers borrow PreparedOpticalState storage and return value rows. The profile spectroscopy cache  |
+//   is local scratch for one wavelength, and support-row slices point into PreparedSublayer storage owned by |
+//   the prepared state. No ownership transfer or heap allocation happens in this file.                       |
+//                                                                                                            |
 // math                                                                                                       |
 //   tau_total(lambda) = gas absorption + Rayleigh scattering + CIA + aerosol extinction.                     |
 //   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
