@@ -44,6 +44,12 @@ const Trace = @import("../../instrumentation/trace.zig");
 //   3. add Fourier-weighted rho_m into total reflectance                                                      |
 //   4. calculate requested Jacobians                                                                          |
 //                                                                                                             |
+// hot path                                                                                                    |
+//   Product workers enter executeWithWorkspace for each high-resolution forward miss. The layer-resolved      |
+//   route loops retained Fourier terms, RT layer construction, scattering-order propagation, reflectance      |
+//   integration, and requested Jacobian weighting. A supplied Workspace reuses Geometry, attenuation,         |
+//   RT layer, order, phase-row, and PLM buffers across nearby wavelength samples handled by the same worker.  |
+//                                                                                                             |
 // reference names                                                                                             |
 //   RT_fc         : layer reflection/transmission matrices                                                    |
 //   UD_fc         : radiation fields from scattering orders                                                   |

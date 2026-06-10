@@ -23,6 +23,12 @@ const Geometry = types.Geometry;
 //   weighted variants                                                                                         |
 //     -> mix aerosol phase with Rayleigh l=2 before building the same Z+/Z- objects                           |
 //                                                                                                             |
+// hot path                                                                                                    |
+//   A layer-resolved LABOS solve builds one basis per retained Fourier term and then forms many Z matrices or |
+//   Z rows for layer construction, reflectance weighting, and Jacobians. FourierPlmBasis stores weighted      |
+//   P_l^m(mu_i) rows for the current geometry so those builders walk dense rows while forming Z+ and Z- outer |
+//   products.                                                                                                 |
+//                                                                                                             |
 // math names                                                                                                  |
 //   m              : Fourier index                                                                            |
 //   l              : phase coefficient index                                                                  |
