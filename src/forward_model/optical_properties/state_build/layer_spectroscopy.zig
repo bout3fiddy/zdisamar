@@ -20,16 +20,29 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 // Builds layer-preparation spectroscopy values from line lists, operational O2 LUTs, and profile caches.      |
 //                                                                                                             |
 // called by                                                                                                   |
-//   layer_accumulation while filling prepared layer and sublayer rows.                                        |
+//   layer_accumulation.zig builds one ProfileSpectroscopyCache for the preparation midpoint wavelength when   |
+//   profile-node spectroscopy is active, then passes it into parity/support-row population.                   |
+//   resolveSpectroscopyEvaluation fills each support row's line, line-mixing, total sigma, and temperature    |
+//   derivative before layer_accumulation writes PreparedLayer or PreparedSublayer storage.                    |
+//   operational_o2.zig supplies the LUT evaluation shape used when the line route is replaced by an           |
+//   operational O2 cross-section product.                                                                     |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   profile cache  : evaluate spectroscopy at profile nodes and spline it over altitude.                      |
-//   prepared lines : evaluate active line absorbers and density-weight their sigma values.                    |
-//   single line    : use one line list, operational O2, or zero spectroscopy when no line data is active.     |
+//   profile cache  : evaluate spectroscopy at profile nodes, prepare endpoint-secant splines, and later       |
+//                    sample those cached line/line-mixing/total columns by altitude.                          |
+//   prepared lines : evaluate active line absorbers, prepare strong-line sidecars when needed, and            |
+//                    density-weight their sigma values into one support-row evaluation.                       |
+//   single line    : use the operational O2 LUT, a single retained line list, a profile-cache hit, or zero    |
+//                    spectroscopy when no line data is active.                                                |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Runs during optical-state preparation. The cache path is parallelized for larger profile grids so each    |
 //   worker fills a chunk of profile-node spectroscopy values before spline setup.                             |
+//                                                                                                             |
+// memory                                                                                                      |
+//   ProfileSpectroscopyCache is a stack/local value with fixed 64-node columns and borrowed altitude storage. |
+//   Worker rows borrow the cache, context, line list, wavelength window, and queue; this file does not own    |
+//   the final prepared slices moved into PreparedOpticalState.                                                |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ProfileCacheValueRequest -----------------------------------------------------------------------------------|

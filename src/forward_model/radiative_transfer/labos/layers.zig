@@ -47,6 +47,11 @@ const phase_timing = @import("phase_timing.zig");
 //   empty_layer_optical_depth_floor treats vanishing optical depth as inactive                                |
 //   layer_direction_cosine_floor keeps exp(-tau / mu) finite for grazing directions                           |
 //   tangent_step is the central-difference step for layer RT derivatives                                      |
+//                                                                                                             |
+// memory model                                                                                                |
+//   The main entry points write caller-owned []LayerRT rows and optional workspace-owned phase-row caches.    |
+//   A LayerRT row is intentionally wide because orders.zig consumes the R/T matrices together; active masks   |
+//   let later stages skip rows without clearing or splitting the 2.3 KiB payload.                             |
 // ------------------------------------------------------------------------------------------------------------|
 
 const phase_normalization_floor: f64 = 1.0e-30;

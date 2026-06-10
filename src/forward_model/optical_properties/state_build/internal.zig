@@ -19,6 +19,10 @@ const ClimatologyProfile = @import("../../../input/reference/climatology.zig").C
 //                                                                                                             |
 // boundary                                                                                                    |
 //   No runtime preparation route depends on this module; it is an inspection and test surface only.           |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   The re-exports are compile-time aliases. The two helper functions allocate nothing and return scalar      |
+//   value rows; all profile storage is borrowed from the ClimatologyProfile passed by the caller.             |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const carrier_eval = @import("carrier_eval.zig");

@@ -32,6 +32,11 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //   Runs per high-resolution wavelength. Profile caches prevent repeating spectroscopy over pressure nodes.  |
 //   The PreparedLayer loop reads a few index/altitude fields by pointer; it does not copy the 208 B row.     |
 //                                                                                                            |
+// memory                                                                                                     |
+//   These helpers borrow PreparedOpticalState storage and return value rows. The profile spectroscopy cache  |
+//   is local scratch for one wavelength, and support-row slices point into PreparedSublayer storage owned by |
+//   the prepared state. No ownership transfer or heap allocation happens in this file.                       |
+//                                                                                                            |
 // math                                                                                                       |
 //   tau_total(lambda) = gas absorption + Rayleigh scattering + CIA + aerosol extinction.                     |
 //   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
@@ -123,8 +128,7 @@ pub fn opticalDepthBreakdownAtWavelength(
 
     if (self.sublayers) |sublayers| {
         var totals: OpticalDepthBreakdown = .{};
-        const layers: []const Types.PreparedLayer = self.layers;
-        for (layers) |*layer| {
+        for (self.layers) |*layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
             const strong_line_state = if (self.strong_line_states) |states|
