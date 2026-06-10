@@ -428,7 +428,7 @@ pub const BatchResult = struct {
 
         const batch = result.output();
         for (0..batch.run_count) |run_index| {
-            markBatchRunPending(batch, run_index);
+            resetBatchRun(batch, run_index, .pending);
         }
         return result;
     }
@@ -523,21 +523,10 @@ fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
     }
 }
 
-fn markBatchRunPending(batch: BatchOutput, run_index: usize) void {
+fn resetBatchRun(batch: BatchOutput, run_index: usize, status: BatchRunStatus) void {
     batch.iteration_count[run_index] = 0;
     batch.converged[run_index] = 0;
-    batch.status[run_index] = @intFromEnum(BatchRunStatus.pending);
-    const state_offset = run_index * batch.state_count;
-    for (0..batch.state_count) |state_index| {
-        batch.state[state_offset + state_index] = std.math.nan(f64);
-    }
-    clearBatchRunHistory(batch, run_index);
-}
-
-fn markBatchRunFailure(batch: BatchOutput, run_index: usize) void {
-    batch.iteration_count[run_index] = 0;
-    batch.converged[run_index] = 0;
-    batch.status[run_index] = @intFromEnum(BatchRunStatus.failed);
+    batch.status[run_index] = @intFromEnum(status);
     const state_offset = run_index * batch.state_count;
     for (0..batch.state_count) |state_index| {
         batch.state[state_offset + state_index] = std.math.nan(f64);
@@ -1270,7 +1259,7 @@ fn runO2ABatchRange(
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => {
-                markBatchRunFailure(batch.*, run_index);
+                resetBatchRun(batch.*, run_index, .failed);
                 continue;
             },
         };
