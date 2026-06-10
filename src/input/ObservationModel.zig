@@ -217,7 +217,15 @@ pub const ObservationModel = struct {
         //   irradiance keeps neutral post-calibration                                                        |
         // ---------------------------------------------------------------------------------------------------|
 
-        return channelControls(self, channel);
+        var controls: Instrument.SpectralChannelControls = .{
+            .response = spectralResponse(self),
+            .wavelength_shift_nm = self.wavelength_shift_nm,
+        };
+        if (channel == .radiance) {
+            controls.multiplicative_offset = self.multiplicative_offset;
+            controls.stray_light = self.stray_light;
+        }
+        return controls;
     }
 
     pub fn operationalBandCount(self: *const ObservationModel) usize {
@@ -325,18 +333,6 @@ fn lutSamplingHalfSpanForSupport(support: OperationalBandSupport) f64 {
         }
     }
     return half_span_nm;
-}
-
-fn channelControls(model: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
-    var controls: Instrument.SpectralChannelControls = .{
-        .response = spectralResponse(model),
-        .wavelength_shift_nm = model.wavelength_shift_nm,
-    };
-    if (channel == .radiance) {
-        controls.multiplicative_offset = model.multiplicative_offset;
-        controls.stray_light = model.stray_light;
-    }
-    return controls;
 }
 
 fn spectralResponse(model: *const ObservationModel) Instrument.SpectralResponse {
