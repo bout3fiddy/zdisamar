@@ -64,7 +64,8 @@ const Allocator = std.mem.Allocator;
 // hot reads                                                                                                   |
 //   Repeated wavelength paths read this header for layer/support rows, aerosol phase coefficients,            |
 //   spectroscopy handles, LUT headers, scalar optical-depth summaries, and cache keys. Index-only loops over  |
-//   PreparedLayer use pointer capture so no 208 B row is copied; the row is intentionally not split because   |
+//   PreparedLayer use pointer capture so no 208 B row is copied. The shared-RTM shape check reads only        |
+//   sublayer_count at [204..207] from each PreparedLayer, but the row is intentionally not split because      |
 //   nearby transport builders read the same array's altitude, pressure, aerosol, and optical-depth fields.    |
 //                                                                                                             |
 // header layout                                                                                               |
@@ -395,11 +396,12 @@ pub const PreparedOpticalState = struct {
         // sublayer row count. That is the shape that needs reduced shared-RTM layer handling.                 |
         //                                                                                                     |
         // memory                                                                                              |
-        // This is an index-only PreparedLayer walk: one u32 load from each 208 B row. It runs during          |
-        // transport-count/cache-shape decisions, not inside the LABOS matrix kernels. The layer array stays   |
-        // row-based because the per-wavelength builders consume the same rows' altitude, pressure, aerosol,   |
-        // and optical-depth fields nearby. A separate sublayer-count column would add ownership and call      |
-        // surface only for this rare shape check unless a retained benchmark proves a repeated-boundary win.  |
+        // This is an index-only PreparedLayer walk: one u32 load, sublayer_count at [204..207], from each     |
+        // 208 B row. It runs during transport-count/cache-shape decisions, not inside the LABOS matrix        |
+        // kernels. The layer array stays row-based because the per-wavelength builders consume the same rows' |
+        // altitude, pressure, aerosol, and optical-depth fields nearby. A separate sublayer-count column      |
+        // would add ownership and call surface only for this rare shape check unless a retained benchmark     |
+        // proves a repeated-boundary win.                                                                     |
         // ----------------------------------------------------------------------------------------------------|
 
         if (self.interval_semantics == .none) return false;
