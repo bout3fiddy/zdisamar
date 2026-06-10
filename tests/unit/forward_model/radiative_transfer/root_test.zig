@@ -6,6 +6,27 @@ const phase_functions = internal.forward_model.optical_properties.shared.phase_f
 const prepareSolveConfig = common.prepareSolveConfig;
 const fillSourceInterfacesFromLayers = common.fillSourceInterfacesFromLayers;
 
+test "radiative-transfer core row layouts match documented hot-path comments" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(common.RadiativeTransferPerformanceThresholds));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(common.RadiativeTransferPerformanceThresholds));
+
+    try std.testing.expectEqual(@as(usize, 176), @sizeOf(common.LayerInput));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(common.LayerInput));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(common.LayerInput, "gas_absorption_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 48), @offsetOf(common.LayerInput, "scattering_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 64), @offsetOf(common.LayerInput, "optical_depth_jacobian"));
+    try std.testing.expectEqual(@as(usize, 152), @offsetOf(common.LayerInput, "phase"));
+
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(common.SourceInterfaceInput));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(common.SourceInterfaceInput));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(common.SourceInterfaceInput, "phase_above"));
+
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(common.RtmQuadratureLevel));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(common.RtmQuadratureLevel));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(common.RtmQuadratureLevel, "aerosol_ksca_above_per_km"));
+    try std.testing.expectEqual(@as(usize, 56), @offsetOf(common.RtmQuadratureLevel, "phase_rayleigh2_weight"));
+}
+
 test "radiative-transfer thresholds keep tangent order cap opt-in" {
     const default_thresholds = common.RadiativeTransferPerformanceThresholds.o2a_default;
     try std.testing.expect(default_thresholds.shouldEvaluateAerosolTangent(0));
