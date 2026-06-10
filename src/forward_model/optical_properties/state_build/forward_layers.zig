@@ -109,6 +109,34 @@ pub const ForwardLayerCarrierRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------|
 
+// ForwardInputLayerRequest ----------------------------------------------------------------------------------|
+// Borrowed broad state and optional caller-owned layer rows for one ForwardInput build.                      |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 48 B (0.047 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared      : *const PreparedOpticalState                                                       |
+// [ 8..15] scene         : *const Scene                                                                      |
+// [16..31] layer_inputs  : ?[]LayerInput                                                                     |
+// [32..39] profile_cache : ?*const ProfileNodeSpectroscopyCache                                              |
+// [40..47] wavelength_nm : f64                                                                               |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared, scene, profile_cache, and layer_inputs are borrowed. layer_inputs points at caller-owned rows. |
+//                                                                                                            |
+// unused bits: 0 padding + 0 optional-storage slack = 0 bits                                                 |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 48 B plus borrowed input and optional caller-owned layer storage                 |
+pub const ForwardInputLayerRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    layer_inputs: ?[]transport_common.LayerInput,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    wavelength_nm: f64,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 // ForwardInputScalars ---------------------------------------------------------------------------------------|
 // RTM scalar handoff copied out of Scene and PreparedOpticalState before the optical-depth request is built. |
 //                                                                                                            |
@@ -198,12 +226,15 @@ pub fn toForwardInputWithLayers(
     // scalar callers; high-resolution workers call the wavelength-specific route below.                      |
     // -------------------------------------------------------------------------------------------------------|
 
-    return toForwardInputAtWavelengthWithLayers(
-        prepared,
-        scene,
-        (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,
-        layer_inputs,
-    );
+    const spectral_grid = scene.spectral_grid;
+    const request = ForwardInputLayerRequest{
+        .prepared = prepared,
+        .scene = scene,
+        .layer_inputs = layer_inputs,
+        .profile_cache = null,
+        .wavelength_nm = (spectral_grid.start_nm + spectral_grid.end_nm) * 0.5,
+    };
+    return forwardInputFromLayerRequest(&request);
 }
 
 pub fn toForwardInputAtWavelengthWithLayers(
@@ -216,13 +247,14 @@ pub fn toForwardInputAtWavelengthWithLayers(
     // Build a ForwardInput for one wavelength when no caller-owned profile spectroscopy cache is available.  |
     // -------------------------------------------------------------------------------------------------------|
 
-    return toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
-        prepared,
-        scene,
-        wavelength_nm,
-        layer_inputs,
-        null,
-    );
+    const request = ForwardInputLayerRequest{
+        .prepared = prepared,
+        .scene = scene,
+        .layer_inputs = layer_inputs,
+        .profile_cache = null,
+        .wavelength_nm = wavelength_nm,
+    };
+    return forwardInputFromLayerRequest(&request);
 }
 
 pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
@@ -240,33 +272,57 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
     //   for RTM quadrature, pseudo-spherical correction, and LABOS execution.                                |
     // -------------------------------------------------------------------------------------------------------|
 
+    const request = ForwardInputLayerRequest{
+        .prepared = prepared,
+        .scene = scene,
+        .layer_inputs = layer_inputs,
+        .profile_cache = profile_cache,
+        .wavelength_nm = wavelength_nm,
+    };
+    return forwardInputFromLayerRequest(&request);
+}
+
+fn forwardInputFromLayerRequest(
+    request: *const ForwardInputLayerRequest,
+) transport_common.ForwardInput {
+    // forwardInputFromLayerRequest --------------------------------------------------------------------------|
+    // Internal route that turns one layer-fill request into the final ForwardInput handoff. The public       |
+    // wrappers above stop at this request boundary instead of forwarding broad objects through each other.   |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const prepared = request.prepared;
+    const scene = request.scene;
+    const wavelength_nm = request.wavelength_nm;
     const optical_depths = choose_optical_depths: {
-        if (layer_inputs) |owned_layers| {
-            const request = ForwardLayerSpectroscopyRequest{
-                .prepared = prepared,
-                .scene = scene,
+        if (request.layer_inputs) |owned_layers| {
+            const spectroscopy_request = ForwardLayerSpectroscopyRequest{
+                .prepared = request.prepared,
+                .scene = request.scene,
                 .layer_inputs = owned_layers,
-                .profile_cache = profile_cache,
-                .wavelength_nm = wavelength_nm,
+                .profile_cache = request.profile_cache,
+                .wavelength_nm = request.wavelength_nm,
                 .compute_jacobian = true,
             };
             break :choose_optical_depths fillForwardLayersAtWavelengthWithSpectroscopyCache(
-                &request,
+                &spectroscopy_request,
             );
         }
 
         break :choose_optical_depths prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
     };
 
-    const resolved_layers = if (layer_inputs) |owned_layers| owned_layers else &.{};
+    const resolved_layers = if (request.layer_inputs) |owned_layers| owned_layers else &.{};
+    const spectral_grid = scene.spectral_grid;
+    const relative_azimuth_deg = scene.geometry.relative_azimuth_deg;
+    const surface_albedo = scene.surface.albedo;
     const input_scalars = ForwardInputScalars{
         .wavelength_nm = wavelength_nm,
-        .spectral_weight = forwardInputSpectralWeight(scene.spectral_grid),
+        .spectral_weight = forwardInputSpectralWeight(spectral_grid),
         .air_mass_factor = prepared.effective_air_mass_factor,
         .mu0 = scene.geometry.solarCosineAtAltitude(0.0),
         .muv = scene.geometry.viewingCosineAtAltitude(0.0),
-        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
-        .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
+        .relative_azimuth_rad = transportAzimuthDifferenceRad(relative_azimuth_deg),
+        .surface_albedo = std.math.clamp(surface_albedo, 0.0, 1.0),
         .fallback_single_scatter_albedo = prepared.effective_single_scatter_albedo,
     };
     const input_request = ForwardInputOpticalDepthRequest{
