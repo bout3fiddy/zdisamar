@@ -12,9 +12,9 @@ const Allocator = std.mem.Allocator;
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
 // state.zig --------------------------------------------------------------------------------------------------|
-// Compiler-measured row definitions for optical-property preparation, RTM setup, and diagnostics.             |
-// prepared_state.zig owns the final PreparedOpticalState header; this file owns the repeated row payload      |
-// shapes that are filled during setup and read many times during wavelength evaluation.                       |
+// Repeated optical-property row definitions used after Scene controls have been reduced into prepared state.  |
+// prepared_state.zig owns the final PreparedOpticalState header; this file owns the row payloads that         |
+// layer_accumulation writes during setup and wavelength-time builders read through that header.               |
 //                                                                                                             |
 // build route                                                                                                 |
 //   Context owns mutable preparation arrays while Scene controls are reduced.                                 |
@@ -24,11 +24,17 @@ pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 //   forward_layers, rtm_quadrature, shared_carrier, diagnostics, and retrieval read these rows for each       |
 //   wavelength.                                                                                               |
 //                                                                                                             |
-// row groups                                                                                                  |
-//   Active* rows     : scene absorber controls after input validation, before prepared density columns exist  |
-//   Prepared* rows   : retained line/cross-section, layer, sublayer, and LUT rows after preparation           |
-//   wavelength rows  : OpticalDepthBreakdown and EvaluatedLayer, short-lived results for one wavelength       |
-//   SharedRtm* rows  : cached geometry used only by reduced shared-RTM interval routes                        |
+// common fast path                                                                                            |
+//   Per wavelength, forward_layers, rtm_quadrature, shared_carrier, and state_optical_depth walk these rows   |
+//   to build LABOS LayerInput rows, integrated-source quadrature levels, scalar diagnostics, and Jacobian     |
+//   source terms. Most hot loops borrow rows by pointer so the 208 B PreparedLayer and 256 B PreparedSublayer |
+//   payloads are not copied.                                                                                  |
+//                                                                                                             |
+// name shortcuts                                                                                              |
+//   Active*       = scene absorber controls after input validation, before prepared density columns exist.    |
+//   Prepared*     = retained line/cross-section, layer, sublayer, and LUT rows after preparation.             |
+//   wavelength    = OpticalDepthBreakdown and EvaluatedLayer value rows for one wavelength.                   |
+//   SharedRtm*    = cached geometry used only by reduced shared-RTM interval routes.                          |
 //                                                                                                             |
 // layout policy                                                                                               |
 //   The boxes below show compiler-measured storage order, not source order. PreparedOpticalState owns only    |
@@ -236,8 +242,14 @@ pub const PreparedCrossSectionAbsorber = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedLayer ----------------------------------------------------------------------------------------------|
-// Prepared layer state on the transport grid. One row keeps the physical layer values plus the indexes        |
-// that connect the row back to its prepared support rows.                                                     |
+// Prepared transport-layer row. One row keeps representative layer physics plus the support-row span used to  |
+// reach the finer PreparedSublayer grid.                                                                      |
+//                                                                                                             |
+// row use                                                                                                     |
+//   layer_accumulation writes this once during setup. prepared_state uses the support tail to choose reduced  |
+//   shared-RTM handling. forward_layers and state_optical_depth read support spans plus representative        |
+//   altitude. rtm_quadrature reads the same span when it has to place fallback Gauss levels inside a layer.   |
+//   shared_geometry copies the span into retained SharedRtmGeometry when interval semantics allow reuse.      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 208 B (0.203 KiB), align: 8 B                                                                         |
@@ -278,13 +290,13 @@ pub const PreparedCrossSectionAbsorber = struct {
 //                                                                                                             |
 // support-index tail                                                                                          |
 // [192..207] stores {sublayer_start_index, layer_index, interval_index_1based, sublayer_count}. Shape checks  |
-// and reduced shared-RTM routing read this tail even when they do not need the physical f64 fields.           |
+// and reduced shared-RTM routing can read this tail without touching the physical f64 fields.                 |
 //                                                                                                             |
 // hot path                                                                                                    |
-// Index-only loops read the four u32 support fields at the end of this 208 B row. The row stays whole         |
-// because forward-layer, RTM quadrature, and optical-depth paths consume the same layer array's physical      |
-// fields nearby. Split columns would need a measured repeated-boundary win before they are worth the extra    |
-// ownership and call-surface complexity.                                                                      |
+// Span-only loops read sublayer_start_index at [192..195] and sublayer_count at [204..207] by pointer.        |
+// Mixed layer loops also read altitude_km at [24..31] and optical-depth/aerosol fields nearby. The row stays  |
+// whole because these paths share one retained layer array; a separate span column needs a measured           |
+// repeated-boundary win before it is worth another synchronized owner.                                        |
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
