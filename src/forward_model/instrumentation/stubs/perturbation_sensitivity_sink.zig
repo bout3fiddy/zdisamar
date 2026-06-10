@@ -33,6 +33,18 @@ pub inline fn scalar(
     branch: i32,
     baseline: f64,
 ) f64 {
+    // scalar -------------------------------------------------------------------------------------------------|
+    // Disabled scalar perturbation hook. Return the input value unchanged.                                    |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   sensitivity.zig calls this only in builds that have selected an available sink. In normal builds,     |
+    //   the facade returns before calling this stub, but keeping this function baseline-only preserves the    |
+    //   same surface for direct import tests and module wiring.                                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   No plan lookup, counter update, filter branch, or allocation is reachable from this disabled hook.    |
+    // --------------------------------------------------------------------------------------------------------|
+
     _ = channel_id;
     _ = layer_index;
     _ = fourier_index;
@@ -51,6 +63,18 @@ pub inline fn decision(
     branch: i32,
     baseline: bool,
 ) bool {
+    // decision -----------------------------------------------------------------------------------------------|
+    // Disabled branch perturbation hook. Return the branch decision unchanged.                                |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   sensitivity.zig wraps LABOS q-series, orders convergence, Fourier tail, and tangent gates with this   |
+    //   sink shape when an experiment build is active. The disabled variant keeps those coordinates typed     |
+    //   but cannot force a branch outcome.                                                                    |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   No sweep state, atomics, or replacement branch is touched here.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     _ = channel_id;
     _ = layer_index;
     _ = fourier_index;
