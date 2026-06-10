@@ -8,21 +8,30 @@ const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 // selection.zig ---------------------------------------------------------------------------------------------|
-// Scene-to-bundled-reference selection for defaults, generated LUT workflows, and setup wavelength grids.    |
+// Scene-to-reference selection rules used before optical preparation and LUT generation.                     |
 //                                                                                                            |
-// used by                                                                                                    |
-//   bundled/load.zig hydrates a working Scene before optical preparation                                     |
-//   bundled/workflows.zig builds generated O2/O2-O2 LUT inputs and support wavelength arrays                 |
+// called by                                                                                                  |
+//   bundled/load.zig calls the asset selectors while hydrating the working Scene used by prepare().          |
+//   bundled/workflows.zig calls sampleSceneWavelengthsOwned when generated O2 or O2-O2 LUTs need support     |
+//   wavelengths shaped like the source scene.                                                                |
 //                                                                                                            |
-// main paths                                                                                                 |
-//   continuum      : unresolved cross-section requests reject; otherwise build an owned zero continuum table |
-//   spectroscopy   : resolved scene line list wins, explicit unresolved bindings reject, O2 A defaults load  |
-//   O2-O2 CIA      : resolved scene CIA wins, operational LUTs suppress sidecar load, O2 A defaults load     |
-//   wavelengths    : high-resolution LUT sampling, measured wavelengths, or uniform scene grid               |
+// selection order                                                                                            |
+//   continuum   : resolved cross-section requests are accepted; unresolved cross-section requests reject;    |
+//                 otherwise an owned zero-continuum table covers the scene spectral span.                    |
+//   spectroscopy: resolved scene line list wins; explicit unresolved bindings reject; bundled O2 A defaults  |
+//                 load only for O2 A line-by-line requests overlapping the bundled line-list range.          |
+//   O2-O2 CIA   : resolved scene CIA wins; explicit unresolved CIA bindings reject; operational LUT support  |
+//                 suppresses the sidecar unless the scene is currently generating that LUT.                  |
+//   wavelengths : generated LUTs prefer high-resolution LUT sampling, then measured wavelengths, then a      |
+//                 uniform scene grid from spectral_grid start/end/sample_count.                              |
 //                                                                                                            |
-// boundary                                                                                                   |
-//   This is setup code that may allocate owned rows and wavelength arrays. It does not parse control files,  |
-//   and it does not silently replace explicit asset bindings with bundled defaults.                          |
+// no-silent-fallback rule                                                                                    |
+//   If the scene explicitly asks for an asset binding, this file either returns that resolved asset or       |
+//   rejects the request. Bundled defaults are only for absent bindings on supported O2 A default paths.      |
+//                                                                                                            |
+// ownership and runtime shape                                                                                |
+//   Selectors may allocate owned tables or wavelength arrays for setup code. They do not parse files, run    |
+//   the RTM, or retain hidden global state; callers own every returned buffer and deinitialize it.           |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
