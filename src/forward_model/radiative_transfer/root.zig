@@ -386,6 +386,13 @@ pub const SolveConfig = struct {
 // One prepared atmospheric layer for LABOS. Optical-depth totals and Jacobian values are already built by     |
 // optical-property preparation; RTM code consumes this without file I/O or text parsing.                      |
 //                                                                                                             |
+// row use                                                                                                     |
+//   forward_layers.zig and evaluation.zig write this row after optical-property preparation. LABOS layer      |
+//   builders consume the full row for layer R/T matrices. pseudo_spherical.zig reads optical_depth when it    |
+//   builds attenuation samples from already-filled transport rows. rtm_quadrature.zig reads the scattering    |
+//   Jacobian lane for shared-grid aerosol source Jacobians. reflectance.zig reads scattering and aerosol      |
+//   optical-depth fields for order limits and aerosol Jacobian weighting.                                     |
+//                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 176 B (0.172 KiB), align: 8 B                                                                         |
 //                                                                                                             |
@@ -410,6 +417,12 @@ pub const SolveConfig = struct {
 // out-of-line: phase points at shared prepared phase-coefficient storage                                      |
 // cache span: 3 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 176 B (0.172 KiB); total also includes referenced phase storage                   |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Narrow scans read optical_depth at [40..47], scattering_optical_depth at [48..55], aerosol totals at      |
+//   [24..39], or scattering_optical_depth_jacobian at [88..111]. These walks use pointer capture, so the      |
+//   176 B row is not copied. The row stays whole because the same slice is the transport contract passed to   |
+//   LABOS immediately after those narrow helpers run; side columns would add synchronization work.            |
 pub const LayerInput = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -477,6 +490,11 @@ pub const SourceInterfaceInput = struct {
 // One altitude quadrature level used by source integration. Phase fields store weights so each level          |
 // does not need its own full phase-coefficient row.                                                           |
 //                                                                                                             |
+// row use                                                                                                     |
+//   rtm_quadrature.zig and carrier_eval.zig write these rows while preparing integrated-source inputs.        |
+//   LABOS reflectance reads them when explicit source integration is active. Shared aerosol Jacobian setup    |
+//   reads weight and writes aerosol_ksca_jacobian without touching the phase weights.                         |
+//                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
 //                                                                                                             |
@@ -493,6 +511,10 @@ pub const SourceInterfaceInput = struct {
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 1 cache line at 64 B per line                                                                   |
 // footprint: per instance = 64 B (0.062 KiB); total = per instance * live instance count                      |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Source integration keeps this row to one cache line. Narrow helpers read weight at [8..15], read/write    |
+//   aerosol k_sca fields at [24..47], and leave phase weights at [48..63] for LABOS source mixing.            |
 pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
