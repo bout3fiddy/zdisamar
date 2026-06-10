@@ -3,25 +3,38 @@ const errors = @import("../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
 // Binding.zig ------------------------------------------------------------------------------------------------|
-// Typed reference tokens for public input rows that point at assets, ingest outputs, or stage products.       |
+// Typed unresolved-reference rows for public input fields. A Binding says where a requested profile,          |
+// spectroscopy table, measurement vector, or instrument support should come from; it does not carry the       |
+// resolved payload and it never opens files.                                                                  |
 //                                                                                                             |
-// used by                                                                                                     |
-//   Atmosphere, Absorber, Measurement, and ObservationModel store bindings instead of raw loader state        |
-//   reference-data workflows interpret active bindings and attach concrete resolved payloads elsewhere        |
-//   Scene.lutCompatibilityKey hashes binding kind/name when the binding affects generated LUT compatibility   |
+// route                                                                                                       |
+//   Atmosphere, Absorber, Measurement, and ObservationModel store Binding values inside the Scene input row.  |
+//   Scene.validate calls Binding.validate through those parent rows before any loader or forward-model code   |
+//   runs. reference-data workflows and bundled-asset selection later interpret the active kind and attach     |
+//   concrete resolved payloads to the owning input rows or prepared optical state.                            |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   NamedRef validates one non-empty name                                                                     |
-//   IngestRef.fromFullName splits ingest.output while keeping both slices inside full_name storage            |
-//   Binding.validate checks only the active union payload; clone/deinitOwned duplicate and release names      |
+// binding kinds                                                                                               |
+//   none          : no external source requested                                                              |
+//   atmosphere    : use the current Scene atmosphere/profile as the source                                    |
+//   bundle_default: ask bundled reference-data selection to choose the default asset                          |
+//   asset         : name a concrete loaded asset                                                              |
+//   ingest        : name an ingest output as "ingest.output"                                                  |
+//   stage_product : name an earlier stage product                                                             |
 //                                                                                                             |
-// boundary                                                                                                    |
-//   Binding is not a loader and does not know file paths. It preserves typed intent so loaders can consume,   |
-//   reject, or document the reference at the input/reference-data boundary.                                   |
+// validation and lookup boundary                                                                              |
+//   validate checks only the syntactic payload carried by the active tag: non-empty names for NamedRef and    |
+//   a split ingest/output pair for IngestRef. It does not prove the asset exists. Loader and workflow code    |
+//   must still consume the binding, reject it with a typed error, or document it as inert with coverage.      |
 //                                                                                                             |
-// memory                                                                                                      |
-//   IngestRef.ingest_name and output_name borrow from full_name. Deinit frees only the owning top-level name  |
-//   allocation for asset, ingest, or stage_product payloads.                                                  |
+// cache-key boundary                                                                                          |
+//   Scene.lutCompatibilityKey hashes binding kind plus binding.name() for spectroscopy bindings.              |
+//   Marker kinds intentionally return an empty name; `.none`, `.atmosphere`, and `.bundle_default` stay       |
+//   distinct through the tag even though their name bytes are empty.                                          |
+//                                                                                                             |
+// memory and ownership                                                                                        |
+//   NamedRef.name points at out-of-line bytes. IngestRef.ingest_name and output_name borrow from full_name.   |
+//   deinit frees only full_name for ingest payloads. clone duplicates the owning string and rebuilds the      |
+//   borrowed slices from the clone.                                                                           |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const BindingKind = enum {
@@ -86,6 +99,11 @@ pub const IngestRef = struct {
     output_name: []const u8,
 
     pub fn fromFullName(full_name: []const u8) IngestRef {
+        // IngestRef.fromFullName -----------------------------------------------------------------------------|
+        // Split one "ingest.output" name into borrowed slices. Missing "." keeps full_name but returns empty  |
+        // ingest/output slices so validate can reject the malformed reference without reparsing.              |
+        // ----------------------------------------------------------------------------------------------------|
+
         const dot_index = std.mem.indexOfScalar(u8, full_name, '.');
         if (dot_index) |index| {
             return .{
@@ -149,6 +167,11 @@ pub const Binding = union(BindingKind) {
     }
 
     pub fn name(self: Binding) []const u8 {
+        // Binding.name ---------------------------------------------------------------------------------------|
+        // Return the cache-key name bytes for payload-bearing bindings. Marker bindings carry their meaning   |
+        // in the tag, so they intentionally return an empty name.                                             |
+        // ----------------------------------------------------------------------------------------------------|
+
         return switch (self) {
             .asset => |value| value.name,
             .ingest => |value| value.full_name,
@@ -165,6 +188,10 @@ pub const Binding = union(BindingKind) {
     }
 
     pub fn validate(self: Binding) errors.Error!void {
+        // Binding.validate -----------------------------------------------------------------------------------|
+        // Check the active tag's local naming shape. This does not resolve the binding or check loader state. |
+        // ----------------------------------------------------------------------------------------------------|
+
         switch (self) {
             .none, .atmosphere, .bundle_default => {},
             .asset => |value| try value.validate(),
