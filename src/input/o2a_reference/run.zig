@@ -66,8 +66,8 @@ pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 // cache and ownership rules                                                                                   |
 //   fixed_asset_cache returns caller-owned clones, never retained cache slices. LoadedVendorO2AInputs owns    |
 //   loaded profile, spectroscopy profile, continuum, line list, optional CIA, LUT, reference, and solar rows. |
-//   PreparedRuntime* structs are owner/view headers over Scene, PreparedOpticalState, solve config, product,  |
-//   and reference slices; deinit order releases product/prepared/scene storage before clearing each header.   |
+//   PreparedRuntimeCase is an owner/view header over reference rows, Scene, solve config, and prepared        |
+//   optical state; callers deinit the moved owners in that order.                                             |
 //                                                                                                             |
 // performance boundary                                                                                        |
 //   This file runs setup and retrieval refresh work before the RTM wavelength loop. The repeated retrieval    |
@@ -99,62 +99,6 @@ pub const PreparedRuntimeCase = struct {
     scene: Scene,
     rtm_config: SolveConfig,
     prepared: OpticsPrepare.PreparedOpticalState,
-};
-
-// PreparedRuntimeEvaluation --------------------------------------------------------------------------------- |
-// Prepared O2 A case used by native retrieval evaluations after loaded inputs are already available.          |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 2888 B (2.820 KiB), align: 8 B                                                                        |
-//                                                                                                             |
-// memory                                                                                                      |
-// [   0.. 671] scene      : Scene                                                                             |
-// [ 672.. 751] rtm_config : SolveConfig                                                                       |
-// [ 752..2887] prepared   : PreparedOpticalState                                                              |
-//                                                                                                             |
-// out-of-line                                                                                                 |
-//   scene and prepared are inline headers with nested owned storage released by deinit.                       |
-//                                                                                                             |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// cache span: 46 cache lines at 64 B per line                                                                 |
-// footprint: per instance = 2888 B plus referenced scene/prepared storage                                     |
-pub const PreparedRuntimeEvaluation = struct {
-    scene: Scene,
-    rtm_config: SolveConfig,
-    prepared: OpticsPrepare.PreparedOpticalState,
-
-    pub fn deinit(self: *PreparedRuntimeEvaluation, allocator: Allocator) void {
-        self.prepared.deinit(allocator);
-        self.scene.deinitOwned(allocator);
-        self.* = undefined;
-    }
-};
-
-// PreparedRuntimeOptics ------------------------------------------------------------------------------------- |
-// Optics-only prepared case used before solve-config or product simulation is attached.                       |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 2808 B (2.742 KiB), align: 8 B                                                                        |
-//                                                                                                             |
-// memory                                                                                                      |
-// [   0.. 671] scene    : Scene                                                                               |
-// [ 672..2807] prepared : PreparedOpticalState                                                                |
-//                                                                                                             |
-// out-of-line                                                                                                 |
-//   scene and prepared are inline headers with nested owned storage released by deinit.                       |
-//                                                                                                             |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// cache span: 44 cache lines at 64 B per line                                                                 |
-// footprint: per instance = 2808 B plus referenced scene/prepared storage                                     |
-pub const PreparedRuntimeOptics = struct {
-    scene: Scene,
-    prepared: OpticsPrepare.PreparedOpticalState,
-
-    pub fn deinit(self: *PreparedRuntimeOptics, allocator: Allocator) void {
-        self.prepared.deinit(allocator);
-        self.scene.deinitOwned(allocator);
-        self.* = undefined;
-    }
 };
 
 // WeakCutoffGridCache --------------------------------------------------------------------------------------- |
@@ -913,147 +857,6 @@ pub fn prepareResolvedVendorO2ACase(
     };
 }
 
-pub fn prepareResolvedVendorO2AEvaluationWithInputs(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-) !PreparedRuntimeEvaluation {
-    var optics = try prepareResolvedVendorO2AOpticsWithInputs(allocator, resolved, inputs);
-    errdefer optics.deinit(allocator);
-
-    const rtm_config = rtm_config: {
-
-        // instrumentation: trace zone: prepare.rtm_config --------------------------------------------------- |
-        // captures: RTM solve-config preparation wall time                                                    |
-        // why: measure control setup for input-reuse validation and retrieval lanes.                          |
-        const zone = Trace.staticZone(@src(), "prepare.rtm_config");
-        defer zone.end();
-        // end instrumentation: trace zone: prepare.rtm_config ----------------------------------------------- |
-
-        break :rtm_config try prepareResolvedVendorO2ASolveConfig(resolved.plan, resolved.rtm_controls);
-    };
-
-    return .{
-        .scene = optics.scene,
-        .rtm_config = rtm_config,
-        .prepared = optics.prepared,
-    };
-}
-
-pub fn prepareResolvedVendorO2AOpticsWithInputs(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-) !PreparedRuntimeOptics {
-    return prepareResolvedVendorO2AOpticsWithInputsInternal(
-        allocator,
-        resolved,
-        inputs,
-        null,
-    );
-}
-
-pub fn prepareResolvedVendorO2AOpticsWithInputsAndWeakCutoffCache(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-) !PreparedRuntimeOptics {
-    return prepareResolvedVendorO2AOpticsWithInputsInternal(
-        allocator,
-        resolved,
-        inputs,
-        weak_cutoff_grid,
-    );
-}
-
-fn prepareResolvedVendorO2AOpticsWithInputsInternal(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: ?*WeakCutoffGridCache,
-) !PreparedRuntimeOptics {
-    // prepareResolvedVendorO2AOpticsWithInputsInternal ------------------------------------------------------ |
-    // Shared reused-input optics route. Callers have already loaded reference assets, so this rebuilds only   |
-    // the Scene and PreparedOpticalState for the current resolved case. An optional weak-cutoff cache lets    |
-    // retrieval-like callers avoid recomputing the realized instrument-grid support.                          |
-    //                                                                                                         |
-    // ownership                                                                                               |
-    //   The returned PreparedRuntimeOptics owns a fresh Scene and prepared state. This route clones static    |
-    //   input tables, so inputs must outlive only this preparation call.                                      |
-    // --------------------------------------------------------------------------------------------------------|
-
-    var scene = scene: {
-
-        // instrumentation: trace zone: prepare.build_scene -------------------------------------------------- |
-        // captures: typed scene construction wall time                                                        |
-        // why: separate reused loaded inputs from per-scene reconstruction cost.                              |
-        const zone = Trace.staticZone(@src(), "prepare.build_scene");
-        defer zone.end();
-        // end instrumentation: trace zone: prepare.build_scene ---------------------------------------------- |
-
-        break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
-    };
-    errdefer scene.deinitOwned(allocator);
-
-    var solar_rewindowed = false;
-    var prepared = try prepareResolvedVendorO2AOpticalStateWithSceneInternal(
-        allocator,
-        &scene,
-        inputs,
-        weak_cutoff_grid,
-        &solar_rewindowed,
-        null,
-        .clone_input_tables,
-        aerosolProfileLayersForOptics(resolved.aerosol),
-    );
-    errdefer prepared.deinit(allocator);
-
-    return .{
-        .scene = scene,
-        .prepared = prepared,
-    };
-}
-
-pub fn prepareResolvedVendorO2AOpticalStateWithSceneAndCaches(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        null,
-        .clone_input_tables,
-        &.{},
-    );
-}
-
-pub fn prepareResolvedVendorO2AOpticalStateWithSceneCachesAndProfilePreparation(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: *WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-    borrowed_profile_preparation: *const OpticsPrepare.BorrowedProfilePreparation,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        borrowed_profile_preparation,
-        .clone_input_tables,
-        &.{},
-    );
-}
-
 pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     allocator: Allocator,
     scene: *Scene,
@@ -1075,7 +878,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
 
     // Retrieval sessions own loaded inputs for the full OE run, so each optical
     // refresh borrows immutable continuum/CIA tables with no per-refresh clone.
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
+    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
         allocator,
         scene,
         inputs,
@@ -1092,28 +895,6 @@ const StaticInputTableMode = enum {
     borrow_input_tables,
 };
 
-fn prepareResolvedVendorO2AOpticalStateWithSceneInternal(
-    allocator: Allocator,
-    scene: *Scene,
-    inputs: *const LoadedVendorO2AInputs,
-    weak_cutoff_grid: ?*WeakCutoffGridCache,
-    solar_rewindowed: *bool,
-    borrowed_profile_preparation: ?*const OpticsPrepare.BorrowedProfilePreparation,
-    static_input_table_mode: StaticInputTableMode,
-    aerosol_profile_layers: []const AerosolModel.ProfileLayer,
-) !OpticsPrepare.PreparedOpticalState {
-    return prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
-        allocator,
-        scene,
-        inputs,
-        weak_cutoff_grid,
-        solar_rewindowed,
-        borrowed_profile_preparation,
-        static_input_table_mode,
-        aerosol_profile_layers,
-    );
-}
-
 fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     allocator: Allocator,
     scene: *Scene,
@@ -1125,7 +906,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     aerosol_profile_layers: []const AerosolModel.ProfileLayer,
 ) !OpticsPrepare.PreparedOpticalState {
     // prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile -----------------------------------------  |
-    // Common optical-state builder behind one-shot, reused-input, and retrieval-session routes. It adapts     |
+    // Common optical-state builder behind retrieval-session optical refreshes. It adapts                      |
     // LoadedVendorO2AInputs into OpticsPrepare.PreparationInputs, then applies the O2 A-only cutoff-grid and  |
     // solar-window fixes that need the prepared instrument/grid shape.                                        |
     //                                                                                                         |
