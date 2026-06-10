@@ -37,6 +37,40 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
 // -----------------------------------------------------------------------------------------------------------|
 
+// LayerEvaluationRequest ------------------------------------------------------------------------------------|
+// Borrowed prepared-state data and support rows needed to evaluate one physical layer span.                  |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 80 B (0.078 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared             : *const PreparedOpticalState                                                |
+// [ 8..15] scene                : ?*const Scene                                                              |
+// [16..23] altitude_km          : f64                                                                        |
+// [24..31] wavelength_nm        : f64                                                                        |
+// [32..39] sublayer_start_index : usize                                                                      |
+// [40..55] sublayers            : []const PreparedSublayer                                                   |
+// [56..71] strong_line_states   : ?[]const StrongLinePreparedState                                           |
+// [72..79] profile_cache        : ?*const ProfileNodeSpectroscopyCache                                       |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   Prepared state, scene, support rows, strong-line rows, and optional profile cache are borrowed.          |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 2 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 80 B plus borrowed support rows and prepared-state storage                       |
+pub const LayerEvaluationRequest = struct {
+    prepared: *const PreparedOpticalState,
+    scene: ?*const Scene,
+    altitude_km: f64,
+    wavelength_nm: f64,
+    sublayer_start_index: usize,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const Spectroscopy.ProfileNodeSpectroscopyCache,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 pub fn opticalDepthBreakdownAtWavelength(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -75,16 +109,17 @@ pub fn opticalDepthBreakdownAtWavelength(
             else
                 null;
 
-            const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(
-                self,
-                null,
-                layer.altitude_km,
-                wavelength_nm,
-                start_index,
-                sublayers[start_index..end_index],
-                strong_line_state,
-                &profile_cache,
-            );
+            const request = LayerEvaluationRequest{
+                .prepared = self,
+                .scene = null,
+                .altitude_km = layer.altitude_km,
+                .wavelength_nm = wavelength_nm,
+                .sublayer_start_index = start_index,
+                .sublayers = sublayers[start_index..end_index],
+                .strong_line_states = strong_line_state,
+                .profile_cache = &profile_cache,
+            };
+            const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(&request);
 
             totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
             totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
@@ -138,36 +173,14 @@ pub fn opticalDepthBreakdownAtWavelength(
     };
 }
 
-pub fn evaluateLayerAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: ?*const Scene,
-    altitude_km: f64,
-    wavelength_nm: f64,
-    sublayer_start_index: usize,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-) EvaluatedLayer {
-    return evaluateLayerAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        altitude_km,
-        wavelength_nm,
-        sublayer_start_index,
-        sublayers,
-        strong_line_states,
-        null,
-    );
+pub fn evaluateLayerAtWavelength(request: *const LayerEvaluationRequest) EvaluatedLayer {
+    var cacheless_request = request.*;
+    cacheless_request.profile_cache = null;
+    return evaluateLayerAtWavelengthWithSpectroscopyCache(&cacheless_request);
 }
 
 pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: ?*const Scene,
-    altitude_km: f64,
-    wavelength_nm: f64,
-    sublayer_start_index: usize,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    profile_cache: ?*const Spectroscopy.ProfileNodeSpectroscopyCache,
+    request: *const LayerEvaluationRequest,
 ) EvaluatedLayer {
     // evaluateLayerAtWavelengthWithSpectroscopyCache ------------------------------------------------------- |
     // Evaluate one physical layer or support-row span at one wavelength.                                     |
@@ -191,18 +204,18 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     };
 
     var breakdown: OpticalDepthBreakdown = .{};
-    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-    const use_table_continuum = self.cross_section_absorbers.len == 0;
+    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = request.prepared.continuum_points };
+    const use_table_continuum = request.prepared.cross_section_absorbers.len == 0;
 
-    for (sublayers, 0..) |sublayer, sublayer_index| {
-        const global_sublayer_index = sublayer_start_index + sublayer_index;
+    for (request.sublayers, 0..) |sublayer, sublayer_index| {
+        const global_sublayer_index = request.sublayer_start_index + sublayer_index;
 
         const continuum_optical_depth = choose_continuum_optical_depth: {
             if (!use_table_continuum) break :choose_continuum_optical_depth 0.0;
 
-            const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+            const continuum_sigma = continuum_table.interpolateSigma(request.wavelength_nm);
             const continuum_density_cm3 =
-                Scalar.continuumCarrierDensityAtSublayer(self, sublayer, global_sublayer_index);
+                Scalar.continuumCarrierDensityAtSublayer(request.prepared, sublayer, global_sublayer_index);
             break :choose_continuum_optical_depth continuum_sigma *
                 continuum_density_cm3 *
                 sublayer.path_length_cm;
@@ -210,7 +223,7 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
 
         const gas_absorption_optical_depth = compute_gas_absorption: {
             var cross_section_optical_depth: f64 = 0.0;
-            for (self.cross_section_absorbers) |cross_section_absorber| {
+            for (request.prepared.cross_section_absorbers) |cross_section_absorber| {
                 if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
 
                 const absorber_density_cm3 =
@@ -218,16 +231,18 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                 if (absorber_density_cm3 <= 0.0) continue;
 
                 cross_section_optical_depth += cross_section_absorber.sigmaAt(
-                    wavelength_nm,
+                    request.wavelength_nm,
                     sublayer.temperature_k,
                     sublayer.pressure_hpa,
                 ) * absorber_density_cm3 * sublayer.path_length_cm;
             }
 
-            if (self.line_absorbers.len != 0) {
+            if (request.prepared.line_absorbers.len != 0) {
                 var line_optical_depth: f64 = 0.0;
-                for (self.line_absorbers) |line_absorber| {
-                    if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+                for (request.prepared.line_absorbers) |line_absorber| {
+                    if (request.prepared.operational_o2_lut.enabled() and line_absorber.species == .o2) {
+                        continue;
+                    }
 
                     const absorber_density_cm3 = line_absorber.number_densities_cm3[global_sublayer_index];
                     if (absorber_density_cm3 <= 0.0) continue;
@@ -237,7 +252,7 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                     else
                         null;
                     const sigma = line_absorber.line_list.sigmaAtPrepared(
-                        wavelength_nm,
+                        request.wavelength_nm,
                         sublayer.temperature_k,
                         sublayer.pressure_hpa,
                         strong_line_state,
@@ -245,10 +260,10 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                     line_optical_depth += sigma * absorber_density_cm3 * sublayer.path_length_cm;
                 }
 
-                if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
+                if (request.prepared.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
                     line_optical_depth +=
-                        self.operational_o2_lut.sigmaAt(
-                            wavelength_nm,
+                        request.prepared.operational_o2_lut.sigmaAt(
+                            request.wavelength_nm,
                             sublayer.temperature_k,
                             sublayer.pressure_hpa,
                         ) *
@@ -261,18 +276,18 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                     line_optical_depth;
             }
 
-            const strong_line_state = if (strong_line_states) |states| &states[sublayer_index] else null;
+            const strong_line_state = if (request.strong_line_states) |states| &states[sublayer_index] else null;
             const spectroscopy_sigma = Spectroscopy.spectroscopySigmaAtAltitudeWithCache(
-                self,
-                wavelength_nm,
+                request.prepared,
+                request.wavelength_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
                 sublayer.altitude_km,
                 strong_line_state,
-                profile_cache,
+                request.profile_cache,
             );
             const spectroscopy_carrier_density_cm3 = Scalar.lineSpectroscopyCarrierDensityAtSublayer(
-                self,
+                request.prepared,
                 sublayer,
                 global_sublayer_index,
             );
@@ -284,13 +299,13 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         };
 
         const gas_scattering_optical_depth =
-            Rayleigh.crossSectionCm2(wavelength_nm) *
+            Rayleigh.crossSectionCm2(request.wavelength_nm) *
             sublayer.number_density_cm3 *
             sublayer.path_length_cm;
 
         const cia_sigma_cm5_per_molecule2 = Spectroscopy.ciaSigmaAtWavelength(
-            self,
-            wavelength_nm,
+            request.prepared,
+            request.wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
         );
@@ -300,7 +315,7 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             sublayer.path_length_cm;
 
         const aerosol_profile: AerosolProfile = choose_aerosol_profile: {
-            if (self.has_aerosol_profile_properties) {
+            if (request.prepared.has_aerosol_profile_properties) {
                 break :choose_aerosol_profile .{
                     .reference_wavelength_nm = sublayer.aerosol_reference_wavelength_nm,
                     .angstrom_exponent = sublayer.aerosol_angstrom_exponent,
@@ -308,8 +323,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             }
 
             break :choose_aerosol_profile .{
-                .reference_wavelength_nm = self.aerosol_reference_wavelength_nm,
-                .angstrom_exponent = self.aerosol_angstrom_exponent,
+                .reference_wavelength_nm = request.prepared.aerosol_reference_wavelength_nm,
+                .angstrom_exponent = request.prepared.aerosol_angstrom_exponent,
             };
         };
         const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
@@ -317,8 +332,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             sublayer.aerosol_base_optical_depth,
             aerosol_profile.reference_wavelength_nm,
             aerosol_profile.angstrom_exponent,
-            self.aerosol_fraction_control,
-            wavelength_nm,
+            request.prepared.aerosol_fraction_control,
+            request.wavelength_nm,
         );
         const aerosol_scattering_optical_depth =
             aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
@@ -331,16 +346,16 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     }
 
     const phase = PhaseFunctions.PhaseMixture.fromScatteringMix(
-        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(request.wavelength_nm),
         breakdown.gas_scattering_optical_depth,
         breakdown.aerosol_scattering_optical_depth,
-        &self.aerosol_phase_coefficients,
+        &request.prepared.aerosol_phase_coefficients,
     );
     const direction_cosines: DirectionCosines = choose_direction_cosines: {
-        if (scene) |owned_scene| {
+        if (request.scene) |owned_scene| {
             break :choose_direction_cosines .{
-                .solar_mu = owned_scene.geometry.solarCosineAtAltitude(altitude_km),
-                .view_mu = owned_scene.geometry.viewingCosineAtAltitude(altitude_km),
+                .solar_mu = owned_scene.geometry.solarCosineAtAltitude(request.altitude_km),
+                .view_mu = owned_scene.geometry.viewingCosineAtAltitude(request.altitude_km),
             };
         }
 

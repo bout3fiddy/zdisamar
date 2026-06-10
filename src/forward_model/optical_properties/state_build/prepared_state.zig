@@ -7,6 +7,7 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const PhaseSupportKind = @import("../../../input/reference/airmass_phase.zig").PhaseSupportKind;
 const transport_common = @import("../../radiative_transfer/root.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
+const StateOpticalDepth = @import("state_optical_depth.zig");
 const Types = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
@@ -484,7 +485,7 @@ pub const PreparedOpticalState = struct {
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
     ) Types.OpticalDepthBreakdown {
-        return @import("state_optical_depth.zig").opticalDepthBreakdownAtWavelength(self, wavelength_nm);
+        return StateOpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
     }
 
     pub fn evaluateLayerAtWavelength(
@@ -496,15 +497,17 @@ pub const PreparedOpticalState = struct {
         sublayers: []const Types.PreparedSublayer,
         strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     ) Types.EvaluatedLayer {
-        return @import("state_optical_depth.zig").evaluateLayerAtWavelength(
-            self,
-            scene,
-            altitude_km,
-            wavelength_nm,
-            sublayer_start_index,
-            sublayers,
-            strong_line_states,
-        );
+        const request = StateOpticalDepth.LayerEvaluationRequest{
+            .prepared = self,
+            .scene = scene,
+            .altitude_km = altitude_km,
+            .wavelength_nm = wavelength_nm,
+            .sublayer_start_index = sublayer_start_index,
+            .sublayers = sublayers,
+            .strong_line_states = strong_line_states,
+            .profile_cache = null,
+        };
+        return StateOpticalDepth.evaluateLayerAtWavelength(&request);
     }
 
     pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
@@ -517,16 +520,17 @@ pub const PreparedOpticalState = struct {
         strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
         profile_cache: ?*const @import("state_spectroscopy.zig").ProfileNodeSpectroscopyCache,
     ) Types.EvaluatedLayer {
-        return @import("state_optical_depth.zig").evaluateLayerAtWavelengthWithSpectroscopyCache(
-            self,
-            scene,
-            altitude_km,
-            wavelength_nm,
-            sublayer_start_index,
-            sublayers,
-            strong_line_states,
-            profile_cache,
-        );
+        const request = StateOpticalDepth.LayerEvaluationRequest{
+            .prepared = self,
+            .scene = scene,
+            .altitude_km = altitude_km,
+            .wavelength_nm = wavelength_nm,
+            .sublayer_start_index = sublayer_start_index,
+            .sublayers = sublayers,
+            .strong_line_states = strong_line_states,
+            .profile_cache = profile_cache,
+        };
+        return StateOpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(&request);
     }
 
     pub fn spectroscopySigmaAtWavelength(
