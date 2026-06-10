@@ -3,11 +3,22 @@ const errors = @import("../../common/errors.zig");
 const Allocator = std.mem.Allocator;
 
 // reference_grid.zig -----------------------------------------------------------------------------------------|
-// Operational and adaptive wavelength-grid controls for instrument sampling.                                  |
+// Wavelength-grid support controls carried by instrument input. Operational reference-spectrum grids weight   |
+// band means and DISAMAR-style support data; adaptive grids control strong-line interval splitting.           |
 //                                                                                                             |
-// data                                                                                                        |
-//   OperationalReferenceGrid is a small header over weighted wavelength samples. AdaptiveReferenceGrid stores |
-//   integer controls used by the adaptive instrument-grid builder.                                            |
+// called by                                                                                                   |
+//   Instrument.zig embeds these rows in scene-level and band-local support. ObservationModel carries the      |
+//   adaptive grid into resolved channel controls. band_means.zig consumes operational weights for LUT means.  |
+//   adaptive_plan.zig consumes adaptive controls while building high-resolution integration intervals.        |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   OperationalReferenceGrid.validate        -> sorted finite wavelengths and non-negative positive weights   |
+//   OperationalReferenceGrid.effectiveSpacingNm -> weighted neighboring-sample spacing for support heuristics |
+//   AdaptiveReferenceGrid.validate           -> complete min/max division controls when adaptive mode is used |
+//                                                                                                             |
+// setup boundary                                                                                              |
+//   These structs are input/support headers. They do not allocate during RTM or wavelength-time evaluation.   |
+//   Callers either borrow parser/reference-data arrays or clone them into a retained scene/band owner.        |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   OperationalReferenceGrid.clone duplicates wavelength and weight arrays; deinitOwned releases those owned  |

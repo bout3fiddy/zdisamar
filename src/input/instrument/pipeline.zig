@@ -4,12 +4,23 @@ const Allocator = std.mem.Allocator;
 const line_shape = @import("line_shape.zig");
 
 // pipeline.zig -----------------------------------------------------------------------------------------------|
-// Instrument spectral-response controls shared by scene input and operational support.                        |
+// Instrument spectral-response request types shared by scene input, observation-model resolution, and         |
+// instrument-grid sampling. These rows describe what response to apply; compute code decides how to apply it. |
 //                                                                                                             |
-// data                                                                                                        |
-//   SpectralResponse holds one line-shape response request and any explicit kernel/table data.                |
-//   SpectralChannelControls wraps that response with per-channel shift, scale, offset, and stray-light        |
-//   controls used by measured-channel paths.                                                                  |
+// called by                                                                                                   |
+//   Instrument.zig re-exports these types for public input. ObservationModel.zig resolves scene defaults and  |
+//   per-channel overrides into SpectralChannelControls. integration.zig turns SpectralResponse into sampling  |
+//   kernels. implementations/instrument/calibration.zig turns channel controls into scalar calibration rows.  |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   SamplingMode        -> native, operational, measured-channel, or synthetic wavelength handling            |
+//   SlitIndex           -> DISAMAR-compatible line-shape selector and builtin fallback kind                   |
+//   SpectralResponse    -> FWHM, high-resolution grid, explicit line-shape kernels, and integration mode      |
+//   SpectralChannelControls -> response plus wavelength shift, gain, offset, and stray-light controls         |
+//                                                                                                             |
+// validation boundary                                                                                         |
+//   Validation rejects negative widths, half-configured high-resolution grids, invalid line-shape tables, and |
+//   table slit requests with no explicit samples. It does not parse files or load support assets.             |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   Response structs own only nested line-shape storage. deinitOwned delegates to the nested line-shape       |
