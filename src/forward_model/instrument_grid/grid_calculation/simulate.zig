@@ -666,7 +666,14 @@ pub fn simulateInternal(
     );
 
     var summary = RunningSummary.init();
-    _ = try validateTransportBuffers(scene, rtm_config, prepared, buffers);
+    const transport_requirements_request = Storage.ResolvedBufferRequirementsRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+        .prepared = prepared,
+        .sample_count = setup.sample_count,
+    };
+    const transport_requirements = Storage.BufferRequirements.fromPrepared(&transport_requirements_request);
+    _ = try validateTransportBuffers(transport_requirements, buffers);
     const radiance_request = RadianceSamplingRequest{
         .rtm_config = rtm_config,
         .setup = setup,
@@ -724,8 +731,13 @@ fn buildSimulationSetup(
     // -------------------------------------------------------------------------------------------------------------------|
 
     try scene.validate();
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    try Storage.validateBuffers(scene, rtm_config, sample_count, buffers);
+    const buffer_requirements_request = Storage.BufferHintRequest{
+        .scene = scene,
+        .rtm_config = &rtm_config,
+    };
+    const buffer_requirements = Storage.BufferRequirements.fromSceneHint(&buffer_requirements_request);
+    const sample_count = buffer_requirements.sample_count;
+    try Storage.validateBuffers(buffer_requirements, buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -939,9 +951,7 @@ fn prefetchSimulationPlan(
 }
 
 fn validateTransportBuffers(
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
+    requirements: Storage.BufferRequirements,
     buffers: Storage.Buffers,
 ) Storage.Error!usize {
     // validateTransportBuffers ------------------------------------------------------------------------------------------|
@@ -950,31 +960,30 @@ fn validateTransportBuffers(
     // explicit interval or shared RTM geometry details.                                                                  |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const transport_layer_count = Storage.resolvedTransportLayerCount(rtm_config, prepared);
-
-    if (buffers.layer_inputs.len < transport_layer_count) {
+    if (buffers.layer_inputs.len < requirements.layer_count) {
         return error.ShapeMismatch;
     }
 
-    if (Storage.configMayUseSourceInterfaces(scene, rtm_config) and
-        buffers.source_interfaces.len < transport_layer_count + 1)
+    if (requirements.source_interface_count != 0 and
+        buffers.source_interfaces.len < requirements.source_interface_count)
     {
         return error.ShapeMismatch;
     }
 
-    if (Storage.configUsesRtmQuadrature(rtm_config) and
-        buffers.rtm_quadrature_levels.len < transport_layer_count + 1)
+    if (requirements.rtm_quadrature_level_count != 0 and
+        buffers.rtm_quadrature_levels.len < requirements.rtm_quadrature_level_count)
     {
         return error.ShapeMismatch;
     }
 
-    if (Storage.configUsesPseudoSphericalGrid(rtm_config) and
-        buffers.pseudo_spherical_level_starts.len < transport_layer_count + 1)
+    if (requirements.pseudo_spherical_level_count != 0 and
+        (buffers.pseudo_spherical_samples.len < requirements.pseudo_spherical_sample_count or
+            buffers.pseudo_spherical_level_starts.len < requirements.pseudo_spherical_level_count))
     {
         return error.ShapeMismatch;
     }
 
-    return transport_layer_count;
+    return requirements.layer_count;
 }
 
 fn fillRadianceSamples(

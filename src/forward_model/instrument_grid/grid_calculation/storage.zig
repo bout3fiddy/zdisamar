@@ -120,6 +120,186 @@ pub const Buffers = struct {
     jacobian_state_mask: jacobian.StateMask = 0,
 };
 
+// BufferHintRequest -----------------------------------------------------------------------------------------------------|
+// Borrowed scene and RTM controls used to size ProductStorage before optical preparation gives exact transport counts.   |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 16 B (0.016 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene      : *const Scene                                                                                     |
+// [ 8..15] rtm_config : *const common.SolveConfig                                                                        |
+//                                                                                                                        |
+// referenced storage: borrowed scene and solve config; the request owns no backing storage.                              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 16 B (0.016 KiB); no out-of-line storage                                                     |
+pub const BufferHintRequest = struct {
+    scene: *const Scene,
+    rtm_config: *const common.SolveConfig,
+};
+
+// ResolvedBufferRequirementsRequest -------------------------------------------------------------------------------------|
+// Borrowed inputs used to validate one Buffers view after PreparedOpticalState has exact transport-layer counts.         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene        : *const Scene                                                                                   |
+// [ 8..15] rtm_config   : *const common.SolveConfig                                                                      |
+// [16..23] prepared     : *const OpticsPreparation.PreparedOpticalState                                                  |
+// [24..31] sample_count : usize                                                                                          |
+//                                                                                                                        |
+// referenced storage: borrowed scene, solve config, and prepared optical state; no referenced storage is owned here.     |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 32 B (0.031 KiB); no out-of-line storage                                                     |
+pub const ResolvedBufferRequirementsRequest = struct {
+    scene: *const Scene,
+    rtm_config: *const common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    sample_count: usize,
+};
+
+// BufferRequirements ----------------------------------------------------------------------------------------------------|
+// Counts needed to grow or validate the one-sweep Buffers view. Scene and RTM controls are read once to build            |
+// this row; allocation code then sees plain lengths and a compact Jacobian mask.                                         |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 64 B (0.063 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] sample_count                  : usize                                                                         |
+// [ 8..15] layer_count                   : usize                                                                         |
+// [16..23] source_interface_count        : usize                                                                         |
+// [24..31] rtm_quadrature_level_count    : usize                                                                         |
+// [32..39] pseudo_spherical_sample_count : usize                                                                         |
+// [40..47] pseudo_spherical_level_count  : usize                                                                         |
+// [48..55] active_jacobian_count         : usize                                                                         |
+// [56..56] jacobian_state_mask           : jacobian.StateMask                                                            |
+// [57..63] padding                       : 7 B                                                                           |
+//                                                                                                                        |
+// referenced storage: none; this is a stack value copied by value.                                                       |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                               |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 64 B (0.063 KiB); no out-of-line storage                                                     |
+pub const BufferRequirements = struct {
+    sample_count: usize,
+    layer_count: usize,
+    source_interface_count: usize,
+    rtm_quadrature_level_count: usize,
+    pseudo_spherical_sample_count: usize,
+    pseudo_spherical_level_count: usize,
+    active_jacobian_count: usize,
+    jacobian_state_mask: jacobian.StateMask,
+
+    pub fn fromSceneHint(request: *const BufferHintRequest) BufferRequirements {
+        // BufferRequirements.fromSceneHint ------------------------------------------------------------------------------|
+        // Build the allocation-size row from scene-level hints before wavelength-specific preparation starts.            |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const scene = request.scene;
+        const rtm_config = request.rtm_config.*;
+        const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+        const layer_count = transportLayerCountHint(scene, rtm_config);
+        const uses_source_interfaces = configMayUseSourceInterfaces(scene, rtm_config);
+        const uses_rtm_quadrature = configUsesRtmQuadrature(rtm_config);
+        const uses_pseudo_spherical_grid = configUsesPseudoSphericalGrid(rtm_config);
+        const active_jacobian_mask = if (rtm_config.derivative_mode != .none)
+            jacobian.sanitizedMask(rtm_config.derivative_state_mask)
+        else
+            0;
+        const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
+
+        var source_interface_count: usize = 0;
+        if (uses_source_interfaces) {
+            source_interface_count = layer_count + 1;
+        }
+
+        var rtm_quadrature_level_count: usize = 0;
+        if (uses_rtm_quadrature) {
+            rtm_quadrature_level_count = layer_count + 1;
+        }
+
+        var pseudo_spherical_sample_count: usize = 0;
+        var pseudo_spherical_level_count: usize = 0;
+        if (uses_pseudo_spherical_grid) {
+            pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene, rtm_config);
+            pseudo_spherical_level_count = layer_count + 1;
+        }
+
+        var jacobian_state_mask: jacobian.StateMask = 0;
+        if (active_jacobian_count != 0) {
+            jacobian_state_mask = active_jacobian_mask;
+        }
+
+        return .{
+            .sample_count = sample_count,
+            .layer_count = layer_count,
+            .source_interface_count = source_interface_count,
+            .rtm_quadrature_level_count = rtm_quadrature_level_count,
+            .pseudo_spherical_sample_count = pseudo_spherical_sample_count,
+            .pseudo_spherical_level_count = pseudo_spherical_level_count,
+            .active_jacobian_count = active_jacobian_count,
+            .jacobian_state_mask = jacobian_state_mask,
+        };
+    }
+
+    pub fn fromPrepared(request: *const ResolvedBufferRequirementsRequest) BufferRequirements {
+        // BufferRequirements.fromPrepared -------------------------------------------------------------------------------|
+        // Build the validation row from exact PreparedOpticalState transport counts after optical preparation.           |
+        // ---------------------------------------------------------------------------------------------------------------|
+
+        const scene = request.scene;
+        const rtm_config = request.rtm_config.*;
+        const prepared = request.prepared;
+        const sample_count = request.sample_count;
+        const layer_count = resolvedTransportLayerCount(rtm_config, prepared);
+        const uses_source_interfaces = configMayUseSourceInterfaces(scene, rtm_config);
+        const uses_rtm_quadrature = configUsesRtmQuadrature(rtm_config);
+        const uses_pseudo_spherical_grid = configUsesPseudoSphericalGrid(rtm_config);
+        const active_jacobian_mask = if (rtm_config.derivative_mode != .none)
+            jacobian.sanitizedMask(rtm_config.derivative_state_mask)
+        else
+            0;
+        const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
+
+        var source_interface_count: usize = 0;
+        if (uses_source_interfaces) {
+            source_interface_count = layer_count + 1;
+        }
+
+        var rtm_quadrature_level_count: usize = 0;
+        if (uses_rtm_quadrature) {
+            rtm_quadrature_level_count = layer_count + 1;
+        }
+
+        var pseudo_spherical_sample_count: usize = 0;
+        var pseudo_spherical_level_count: usize = 0;
+        if (uses_pseudo_spherical_grid) {
+            pseudo_spherical_sample_count = resolvedPseudoSphericalSampleCount(scene, rtm_config, prepared);
+            pseudo_spherical_level_count = layer_count + 1;
+        }
+
+        var jacobian_state_mask: jacobian.StateMask = 0;
+        if (active_jacobian_count != 0) {
+            jacobian_state_mask = active_jacobian_mask;
+        }
+
+        return .{
+            .sample_count = sample_count,
+            .layer_count = layer_count,
+            .source_interface_count = source_interface_count,
+            .rtm_quadrature_level_count = rtm_quadrature_level_count,
+            .pseudo_spherical_sample_count = pseudo_spherical_sample_count,
+            .pseudo_spherical_level_count = pseudo_spherical_level_count,
+            .active_jacobian_count = active_jacobian_count,
+            .jacobian_state_mask = jacobian_state_mask,
+        };
+    }
+};
+
 // instrumentation: trace phase timing -----------------------------------------------------------------------------------|
 // captures: coarse product-simulation phase timings for trace-harness JSON summaries                                     |
 // why: keeps first-use and cached-run attribution available when very deep ztracy captures bury short zones.             |
@@ -428,54 +608,56 @@ pub const ProductStorage = struct {
         //   Workspace Jacobians are state-major over active states only: [active_state][sample].                         |
         // ---------------------------------------------------------------------------------------------------------------|
 
-        const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-        const layer_count = transportLayerCountHint(scene, rtm_config);
+        const requirements_request = BufferHintRequest{
+            .scene = scene,
+            .rtm_config = &rtm_config,
+        };
+        const requirements = BufferRequirements.fromSceneHint(&requirements_request);
 
-        const needs_source_interfaces = configMayUseSourceInterfaces(scene, rtm_config);
-        const needs_rtm_quadrature = configUsesRtmQuadrature(rtm_config);
-        const needs_pseudo_spherical_grid = configUsesPseudoSphericalGrid(rtm_config);
+        try ensureBufferCapacity(allocator, &self.wavelengths, requirements.sample_count);
+        try ensureBufferCapacity(allocator, &self.radiance, requirements.sample_count);
+        try ensureBufferCapacity(allocator, &self.irradiance, requirements.sample_count);
+        try ensureBufferCapacity(allocator, &self.reflectance, requirements.sample_count);
+        try ensureBufferCapacity(allocator, &self.scratch, requirements.sample_count);
+        try ensureBufferCapacity(allocator, &self.scratch_aux, requirements.sample_count);
 
-        const pseudo_spherical_sample_count = if (needs_pseudo_spherical_grid)
-            pseudoSphericalSampleCountHint(scene, rtm_config)
-        else
-            0;
-
-        const active_jacobian_mask = if (rtm_config.derivative_mode != .none)
-            jacobian.sanitizedMask(rtm_config.derivative_state_mask)
-        else
-            0;
-
-        const active_jacobian_count = jacobian.activeStateCount(active_jacobian_mask);
-        const wants_jacobian = active_jacobian_count != 0;
-
-        try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
-        try ensureBufferCapacity(allocator, &self.radiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch, sample_count);
-        try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
-
-        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
-        if (needs_source_interfaces) {
-            try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
+        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, requirements.layer_count);
+        if (requirements.source_interface_count != 0) {
+            try ensureSourceInterfaceBufferCapacity(
+                allocator,
+                &self.source_interfaces,
+                requirements.source_interface_count,
+            );
         } else {
             freeSourceInterfaceBuffer(allocator, self.source_interfaces);
             self.source_interfaces = &.{};
         }
-        if (needs_rtm_quadrature) {
-            try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
+        if (requirements.rtm_quadrature_level_count != 0) {
+            try ensureRtmQuadratureBufferCapacity(
+                allocator,
+                &self.rtm_quadrature_levels,
+                requirements.rtm_quadrature_level_count,
+            );
         } else {
             freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
             self.rtm_quadrature_levels = &.{};
         }
-        if (needs_pseudo_spherical_grid) {
+        if (requirements.pseudo_spherical_level_count != 0) {
             try ensurePseudoSphericalSampleBufferCapacity(
                 allocator,
                 &self.pseudo_spherical_samples,
-                pseudo_spherical_sample_count,
+                requirements.pseudo_spherical_sample_count,
             );
-            try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
-            try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
+            try ensureIndexBufferCapacity(
+                allocator,
+                &self.pseudo_spherical_level_starts,
+                requirements.pseudo_spherical_level_count,
+            );
+            try ensureBufferCapacity(
+                allocator,
+                &self.pseudo_spherical_level_altitudes,
+                requirements.pseudo_spherical_level_count,
+            );
         } else {
             freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
 
@@ -485,16 +667,20 @@ pub const ProductStorage = struct {
             self.pseudo_spherical_level_starts = &.{};
             self.pseudo_spherical_level_altitudes = &.{};
         }
-        if (wants_jacobian) {
-            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * active_jacobian_count);
+        if (requirements.active_jacobian_count != 0) {
+            try ensureBufferCapacity(
+                allocator,
+                &self.jacobian,
+                requirements.sample_count * requirements.active_jacobian_count,
+            );
         }
 
-        const source_interface_view: []common.SourceInterfaceInput = if (needs_source_interfaces)
-            self.source_interfaces[0 .. layer_count + 1]
+        const source_interface_view: []common.SourceInterfaceInput = if (requirements.source_interface_count != 0)
+            self.source_interfaces[0..requirements.source_interface_count]
         else
             @constCast(&[_]common.SourceInterfaceInput{});
-        const rtm_quadrature_view: []common.RtmQuadratureLevel = if (needs_rtm_quadrature)
-            self.rtm_quadrature_levels[0 .. layer_count + 1]
+        const rtm_quadrature_view: []common.RtmQuadratureLevel = if (requirements.rtm_quadrature_level_count != 0)
+            self.rtm_quadrature_levels[0..requirements.rtm_quadrature_level_count]
         else
             @constCast(&[_]common.RtmQuadratureLevel{});
 
@@ -502,32 +688,35 @@ pub const ProductStorage = struct {
             @constCast(&[_]common.PseudoSphericalSample{});
         var pseudo_spherical_starts_view: []usize = @constCast(&[_]usize{});
         var pseudo_spherical_altitudes_view: []f64 = @constCast(&[_]f64{});
-        if (needs_pseudo_spherical_grid) {
-            pseudo_spherical_samples_view = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count];
-            pseudo_spherical_starts_view = self.pseudo_spherical_level_starts[0 .. layer_count + 1];
-            pseudo_spherical_altitudes_view = self.pseudo_spherical_level_altitudes[0 .. layer_count + 1];
+        if (requirements.pseudo_spherical_level_count != 0) {
+            pseudo_spherical_samples_view =
+                self.pseudo_spherical_samples[0..requirements.pseudo_spherical_sample_count];
+            pseudo_spherical_starts_view =
+                self.pseudo_spherical_level_starts[0..requirements.pseudo_spherical_level_count];
+            pseudo_spherical_altitudes_view =
+                self.pseudo_spherical_level_altitudes[0..requirements.pseudo_spherical_level_count];
         }
 
-        const jacobian_view = if (wants_jacobian)
-            self.jacobian[0 .. sample_count * active_jacobian_count]
+        const jacobian_view = if (requirements.active_jacobian_count != 0)
+            self.jacobian[0 .. requirements.sample_count * requirements.active_jacobian_count]
         else
             null;
 
         return .{
-            .wavelengths = self.wavelengths[0..sample_count],
-            .radiance = self.radiance[0..sample_count],
-            .irradiance = self.irradiance[0..sample_count],
-            .reflectance = self.reflectance[0..sample_count],
-            .scratch = self.scratch[0..sample_count],
-            .scratch_aux = self.scratch_aux[0..sample_count],
-            .layer_inputs = self.layer_inputs[0..layer_count],
+            .wavelengths = self.wavelengths[0..requirements.sample_count],
+            .radiance = self.radiance[0..requirements.sample_count],
+            .irradiance = self.irradiance[0..requirements.sample_count],
+            .reflectance = self.reflectance[0..requirements.sample_count],
+            .scratch = self.scratch[0..requirements.sample_count],
+            .scratch_aux = self.scratch_aux[0..requirements.sample_count],
+            .layer_inputs = self.layer_inputs[0..requirements.layer_count],
             .source_interfaces = source_interface_view,
             .rtm_quadrature_levels = rtm_quadrature_view,
             .pseudo_spherical_samples = pseudo_spherical_samples_view,
             .pseudo_spherical_level_starts = pseudo_spherical_starts_view,
             .pseudo_spherical_level_altitudes = pseudo_spherical_altitudes_view,
             .jacobian = jacobian_view,
-            .jacobian_state_mask = if (wants_jacobian) active_jacobian_mask else 0,
+            .jacobian_state_mask = requirements.jacobian_state_mask,
         };
     }
 };
@@ -615,9 +804,7 @@ fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
 }
 
 pub fn validateBuffers(
-    scene: *const Scene,
-    rtm_config: common.SolveConfig,
-    sample_count: usize,
+    requirements: BufferRequirements,
     buffers: Buffers,
 ) Error!void {
     // validateBuffers ---------------------------------------------------------------------------------------------------|
@@ -628,49 +815,49 @@ pub fn validateBuffers(
     // The always-active summary buffers and the rtm_config-selected transport
     // carriers must stay shape-compatible for a single sweep.
     const summary_buffers_match =
-        sample_count != 0 and
-        buffers.wavelengths.len == sample_count and
-        buffers.radiance.len == sample_count and
-        buffers.irradiance.len == sample_count and
-        buffers.reflectance.len == sample_count and
-        buffers.scratch.len == sample_count and
-        buffers.scratch_aux.len == sample_count and
-        buffers.layer_inputs.len != 0;
+        requirements.sample_count != 0 and
+        buffers.wavelengths.len == requirements.sample_count and
+        buffers.radiance.len == requirements.sample_count and
+        buffers.irradiance.len == requirements.sample_count and
+        buffers.reflectance.len == requirements.sample_count and
+        buffers.scratch.len == requirements.sample_count and
+        buffers.scratch_aux.len == requirements.sample_count and
+        buffers.layer_inputs.len >= requirements.layer_count;
     if (!summary_buffers_match) {
         return error.ShapeMismatch;
     }
 
     const source_interfaces_match =
-        !configMayUseSourceInterfaces(scene, rtm_config) or
-        buffers.source_interfaces.len == buffers.layer_inputs.len + 1;
+        requirements.source_interface_count == 0 or
+        buffers.source_interfaces.len >= requirements.source_interface_count;
     if (!source_interfaces_match) {
         return error.ShapeMismatch;
     }
 
     const rtm_quadrature_matches =
-        !configUsesRtmQuadrature(rtm_config) or
-        buffers.rtm_quadrature_levels.len == buffers.layer_inputs.len + 1;
+        requirements.rtm_quadrature_level_count == 0 or
+        buffers.rtm_quadrature_levels.len >= requirements.rtm_quadrature_level_count;
     if (!rtm_quadrature_matches) {
         return error.ShapeMismatch;
     }
 
     const pseudo_spherical_grid_matches =
-        !configUsesPseudoSphericalGrid(rtm_config) or
-        (buffers.pseudo_spherical_samples.len != 0 and
-            buffers.pseudo_spherical_level_starts.len == buffers.layer_inputs.len + 1 and
-            buffers.pseudo_spherical_level_altitudes.len == buffers.layer_inputs.len + 1);
+        requirements.pseudo_spherical_level_count == 0 or
+        (buffers.pseudo_spherical_samples.len >= requirements.pseudo_spherical_sample_count and
+            buffers.pseudo_spherical_level_starts.len >= requirements.pseudo_spherical_level_count and
+            buffers.pseudo_spherical_level_altitudes.len >= requirements.pseudo_spherical_level_count);
     if (!pseudo_spherical_grid_matches) {
         return error.ShapeMismatch;
     }
 
     if (buffers.jacobian) |values| {
-        const active_jacobian_count = jacobian.activeStateCount(buffers.jacobian_state_mask);
-        if (active_jacobian_count == 0 or
-            values.len != sample_count * active_jacobian_count)
+        if (requirements.active_jacobian_count == 0 or
+            buffers.jacobian_state_mask != requirements.jacobian_state_mask or
+            values.len != requirements.sample_count * requirements.active_jacobian_count)
         {
             return error.ShapeMismatch;
         }
-    } else if (buffers.jacobian_state_mask != 0) {
+    } else if (requirements.active_jacobian_count != 0 or buffers.jacobian_state_mask != 0) {
         return error.ShapeMismatch;
     }
 }
