@@ -1023,8 +1023,8 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
 
                 // Hot path:
                 //   Parent-layer ownership is seeded into the support-row
-                //   output buffer before fanout. Workers then load the row-local
-                //   indexes directly instead of scanning layer starts.
+                //   output buffer before fanout. Workers load the row-local
+                //   indexes directly during support-row fill.
                 const current_layer_index: usize = @intCast(worker.context.sublayers[write_index].parent_layer_index);
                 populateParitySupportRow(
                     worker.allocator,

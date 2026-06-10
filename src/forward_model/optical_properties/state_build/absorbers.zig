@@ -685,7 +685,7 @@ fn buildLineAbsorbers(
     //                                                                                                            |
     // hot path                                                                                                   |
     //   Runs once while preparing spectroscopy line absorbers. Layer spectroscopy and line-list evaluation       |
-    //   reuse the filtered lists and prepared sidecars instead of repartitioning by wavelength.                  |
+    //   reuse the filtered lists and prepared sidecars at wavelength time.                                       |
     // ---------------------------------------------------------------------------------------------------------  |
 
     const line_list = owned_lines.*;

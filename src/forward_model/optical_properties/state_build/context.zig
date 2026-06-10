@@ -26,8 +26,8 @@ const Allocator = std.mem.Allocator;
 //   operational LUT handles    : cloned O2 and O2-O2 LUT headers for prepared-state ownership transfer        |
 //                                                                                                             |
 // setup boundary                                                                                              |
-//   This is not a wavelength-time hot path. It allocates and validates the state that lets later loops read   |
-//   dense arrays, prepared absorber rows, and cloned LUT handles without reaching back into input loaders.    |
+//   This setup path allocates and validates the state that lets wavelength-time loops read dense arrays,      |
+//   prepared absorber rows, and cloned LUT handles without reaching back into input loaders.                  |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   PreparationContext is the temporary owner. Finalize.assemble moves surviving buffers into                 |

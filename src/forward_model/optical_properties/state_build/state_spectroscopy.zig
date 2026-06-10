@@ -553,8 +553,8 @@ pub fn preparedStrongLineStateAtAltitude(
     // hot path                                                                                                |
     //   Support-row carrier helpers call this while resolving altitude-specific line state. The loop walks    |
     //   PreparedSublayer by value today; each row is 256 B, but this route is only used when prepared strong  |
-    //   line states are present and it needs adjacent altitude pairs. Any narrower side column needs a        |
-    //   measured repeated-boundary win before adding another ownership surface.                               |
+    //   line states are present and it needs adjacent altitude pairs. Strong-line interpolation policy stays  |
+    //   tied to the prepared profile-row arrays used by this lookup.                                          |
     // ------------------------------------------------------------------------------------------------------  |
 
     const states = strong_line_states orelse return null;

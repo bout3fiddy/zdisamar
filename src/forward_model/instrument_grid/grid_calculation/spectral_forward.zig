@@ -32,7 +32,7 @@ const Error = Storage.Error;
 // hot path                                                                                                               |
 //   Each miss is one high-resolution wavelength. Workers reuse layer, source-interface, RTM-quadrature,                  |
 //   pseudo-spherical, carrier-cache, and LABOS workspace storage across many misses, then write results[index]           |
-//   for misses[index]. Later gather loops read this dense array by integer index instead of hashing.                     |
+//   for misses[index]. Later gather loops read this dense array by integer index.                                        |
 //                                                                                                                        |
 // math                                                                                                                   |
 //   LABOS returns a top-of-atmosphere reflectance factor. radianceScaleFromForward multiplies by                         |
