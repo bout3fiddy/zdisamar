@@ -4,9 +4,10 @@ const Scene = @import("../Scene.zig").Scene;
 // solar_irradiance.zig -------------------------------------------------------------------------------------- |
 // Solar irradiance source-order helper for nominal channels and instrument-integration samples.               |
 //                                                                                                             |
-// used by                                                                                                     |
-//   spectral_forward.zig converts LABOS reflectance into radiance                                             |
-//   spectral_eval.zig evaluates irradiance samples and prefilled irradiance cache rows                        |
+// called by                                                                                                   |
+//   spectral_forward.zig samples this while scaling each LABOS reflectance factor into radiance.              |
+//   spectral_eval.zig samples this while building exact-wavelength irradiance cache rows and while gathering  |
+//   nominal irradiance through integration kernels.                                                           |
 //                                                                                                             |
 // source order                                                                                                |
 //   1. operational solar table retained on primary band support, when present                                 |
@@ -17,6 +18,7 @@ const Scene = @import("../Scene.zig").Scene;
 //   Called for radiance scaling and irradiance-cache misses. The instrument-grid cache keys exact f64         |
 //   wavelengths, so repeated integration offsets reuse the resolved value. This function allocates nothing    |
 //   and walks the tiny bundled O2 A table only when the scene requests bundled defaults.                      |
+//   Operational solar interpolation uses the table and spline state owned by input/instrument/solar_spectrum. |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The helper always returns a positive finite floor for downstream radiance/reflectance scaling. It does    |

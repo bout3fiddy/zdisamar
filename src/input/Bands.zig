@@ -23,7 +23,7 @@ const units = @import("../common/units.zig");
 //                                                                                                             |
 // memory                                                                                                      |
 //   SpectralBandSet is a slice header. Cloned sets own band rows; cloned bands own exclusion rows and borrow  |
-//   their id string unless a future caller chooses to duplicate ids separately.                               |
+//   their id string from the parsed or caller-owned input model.                                              |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralWindow ---------------------------------------------------------------------------------------------|

@@ -20,9 +20,10 @@ pub const RadiativeTransferControls = transport_common.RadiativeTransferControls
 // types.zig ------------------------------------------------------------------------------------------------- |
 // Parsed O2 A reference-case schema used before runtime preparation.                                          |
 //                                                                                                             |
-// used by                                                                                                     |
-//   root.zig parses and validates these records; run.zig turns them into loaded assets, Scene, solve config,  |
-//   and PreparedOpticalState; metrics.zig keeps the public validation wrappers typed against the same rows.   |
+// call route                                                                                                  |
+//   root.zig parses and validates these records from reference-case JSON. run.zig consumes them into loaded   |
+//   reference assets, Scene, SolveConfig, and PreparedOpticalState. metrics.zig keeps validation wrappers     |
+//   typed against the same row family.                                                                        |
 //                                                                                                             |
 // record groups                                                                                               |
 //   Metadata and ExternalAsset identify fixed/reference files. GeometrySpec, AtmosphereSpec, AerosolSpec,     |
@@ -32,6 +33,10 @@ pub const RadiativeTransferControls = transport_common.RadiativeTransferControls
 // contract                                                                                                    |
 //   These rows preserve vendor/reference inputs until run.zig can consume each control into                   |
 //   Scene/PreparationInputs/SolveConfig or reject unsupported combinations.                                   |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   These setup rows are consumed before wavelength-time work begins. Forward-model workers receive the       |
+//   Scene, prepared optical rows, and solve controls produced from the reference-case records.                |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Small numeric/control rows stay inline. Asset ids, paths, intervals, profiles, measured wavelengths, and  |
