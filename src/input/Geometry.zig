@@ -3,6 +3,7 @@ const units = @import("../common/units.zig");
 const std = @import("std");
 
 const earth_radius_km = 6371.0;
+const direction_cosine_floor: f64 = 0.05;
 
 // Geometry.zig -----------------------------------------------------------------------------------------------|
 // Observation geometry controls and altitude-adjusted propagation cosines for RTM preparation.                |
@@ -23,7 +24,7 @@ const earth_radius_km = 6371.0;
 //   allocates nothing, and leaves all altitude-dependent work as scalar math in the methods below.            |
 //                                                                                                             |
 // math                                                                                                        |
-//   radius_ratio = R_earth / (R_earth + altitude). Near-horizon paths keep a cosine floor of 0.05 so path     |
+//   radius_ratio = R_earth / (R_earth + altitude). Near-horizon paths keep direction_cosine_floor so path     |
 //   lengths remain bounded and parity-sensitive long slant paths do not explode numerically.                  |
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -57,6 +58,14 @@ pub const Geometry = struct {
     surface_altitude_km: f64 = 0.0,
 
     pub fn validate(self: Geometry) errors.Error!void {
+        // Geometry.validate ----------------------------------------------------------------------------------|
+        // Validate the public geometry row before Scene preparation, LUT key creation, or RTM execution.      |
+        //                                                                                                     |
+        // boundary                                                                                            |
+        //   Angle ranges are delegated to common unit validators so all input adapters share the same rule.   |
+        //   Surface altitude is allowed at sea level or above; negative or non-finite altitude is rejected.   |
+        // ----------------------------------------------------------------------------------------------------|
+
         (units.ZenithAngleDeg{
             .value = self.solar_zenith_deg,
         }).validate() catch return errors.Error.InvalidRequest;
@@ -73,18 +82,42 @@ pub const Geometry = struct {
     }
 
     pub fn solarCosineAtAltitude(self: Geometry, altitude_km: f64) f64 {
+        // Geometry.solarCosineAtAltitude ---------------------------------------------------------------------|
+        // Return the local propagation cosine for the incoming solar path at one altitude.                    |
+        // ----------------------------------------------------------------------------------------------------|
+
         return self.propagationCosineAtAltitude(self.solar_zenith_deg, altitude_km);
     }
 
     pub fn viewingCosineAtAltitude(self: Geometry, altitude_km: f64) f64 {
+        // Geometry.viewingCosineAtAltitude -------------------------------------------------------------------|
+        // Return the local propagation cosine for the outgoing viewing path at one altitude.                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         return self.propagationCosineAtAltitude(self.viewing_zenith_deg, altitude_km);
     }
 
     fn propagationCosineAtAltitude(self: Geometry, zenith_deg: f64, altitude_km: f64) f64 {
+        // Geometry.propagationCosineAtAltitude ---------------------------------------------------------------|
+        // Convert a stored zenith angle into the local cosine used by optical preparation and diagnostics.    |
+        //                                                                                                     |
+        // route                                                                                               |
+        //   plane_parallel keeps the base cosine at every altitude.                                           |
+        //   pseudo_spherical bends the ray by Earth-radius geometry before applying the same floor.           |
+        //   spherical applies the local cosine and the radius ratio used by this simplified spherical path.   |
+        //                                                                                                     |
+        // math                                                                                                |
+        //   radius_ratio = R_earth / (R_earth + altitude_km)                                                  |
+        //   local_mu     = sqrt(1 - (sin(zenith) * radius_ratio)^2)                                           |
+        //                                                                                                     |
+        // safety                                                                                              |
+        //   direction_cosine_floor bounds long slant paths near the horizon.                                  |
+        // ----------------------------------------------------------------------------------------------------|
+
         const base_zenith_rad = std.math.degreesToRadians(zenith_deg);
         const base_mu = @cos(base_zenith_rad);
         if (self.model == .plane_parallel) {
-            return @max(base_mu, 0.05);
+            return @max(base_mu, direction_cosine_floor);
         }
 
         const safe_altitude_km = @max(altitude_km, 0.0);
@@ -96,11 +129,10 @@ pub const Geometry = struct {
         );
         const local_mu = @sqrt(@max(1.0 - (sin_at_altitude * sin_at_altitude), 0.0));
 
-        // Keep the cosine floor for parity-sensitive long slant paths.
         return switch (self.model) {
-            .plane_parallel => @max(base_mu, 0.05),
-            .pseudo_spherical => @max(local_mu, 0.05),
-            .spherical => @max(local_mu * radius_ratio, 0.05),
+            .plane_parallel => @max(base_mu, direction_cosine_floor),
+            .pseudo_spherical => @max(local_mu, direction_cosine_floor),
+            .spherical => @max(local_mu * radius_ratio, direction_cosine_floor),
         };
     }
 };
