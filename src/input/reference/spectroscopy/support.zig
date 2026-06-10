@@ -3,20 +3,31 @@ const PhysicsCore = @import("physics_core.zig");
 const Types = @import("types.zig");
 
 // support.zig -----------------------------------------------------------------------------------------------|
-// Spectroscopy metadata and unit helpers shared by line-list preparation, evaluation, and diagnostics.       |
+// Spectroscopy metadata predicates and unit fallbacks shared by line-list setup and diagnostics.             |
 //                                                                                                            |
-// used by                                                                                                    |
-//   line_list.zig filters runtime gas/isotope controls, anchors strong lines, and returns zero evaluations   |
-//   output/o2_line_contributions.zig renders line metadata with canonical wavenumber/width/shift units       |
+// called by                                                                                                  |
+//   line_list.zig uses these helpers while filtering runtime controls, preserving sidecars, detecting vendor |
+//   O2 A strong-line partitions, and returning zero evaluations for empty windows.                           |
+//   output/o2_line_contributions.zig uses the unit helpers so diagnostic rows report canonical               |
+//   wavenumber/half-width/pressure-shift values even when the source list stored wavelength-space fields.    |
 //                                                                                                            |
-// main paths                                                                                                 |
-//   lineCenterWavenumberCm1 / lineAirHalfWidthCm1 / linePressureShiftCm1 fill missing derived units          |
-//   lineHasVendorStrongLineMetadata and O2 A predicates recognize vendor strong-line sidecar candidates      |
-//   runtimeControlsMatchLine and runtimeControlsKeepStrongLineSidecars apply active gas/isotope controls     |
+// unit fallback rules                                                                                        |
+//   lineCenterWavenumberCm1, lineAirHalfWidthCm1, and linePressureShiftCm1 return finite cm^-1 source        |
+//   fields when present. Otherwise they derive the value from nm fields through physics_core conversions.    |
+//   Pressure-shift conversion keeps the sign convention used by HITRAN-style wavenumber shifts.              |
 //                                                                                                            |
-// boundary                                                                                                   |
-//   This file normalizes metadata but does not evaluate line shapes, allocate storage, or own line-list rows.|
-//   Helpers take SpectroscopyLine pointers because the row is wide and callers often need only one field.    |
+// vendor O2 A metadata                                                                                       |
+//   A vendor strong-line candidate must be O2 gas 7, isotope 1, branch_ic1=5, branch_ic2=1, and              |
+//   rotational_nf<=35. The *FromSource variants additionally require vendor_filter_metadata_from_source so   |
+//   inferred metadata is not mistaken for vendor-provided partition evidence.                                |
+//                                                                                                            |
+// runtime controls                                                                                           |
+//   runtimeControlsMatchLine applies the active gas and isotope filters to one wide SpectroscopyLine row.    |
+//   runtimeControlsKeepStrongLineSidecars keeps sidecar storage only for unfiltered or O2 isotope-1 paths.   |
+//                                                                                                            |
+// boundary and hot path                                                                                      |
+//   This file owns no storage, allocates nothing, and does not evaluate line shapes. Helpers take pointers   |
+//   to SpectroscopyLine because the row is wide and most callers need only one or two metadata fields.       |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {

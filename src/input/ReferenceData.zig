@@ -10,21 +10,32 @@ const spectroscopy_line_list = @import("reference/spectroscopy/line_list.zig");
 const Allocator = std.mem.Allocator;
 
 // ReferenceData.zig -----------------------------------------------------------------------------------------|
-// Typed reference-data facade shared by input loaders, preparation, diagnostics, and tests.                  |
+// Public typed-reference-data facade for loaders, input bindings, preparation, diagnostics, and tests.       |
 //                                                                                                            |
-// used by                                                                                                    |
-//   input/reference_data loaders return the concrete rows re-exported here                                   |
-//   optical_properties/state_build consumes climatology, CIA, cross-section, Rayleigh, and spectroscopy rows |
-//   input Absorber resolved payloads and output O2 line diagnostics refer to these public row types          |
-//   unit tests and examples use the deterministic demo builders at the bottom of this file                   |
+// called by                                                                                                  |
+//   input/reference_data loaders return the concrete owner rows re-exported here after manifest conversion.  |
+//   input/Absorber.zig stores resolved line-list, cross-section, and CIA payloads on scene absorbers.        |
+//   optical_properties/state_build consumes profile, LUT, cross-section, CIA, Rayleigh, and spectroscopy     |
+//   rows while preparing per-wavelength optical state.                                                       |
+//   output/o2_line_contributions.zig and tests import these names as the stable public row vocabulary.       |
 //                                                                                                            |
-// boundary                                                                                                   |
-//   This file is a type/export surface, not an asset loader. Production reference files are parsed under     |
-//   src/input/reference_data/ and concrete spectroscopy math lives under src/input/reference/.               |
+// export map                                                                                                 |
+//   climatology.zig      -> ClimatologyPoint/Profile and pressure-grid helpers                               |
+//   cross_sections.zig   -> continuum/cross-section point tables                                             |
+//   cia.zig              -> O2-O2 collision-induced absorption polynomial tables                             |
+//   airmass_phase.zig    -> airmass-factor LUT rows                                                          |
+//   rayleigh.zig         -> Rayleigh scalar helper namespace                                                 |
+//   spectroscopy/types   -> line, sidecar, relaxation, runtime-control, and prepared-state structs           |
+//   spectroscopy/line_list.zig -> SpectroscopyLineList owner and evaluation entrypoint                       |
+//                                                                                                            |
+// boundary and ownership                                                                                     |
+//   This file is a facade, not an asset loader and not a math implementation. Owner/deinit behavior lives    |
+//   in the imported modules; this file only re-exports the names so public callers do not depend on the      |
+//   internal directory split under src/input/reference/.                                                     |
 //                                                                                                            |
 // demo data                                                                                                  |
-//   The small in-memory rows are deterministic fixtures for examples and smoke tests. They are deliberately  |
-//   separate from validation/reference_data assets and should not be treated as scientific reference truth.  |
+//   The buildDemo* helpers allocate deterministic fixture rows for examples and smoke tests. They are        |
+//   deliberately separate from data/reference_data and should not be treated as scientific reference truth.  |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;
