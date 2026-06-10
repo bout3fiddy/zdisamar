@@ -12,7 +12,10 @@ const Types = @import("state.zig");
 const Allocator = std.mem.Allocator;
 
 // prepared_state.zig -----------------------------------------------------------------------------------------|
-// Final optical-property state boundary and read helpers.                                                     |
+// Public owner/view boundary for prepared optical properties after scene input has been reduced into rows     |
+// that RTM, instrument-grid, diagnostics, and retrieval code can read repeatedly. This file owns the final    |
+// PreparedOpticalState header, its deinit rules, cache-key methods, and thin read helpers that delegate to    |
+// the specialized state_* modules.                                                                            |
 //                                                                                                             |
 // call path                                                                                                   |
 //   root.prepare                                                                                              |
@@ -25,6 +28,11 @@ const Allocator = std.mem.Allocator;
 // used by                                                                                                     |
 //   instrument-grid wavelength workers, RTM forward-input builders, profile spectroscopy caches, output       |
 //   diagnostics, atmospheric budgets, O2 line/CIA reports, and optimal-estimation retrieval setup.            |
+//                                                                                                             |
+// module split                                                                                                |
+//   state.zig defines the compiler-measured row payloads. finalize.zig writes this header once by moving      |
+//   Context and AbsorberBuildState storage into it. state_spectroscopy.zig, state_optical_depth.zig, and      |
+//   state_scalar.zig do the wavelength/altitude math behind the public methods below.                         |
 //                                                                                                             |
 // row model                                                                                                   |
 //   layers    : transport-grid rows. Each row stores physical layer values and the support-row span           |

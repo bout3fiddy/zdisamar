@@ -8,13 +8,26 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
 // integration.zig ------------------------------------------------------------------------------------------- |
-// Resolves scene instrument controls into the sampling kernel used before RTM values reach measurement space. |
+// Converts one scene/channel/nominal wavelength into the instrument-response samples used by product          |
+// wavelength planning. This is the router between observation-model controls and the fixed IntegrationKernel  |
+// row: it decides which response model is active, writes offsets relative to the nominal wavelength,          |
+// normalizes weights, and tells later code whether legacy slit convolution must be skipped.                   |
 //                                                                                                             |
 // called by                                                                                                   |
-//   wavelength_sampling.zig builds one retained radiance and irradiance row for every product wavelength      |
-//   simulate.zig asks whether the later five-tap slit convolution must be skipped                             |
+//   wavelength_sampling.zig builds retained radiance and irradiance integration rows for every output sample  |
+//   simulate.zig asks usesIntegratedInstrumentSampling before deciding whether to run five-tap convolution    |
 //   output/instrument_response.zig expands the same kernels into diagnostic support rows                      |
-//   input/o2a_reference/run.zig samples start/end kernels for DISAMAR parity support bounds                   |
+//   input/o2a_reference/run.zig samples endpoint kernels for DISAMAR parity support bounds                    |
+//                                                                                                             |
+// inputs                                                                                                      |
+//   Scene supplies observation-model sampling mode, channel response controls, line-shape tables, and         |
+//   fallback FWHM metadata. PreparedOpticalState is optional because DISAMAR high-resolution grids can be     |
+//   realized either from prepared strong-line intervals or from scene-only operational controls.              |
+//                                                                                                             |
+// output row                                                                                                  |
+//   IntegrationKernel is caller-owned 32 KiB scratch from types.zig. Only the active prefix                   |
+//   offsets_nm[0..sample_count] and weights[0..sample_count] is meaningful after this file returns.           |
+//   Disabled kernels are still a valid direct-sample contract: offset 0, weight 1, enabled=false.             |
 //                                                                                                             |
 // main path                                                                                                   |
 //   integrationForWavelengthWithAdaptiveCacheChecked chooses exactly one route, in this order:                |
@@ -25,6 +38,11 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //     explicit high-resolution lattice from operational-band controls                                         |
 //     adaptive strong-line-aware Gauss integration                                                            |
 //     legacy five-point response-weighted fallback                                                            |
+//                                                                                                             |
+// module split                                                                                                |
+//   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |
+//   construction, Gauss sample emission, strong-line splitting, and validation support grids. This file keeps |
+//   the public route order, normalization boundary, and double-convolution guard in one place.                |
 //                                                                                                             |
 // contract                                                                                                    |
 //   IntegrationKernel offsets are relative to nominal_wavelength_nm and weights are normalized before return. |
@@ -116,11 +134,25 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
     // integrationForWavelengthWithAdaptiveCacheChecked ------------------------------------------------------ |
     // Builds radiance/irradiance integration offsets and weights for one nominal wavelength.                  |
     //                                                                                                         |
+    // route order                                                                                             |
+    //   1. identity direct sample when no integrated response is configured                                   |
+    //   2. measured line-shape table keyed by nominal wavelength                                              |
+    //   3. explicit fixed line-shape kernel                                                                   |
+    //   4. DISAMAR high-resolution grid from prepared state or scene-only controls                            |
+    //   5. explicit high-resolution lattice                                                                   |
+    //   6. adaptive strong-line-aware Gauss integration                                                       |
+    //   7. five-tap fallback for native/synthetic channels with only FWHM metadata                            |
+    //                                                                                                         |
     // hot path                                                                                                |
-    //   Chooses table, fixed line-shape, adaptive, or default integration samples for wavelength sampling.    |
+    //   Wavelength-plan workers call this once for radiance and once for irradiance per nominal sample. The   |
+    //   caller reuses the large IntegrationKernel scratch; this function only writes the active prefix and    |
+    //   never allocates. Adaptive caches, when provided, move interval planning out of this repeated route.   |
     //                                                                                                         |
     // math                                                                                                    |
-    //   y(lambda_i) = sum_j w_ij * y(lambda_i + delta_ij), with sum_j w_ij = 1                                |
+    //   lambda_i : nominal output wavelength                                                                  |
+    //   delta_j  : kernel.offsets_nm[j]                                                                       |
+    //   weight_j : kernel.weights[j]                                                                          |
+    //   y_i      = sum_j weight_j * y(lambda_i + delta_j), with sum_j weight_j = 1                            |
     // ------------------------------------------------------------------------------------------------------- |
 
     response_support.resetKernel(kernel);
@@ -338,11 +370,15 @@ pub fn prepareAdaptiveKernelCache(
     cache: *AdaptiveKernelCache,
 ) bool {
     // prepareAdaptiveKernelCache ---------------------------------------------------------------------------- |
-    // Prepares strong-line-aware adaptive support data for reuse across nominal wavelengths.                  |
+    // Prepares the strong-line-aware interval plan shared by all nominal wavelengths in one product run.      |
     //                                                                                                         |
     // hot path                                                                                                |
     //   Wavelength sampling calls this when adaptive instrument grids can reuse an interval plan. The cache   |
     //   stores the 20 KiB plan so per-wavelength kernel construction only emits samples and weights.          |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   The cache is valid only for the same Scene, PreparedOpticalState, channel, and response controls used |
+    //   to build the wavelength plan. Product storage keys enforce that boundary before this cache is reused. |
     // ------------------------------------------------------------------------------------------------------- |
 
     const response = scene.observation_model.resolvedChannelControls(channel).response;
