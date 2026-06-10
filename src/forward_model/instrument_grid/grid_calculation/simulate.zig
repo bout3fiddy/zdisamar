@@ -576,7 +576,6 @@ pub fn simulateInternal(
     );
     try fillIrradianceSamples(
         scene,
-        prepared,
         setup,
         simulation_plan.wavelength_sampling,
         buffers,
@@ -966,7 +965,6 @@ fn fillRadianceSamples(
 
 fn fillIrradianceSamples(
     scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
     setup: SimulationSetup,
     wavelength_sampling: WavelengthSampling.WavelengthSamplingTable,
     buffers: Storage.Buffers,
@@ -1001,9 +999,7 @@ fn fillIrradianceSamples(
         for (wavelength_sampling.rows, 0..) |plan, index| {
             buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
                 scene,
-                prepared,
                 plan.irradiance_wavelength_nm,
-                setup.safe_span,
                 evaluation_cache,
                 &plan.irradiance_integration,
                 wavelength_sampling.kernel_storage,
