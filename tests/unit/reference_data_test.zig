@@ -28,6 +28,28 @@ test "spectroscopy constants preserve vendor weak and strong temperature scaling
     );
 }
 
+test "spectroscopy line layout matches documented hot-read comments" {
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(SpectroscopyLine));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(SpectroscopyLine));
+    try expectOffset(SpectroscopyLine, "abundance_fraction", 0);
+    try expectOffset(SpectroscopyLine, "center_wavelength_nm", 8);
+    try expectOffset(SpectroscopyLine, "center_wavenumber_cm1", 16);
+    try expectOffset(SpectroscopyLine, "line_strength_cm2_per_molecule", 24);
+    try expectOffset(SpectroscopyLine, "air_half_width_nm", 32);
+    try expectOffset(SpectroscopyLine, "air_half_width_cm1", 40);
+    try expectOffset(SpectroscopyLine, "temperature_exponent", 48);
+    try expectOffset(SpectroscopyLine, "lower_state_energy_cm1", 56);
+    try expectOffset(SpectroscopyLine, "pressure_shift_nm", 64);
+    try expectOffset(SpectroscopyLine, "pressure_shift_cm1", 72);
+    try expectOffset(SpectroscopyLine, "line_mixing_coefficient", 80);
+    try expectOffset(SpectroscopyLine, "gas_index", 88);
+    try expectOffset(SpectroscopyLine, "isotope_number", 90);
+    try expectOffset(SpectroscopyLine, "vendor_filter_metadata_from_source", 91);
+    try expectOffset(SpectroscopyLine, "branch_ic1", 92);
+    try expectOffset(SpectroscopyLine, "branch_ic2", 94);
+    try expectOffset(SpectroscopyLine, "rotational_nf", 96);
+}
+
 fn makeLineList(lines: []const SpectroscopyLine) !SpectroscopyLineList {
     return .{ .lines = try std.testing.allocator.dupe(SpectroscopyLine, lines) };
 }
@@ -1072,4 +1094,8 @@ test "strong-line sidecars and relaxation matrices stay typed and square" {
     try std.testing.expectEqual(@as(usize, 2), matrix.line_count);
     try std.testing.expect(matrix.weightAt(0, 0) > matrix.weightAt(0, 1));
     try std.testing.expect(matrix.temperatureExponentAt(0, 1) > 0.0);
+}
+
+fn expectOffset(comptime Struct: type, comptime field_name: []const u8, expected: usize) !void {
+    try std.testing.expectEqual(expected, @offsetOf(Struct, field_name));
 }

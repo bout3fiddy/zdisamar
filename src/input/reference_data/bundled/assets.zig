@@ -291,7 +291,7 @@ fn normalizeResolvedLineGasIndex(
     //   This is setup work after cloneResolvedSpectroscopyLineList, not per-wavelength spectroscopy.          |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The loop reads and may write gas_index at byte 88 of each 104 B SpectroscopyLine row. It uses         |
+    //   The loop reads and may write gas_index at [88..89] of each 104 B SpectroscopyLine row. It uses        |
     //   pointer capture, does not copy rows, and avoids a side index because this one-time normalization      |
     //   must keep the public line-list row intact for later spectroscopy evaluation and cache-key hashing.    |
     // --------------------------------------------------------------------------------------------------------|

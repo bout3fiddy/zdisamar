@@ -1,32 +1,42 @@
 const std = @import("std");
 
 // types.zig ------------------------------------------------------------------------------------------------- |
-// Shared spectroscopy constants, line rows, runtime controls, and prepared line-state layouts.                |
+// Shared spectroscopy data contract: raw line rows, DISAMAR sidecars, runtime controls, and prepared states.  |
 //                                                                                                             |
-// used by                                                                                                     |
-//   reference-data loaders produce SpectroscopyLine rows; line_list.zig owns filtering/windowing/evaluation;  |
-//   absorbers.zig prepares weak/strong line states; carrier_eval.zig reads those prepared states at           |
-//   wavelength time.                                                                                          |
+// called by                                                                                                   |
+//   ReferenceData.zig re-exports these names as the public reference-data types. ingest/reference_assets      |
+//   builds SpectroscopyLine and sidecar rows from retained CSV assets. line_list.zig owns filtering,          |
+//   sidecar matching, windowing, and weak/strong sigma entrypoints. optical_properties/state_build prepares   |
+//   profile/support states, and carrier_eval.zig reads the prepared arrays at wavelength time.                |
 //                                                                                                             |
-// important rows                                                                                              |
-//   SpectroscopyLine is the normalized HITRAN/O2 A row. Strong-line sidecars and relaxation matrices carry    |
-//   DISAMAR O2 line-mixing inputs. WeakLinePreparedState and StrongLinePreparedState are exactly-sized        |
-//   retained arrays built for profile nodes or support rows. SpectroscopyRuntimeControls keeps threshold,     |
-//   isotope, gas-index, cutoff-grid, and line-mixing controls next to the list that consumes them.            |
+// main rows                                                                                                   |
+//   SpectroscopyLine is the normalized HITRAN/O2 A row kept by SpectroscopyLineList. SpectroscopyStrongLine   |
+//   and RelaxationMatrix carry the DISAMAR O2 line-mixing sidecar inputs. SpectroscopyRuntimeControls keeps   |
+//   gas/isotope, threshold, cutoff-grid, and line-mixing controls next to the list that consumes them.        |
+//   WeakLinePreparedState and StrongLinePreparedState are the exactly-sized retained arrays built for         |
+//   profile nodes or support rows.                                                                            |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   CSV/resolved scene rows -> SpectroscopyLine -> SpectroscopyLineList runtime filtering                     |
+//   SpectroscopyLineList + T/P -> WeakLinePreparedState and StrongLinePreparedState                           |
+//   prepared states + wavelength -> carrier_eval and line_list sigma accumulation                             |
+//   SpectroscopyLine rows -> adaptive_plan setup scans for strong-line interval boundaries                    |
 //                                                                                                             |
 // numbers                                                                                                     |
 //   HITRAN and DISAMAR constants here intentionally keep reference literals such as truncated pi and the      |
-//   O2 line-mixing hc/kB value because O2 A parity changes at the precision tested by validation.             |
+//   O2 line-mixing hc/kB value. Those last digits are visible in O2 A parity checks.                          |
 //                                                                                                             |
 // layout                                                                                                      |
-//   SpectroscopyLine is a 104 B row. Setup loops may read only center_wavelength_nm, gas_index, or            |
-//   line_strength_cm2_per_molecule while building indexes and thresholds; the row stays whole because         |
+//   SpectroscopyLine is a 104 B row. Setup loops may read only center_wavelength_nm at [8..15],               |
+//   line_strength_cm2_per_molecule at [24..31], or gas_index at [88..89]; the row stays whole because         |
 //   wavelength-time Voigt evaluation consumes the same row's strength, width, energy, isotope, and shift      |
 //   fields nearby.                                                                                            |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Line rows are inline records copied into owned lists. Prepared states are compact owner headers over      |
-//   out-of-line per-line arrays allocated during setup and reused across wavelength-time evaluation.          |
+//   Line and sidecar rows are inline records copied into owned lists. Prepared states are compact owner       |
+//   headers over out-of-line per-line arrays allocated during setup and reused across wavelength-time         |
+//   evaluation. Runtime controls can borrow or clone control slices, so their deinit path lives with the      |
+//   struct rather than with loaders.                                                                          |
 // ----------------------------------------------------------------------------------------------------------- |
 
 pub const Allocator = std.mem.Allocator;
@@ -303,8 +313,9 @@ pub const SpectroscopyRuntimeControls = struct {
         //   line_list filtering uses the same value before prepared weak-line windows are built.              |
         //                                                                                                     |
         // memory                                                                                              |
-        //   Setup scans read only line_strength_cm2_per_molecule from 104 B SpectroscopyLine rows by pointer. |
-        //   The row stays whole because wavelength-time evaluation consumes the full line fields.             |
+        //   Setup scans read only line_strength_cm2_per_molecule at [24..31] from 104 B SpectroscopyLine      |
+        //   rows by pointer. The row stays whole because wavelength-time evaluation consumes the full line    |
+        //   fields.                                                                                           |
         //                                                                                                     |
         // math                                                                                                |
         //   cutoff = max(line_strength_cm2_per_molecule) * threshold_line_scale                               |
