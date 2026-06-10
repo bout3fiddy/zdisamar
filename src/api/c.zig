@@ -834,98 +834,6 @@ const Context = struct {
         self.oe_fastmode_batch_results.clearAndFree(allocator);
     }
 
-    fn clearAtmosphericBudgets(self: *Context) void {
-        clearStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets);
-    }
-
-    fn clearO2LineContributionTables(self: *Context) void {
-        clearStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables);
-    }
-
-    fn clearInstrumentResponseTables(self: *Context) void {
-        clearStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables);
-    }
-
-    fn clearO2O2CIATables(self: *Context) void {
-        clearStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables);
-    }
-
-    fn clearRadiativeTransferTables(self: *Context) void {
-        clearStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables);
-    }
-
-    fn removeResult(self: *Context, result: *zdisamar.Output) bool {
-        for (self.results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationResult(self: *Context, result: *zdisamar.optimal_estimation.Result) bool {
-        for (self.oe_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationBatchResult(self: *Context, result: *zdisamar.optimal_estimation.BatchResult) bool {
-        for (self.oe_batch_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_batch_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeOptimalEstimationFastmodeBatchResult(
-        self: *Context,
-        result: *zdisamar.optimal_estimation.FastmodeBatchResult,
-    ) bool {
-        for (self.oe_fastmode_batch_results.items, 0..) |stored, index| {
-            if (stored == result) {
-                _ = self.oe_fastmode_batch_results.swapRemove(index);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn removeAtmosphericBudget(self: *Context, rows_ptr: [*]const ZdsAtmosphericBudgetRow) ?[]ZdsAtmosphericBudgetRow {
-        return removeStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets, rows_ptr);
-    }
-
-    fn removeO2LineContributionTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsO2LineContributionRow,
-    ) ?[]ZdsO2LineContributionRow {
-        return removeStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables, rows_ptr);
-    }
-
-    fn removeInstrumentResponseTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsInstrumentResponseRow,
-    ) ?[]ZdsInstrumentResponseRow {
-        return removeStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables, rows_ptr);
-    }
-
-    fn removeO2O2CIATable(self: *Context, rows_ptr: [*]const ZdsO2O2CIARow) ?[]ZdsO2O2CIARow {
-        return removeStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables, rows_ptr);
-    }
-
-    fn removeRadiativeTransferTable(
-        self: *Context,
-        rows_ptr: [*]const ZdsRadiativeTransferDiagnosticRow,
-    ) ?[]ZdsRadiativeTransferDiagnosticRow {
-        return removeStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables, rows_ptr);
-    }
-
     fn ownsResult(self: *const Context, result: *const zdisamar.Output) bool {
         for (self.results.items) |stored| {
             if (stored == result) return true;
@@ -972,13 +880,32 @@ fn clearStoredRows(comptime Row: type, list: *std.ArrayList([]Row)) void {
     list.clearAndFree(allocator);
 }
 
-fn removeStoredRows(comptime Row: type, list: *std.ArrayList([]Row), rows_ptr: [*]const Row) ?[]Row {
+fn destroyStoredResult(comptime Item: type, list: *std.ArrayList(*Item), result: *Item) void {
     for (list.items, 0..) |stored, index| {
-        if (stored.ptr == rows_ptr) {
-            return list.swapRemove(index);
+        if (stored == result) {
+            _ = list.swapRemove(index);
+            result.deinit(allocator);
+            allocator.destroy(result);
+            return;
         }
     }
-    return null;
+}
+
+fn freeStoredRowsIfOwned(
+    comptime Row: type,
+    list: *std.ArrayList([]Row),
+    rows_ptr: [*]const Row,
+    row_count: usize,
+) void {
+    const has_rows = row_count != 0;
+    if (!has_rows) return;
+
+    for (list.items, 0..) |stored, index| {
+        if (stored.ptr == rows_ptr) {
+            allocator.free(list.swapRemove(index));
+            return;
+        }
+    }
 }
 
 fn checkedWavelengthRequest(
@@ -1041,11 +968,11 @@ export fn zds_context_destroy(ctx: ?*Context) void {
     resolved.clearOptimalEstimationResults();
     resolved.clearOptimalEstimationBatchResults();
     resolved.clearOptimalEstimationFastmodeBatchResults();
-    resolved.clearAtmosphericBudgets();
-    resolved.clearO2LineContributionTables();
-    resolved.clearInstrumentResponseTables();
-    resolved.clearO2O2CIATables();
-    resolved.clearRadiativeTransferTables();
+    clearStoredRows(ZdsAtmosphericBudgetRow, &resolved.atmospheric_budgets);
+    clearStoredRows(ZdsO2LineContributionRow, &resolved.o2_line_contribution_tables);
+    clearStoredRows(ZdsInstrumentResponseRow, &resolved.instrument_response_tables);
+    clearStoredRows(ZdsO2O2CIARow, &resolved.o2_o2_cia_tables);
+    clearStoredRows(ZdsRadiativeTransferDiagnosticRow, &resolved.radiative_transfer_tables);
     resolved.clearPrepared();
     resolved.o2a_session_storage.deinit(allocator);
     allocator.destroy(resolved);
@@ -2197,10 +2124,7 @@ export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.Output = @ptrCast(@alignCast(handle));
-        if (resolved.removeResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.Output, &resolved.results, result);
     }
     output.* = .{};
 }
@@ -2210,10 +2134,7 @@ export fn zds_optimal_estimation_result_free(ctx: ?*Context, out: ?*ZdsOptimalEs
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.Result = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.optimal_estimation.Result, &resolved.oe_results, result);
     }
     output.* = .{};
 }
@@ -2223,10 +2144,7 @@ export fn zds_optimal_estimation_batch_result_free(ctx: ?*Context, out: ?*ZdsOpt
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.BatchResult = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationBatchResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(zdisamar.optimal_estimation.BatchResult, &resolved.oe_batch_results, result);
     }
     output.* = .{};
 }
@@ -2239,10 +2157,11 @@ export fn zds_optimal_estimation_fastmode_batch_result_free(
     const output = out orelse return;
     if (output.result_handle) |handle| {
         const result: *zdisamar.optimal_estimation.FastmodeBatchResult = @ptrCast(@alignCast(handle));
-        if (resolved.removeOptimalEstimationFastmodeBatchResult(result)) {
-            result.deinit(allocator);
-            allocator.destroy(result);
-        }
+        destroyStoredResult(
+            zdisamar.optimal_estimation.FastmodeBatchResult,
+            &resolved.oe_fastmode_batch_results,
+            result,
+        );
     }
     output.* = .{};
 }
@@ -2250,45 +2169,40 @@ export fn zds_optimal_estimation_fastmode_batch_result_free(
 export fn zds_atmospheric_budget_free(ctx: ?*Context, out: ?*ZdsAtmosphericBudget) void {
     const resolved = ctx orelse return;
     const budget = out orelse return;
-    if (budget.len != 0) {
-        if (resolved.removeAtmosphericBudget(budget.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsAtmosphericBudgetRow, &resolved.atmospheric_budgets, budget.rows, budget.len);
     budget.* = .{};
 }
 
 export fn zds_o2_line_contributions_free(ctx: ?*Context, out: ?*ZdsO2LineContributions) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeO2LineContributionTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsO2LineContributionRow, &resolved.o2_line_contribution_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_instrument_response_free(ctx: ?*Context, out: ?*ZdsInstrumentResponse) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeInstrumentResponseTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsInstrumentResponseRow, &resolved.instrument_response_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_o2_o2_cia_diagnostics_free(ctx: ?*Context, out: ?*ZdsO2O2CIADiagnostics) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeO2O2CIATable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(ZdsO2O2CIARow, &resolved.o2_o2_cia_tables, table.rows, table.len);
     table.* = .{};
 }
 
 export fn zds_radiative_transfer_diagnostics_free(ctx: ?*Context, out: ?*ZdsRadiativeTransferDiagnostics) void {
     const resolved = ctx orelse return;
     const table = out orelse return;
-    if (table.len != 0) {
-        if (resolved.removeRadiativeTransferTable(table.rows)) |rows| allocator.free(rows);
-    }
+    freeStoredRowsIfOwned(
+        ZdsRadiativeTransferDiagnosticRow,
+        &resolved.radiative_transfer_tables,
+        table.rows,
+        table.len,
+    );
     table.* = .{};
 }
 
