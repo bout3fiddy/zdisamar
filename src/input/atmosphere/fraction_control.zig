@@ -7,17 +7,31 @@ pub const FractionTarget = types.FractionTarget;
 pub const FractionKind = types.FractionKind;
 
 // fraction_control.zig ---------------------------------------------------------------------------------------|
-// Wavelength-dependent scaling controls for particle optical depth.                                           |
+// Wavelength-dependent aerosol fraction controls shared by scene validation and prepared optical state.       |
 //                                                                                                             |
-// data                                                                                                        |
-//   FractionControl stores one control target, its fraction mode, and optional wavelength/value arrays.       |
-//   The arrays are either borrowed from input storage or owned by a clone, as marked by owns_arrays.          |
+// called by                                                                                                   |
+//   Atmosphere.zig re-exports FractionControl; Aerosol.zig validates that active controls target aerosol      |
+//   optical-depth splitting rather than an unrelated quantity.                                                |
+//   optical_properties/state_build/context.zig clones the scene control into setup-owned storage before       |
+//   Finalize.assemble moves it into PreparedOpticalState.                                                     |
+//   layer_accumulation.zig samples scene-time controls while building support rows. state_scalar.zig,         |
+//   forward_layers.zig, phase_functions.zig, and atmospheric_budget.zig read the prepared copy during         |
+//   wavelength evaluation and diagnostics.                                                                    |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   validate rejects inert-but-populated controls, missing targets/kinds, bad lengths, unsorted wavelengths,  |
+//   and non-finite or out-of-range fraction values.                                                           |
+//   valueAtWavelength returns the disabled zero, the constant fraction, or a clamped linear interpolation.    |
+//   clone/deinitOwned are the ownership handoff from borrowed scene slices into PreparedOpticalState.         |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   FractionControl is a compact header over up to four out-of-line f64 arrays. Parser/input rows usually     |
+//   borrow those arrays; prepared state owns duplicated arrays when owns_arrays is true.                      |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   valueAtWavelength is sampled by aerosol optical-depth evaluation when fraction controls are enabled.      |
-//                                                                                                             |
-// ownership                                                                                                   |
-//   clone duplicates all non-empty arrays and sets owns_arrays. deinitOwned releases only owned arrays.       |
+//   Fraction controls are optional, but enabled aerosol routes sample valueAtWavelength for layer/support     |
+//   preparation and prepared optical-depth evaluation. The sampler allocates nothing and only scans the       |
+//   wavelength breakpoints needed to find the enclosing interval.                                             |
 // ------------------------------------------------------------------------------------------------------------|
 
 // FractionControl --------------------------------------------------------------------------------------------|

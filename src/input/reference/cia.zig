@@ -6,15 +6,33 @@ const Allocator = std.mem.Allocator;
 const max_spline_window_points: usize = 256;
 
 // cia.zig ----------------------------------------------------------------------------------------------------|
-// O2-O2 collision-induced absorption table sampling.                                                          |
+// O2-O2 collision-induced absorption table sampling for prepared optical state and CIA diagnostics.           |
 //                                                                                                             |
-// data                                                                                                        |
-//   CollisionInducedAbsorptionPoint stores one wavelength row with three temperature-polynomial coefficients. |
-//   CollisionInducedAbsorptionTable owns the row storage and the scalar unit-conversion factor.               |
+// called by                                                                                                   |
+//   ReferenceData.zig re-exports the point/table types used by input models and tests.                        |
+//   input/reference_data/ingest, bundled loaders, fixed_asset_cache, and o2a_reference/run.zig load or retain |
+//   O2-O2 CIA assets before optical-state preparation begins.                                                 |
+//   optical_properties/state_build/context.zig borrows or clones the table into PreparedOpticalState;         |
+//   state_spectroscopy.zig, layer_accumulation.zig, and state_optical_depth.zig sample it for support rows,   |
+//   layer means, and temperature derivative paths.                                                            |
+//   input/instrument/cross_section_lut.zig can fold this table into operational LUT products, while           |
+//   output/o2_o2_cia.zig reports the same sampled quantities as diagnostics.                                  |
+//                                                                                                             |
+// main paths                                                                                                  |
+//   sigmaAt evaluates one wavelength/temperature sample from interpolated a0/a1/a2 coefficients.              |
+//   dSigmaDTemperatureAt returns the derivative of the clamped temperature polynomial when the raw sigma is   |
+//   positive. meanSigmaInRange scans stored points for setup-time interval means.                             |
+//   effectiveSigmaAtSamples builds a differential CIA vector by sampling every instrument wavelength and      |
+//   delegating polynomial baseline removal to cross_sections.zig.                                             |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   CollisionInducedAbsorptionTable is a small header over sorted out-of-line coefficient rows plus a unit    |
+//   scale. clone/deinit own that storage when the prepared state needs to retain it; borrowed tables stay     |
+//   under their input/reference-data owner.                                                                   |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   sigmaAt and dSigmaDTemperatureAt sample coefficients for each wavelength that includes CIA absorption.    |
-//   interpolateCoefficients uses a local spline window when enough nearby points are available.               |
+//   Support-row evaluation repeatedly calls sigmaAt and the temperature derivative. Coefficient interpolation |
+//   uses bounded stack windows and no heap allocation; only clone and effectiveSigmaAtSamples allocate.       |
 //                                                                                                             |
 // units                                                                                                       |
 //   scale_factor_cm5_per_molecule2 converts the table coefficients into cm5 per molecule^2.                   |
