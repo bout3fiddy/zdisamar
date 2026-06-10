@@ -10,8 +10,8 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 // integration.zig ------------------------------------------------------------------------------------------- |
 // Builds the normalized instrument-response stencil for one channel at one nominal product wavelength. This   |
 // file is the only route chooser between scene metadata and product sampling: measured line-shape tables,     |
-// explicit fixed kernels, DISAMAR high-resolution grids, adaptive strong-line grids, and the old five-tap     |
-// fallback all become the same offsets/weights row here. Later wavelength-plan and spectral-evaluation code   |
+// explicit fixed kernels, DISAMAR high-resolution grids, adaptive strong-line grids, and FWHM-only five-tap   |
+// fallback kernels all become the same offsets/weights row here. Wavelength-plan and spectral-evaluation code |
 // use this builder output while LABOS, solar irradiance, and channel calibration stay in their own stages.    |
 //                                                                                                             |
 // called by                                                                                                   |

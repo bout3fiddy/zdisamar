@@ -28,7 +28,7 @@ pub const optimal_estimation = @import("optimal_estimation/retrieval.zig");
 // boundary shape                                                                                              |
 //   This file is a narrow facade. It names stable public types, forwards preparation and run calls to the     |
 //   O2 A/input/forward-model modules, and keeps loading/parsing/report-writing out of the RTM compute path.   |
-//   Unit tests assert that removed framework scaffolding is not re-exposed here.                              |
+//   Tests cover the facade export set so non-public helpers stay behind internal and test routers.            |
 //                                                                                                             |
 // memory                                                                                                      |
 //   PreparedInput embeds the input, reference data, optical state, and product workspace owner. Deinit order  |
