@@ -13,7 +13,7 @@ const PreparedSublayer = Optics.PreparedSublayer;
 
 // atmospheric_budget.zig -------------------------------------------------------------------------------------|
 // Base vertical diagnostic table for prepared optical state. It materializes wavelength x layer/sublayer rows |
-// that other output tables reuse instead of recomputing their own vertical optical-depth views.               |
+// shared by output tables that need vertical optical-depth views.                                             |
 //                                                                                                             |
 // called by                                                                                                   |
 //   root.zig exposes buildAtmosphericBudget for Zig callers. api/c.zig copies rows into Context-owned C ABI   |

@@ -30,8 +30,8 @@ pub const RadiativeTransferControls = transport_common.RadiativeTransferControls
 //   by run.zig. LoadedVendorO2AInputs is the post-load owner bundle reused by retrieval sessions.             |
 //                                                                                                             |
 // contract                                                                                                    |
-//   These rows are not the product model. They preserve vendor/reference inputs until run.zig can either      |
-//   consume each control into Scene/PreparationInputs/SolveConfig or reject unsupported combinations.         |
+//   These rows preserve vendor/reference inputs until run.zig can consume each control into                   |
+//   Scene/PreparationInputs/SolveConfig or reject unsupported combinations.                                   |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Small numeric/control rows stay inline. Asset ids, paths, intervals, profiles, measured wavelengths, and  |

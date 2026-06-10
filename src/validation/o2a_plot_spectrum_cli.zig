@@ -21,7 +21,7 @@ const report = zdisamar.report;
 //                                                                                                             |
 // memory                                                                                                      |
 //   A DebugAllocator owns process args, the joined output path, and the retained reflectance case. CSV rows   |
-//   are streamed by output/json.zig rather than staged in another buffer.                                     |
+//   stream directly through output/json.zig.                                                                  |
 // ------------------------------------------------------------------------------------------------------------|
 
 // Config -----------------------------------------------------------------------------------------------------|

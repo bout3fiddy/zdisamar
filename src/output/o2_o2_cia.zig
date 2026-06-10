@@ -7,8 +7,8 @@ const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
 // o2_o2_cia.zig ----------------------------------------------------------------------------------------------|
-// O2-O2 collision-induced absorption diagnostics derived from the atmospheric-budget table. This is an output |
-// view over prepared optical state, not a separate CIA physics path.                                          |
+// O2-O2 collision-induced absorption diagnostics derived from the atmospheric-budget table. This output view  |
+// projects prepared optical state into CIA-focused rows.                                                      |
 //                                                                                                             |
 // called by                                                                                                   |
 //   root.zig exposes buildO2O2CIADiagnostics for Zig callers. api/c.zig uses the same builder, copies the     |

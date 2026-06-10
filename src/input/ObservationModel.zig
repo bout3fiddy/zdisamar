@@ -191,8 +191,8 @@ pub const ObservationModel = struct {
         if (self.operational_band_support.len > 1) {
 
             // Runtime consumers still resolve one operational support record per scene.
-            // Reject multi-band support until optics and measurement prep are truly band-indexed
-            // instead of silently dropping enabled replacements for bands after the first.
+            // Reject multi-band support until optics and measurement prep are band-indexed
+            // and can consume every enabled replacement.
             return errors.Error.InvalidRequest;
         }
 

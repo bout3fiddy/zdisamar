@@ -51,16 +51,15 @@ pub const labos = struct {
     const workspace_mod = @import("labos/workspace.zig");
 
     // labos facade -------------------------------------------------------------------------------------------|
-    // This struct is a namespace of aliases. It is not a value that gets allocated, and it does not wrap      |
-    // calls. Each pub const line gives another name to code in a sibling LABOS file; Zig resolves the name    |
-    // at compile time.                                                                                        |
+    // This struct is a compile-time namespace of aliases. Each pub const line gives another name to code in   |
+    // a sibling LABOS file; Zig resolves the name at compile time.                                            |
     //                                                                                                         |
     // why keep this facade                                                                                    |
-    //   one public door : RTM code imports LABOS through root.zig, not every child file                       |
+    //   one public door : RTM code imports LABOS through root.zig                                             |
     //   clear exports   : helper-only names can stay private inside their own LABOS module                    |
     //   split hot code   : child files stay grouped by data: basis arrays, attenuation tables, layer R/T      |
     //                      matrices, order workspaces, and reflectance accumulation                           |
-    //   simple callers   : callers see the LABOS API, not the file split used to keep hot loops readable      |
+    //   simple callers   : callers see the LABOS API while child files keep hot loops grouped by data         |
     //   cheap moves      : moving a public LABOS name between child files only changes this export list       |
     //                                                                                                         |
     // why it has no runtime cost                                                                              |

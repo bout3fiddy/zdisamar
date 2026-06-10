@@ -18,8 +18,7 @@
 //                                                                                                             |
 // runtime shape                                                                                               |
 //   The nested structs below are namespace-only wrappers around @import aliases. They carry no runtime state, |
-//   allocation, or dispatch layer, so this file uses one file-level note instead of repeating 0 B layout      |
-//   boxes for each namespace.                                                                                 |
+//   allocation, or dispatch layer. This file-level note covers their zero-storage shape.                      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const scene = @import("input/Scene.zig");

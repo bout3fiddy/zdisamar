@@ -16,8 +16,8 @@ const Types = @import("types.zig");
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Prepared weak-line evaluation calls complexProbabilityFunction for each relevant line in the current      |
-//   wavelength window. Setup paths prepare temperature/pressure-dependent line constants so repeated          |
-//   evaluation streams compact WeakLinePreparedLineState rows instead of recomputing line-shape constants.    |
+//   wavelength window. Setup paths prepare temperature/pressure-dependent line constants, and repeated        |
+//   evaluation streams compact WeakLinePreparedLineState rows with those constants already attached.          |
 //                                                                                                             |
 // math                                                                                                        |
 //   wavelength_nm -> wavenumber_cm1 uses 1.0e7 / wavelength_nm. Weak-line sigma combines HITRAN strength      |

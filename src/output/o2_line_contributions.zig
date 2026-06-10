@@ -31,8 +31,8 @@ const missing_index = std.math.maxInt(u32);
 //                                                                                                             |
 // diagnostic contract                                                                                         |
 //   row_kind separates weak-line and strong-line rows. status explains inclusion, strong-line ownership, or   |
-//   cutoff. max_rows limits materialized rows for large line lists; total_row_count still reports how many    |
-//   rows would have been emitted without truncation.                                                          |
+//   cutoff. max_rows limits materialized rows for large line lists; total_row_count reports the untruncated   |
+//   row count.                                                                                                |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   This is diagnostic work over wavelength x profile-node x relevant-line grids. The prepared line states    |
@@ -182,7 +182,7 @@ pub fn build(
     // hot path                                                                                                |
     //   repeated : diagnostic requests over wavelength x profile-node grids                                   |
     //   costly   : relevant-line windowing, weak-line evaluation, and strong-line sidecar evaluation          |
-    //   memory   : ArrayList grows to max_rows; total_row_count tracks rows that would have been emitted      |
+    //   memory   : ArrayList grows to max_rows; total_row_count tracks the untruncated row count              |
     //                                                                                                         |
     // calls                                                                                                   |
     //   primaryO2LineList                                                                                     |

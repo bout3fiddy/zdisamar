@@ -681,7 +681,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     //                                                                                                         |
     // call path                                                                                               |
     //   absorbers.zig and reference-data tests call this after sidecars/runtime controls are attached.        |
-    //   Prepared line-state setup then reuses the match slice instead of searching sidecars per wavelength.   |
+    //   Prepared line-state setup stores the match slice for wavelength-time reuse.                           |
     //                                                                                                         |
     // memory                                                                                                  |
     //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at [8..15] by             |
@@ -1160,8 +1160,8 @@ fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
     //                                                                                                         |
     // memory                                                                                                  |
     //   This setup pass reads gas_index at [88..89] and vendor metadata around [91..97] from 104 B line rows  |
-    //   by pointer. It chooses retained sidecar matching mode before prepared state exists. A gas-index side  |
-    //   column would not remove wavelength-time work because the repeated formulas still consume full lines.  |
+    //   by pointer. It chooses retained sidecar matching mode before prepared state exists. Wavelength-time   |
+    //   formulas still consume the full line rows for strength, width, energy, isotope, and shift fields.     |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (!self.hasStrongLineSidecars()) return false;

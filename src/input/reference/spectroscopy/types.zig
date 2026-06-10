@@ -35,8 +35,8 @@ const std = @import("std");
 // memory                                                                                                      |
 //   Line and sidecar rows are inline records copied into owned lists. Prepared states are compact owner       |
 //   headers over out-of-line per-line arrays allocated during setup and reused across wavelength-time         |
-//   evaluation. Runtime controls can borrow or clone control slices, so their deinit path lives with the      |
-//   struct rather than with loaders.                                                                          |
+//   evaluation. Runtime controls can borrow or clone control slices, so the struct owns the matching deinit   |
+//   path.                                                                                                     |
 // ----------------------------------------------------------------------------------------------------------- |
 
 pub const Allocator = std.mem.Allocator;
@@ -49,8 +49,8 @@ pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 pub const hitran_hc_over_kb_cm_k = 1.4387770;
 
 // hitran_pi ------------------------------------------------------------------------------------------------- |
-// DISAMAR's HITRAN module uses pi = 3.1415926536D0, not the full language/library constant. The truncated     |
-// literal is visible in O2 A cross-section parity because it sits inside the Voigt normalization.             |
+// DISAMAR's HITRAN module uses pi = 3.1415926536D0. The truncated literal is visible in O2 A cross-section    |
+// parity because it sits inside the Voigt normalization.                                                      |
 // ----------------------------------------------------------------------------------------------------------- |
 pub const hitran_pi = 3.1415926536;
 

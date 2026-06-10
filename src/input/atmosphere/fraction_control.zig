@@ -11,7 +11,7 @@ pub const FractionKind = types.FractionKind;
 //                                                                                                             |
 // called by                                                                                                   |
 //   Atmosphere.zig re-exports FractionControl; Aerosol.zig validates that active controls target aerosol      |
-//   optical-depth splitting rather than an unrelated quantity.                                                |
+//   optical-depth splitting.                                                                                  |
 //   optical_properties/state_build/context.zig clones the scene control into setup-owned storage before       |
 //   Finalize.assemble moves it into PreparedOpticalState.                                                     |
 //   layer_accumulation.zig samples scene-time controls while building support rows. state_scalar.zig,         |
