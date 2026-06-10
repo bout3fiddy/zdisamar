@@ -9,22 +9,30 @@ const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
 
 // state_scalar.zig ------------------------------------------------------------------------------------------|
-// Scalar lookup helpers for prepared density columns and aerosol controls.                                   |
+// Scalar carrier-density and aerosol-depth helpers for PreparedOpticalState evaluation.                      |
 //                                                                                                            |
 // called by                                                                                                  |
-//   carrier evaluation, optical-depth evaluation, and shared RTM support-row interpolation.                  |
+//   prepared_state.zig exposes these helpers as the public PreparedOpticalState scalar methods.              |
+//   state_optical_depth.zig and forward_layers.zig use them while building LayerInput optical-depth rows.    |
+//   carrier_eval.zig and state_spectroscopy.zig use them for shared RTM support rows and profile nodes.      |
 //                                                                                                            |
-// main path                                                                                                  |
-//   resolve a density column for one absorber family                                                         |
-//   sample by global sublayer index or interpolate by altitude                                               |
-//   apply aerosol fraction controls and wavelength scaling                                                   |
+// density routes                                                                                             |
+//   preparedScalarForSublayer indexes a prepared scalar column by global_sublayer_index with a zero fallback |
+//   for missing rows. interpolatePreparedScalarAtAltitude brackets neighboring sublayers and interpolates    |
+//   linearly by altitude for arbitrary shared-geometry levels.                                               |
+//   continuum carrier density uses absorber density by default, operational O2 density for O2 LUT paths, or  |
+//   the configured continuum-owner line-absorber density.                                                    |
+//   line spectroscopy carrier density uses oxygen density for operational O2 LUT paths; otherwise it removes |
+//   cross-section carrier density from absorber density and clamps the result to zero.                       |
 //                                                                                                            |
-// hot path                                                                                                   |
-//   Shared RTM carrier loops call these helpers while walking support rows. Keep the helpers allocation-free |
-//   and explicit about which prepared row owns the density column.                                           |
+// aerosol math                                                                                               |
+//   particleOpticalDepthAtWavelength applies Angstrom scaling from reference_wavelength_nm. When only an     |
+//   effective reference optical depth exists, wavelength-dependent fraction controls are normalized by the   |
+//   reference-wavelength fraction before applying the active-wavelength fraction.                            |
 //                                                                                                            |
-// memory                                                                                                     |
-//   Density columns are borrowed from PreparedOpticalState absorber rows; this file only reads them.         |
+// hot path and memory                                                                                        |
+//   These helpers run inside per-wavelength layer, carrier, and diagnostics loops. They allocate nothing and |
+//   read borrowed PreparedOpticalState density arrays; keep ownership and zero-fallback rules explicit here. |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn preparedScalarForSublayer(values: []const f64, sublayer: PreparedSublayer) f64 {
