@@ -13,12 +13,11 @@ const Types = @import("state.zig");
 const Allocator = std.mem.Allocator;
 
 // prepared_state.zig -----------------------------------------------------------------------------------------|
-// Public owner/view boundary for prepared optical properties after scene input has been reduced into rows     |
-// that RTM, instrument-grid, diagnostics, and retrieval code can read repeatedly. This file owns the final    |
-// PreparedOpticalState header, its deinit rules, cache-key methods, and thin read helpers that delegate to    |
-// the specialized state_* modules.                                                                            |
+// Public owner/view boundary for optical properties after a Scene has been reduced into prepared rows.        |
+// This is the object the rest of the forward model carries: RTM builders, instrument-grid workers, output     |
+// diagnostics, and retrieval setup all read through PreparedOpticalState instead of touching setup internals. |
 //                                                                                                             |
-// call path                                                                                                   |
+// build route                                                                                                 |
 //   root.prepare                                                                                              |
 //     -> Context.init                  builds the vertical grid, borrowed profiles, LUT handles, and controls |
 //     -> Absorbers.build               prepares active line and cross-section absorbers                       |
@@ -26,9 +25,18 @@ const Allocator = std.mem.Allocator;
 //     -> Finalize.assemble             moves owned buffers into PreparedOpticalState                          |
 //     -> ensureSharedRtmGeometryCache  builds retained shared-RTM geometry when interval semantics allow      |
 //                                                                                                             |
-// used by                                                                                                     |
-//   instrument-grid wavelength workers, RTM forward-input builders, profile spectroscopy caches, output       |
-//   diagnostics, atmospheric budgets, O2 line/CIA reports, and optimal-estimation retrieval setup.            |
+// public surface                                                                                              |
+//   PreparedOpticalState              : wide header over owned or borrowed out-of-line preparation storage    |
+//   deinit                            : follows owns_* flags set while Context/AbsorberBuildState are moved   |
+//   transportLayerCount               : exposes the reduced/shared RTM layer count to product storage         |
+//   computeSpectroscopy*Key           : cache identity for line-list and profile-node spectroscopy reuse      |
+//   spectroscopy/optical-depth helpers : thin methods that delegate to state_spectroscopy/state_scalar/etc.   |
+//                                                                                                             |
+// caller map                                                                                                  |
+//   instrument_grid/grid_calculation reads this for wavelength plans, forward inputs, spectral eval, storage, |
+//   and simulation setup. state_build/forward_layers, rtm_quadrature, shared_carrier, pseudo_spherical, and   |
+//   source_interfaces turn it into RTM input rows. output/* modules use it for atmospheric budget, O2 line,   |
+//   O2-O2 CIA, radiative-transfer diagnostics, and instrument-response reports.                               |
 //                                                                                                             |
 // module split                                                                                                |
 //   state.zig defines the compiler-measured row payloads. finalize.zig writes this header once by moving      |
@@ -45,16 +53,23 @@ const Allocator = std.mem.Allocator;
 //   absorber rows keep line/cross-section data beside density columns; wavelength-specific spectroscopy work  |
 //   lives in state_spectroscopy.zig and carrier_eval.zig.                                                     |
 //                                                                                                             |
+// layout map                                                                                                  |
+//   PreparedOpticalState is mapped below because this file owns the header and deinit contract. The repeated  |
+//   row payload maps live in state.zig beside their writers/readers. PreparedLayer is 208 B, PreparedSublayer |
+//   is 256 B, SharedRtmGeometry is a 32 B slice header, and GeneratedLutAsset is 216 B. Keeping those layout  |
+//   boxes beside the row definitions prevents this owner/view file from becoming a stale duplicate.           |
+//                                                                                                             |
 // hot reads                                                                                                   |
 //   Repeated wavelength paths read this header for layer/support rows, aerosol phase coefficients,            |
 //   spectroscopy handles, LUT headers, scalar optical-depth summaries, and cache keys. Index-only loops over  |
 //   PreparedLayer use pointer capture so no 208 B row is copied; the row is intentionally not split because   |
 //   nearby transport builders read the same array's altitude, pressure, aerosol, and optical-depth fields.    |
 //                                                                                                             |
-// layout                                                                                                      |
-//   PreparedOpticalState is a wide header over out-of-line rows. The inline [151]f64 aerosol phase array      |
-//   takes 1208 B and dominates the header footprint; slices and optional slices are only headers here. The    |
-//   layout box below is compiler-measured storage order for the current 64-bit target.                        |
+// header layout                                                                                               |
+//   The inline [151]f64 aerosol phase array takes 1208 B and dominates this 2136 B header. Slice and optional |
+//   slice fields are only pointers/lengths here; their payload storage is accounted for by the row boxes in   |
+//   state.zig or by the referenced-storage notes below. The map is compiler-measured for the current 64-bit   |
+//   target, not source order.                                                                                 |
 //                                                                                                             |
 // cache keys                                                                                                  |
 //   spectroscopy_plan_key tracks the active line-list plan. spectroscopy_profile_cache_inputs_key tracks      |
@@ -309,12 +324,29 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
+        // PreparedOpticalState.transportLayerCount -----------------------------------------------------------|
+        // Return the row count that downstream transport storage should allocate for this prepared state.     |
+        //                                                                                                     |
+        // route                                                                                               |
+        //   reduced shared-RTM interval grid -> one transport row per PreparedLayer                           |
+        //   regular sublayer grid            -> one transport row per PreparedSublayer                        |
+        //   no sublayers                     -> one transport row per PreparedLayer                           |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.intervalSemanticsUseReducedSharedRtmLayers()) return self.layers.len;
         if (self.sublayers) |sublayers| return sublayers.len;
         return self.layers.len;
     }
 
     pub fn computeSpectroscopyPlanKey(self: *const PreparedOpticalState) u64 {
+        // PreparedOpticalState.computeSpectroscopyPlanKey ----------------------------------------------------|
+        // Hash the line-list plan inputs that change strong-line and adaptive-grid planning.                  |
+        //                                                                                                     |
+        // used by                                                                                             |
+        //   wavelength-plan and spectroscopy caches use this to decide whether line-list planning can be      |
+        //   reused.                                                                                           |
+        // ----------------------------------------------------------------------------------------------------|
+
         var hash = std.hash.Wyhash.init(0x4f32_4132_7370_6c6e);
         updateInt(&hash, self.spectroscopy_lines != null);
         if (self.spectroscopy_lines) |line_list| {
@@ -328,6 +360,14 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn computeSpectroscopyProfileCacheInputsKey(self: *const PreparedOpticalState) u64 {
+        // PreparedOpticalState.computeSpectroscopyProfileCacheInputsKey --------------------------------------|
+        // Hash the vertical profile arrays plus spectroscopy controls that make profile-node state reusable.  |
+        //                                                                                                     |
+        // boundary                                                                                            |
+        //   This is stricter than computeSpectroscopyPlanKey because changing pressure/temperature/altitude   |
+        //   rows can invalidate prepared line-shape state even when the line-list plan itself is unchanged.   |
+        // ----------------------------------------------------------------------------------------------------|
+
         var hash = std.hash.Wyhash.init(0x4f32_4132_7370_726f);
         updateFloatSlice(&hash, self.spectroscopy_profile_altitudes_km);
         updateFloatSlice(&hash, self.spectroscopy_profile_pressures_hpa);
@@ -374,6 +414,15 @@ pub const PreparedOpticalState = struct {
         self: *PreparedOpticalState,
         allocator: Allocator,
     ) !void {
+        // PreparedOpticalState.ensureSharedRtmGeometryCache --------------------------------------------------|
+        // Lazily build or refresh retained shared-RTM geometry arrays for the current transport-layer count.  |
+        //                                                                                                     |
+        // ownership                                                                                           |
+        //   shared_rtm_geometry owns layer/level arrays through this PreparedOpticalState and is released by  |
+        //   deinit. A stale cache is dropped before rebuilding so geometry always matches current interval    |
+        //   semantics.                                                                                        |
+        // ----------------------------------------------------------------------------------------------------|
+
         if (self.shared_rtm_geometry.isValidFor(self.transportLayerCount())) return;
         self.shared_rtm_geometry.deinit(allocator);
         self.shared_rtm_geometry = try @import("shared_geometry.zig").buildSharedRtmGeometry(allocator, self);

@@ -13,13 +13,16 @@ pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
 // state.zig --------------------------------------------------------------------------------------------------|
 // Compiler-measured row definitions for optical-property preparation, RTM setup, and diagnostics.             |
+// prepared_state.zig owns the final PreparedOpticalState header; this file owns the repeated row payload      |
+// shapes that are filled during setup and read many times during wavelength evaluation.                       |
 //                                                                                                             |
-// call path                                                                                                   |
-//   Context owns the mutable preparation arrays.                                                              |
+// build route                                                                                                 |
+//   Context owns mutable preparation arrays while Scene controls are reduced.                                 |
 //   Absorbers build active absorber rows and density columns.                                                 |
 //   layer_accumulation writes PreparedLayer and PreparedSublayer rows.                                        |
 //   finalize moves those rows into PreparedOpticalState, which is defined in prepared_state.zig.              |
-//   forward_layers, rtm_quadrature, shared_carrier, diagnostics, and retrieval read these rows per wavelength.|
+//   forward_layers, rtm_quadrature, shared_carrier, diagnostics, and retrieval read these rows for each       |
+//   wavelength.                                                                                               |
 //                                                                                                             |
 // row groups                                                                                                  |
 //   Active* rows     : scene absorber controls after input validation, before prepared density columns exist  |
@@ -27,10 +30,16 @@ pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 //   wavelength rows  : OpticalDepthBreakdown and EvaluatedLayer, short-lived results for one wavelength       |
 //   SharedRtm* rows  : cached geometry used only by reduced shared-RTM interval routes                        |
 //                                                                                                             |
-// memory                                                                                                      |
-//   The boxes below show compiler-measured storage order, not source order. PreparedOpticalState owns the     |
-//   final slice headers and ownership flags; these row types keep the per-row payload shape close to the      |
-//   loops that fill and read them.                                                                            |
+// layout policy                                                                                               |
+//   The boxes below show compiler-measured storage order, not source order. PreparedOpticalState owns only    |
+//   slice headers and ownership flags for most of these rows; the row comments here document the payload      |
+//   bytes that dominate repeated loops. Keep layout notes beside the row definitions so they change with the  |
+//   field list, and keep owner/deinit notes in prepared_state.zig where the slices are released.              |
+//                                                                                                             |
+// hot rows                                                                                                    |
+//   PreparedLayer and PreparedSublayer are intentionally row-shaped even when some loops read only support    |
+//   indexes. Nearby RTM and carrier builders read thermodynamics, aerosol fields, optical depths, and support |
+//   spans from the same arrays; splitting columns needs benchmark evidence because it adds ownership surface. |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ActiveLineAbsorber -----------------------------------------------------------------------------------------|
