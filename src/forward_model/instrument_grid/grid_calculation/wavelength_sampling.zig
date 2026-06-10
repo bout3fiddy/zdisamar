@@ -11,6 +11,7 @@ const IntegrationKernel = @import("../../implementations/instrument/types.zig").
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
 const Trace = @import("../../instrumentation/trace.zig");
+const FirstWorkerErrorState = @import("../../first_worker_error_state.zig").FirstWorkerErrorState;
 const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
@@ -58,34 +59,7 @@ const wavelength_sampling_chunk_size: usize = 16;
 const initial_side_samples_per_kernel_cap: usize = 512;
 const initial_side_storage_sample_cap: usize = 1 << 20;
 
-// WavelengthSamplingErrorState ------------------------------------------------------------------------------------------|
-// Shared first-error slot for parallel wavelength-plan workers.                                                          |
-//                                                                                                                        |
-// layout(64-bit)                                                                                                         |
-// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
-//                                                                                                                        |
-// memory                                                                                                                 |
-// [ 0..15] mutex   : std.Thread.Mutex                                                                                    |
-// [16..17] err     : ?Error                                                                                              |
-// [18..23] padding : 6 B                                                                                                 |
-//                                                                                                                        |
-// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                               |
-// footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count                                 |
-const WavelengthSamplingErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
-    err: ?Error = null,
-
-    fn store(self: *WavelengthSamplingErrorState, err: Error) void {
-        // WavelengthSamplingErrorState.store ----------------------------------------------------------------------------|
-        // Record the first worker error while allowing other sampling workers to finish or observe the same              |
-        // shared state.                                                                                                  |
-        // ---------------------------------------------------------------------------------------------------------------|
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.err == null) self.err = err;
-    }
-};
+const WavelengthSamplingErrorState = FirstWorkerErrorState(Error);
 
 // WavelengthSamplingWorker ----------------------------------------------------------------------------------------------|
 // Worker context for filling a static range or queue of wavelength sampling rows.                                        |

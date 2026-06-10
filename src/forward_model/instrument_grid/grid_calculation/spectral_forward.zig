@@ -14,6 +14,7 @@ const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 const work_partition = @import("../../work_partition.zig");
 const Telemetry = @import("../../instrumentation/telemetry.zig");
+const FirstWorkerErrorState = @import("../../first_worker_error_state.zig").FirstWorkerErrorState;
 
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
@@ -208,33 +209,7 @@ const ForwardSampleScratch = struct {
     }
 };
 
-// ForwardPrefetchErrorState ---------------------------------------------------------------------------------------------|
-// Shared first-error slot for parallel forward-prefetch workers.                                                         |
-//                                                                                                                        |
-// layout(64-bit)                                                                                                         |
-// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
-//                                                                                                                        |
-// memory                                                                                                                 |
-// [ 0..15] mutex   : std.Thread.Mutex                                                                                    |
-// [16..17] err     : ?Error                                                                                              |
-// [18..23] padding : 6 B                                                                                                 |
-//                                                                                                                        |
-// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                               |
-// footprint: per instance = 24 B (0.023 KiB); total = per instance * live instance count                                 |
-const ForwardPrefetchErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
-    err: ?Error = null,
-
-    fn store(self: *ForwardPrefetchErrorState, err: Error) void {
-        // ForwardPrefetchErrorState.store -------------------------------------------------------------------------------|
-        // Record the first worker error. A mutex is enough here because workers only write on failure.                   |
-        // ---------------------------------------------------------------------------------------------------------------|
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.err == null) self.err = err;
-    }
-};
+const ForwardPrefetchErrorState = FirstWorkerErrorState(Error);
 
 // ForwardPrefetchWorker -------------------------------------------------------------------------------------------------|
 // Worker context for high-resolution LABOS prefetch.                                                                     |

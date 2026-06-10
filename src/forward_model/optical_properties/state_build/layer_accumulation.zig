@@ -12,6 +12,7 @@ const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Trace = @import("../../instrumentation/trace.zig");
 const work_partition = @import("../../work_partition.zig");
+const FirstWorkerErrorState = @import("../../first_worker_error_state.zig").FirstWorkerErrorState;
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const internal = @import("internal.zig");
@@ -274,30 +275,7 @@ const CollisionComplexProfileCache = struct {
 };
 // ------------------------------------------------------------------------------------------------------------   |
 
-// ParitySupportRowErrorState --------------------------------------------------------------------------------    |
-// Shared first-error slot for parity support-row workers.                                                        |
-//                                                                                                                |
-// layout(64-bit)                                                                                                 |
-// size: 24 B (0.023 KiB), align: 8 B                                                                             |
-//                                                                                                                |
-// memory                                                                                                         |
-// [ 0..15] mutex   : Thread.Mutex                                                                                |
-// [16..17] err     : ?anyerror                                                                                   |
-// [18..23] padding : 6 B                                                                                         |
-//                                                                                                                |
-// unused bits: 48 padding + 0 bool-storage slack = 48 bits                                                       |
-// footprint: per instance = 24 B; shared by workers in one parallel accumulation call                            |
-const ParitySupportRowErrorState = struct {
-    mutex: std.Thread.Mutex = .{},
-    err: ?anyerror = null,
-
-    fn store(self: *ParitySupportRowErrorState, err: anyerror) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.err == null) self.err = err;
-    }
-};
-// ------------------------------------------------------------------------------------------------------------   |
+const ParitySupportRowErrorState = FirstWorkerErrorState(anyerror);
 
 // ParitySupportRowWorker ------------------------------------------------------------------------------------    |
 // Worker row used by parallel parity support-row accumulation.                                                   |
