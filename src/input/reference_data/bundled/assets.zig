@@ -5,26 +5,37 @@ const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
 // assets.zig -------------------------------------------------------------------------------------------------|
-// Bundled O2 A reference-data asset IDs, typed loaders, and resolved-scene helper predicates.                 |
+// Names the retained O2 A reference-data assets and converts them into typed rows used by scene preparation.  |
+// This is the asset-ID and clone helper layer below bundled/selection.zig: selection decides whether a scene  |
+// should use a resolved scene asset, a bundled default, or a typed rejection; this file performs the concrete |
+// load or clone once that decision has been made.                                                             |
 //                                                                                                             |
-// used by                                                                                                     |
-//   selection.zig chooses defaults or rejects unresolved explicit bindings                                    |
-//   bundled/load.zig and bundled/workflows.zig hydrate scenes, generated LUT inputs, and support products     |
-//   tests exercise resolved payload cloning, bundle default behavior, and asset schema conversion             |
+// called by                                                                                                   |
+//   selection.zig chooses continuum, spectroscopy, CIA, and LUT inputs for bundled/load.zig. load.zig owns    |
+//   the hydrated Data object passed to optical preparation. workflows.zig may consume the same selected       |
+//   line lists and CIA tables while generating operational LUTs. Tests cover bundle defaults, explicit        |
+//   binding rejection, resolved-payload cloning, and asset-schema conversion.                                 |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   load* functions route manifest IDs through ingest/reference_assets.zig and convert LoadedAsset rows       |
-//   loadO2aSpectroscopyLineList attaches the strong-line set and relaxation matrix sidecars                   |
-//   cloneResolvedSpectroscopyLineList copies scene-provided rows and normalizes missing HITRAN gas indexes    |
-//   shouldLoadBundled* treats empty absorber lists as the bundled-default O2 A scene                          |
+//   load* functions route manifest IDs through ingest/reference_assets.zig and convert LoadedAsset rows.      |
+//   loadO2aSpectroscopyLineList attaches the O2 strong-line sidecar set and relaxation matrix.                |
+//   cloneResolvedSpectroscopyLineList copies scene-provided rows and normalizes missing HITRAN gas indexes.   |
+//   shouldLoadBundled* treats empty absorber lists as the bundled-default O2 A scene.                         |
 //                                                                                                             |
 // boundary                                                                                                    |
-//   This file names bundled assets and returns owned typed rows. It does not parse user control files;        |
-//   explicit unresolved bindings are handled by selection.zig instead of silently falling back to defaults.   |
+//   This file may load retained CSV assets through the reference-asset ingest layer, but it does not parse    |
+//   user control files, choose fallback policy, run the RTM, or write diagnostics. Explicit unresolved        |
+//   bindings are rejected by selection.zig instead of silently falling back to bundled defaults.              |
+//                                                                                                             |
+// row handoff                                                                                                 |
+//   SpectroscopyLineList rows returned from here are owned by the caller. Bundled O2 A rows already carry     |
+//   HITRAN gas_index values; cloned scene-provided rows may use gas_index=0, so clone normalization fills     |
+//   the absorber species HITRAN index before optical preparation hashes and filters the list.                 |
 //                                                                                                             |
 // memory                                                                                                      |
 //   bundle_manifest_paths and asset_ids are namespace-only constant groups, so they have no runtime state.    |
 //   Loaded tables own their returned arrays; zeroContinuumTable allocates the small 3-point zero table.       |
+//   normalizeResolvedLineGasIndex mutates only a cloned list and leaves scene-owned line lists borrowed.      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const bundle_manifest_paths = struct {
@@ -123,6 +134,17 @@ pub fn loadO2ARelaxationMatrix(
 pub fn loadO2aSpectroscopyLineList(
     allocator: Allocator,
 ) !ReferenceData.SpectroscopyLineList {
+    // loadO2aSpectroscopyLineList ----------------------------------------------------------------------------|
+    // Load the bundled O2 A line list and attach DISAMAR-style strong-line sidecars.                          |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   The returned SpectroscopyLineList owns its line rows plus cloned strong-line and relaxation storage.  |
+    //   Temporary sidecar containers are released after attachStrongLineSidecars clones them into the list.   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   selection.zig uses this only after policy has chosen the bundled O2 A line-list path.                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     var line_list = try loadO2ALineList(allocator);
     errdefer line_list.deinit(allocator);
 
@@ -229,6 +251,17 @@ pub fn cloneResolvedSpectroscopyLineList(
     allocator: Allocator,
     scene: *const Scene,
 ) !?ReferenceData.SpectroscopyLineList {
+    // cloneResolvedSpectroscopyLineList ----------------------------------------------------------------------|
+    // Clone the first resolved scene-provided spectroscopy line list for bundled preparation.                 |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This is not the bundled-default path. It preserves an explicit resolved scene payload, then fills     |
+    //   missing HITRAN gas indexes from the absorber species so later spectroscopy setup sees concrete rows.  |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   The clone is caller-owned. The source Scene and its resolved line list remain borrowed.               |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (scene.absorbers.items) |absorber| {
         const resolved = absorber.spectroscopy.resolved_line_list orelse continue;
         var owned = try resolved.clone(allocator);
@@ -258,9 +291,9 @@ fn normalizeResolvedLineGasIndex(
     //   This is setup work after cloneResolvedSpectroscopyLineList, not per-wavelength spectroscopy.          |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   The loop reads and may write only gas_index on each wide SpectroscopyLine row. It uses pointer        |
-    //   capture, does not copy rows, and avoids a side index because this one-time normalization must keep    |
-    //   the public line-list row intact for later spectroscopy evaluation.                                    |
+    //   The loop reads and may write gas_index at byte 88 of each 104 B SpectroscopyLine row. It uses         |
+    //   pointer capture, does not copy rows, and avoids a side index because this one-time normalization      |
+    //   must keep the public line-list row intact for later spectroscopy evaluation and cache-key hashing.    |
     // --------------------------------------------------------------------------------------------------------|
 
     const species = maybe_species orelse return;
