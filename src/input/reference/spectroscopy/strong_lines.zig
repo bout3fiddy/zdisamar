@@ -536,14 +536,3 @@ pub fn molecularWeightForLine(line: Types.SpectroscopyLine) f64 {
         },
     };
 }
-
-fn zeroContribution() Types.SpectroscopyEvaluation {
-    return .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
-}
