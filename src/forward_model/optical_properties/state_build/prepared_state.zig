@@ -385,22 +385,25 @@ pub const PreparedOpticalState = struct {
         //                                                                                                     |
         // call sites                                                                                          |
         //   transportLayerCount chooses the transport row count exposed to instrument-grid storage.           |
-        //   shared_geometry.usesSharedRtmGrid decides whether cached shared-RTM geometry is valid.            |
-        //   forward_layers and rtm_quadrature use the same decision to choose reduced support-row paths.      |
+        //   ensureSharedRtmGeometryCache and shared_geometry.usesSharedRtmGrid decide whether retained        |
+        //   shared-RTM geometry is valid for forward_layers, rtm_quadrature, source_interfaces, and           |
+        //   pseudo_spherical.                                                                                 |
         //                                                                                                     |
         // math                                                                                                |
         //   referenced_support_rows = sum(layer.sublayer_count) over transport layers                         |
         //                                                                                                     |
-        // If adjacent layers share a boundary support row, the summed references are larger than the unique   |
-        // sublayer row count. That is the shape that needs reduced shared-RTM layer handling.                 |
+        // shape                                                                                               |
+        //   If adjacent layers share a boundary support row, the summed references are larger than the unique |
+        //   sublayer row count. That is the shape that needs reduced shared-RTM layer handling: transport     |
+        //   must keep the coarser PreparedLayer rows instead of treating each unique support row as a layer.  |
         //                                                                                                     |
         // memory                                                                                              |
-        // This is an index-only PreparedLayer walk: one u32 load, sublayer_count at [204..207], from each     |
-        // 208 B row. It runs during transport-count/cache-shape decisions, not inside the LABOS matrix        |
-        // kernels. The layer array stays row-based because the per-wavelength builders consume the same rows' |
-        // altitude, pressure, aerosol, and optical-depth fields nearby. A separate sublayer-count column      |
-        // would add ownership and call surface only for this rare shape check unless a retained benchmark     |
-        // proves a repeated-boundary win.                                                                     |
+        //   This is an index-only PreparedLayer walk: one u32 load, sublayer_count at [204..207], from each   |
+        //   208 B row. It runs during storage sizing and cache-shape selection, before the LABOS              |
+        //   order/Fourier loops. The layer array stays row-based because the per-wavelength builders consume  |
+        //   the same rows' altitude, pressure, aerosol, and optical-depth fields nearby. A separate           |
+        //   sublayer-count column would add ownership and call surface only for this rare shape check unless  |
+        //   a retained benchmark proves a repeated-boundary win.                                              |
         // ----------------------------------------------------------------------------------------------------|
 
         if (self.interval_semantics == .none) return false;

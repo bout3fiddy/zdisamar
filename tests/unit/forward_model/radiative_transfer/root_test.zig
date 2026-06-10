@@ -13,6 +13,9 @@ test "radiative-transfer core row layouts match documented hot-path comments" {
     try std.testing.expectEqual(@as(usize, 176), @sizeOf(common.LayerInput));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(common.LayerInput));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(common.LayerInput, "gas_absorption_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(common.LayerInput, "aerosol_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 32), @offsetOf(common.LayerInput, "aerosol_scattering_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 40), @offsetOf(common.LayerInput, "optical_depth"));
     try std.testing.expectEqual(@as(usize, 48), @offsetOf(common.LayerInput, "scattering_optical_depth"));
     try std.testing.expectEqual(@as(usize, 64), @offsetOf(common.LayerInput, "optical_depth_jacobian"));
     try std.testing.expectEqual(@as(usize, 152), @offsetOf(common.LayerInput, "phase"));

@@ -119,6 +119,23 @@ test "prepared means layout matches documented comments" {
     try std.testing.expectEqual(@as(usize, 144), @offsetOf(Accumulation.PreparedMeans, "depolarization_factor"));
 }
 
+test "prepared layer layout matches documented support-tail comments" {
+    const State = internal.forward_model.optical_properties.state;
+
+    try std.testing.expectEqual(@as(usize, 208), @sizeOf(State.PreparedLayer));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(State.PreparedLayer));
+    try expectOffset(State.PreparedLayer, "aerosol_optical_depth", 0);
+    try expectOffset(State.PreparedLayer, "altitude_km", 24);
+    try expectOffset(State.PreparedLayer, "gas_optical_depth", 104);
+    try expectOffset(State.PreparedLayer, "optical_depth", 168);
+    try expectOffset(State.PreparedLayer, "top_altitude_km", 176);
+    try expectOffset(State.PreparedLayer, "gas_scattering_optical_depth", 184);
+    try expectOffset(State.PreparedLayer, "sublayer_start_index", 192);
+    try expectOffset(State.PreparedLayer, "layer_index", 196);
+    try expectOffset(State.PreparedLayer, "interval_index_1based", 200);
+    try expectOffset(State.PreparedLayer, "sublayer_count", 204);
+}
+
 test "prepared optical state layout matches documented comments" {
     const PreparedOpticalState = internal.forward_model.optical_properties.PreparedOpticalState;
 
