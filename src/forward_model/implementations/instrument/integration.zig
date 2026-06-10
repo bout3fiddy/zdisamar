@@ -37,10 +37,11 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   slitKernelForScene               : legacy five-tap convolution kernel for native/synthetic FWHM-only runs |
 //                                                                                                             |
 // builder row                                                                                                 |
-//   IntegrationKernel is caller-owned scratch from types.zig: 32 KiB with parallel [2048]f64 offsets_nm and   |
-//   weights arrays. Only [0..sample_count] is meaningful after this file returns. enabled=false means direct  |
-//   sampling at the shifted channel wavelength. enabled=true means this row carries a normalized integration  |
-//   kernel and compactIntegrationKernel should store inline samples or side-array samples.                    |
+//   IntegrationKernel is caller-owned scratch from types.zig: 32784 B with parallel [2048]f64 offsets_nm and  |
+//   weights arrays plus {sample_count, enabled}. Only [0..sample_count] is meaningful after this file         |
+//   returns. enabled=false means direct sampling at the shifted channel wavelength. enabled=true means this   |
+//   row carries a normalized integration kernel and compactIntegrationKernel must store inline samples or     |
+//   side-array samples in the retained wavelength plan.                                                       |
 //                                                                                                             |
 // convolution guard                                                                                           |
 //   The per-row enabled flag is not the whole "skip convolution" rule. simulate.zig uses                      |
@@ -60,10 +61,11 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //                                                                                                             |
 // handoff                                                                                                     |
 //   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
-//   storage. spectral_eval.zig later reads only the compact WavelengthSampling view during radiance and       |
-//   irradiance gather; it does not call back into this file from the per-forward-sample RTM path.             |
-//   Channel wavelength shifts are stored beside the compact row, then offsets from this file are added to the |
-//   shifted center when wavelength_sampling builds the dense forward-miss plan.                               |
+//   storage under OwnedWavelengthSampling. simulate.zig then gathers radiance/irradiance through that plan    |
+//   and skips later slit convolution when integrated sampling already applied the instrument response.        |
+//   spectral_eval.zig reads only the compact WavelengthSampling view; it does not call back into this file    |
+//   from the per-forward-sample RTM path. Channel wavelength shifts are stored beside the compact row, then   |
+//   offsets from this file are added to the shifted center when wavelength_sampling builds the miss plan.     |
 //                                                                                                             |
 // module split                                                                                                |
 //   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |

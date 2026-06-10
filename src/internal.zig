@@ -176,7 +176,6 @@ pub const forward_model = struct {
         pub const sourceInterfaceFromLayers = root.sourceInterfaceFromLayers;
         pub const fillSourceInterfacesFromLayers = root.fillSourceInterfacesFromLayers;
 
-        pub const derivatives = @import("forward_model/radiative_transfer/derivatives.zig");
         pub const labos = root.labos;
         pub const labos_basis = @import("forward_model/radiative_transfer/labos/basis.zig");
         pub const labos_layers = @import("forward_model/radiative_transfer/labos/layers.zig");
