@@ -32,6 +32,9 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   parallel [2048]f64 arrays; only [0..sample_count] is meaningful after this file returns. enabled=false    |
 //   means direct sampling at the nominal wavelength; enabled=true means the product row is already integrated |
 //   over response weights and later slit convolution must not repeat that work.                               |
+//   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
+//   storage. spectral_eval.zig then reads only the compact WavelengthSampling view during radiance and        |
+//   irradiance gather; it does not call back into this file from the per-forward-sample RTM path.             |
 //                                                                                                             |
 // route order                                                                                                 |
 //   integrationForWavelengthWithAdaptiveCacheChecked chooses one route and stops:                             |
@@ -52,6 +55,9 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   IntegrationKernel offsets are relative to nominal_wavelength_nm and weights are normalized before return. |
 //   Table, explicit, DISAMAR, adaptive, and fallback kernels all use the same compact row contract, so later  |
 //   code never needs to know which route produced the samples.                                                |
+//   Checked entry points return InstrumentKernelRealizationFailed when an explicitly requested route cannot   |
+//   produce a finite non-empty kernel. High-resolution and adaptive controls fail here instead of silently    |
+//   falling through to the legacy five-tap fallback.                                                          |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Wavelength-plan workers call this inside the output-sample loop. The 32 KiB IntegrationKernel is reused   |

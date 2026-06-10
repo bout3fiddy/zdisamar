@@ -118,3 +118,72 @@ test "prepared means layout matches documented comments" {
     try std.testing.expectEqual(@as(usize, 136), @offsetOf(Accumulation.PreparedMeans, "total_optical_depth"));
     try std.testing.expectEqual(@as(usize, 144), @offsetOf(Accumulation.PreparedMeans, "depolarization_factor"));
 }
+
+test "prepared optical state layout matches documented comments" {
+    const PreparedOpticalState = internal.forward_model.optical_properties.PreparedOpticalState;
+
+    try std.testing.expectEqual(@as(usize, 2136), @sizeOf(PreparedOpticalState));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(PreparedOpticalState));
+    try expectOffset(PreparedOpticalState, "gas_optical_depth", 0);
+    try expectOffset(PreparedOpticalState, "operational_o2o2_lut", 8);
+    try expectOffset(PreparedOpticalState, "strong_line_states", 80);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_strong_line_states", 96);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_weak_line_states", 112);
+    try expectOffset(PreparedOpticalState, "shared_rtm_geometry", 128);
+    try expectOffset(PreparedOpticalState, "continuum_points", 160);
+    try expectOffset(PreparedOpticalState, "lut_execution_entries", 176);
+    try expectOffset(PreparedOpticalState, "collision_induced_absorption", 192);
+    try expectOffset(PreparedOpticalState, "generated_lut_assets", 224);
+    try expectOffset(PreparedOpticalState, "spectroscopy_lines", 240);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_altitudes_km", 456);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_pressures_hpa", 472);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_temperatures_k", 488);
+    try expectOffset(PreparedOpticalState, "line_mixing_mean_cross_section_cm2_per_molecule", 504);
+    try expectOffset(PreparedOpticalState, "column_density_factor", 512);
+    try expectOffset(PreparedOpticalState, "aerosol_fraction_control", 520);
+    try expectOffset(PreparedOpticalState, "spectroscopy_plan_key", 600);
+    try expectOffset(PreparedOpticalState, "effective_air_mass_factor", 608);
+    try expectOffset(PreparedOpticalState, "cross_section_absorbers", 616);
+    try expectOffset(PreparedOpticalState, "line_absorbers", 632);
+    try expectOffset(PreparedOpticalState, "aerosol_base_optical_depth", 648);
+    try expectOffset(PreparedOpticalState, "operational_o2_lut", 656);
+    try expectOffset(PreparedOpticalState, "aerosol_optical_depth", 728);
+    try expectOffset(PreparedOpticalState, "total_optical_depth", 736);
+    try expectOffset(PreparedOpticalState, "depolarization_factor", 744);
+    try expectOffset(PreparedOpticalState, "mean_cross_section_cm2_per_molecule", 752);
+    try expectOffset(PreparedOpticalState, "line_mean_cross_section_cm2_per_molecule", 760);
+    try expectOffset(PreparedOpticalState, "sublayers", 768);
+    try expectOffset(PreparedOpticalState, "layers", 784);
+    try expectOffset(PreparedOpticalState, "spectroscopy_profile_cache_inputs_key", 800);
+    try expectOffset(PreparedOpticalState, "effective_single_scatter_albedo", 808);
+    try expectOffset(PreparedOpticalState, "aerosol_single_scatter_albedo", 816);
+    try expectOffset(PreparedOpticalState, "aerosol_phase_coefficients", 824);
+    try expectOffset(PreparedOpticalState, "effective_temperature_k", 2032);
+    try expectOffset(PreparedOpticalState, "effective_pressure_hpa", 2040);
+    try expectOffset(PreparedOpticalState, "air_column_density_factor", 2048);
+    try expectOffset(PreparedOpticalState, "oxygen_column_density_factor", 2056);
+    try expectOffset(PreparedOpticalState, "cia_mean_cross_section_cm5_per_molecule2", 2064);
+    try expectOffset(PreparedOpticalState, "cia_pair_path_factor_cm5", 2072);
+    try expectOffset(PreparedOpticalState, "aerosol_reference_wavelength_nm", 2080);
+    try expectOffset(PreparedOpticalState, "aerosol_angstrom_exponent", 2088);
+    try expectOffset(PreparedOpticalState, "cia_optical_depth", 2096);
+    try expectOffset(PreparedOpticalState, "d_optical_depth_d_temperature", 2104);
+    try expectOffset(PreparedOpticalState, "fit_interval_index_1based", 2112);
+    try expectOffset(PreparedOpticalState, "owns_spectroscopy_profile_strong_line_states", 2116);
+    try expectOffset(PreparedOpticalState, "has_aerosol_profile_properties", 2117);
+    try expectOffset(PreparedOpticalState, "owns_spectroscopy_profile_arrays", 2118);
+    try expectOffset(PreparedOpticalState, "owns_operational_o2o2_lut", 2119);
+    try expectOffset(PreparedOpticalState, "owns_operational_o2_lut", 2120);
+    try expectOffset(PreparedOpticalState, "interval_semantics", 2121);
+    try expectOffset(PreparedOpticalState, "continuum_owner_species", 2122);
+    try expectOffset(PreparedOpticalState, "aerosol_phase_support", 2124);
+    try expectOffset(PreparedOpticalState, "owns_spectroscopy_profile_weak_line_states", 2125);
+    try expectOffset(PreparedOpticalState, "owns_collision_induced_absorption", 2126);
+    try expectOffset(PreparedOpticalState, "owns_generated_lut_assets", 2127);
+    try expectOffset(PreparedOpticalState, "owns_continuum_points", 2128);
+    try expectOffset(PreparedOpticalState, "owns_lut_execution_entries", 2129);
+}
+
+fn expectOffset(comptime Struct: type, comptime field_name: []const u8, expected: usize) !void {
+    try std.testing.expectEqual(expected, @offsetOf(Struct, field_name));
+}
