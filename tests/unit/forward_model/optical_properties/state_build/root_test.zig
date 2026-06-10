@@ -119,6 +119,20 @@ test "prepared means layout matches documented comments" {
     try std.testing.expectEqual(@as(usize, 144), @offsetOf(Accumulation.PreparedMeans, "depolarization_factor"));
 }
 
+test "prepared line absorber layout matches documented comments" {
+    const State = internal.forward_model.optical_properties.state;
+
+    try std.testing.expectEqual(@as(usize, 280), @sizeOf(State.PreparedLineAbsorber));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(State.PreparedLineAbsorber));
+    try expectOffset(State.PreparedLineAbsorber, "line_list", 0);
+    try expectOffset(State.PreparedLineAbsorber, "number_densities_cm3", 208);
+    try expectOffset(State.PreparedLineAbsorber, "strong_line_states", 224);
+    try expectOffset(State.PreparedLineAbsorber, "strong_line_state_initialized", 240);
+    try expectOffset(State.PreparedLineAbsorber, "strong_line_state_count", 256);
+    try expectOffset(State.PreparedLineAbsorber, "column_density_factor", 264);
+    try expectOffset(State.PreparedLineAbsorber, "species", 272);
+}
+
 test "prepared layer layout matches documented support-tail comments" {
     const State = internal.forward_model.optical_properties.state;
 

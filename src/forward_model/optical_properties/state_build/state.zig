@@ -86,7 +86,13 @@ pub const ActiveCrossSectionAbsorber = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedLineAbsorber ---------------------------------------------------------------------------------------|
-// Prepared line absorber with runtime controls and stored number densities.                                   |
+// Prepared line absorber retained after setup. The row keeps the line-list handle, one density column,        |
+// optional prepared strong-line states, and the species tag that ties continuum ownership back to this row.   |
+//                                                                                                             |
+// row use                                                                                                     |
+//   absorbers.zig builds and owns these rows until finalize moves them into PreparedOpticalState.             |
+//   state_spectroscopy.zig and carrier_eval.zig read line_list, densities, and prepared strong-line states    |
+//   during wavelength evaluation. spectroscopy.zig reads only species when choosing the continuum owner.      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 280 B (0.273 KiB), align: 8 B                                                                         |
@@ -104,6 +110,7 @@ pub const ActiveCrossSectionAbsorber = struct {
 // unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
 // cache span: 5 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 280 B; line list, densities, and optional line states own out-of-line storage     |
+// hot reads: setup-only owner scan reads species at [272..272]; wavelength loops read the larger payload      |
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
