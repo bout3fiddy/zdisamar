@@ -24,6 +24,17 @@ const sink = @import("calculation_telemetry_sink");
 // runtime shape                                                                                                 |
 //   This file does not open telemetry outputs, allocate row buffers, or choose report formats. Those details    |
 //   belong to scaffolding/instrumentation sinks selected outside the forward-model source tree.                 |
+//                                                                                                               |
+// hot path                                                                                                      |
+//   Telemetry hooks sit inside wavelength sampling, simulation assembly, LABOS layer/order/Fourier loops, and   |
+//   OE iteration work. Normal builds compile with enabled=false, so each inline hook returns before row         |
+//   arguments reach the sink. The calculation-telemetry harness keeps the same call sites but swaps in the      |
+//   retained sink module and thread-local context.                                                              |
+//                                                                                                               |
+// memory                                                                                                        |
+//   In normal builds, Context is the zero-size type from the disabled sink and no telemetry row storage exists. |
+//   Enabled harness builds keep the larger sink-owned Context and Parquet writers under scaffolding; this       |
+//   facade only forwards borrowed values and scalar row fields.                                                 |
 // --------------------------------------------------------------------------------------------------------------|
 pub const requested: bool = requested_by_build: {
     if (!@hasDecl(build_options, "enable_calculation_telemetry")) break :requested_by_build false;
