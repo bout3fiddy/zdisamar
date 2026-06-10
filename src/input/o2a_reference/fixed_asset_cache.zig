@@ -216,10 +216,7 @@ pub fn storeLineList(spec: LineGasSpec, line_list: ReferenceData.SpectroscopyLin
         .key = lineListKey(spec),
         .line_list = try line_list.clone(allocator),
     };
-    mutex.lock();
-    defer mutex.unlock();
-    if (cached_line_list) |*old| old.deinit(allocator);
-    cached_line_list = entry;
+    replaceCachedEntry(LineListEntry, &cached_line_list, entry);
 }
 
 pub fn loadProfile(allocator: Allocator, asset: ExternalAsset) !?ClimatologyProfile {
@@ -238,10 +235,7 @@ pub fn storeProfile(asset: ExternalAsset, profile: ClimatologyProfile) !void {
         .key = assetKey(asset),
         .profile = try cloneProfile(allocator, profile),
     };
-    mutex.lock();
-    defer mutex.unlock();
-    if (cached_profile) |*old| old.deinit(allocator);
-    cached_profile = entry;
+    replaceCachedEntry(ProfileEntry, &cached_profile, entry);
 }
 
 pub fn loadCia(allocator: Allocator, asset: ExternalAsset) !?CollisionInducedAbsorptionTable {
@@ -260,10 +254,7 @@ pub fn storeCia(asset: ExternalAsset, table: CollisionInducedAbsorptionTable) !v
         .key = assetKey(asset),
         .table = try table.clone(allocator),
     };
-    mutex.lock();
-    defer mutex.unlock();
-    if (cached_cia) |*old| old.deinit(allocator);
-    cached_cia = entry;
+    replaceCachedEntry(CiaEntry, &cached_cia, entry);
 }
 
 pub fn loadAirmassLut(allocator: Allocator, asset: ExternalAsset) !?AirmassFactorLut {
@@ -282,10 +273,7 @@ pub fn storeAirmassLut(asset: ExternalAsset, lut: AirmassFactorLut) !void {
         .key = assetKey(asset),
         .lut = try cloneAirmassLut(allocator, lut),
     };
-    mutex.lock();
-    defer mutex.unlock();
-    if (cached_airmass_lut) |*old| old.deinit(allocator);
-    cached_airmass_lut = entry;
+    replaceCachedEntry(AirmassLutEntry, &cached_airmass_lut, entry);
 }
 
 pub fn loadReferenceSamples(allocator: Allocator, asset: ExternalAsset) !?[]ReferenceSample {
@@ -304,10 +292,7 @@ pub fn storeReferenceSamples(asset: ExternalAsset, samples: []const ReferenceSam
         .key = assetKey(asset),
         .samples = try allocator.dupe(ReferenceSample, samples),
     };
-    mutex.lock();
-    defer mutex.unlock();
-    if (cached_reference) |*old| old.deinit(allocator);
-    cached_reference = entry;
+    replaceCachedEntry(ReferenceEntry, &cached_reference, entry);
 }
 
 pub fn loadSolarSamples(allocator: Allocator, asset: ExternalAsset) !?[]SolarSpectrumSample {
@@ -326,10 +311,15 @@ pub fn storeSolarSamples(asset: ExternalAsset, samples: []const SolarSpectrumSam
         .key = assetKey(asset),
         .samples = try allocator.dupe(SolarSpectrumSample, samples),
     };
+    replaceCachedEntry(SolarEntry, &cached_solar, entry);
+}
+
+fn replaceCachedEntry(comptime Entry: type, cache: *?Entry, entry: Entry) void {
+    const allocator = std.heap.smp_allocator;
     mutex.lock();
     defer mutex.unlock();
-    if (cached_solar) |*old| old.deinit(allocator);
-    cached_solar = entry;
+    if (cache.*) |*old| old.deinit(allocator);
+    cache.* = entry;
 }
 
 fn lineListKey(spec: LineGasSpec) u64 {
