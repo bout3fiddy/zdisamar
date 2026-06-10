@@ -130,9 +130,8 @@ pub const OperationalSolarSpectrum = struct {
             c4[index] = (self.irradiance[index] - self.irradiance[index - 1]) / c3[index];
         }
 
-        // PARITY:
-        //   Match DISAMAR's `mathTools::spline` wrapper in the only mode used
-        //   for the O2A solar source: first derivatives specified at both ends.
+        // Match DISAMAR's mathTools::spline wrapper in the O2 A solar-source mode: first derivatives are
+        // specified at both ends.
         c4[0] = 1.0;
         c3[0] = 0.0;
 
@@ -375,11 +374,9 @@ pub const OperationalSolarSpectrum = struct {
 
         const dx_nm = wavelength_nm - self.wavelengths_nm[lower_index];
 
-        // PARITY:
-        //   DISAMAR `mathTools::splint` evaluates prepared spline second
-        //   derivatives in Horner form. Keep the O2 A solar source on the
-        //   same reduction path; the symmetric cubic only differs in the last
-        //   bits, but irradiance is large enough for those bits to be visible.
+        // DISAMAR mathTools::splint evaluates prepared spline second derivatives in Horner form. Keep the
+        // O2 A solar source on the same reduction path; the symmetric cubic only differs in the last bits, but
+        // irradiance is large enough for those bits to be visible.
         const b = (self.irradiance[upper_index] - self.irradiance[lower_index]) / span_nm -
             (2.0 * self.spline_second_derivatives[lower_index] +
                 self.spline_second_derivatives[upper_index]) * span_nm / 6.0;

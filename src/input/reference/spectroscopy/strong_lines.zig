@@ -420,11 +420,9 @@ pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm
     else
         -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
 
-    // PARITY:
-    //   `HITRANModule::CalculatAbsXsec` applies pressure shift as
-    //   `Sig + delt * P` in wavenumber space. The Zig line payload stores the
-    //   equivalent wavelength-width magnitude, so convert once and keep the
-    //   vendor's linear wavenumber update.
+    // HITRANModule::CalculatAbsXsec applies pressure shift as Sig + delt * P in wavenumber space. The Zig line
+    // payload may store the equivalent wavelength-width magnitude, so convert once and keep the vendor's linear
+    // wavenumber update.
     return @max(center_wavenumber_cm1 + pressure_shift_cm1 * pressure_atm, 1.0);
 }
 
