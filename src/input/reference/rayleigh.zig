@@ -1,12 +1,17 @@
 const std = @import("std");
 
 // rayleigh.zig -----------------------------------------------------------------------------------------------|
-// Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth and phase-function paths.          |
+// Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth and Rayleigh phase-coefficient     |
+// paths. This is reference math, not retained reference data: callers pass one wavelength or air column and   |
+// receive scalar values with no allocation, file I/O, or hidden cache state.                                  |
 //                                                                                                             |
-// called by                                                                                                   |
-//   layer_accumulation.zig and carrier_eval.zig convert air columns into gas-scattering optical depth.        |
-//   state_optical_depth.zig and atmospheric_budget.zig sample scalar gas-scattering summaries.                |
-//   phase_functions.zig converts air depolarization into the Rayleigh l=2 phase coefficient used by LABOS.    |
+// call routes                                                                                                 |
+//   layer_accumulation.zig uses scatteringOpticalDepthForColumn at the scene midpoint while reducing support  |
+//   rows into PreparedLayer/PreparedSublayer optical-depth totals. carrier_eval.zig computes crossSectionCm2  |
+//   once per wavelength in WavelengthCarrierCache, then reuses that scalar while filling shared carrier,      |
+//   source-interface, and RTM quadrature rows. state_optical_depth.zig and atmospheric_budget.zig call the    |
+//   same scalar route for diagnostics. phase_functions.zig converts depolarizationFactorAir into the          |
+//   Rayleigh l=2 coefficient mixed into LABOS phase-basis rows.                                               |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   refractiveIndexDryAir        -> Edlen-style dry-air refractivity at one wavelength                        |
@@ -15,12 +20,20 @@ const std = @import("std");
 //   scatteringOpticalDepthForColumn -> cross section * air column density                                     |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   crossSectionCm2 is sampled for support rows, carrier caches, and diagnostics when gas scattering is       |
-//   included. All helpers are scalar and allocation-free.                                                     |
+//   crossSectionCm2 is scalar work but can sit on wavelength/support-row routes. The repeated wavelength path |
+//   precomputes it in WavelengthCarrierCache so support-row loops reuse one f64 instead of repeating the      |
+//   refractive-index, King-factor, and wavelength^-4 calculation.                                             |
 //                                                                                                             |
-// numbers                                                                                                     |
-//   Composition fractions are dry-air percent values. reference_number_density_cm3 is the Loschmidt number    |
-//   in cm^-3 used by the Rayleigh cross-section normalization.                                                |
+// math                                                                                                        |
+//   sigma_um_inv = 1000 / max(wavelength_nm, 1)                                                               |
+//   depol        = 6 * (King_air - 1) / (3 + 7 * King_air)                                                    |
+//   sigma_R      = 24*pi^3 / (lambda_cm^4 * N_s^2)                                                            |
+//                  * ((n^2 - 1) / (n^2 + 2))^2 * King_air                                                     |
+//   tau_R        = sigma_R * max(air_column_density_cm2, 0)                                                   |
+//                                                                                                             |
+// constants                                                                                                   |
+//   Composition fractions are dry-air percent values for N2/O2/Ar/CO2. reference_number_density_cm3 is the    |
+//   Loschmidt number in cm^-3 used by the Rayleigh cross-section normalization.                               |
 // ------------------------------------------------------------------------------------------------------------|
 
 const fraction_n2 = 78.084;
