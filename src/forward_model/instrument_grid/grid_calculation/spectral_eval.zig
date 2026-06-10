@@ -44,13 +44,13 @@ const Error = Storage.Error;
 //   Nominal-row gather walks only slices already owned by the simulation plan: row refs, sample_indices, compact         |
 //   integration weights, and dense ForwardIntegratedSample rows. Disabled kernels return the single prefetched           |
 //   result directly. Integrated rows stream weights once; active Jacobian columns are accumulated only when the          |
-//   solve config asks for derivatives. Irradiance mirrors the same offset/weight contract but reads solar support        |
-//   instead of LABOS results.                                                                                            |
+//   solve config asks for derivatives. Irradiance mirrors the same offset/weight contract and reads solar support        |
+//   data for each high-resolution sample.                                                                                |
 //                                                                                                                        |
 // weight contract                                                                                                        |
 //   Integration weights are produced and normalized by implementations/instrument/integration.zig. These loops           |
-//   apply the weights exactly once and do not renormalize. Shape checks guard row_ref/count/index mismatches so          |
-//   a corrupted retained plan fails here instead of reading past the borrowed arrays.                                    |
+//   apply the weights exactly once and do not renormalize. Shape checks guard row_ref/count/index mismatches             |
+//   before borrowed arrays are indexed.                                                                                  |
 //                                                                                                                        |
 // memory                                                                                                                 |
 //   Forward results, row refs, sample indexes, and kernel side arrays are borrowed from ResolvedSimulationPlan.          |
@@ -146,8 +146,7 @@ pub fn integrateIrradianceAtNominal(
     //                                                                                                                    |
     // shared contract                                                                                                    |
     //   Irradiance uses the same integration offsets and weights as the radiance channel selected for                    |
-    //   irradiance. The difference is only the source of each high-resolution sample: solar support data                 |
-    //   instead of LABOS transport.                                                                                      |
+    //   irradiance. Radiance samples come from LABOS transport; irradiance samples come from solar support data.         |
     // ------------------------------------------------------------------------------------------------------------------ |
 
     if (!integration.enabled()) {
@@ -183,7 +182,7 @@ pub fn prefetchForwardSamples(
     //                                                                                                                    |
     // output contract                                                                                                    |
     //   results[index] corresponds to misses[index]. buildForwardMissPlan stores only these dense indexes in             |
-    //   each nominal row, so later integration does not touch the miss hash map.                                         |
+    //   each nominal row, so later integration reads the dense result array directly.                                    |
     // ------------------------------------------------------------------------------------------------------------------ |
 
     if (misses.len == 0) return;

@@ -70,10 +70,10 @@ pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 //   and reference slices; deinit order releases product/prepared/scene storage before clearing each header.   |
 //                                                                                                             |
 // performance boundary                                                                                        |
-//   This file is setup code, not the RTM wavelength loop. Its important speed path is the repeated retrieval  |
-//   preparation boundary: avoid file I/O, avoid reloading static reference tables, avoid rebuilding the       |
-//   weak-line support grid, and avoid repeating solar rewindowing when the instrument/grid support did not    |
-//   change. Trace zones split those costs so benchmark traces show which setup work moved or disappeared.     |
+//   This file runs setup and retrieval refresh work before the RTM wavelength loop. The repeated retrieval    |
+//   preparation boundary avoids file I/O, static reference-table reloads, weak-line support-grid rebuilds,    |
+//   and solar rewindowing when the instrument/grid support did not change. Trace zones split those costs so   |
+//   benchmark traces show which setup work moved or disappeared.                                              |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // PreparedRuntimeCase --------------------------------------------------------------------------------------- |
@@ -1057,7 +1057,7 @@ pub fn prepareResolvedVendorO2AOpticalStateWithSceneSessionCaches(
     // --------------------------------------------------------------------------------------------------------|
 
     // Retrieval sessions own loaded inputs for the full OE run, so each optical
-    // refresh can borrow immutable continuum/CIA tables instead of cloning them.
+    // refresh borrows immutable continuum/CIA tables with no per-refresh clone.
     return prepareResolvedVendorO2AOpticalStateWithSceneInternal(
         allocator,
         scene,
@@ -1118,7 +1118,7 @@ fn prepareResolvedVendorO2AOpticalStateWithSceneInternalProfile(
     //                                                                                                         |
     // instrumentation                                                                                         |
     //   prepare.optical measures OpticsPrepare.prepare. prepare.weak_cutoff_grid and prepare.solar_rewindow   |
-    //   isolate setup that depends on the realized instrument support rather than raw input parsing.          |
+    //   isolate setup that depends on realized instrument support after raw input parsing has finished.       |
     // --------------------------------------------------------------------------------------------------------|
 
     var collision_induced_absorption: ?*const ReferenceDataModel.CollisionInducedAbsorptionTable = null;

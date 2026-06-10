@@ -745,7 +745,8 @@ fn radianceSampleIndexCount(table: WavelengthSamplingTable) usize {
 
 fn castForwardSampleIndexStart(start: usize) !u32 {
     // castForwardSampleIndexStart ---------------------------------------------------------------------------------------|
-    // Store sample-index starts as u32 to keep each row compact. Oversized plans fail instead of wrapping.               |
+    // Store sample-index starts as u32 to keep each row compact. Oversized plans fail before a truncated                 |
+    // start can be stored.                                                                                               |
     // -------------------------------------------------------------------------------------------------------------------|
 
     if (start > std.math.maxInt(u32)) return error.OutOfMemory;

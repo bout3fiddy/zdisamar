@@ -24,8 +24,8 @@ const std = @import("std");
 //   last-bit node differences are visible in steep O2 A high-resolution support samples.                      |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Most calls are setup for a row, interval, or cached geometry plan rather than LABOS inner transport.      |
-//   Callers pass output slices so the generated rule can be written into stack or retained scratch storage.   |
+//   Most calls prepare a row, interval, or cached geometry plan before LABOS inner transport. Callers pass    |
+//   output slices so the generated rule can be written into stack or retained scratch storage.                |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Fixed Rule values carry inline arrays. Ordinary dynamic paths write caller slices. DISAMAR dynamic paths  |

@@ -449,7 +449,7 @@ fn buildProfileSpectroscopyCaches(
 
     // instrumentation: trace zone: profile cache build ----------------------------------------------------------------- |
     // captures: profile spectroscopy cache build wall time and miss count                                                |
-    // why: shows when cache construction, rather than LABOS transport, dominates prefetch setup.                         |
+    // why: shows cache-construction share inside prefetch setup.                                                         |
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(forward_misses.len));
     defer zone.end();
@@ -973,7 +973,7 @@ fn fillIrradianceSamples(
 ) Storage.Error!void {
     // fillIrradianceSamples ---------------------------------------------------------------------------------------------|
     // Fill irradiance through the same nominal sampling contract used for radiance. Solar samples come from              |
-    // the irradiance cache instead of LABOS forward results.                                                             |
+    // the irradiance cache.                                                                                              |
     //                                                                                                                    |
     // math                                                                                                               |
     //   E0_raw_i = sum_j weight_ij * E0(lambda_i + offset_ij)                                                            |
@@ -1406,8 +1406,8 @@ pub fn simulate(
     buffers: Storage.Buffers,
 ) Storage.Error!Types.InstrumentGridSummary {
     // simulate ----------------------------------------------------------------------------------------------------------|
-    // One-shot internal route for callers that already provide output buffers but not a reusable spectral                |
-    // evaluation cache.                                                                                                  |
+    // One-shot internal route for callers that already provide output buffers. This route creates the temporary          |
+    // spectral evaluation cache for the duration of the product simulation.                                              |
     // -------------------------------------------------------------------------------------------------------------------|
 
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);

@@ -32,8 +32,8 @@ const AbsorberModel = @import("Absorber.zig");
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Scene is passed by pointer through preparation and product simulation. Cache-key hashing scans absorber   |
-//   controls during setup; wavelength-time RTM and instrument loops should consume prepared state instead of  |
-//   repeatedly interpreting this public input row.                                                            |
+//   controls during setup; wavelength-time RTM and instrument loops consume the prepared state derived from   |
+//   this public input row.                                                                                    |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;

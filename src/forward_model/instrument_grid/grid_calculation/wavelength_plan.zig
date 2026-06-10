@@ -33,7 +33,7 @@ pub const inline_integration_sample_count: usize = instrument_types.default_inte
 //   The nominal-row gather runs for every product wavelength. Keeping no-integration and five-sample kernels             |
 //   inline avoids extra slice chasing in the common cases, while side arrays keep rare 1000+ sample adaptive             |
 //   kernels out of every row. ForwardSampleIndexRef stores one u32 start offset so the gather walks a dense              |
-//   sample-index stream instead of probing the miss hash map again.                                                      |
+//   sample-index stream. The miss hash map is used only while the plan is built.                                         |
 //                                                                                                                        |
 // math names                                                                                                             |
 //   lambda_i  : nominal product wavelength after channel wavelength shift                                                |
