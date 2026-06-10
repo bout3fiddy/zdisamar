@@ -662,12 +662,10 @@ fn weakLineInsideVendorCutoff(
 
     if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
 
-        // PARITY:
-        //   `HITRANModule::CalculatAbsXsec` computes nearest HR-grid indices
-        //   for `Lsig +/- cutoff` with `minloc`, then loops inclusively from
-        //   the high-wavenumber endpoint to the low-wavenumber endpoint. The
-        //   retained O2 A grid is stored as increasing wavelength, so index
-        //   order is the opposite of wavenumber order but still monotonic.
+        // HITRANModule::CalculatAbsXsec computes nearest HR-grid indices for Lsig +/- cutoff with minloc,
+        // then loops inclusively from the high-wavenumber endpoint to the low-wavenumber endpoint. The
+        // retained O2 A grid is stored as increasing wavelength, so index order is opposite wavenumber order
+        // but still monotonic.
         const has_precomputed_wavenumber_grid =
             runtime_controls.cutoff_grid_wavenumbers_cm1.len == runtime_controls.cutoff_grid_wavelengths_nm.len and
             runtime_controls.cutoff_grid_wavenumbers_cm1.len >= 2;
@@ -826,8 +824,7 @@ fn nearestOfTwoWavenumberGridIndices(
     const lower_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[lower_index]) - target_wavenumber_cm1);
     const upper_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[upper_index]) - target_wavenumber_cm1);
 
-    // PARITY:
-    //   Fortran `minloc` returns the first matching array element on ties.
+    // Match Fortran minloc tie handling: keep the first matching grid element when distances are equal.
     return if (upper_delta < lower_delta) upper_index else lower_index;
 }
 
@@ -840,7 +837,6 @@ fn nearestOfTwoPrecomputedWavenumberGridIndices(
     const lower_delta = @abs(wavenumbers_cm1[lower_index] - target_wavenumber_cm1);
     const upper_delta = @abs(wavenumbers_cm1[upper_index] - target_wavenumber_cm1);
 
-    // PARITY:
-    //   Fortran `minloc` returns the first matching array element on ties.
+    // Match Fortran minloc tie handling: keep the first matching grid element when distances are equal.
     return if (upper_delta < lower_delta) upper_index else lower_index;
 }

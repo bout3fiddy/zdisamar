@@ -268,9 +268,8 @@ pub fn loadExternalAsset(
         allocator.free(parsed_table.values);
     }
 
-    // DECISION:
-    //   External assets still carry manifest-style metadata so the forward model can treat them like
-    //   other hydrated reference assets.
+    // External assets still carry manifest-style metadata so downstream conversion can treat them like
+    // bundled assets after this input-layer boundary has parsed and owned the numeric rows.
     return .{
         .kind = kind,
         .bundle_manifest_path = try allocator.dupe(u8, asset_path),
@@ -320,10 +319,8 @@ fn initLoadedAsset(
     errdefer allocator.free(dataset_hash);
     if (!std.mem.eql(u8, dataset_hash, bundle_asset.sha256)) return error.HashMismatch;
 
-    // DECISION:
-    //   Hash validation happens before numeric parsing so broken assets fail
-    //   fast at the provenance boundary, not after partially materializing
-    //   typed rows.
+    // Hash validation happens before numeric parsing so broken assets fail at the provenance boundary,
+    // not after partially materializing typed rows.
 
     const parsed_table = try formats.parseAssetTable(allocator, .{
         .format = bundle_asset.format,

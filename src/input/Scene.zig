@@ -133,9 +133,8 @@ pub const Scene = struct {
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {
 
-            // INVARIANT:
-            //   Explicit measured channels and the scene spectral grid must describe the same
-            //   sample count once the scene is ready for execution.
+            // Explicit measured channels and the scene spectral grid must describe the same sample count before
+            // instrument-grid execution.
             return errors.Error.InvalidRequest;
         }
     }

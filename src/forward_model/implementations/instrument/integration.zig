@@ -8,11 +8,11 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 
 // integration.zig ------------------------------------------------------------------------------------------- |
-// Turns Scene instrument-response controls into one offsets/weights kernel for one channel and one nominal    |
-// wavelength. This file is the decision point between input metadata and product sampling: it chooses the     |
-// response route, writes relative wavelength offsets, normalizes weights, and tells simulation when the old   |
-// five-tap slit convolution must stay out of the way. It does not run LABOS or sample solar/RTM values; later |
-// wavelength-plan and spectral-evaluation code consume the compact rows produced from this builder output.    |
+// Builds the normalized instrument-response stencil for one channel at one nominal product wavelength. This   |
+// file is the only route chooser between scene metadata and product sampling: measured line-shape tables,     |
+// explicit fixed kernels, DISAMAR high-resolution grids, adaptive strong-line grids, and the old five-tap     |
+// fallback all become the same offsets/weights row here. It does not run LABOS, sample solar irradiance, or   |
+// apply channel calibration; later wavelength-plan and spectral-evaluation code consume this builder output.  |
 //                                                                                                             |
 // called by                                                                                                   |
 //   simulate.zig resolves channel flags with usesIntegratedInstrumentSampling, then calls                     |
@@ -62,6 +62,8 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
 //   storage. spectral_eval.zig later reads only the compact WavelengthSampling view during radiance and       |
 //   irradiance gather; it does not call back into this file from the per-forward-sample RTM path.             |
+//   Channel wavelength shifts are stored beside the compact row, then offsets from this file are added to the |
+//   shifted center when wavelength_sampling builds the dense forward-miss plan.                               |
 //                                                                                                             |
 // module split                                                                                                |
 //   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |
@@ -126,10 +128,8 @@ pub fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralCh
 
     const response = scene.observation_model.resolvedChannelControls(channel).response;
 
-    // DECISION:
-    //   Integrated sampling is driven by the observation model first; explicit
-    //   line-shape metadata also forces integration so the legacy convolution
-    //   path does not silently handle modern measured channels.
+    // Observation-model sampling controls win first. Explicit line-shape metadata also counts as integrated
+    // sampling, so measured channels do not slip into the legacy slit-convolution path.
     const mode_requires_native_integration = switch (scene.observation_model.sampling) {
         .operational, .measured_channels => true,
         .native, .synthetic => false,
@@ -217,9 +217,8 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             return;
         }
 
-        // PARITY:
-        //   Strong-line table routines bypass the legacy slit convolution when
-        //   the table can provide a normalized routine directly.
+        // A measured line-shape table has already supplied a normalized kernel, so simulation must bypass the
+        // legacy slit convolution for this row.
         kernel.enabled = true;
         return;
     }
@@ -497,10 +496,7 @@ pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 
 
     const response = scene.observation_model.resolvedChannelControls(channel).response;
 
-    // PARITY:
-    //   The default slit routine remains a five-point symmetric routine so the
-    //   legacy convolution shape stays recognizable when explicit line-shape
-    //   metadata is absent.
+    // Keep the no-FWHM default as the symmetric five-point legacy kernel; convolution.apply normalizes it.
     if (response.fwhm_nm <= 0.0) {
 
         // math: default convolution kernel is [1,4,6,4,1] before convolution.apply normalizes by its sum.
