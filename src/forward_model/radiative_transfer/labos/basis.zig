@@ -3,21 +3,27 @@ const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");
 
 // basis.zig -------------------------------------------------------------------------------------------------|
-// Private LABOS basis facade for stream constants, dense matrix kernels, and Fourier phase-basis helpers.    |
+// Private LABOS alias map for stream data rows, dense matrix kernels, and Fourier phase-basis builders used  |
+// by the hot transport files.                                                                                |
 //                                                                                                            |
-// used by                                                                                                    |
-//   layers.zig, orders.zig, reflectance.zig, attenuation.zig, and workspace.zig import this as basis         |
-//   labos tests reach the same aliases through src/internal.zig                                              |
+// call chain                                                                                                 |
+//   layers.zig, orders.zig, reflectance.zig, attenuation.zig, and workspace.zig import this as basis.        |
+//   radiative_transfer/root.zig re-exports selected aliases through the public labos namespace.              |
+//   src/internal.zig exposes the same alias map to focused LABOS unit tests.                                 |
 //                                                                                                            |
-// exports                                                                                                    |
-//   types.zig       : fixed stream limits, Mat/Vec rows, LayerRT/UD field rows, and Geometry                 |
-//   matrix.zig      : small dense multiply, q-series, and scale/add kernels                                  |
-//   phase_basis.zig : Fourier PLM basis rows and Z+/Z- phase-kernel builders                                 |
+// owning files                                                                                               |
+//   types.zig       : fixed stream limits, Mat/Vec rows, LayerRT/UD field rows, and Geometry.                |
+//   matrix.zig      : small dense multiply, q-series, and scale/add kernels.                                 |
+//   phase_basis.zig : Fourier PLM basis rows and Z+/Z- phase-kernel builders.                                |
 //                                                                                                            |
-// boundary                                                                                                   |
-//   This file is a compile-time alias map, not an object, wrapper, or runtime dispatch table. It keeps the   |
-//   hot LABOS implementation files on one short import name while the actual layout and math comments stay   |
-//   beside the owning code in types.zig, matrix.zig, and phase_basis.zig.                                    |
+// why keep it                                                                                                |
+//   Hot LABOS files share the same terms: Mat, Vec, LayerRT, UDField, FourierPlmBasis, and Z rows. One       |
+//   alias map keeps signatures short and makes those names read as one LABOS vocabulary. Removing it would   |
+//   scatter the owner-file split through every transport loop without reducing runtime work.                 |
+//                                                                                                            |
+// runtime shape                                                                                              |
+//   This is resolved at compile time. It allocates no storage, owns no buffers, dispatches no calls, and has |
+//   no hidden state. The public root facade decides which of these aliases leave the LABOS package.          |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const max_gauss = types.max_gauss;
