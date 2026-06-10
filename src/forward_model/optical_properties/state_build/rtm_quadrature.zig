@@ -289,7 +289,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
         const stop = start + count;
         if (stop >= rtm_levels.len) return false;
 
-        const active_count = if (count > 0) count - 1 else 0;
+        const active_count = count - 1;
         if (active_count == 0) continue;
         const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
         const lower_altitude_km = rtm_levels[start].altitude_km;
