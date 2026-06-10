@@ -1,14 +1,23 @@
 const std = @import("std");
 
 // derivatives.zig -------------------------------------------------------------------------------------------|
-// Small math helpers for scalar RTM derivative columns. These routines are separate from LABOS: they are     |
-// proxy math used by simple callers, not part of the layer-resolved transport solve.                         |
+// Analytical proxy derivative helpers for scalar RTM sanity checks and focused tests. These routines are     |
+// deliberately separate from LABOS: they do not inspect LayerInput, Fourier terms, scattering orders, phase  |
+// rows, or workspace state, and they are not the semi-analytical Jacobian path used by the transport solver. |
+//                                                                                                            |
+// exported through                                                                                           |
+//   internal.forward_model.radiative_transfer.derivatives for unit tests and scratch callers                 |
 //                                                                                                            |
 // main paths                                                                                                 |
 //   transmittance                      -> Beer-Lambert survival for a unit path                              |
 //   dTransmittanceDOpticalDepth        -> derivative of that survival with respect to optical depth          |
 //   proxyOpticalDepthSensitivity       -> add surface and scattering proxy terms                             |
 //   proxyJacobianColumn                -> apply attenuation to the proxy derivative                          |
+//                                                                                                            |
+// boundary                                                                                                   |
+//   Use these helpers only when a caller wants closed-form scalar proxy math. Layer-resolved Jacobians       |
+//   belong to radiative_transfer/root.zig plus LABOS execution, where geometry, source integration, and      |
+//   scattering mode are part of the contract.                                                                |
 //                                                                                                            |
 // math                                                                                                       |
 //   T(tau) = exp(-tau)                                                                                       |

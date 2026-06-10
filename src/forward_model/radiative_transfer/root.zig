@@ -4,8 +4,17 @@ const jacobian = @import("../jacobian/root.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public RTM entry point. Callers bring prepared optical properties and controls here; LABOS                  |
-// solves the transport problem and returns reflectance plus optional Jacobian values.                         |
+// Public radiative-transfer boundary between prepared optical properties and the LABOS transport solver.      |
+// Callers arrive here with dense layer rows, source-interface rows, optional RTM quadrature, and prepared     |
+// controls; this file validates the controls, defines the ABI-like row shapes, and forwards the solve to      |
+// LABOS with optional caller-owned scratch memory.                                                            |
+//                                                                                                             |
+// called by                                                                                                   |
+//   src/root.zig prepares user-facing runs and diagnostics                                                    |
+//   spectral_forward.zig calls executePreparedWithLabosWorkspace for each high-resolution forward sample      |
+//   o2a_reference/run.zig prepares vendor/O2 A SolveConfig rows for validation and retrieval                  |
+//   output/radiative_transfer_diagnostics.zig reads SolveConfig and ForwardInput shape for reports            |
+//   internal.zig re-exports this module for focused tests and lower-level callers                             |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   prepareSolveConfig                    -> reject unsupported RTM controls before the solve                 |
@@ -13,8 +22,22 @@ const phase_functions = @import("../optical_properties/shared/phase_functions.zi
 //   executePreparedWithLabosWorkspace     -> call the LABOS solve with optional caller-owned scratch memory   |
 //   sourceInterfaceFromLayers             -> build source interfaces from layer data when none are supplied   |
 //                                                                                                             |
+// input model                                                                                                 |
+//   ForwardInput is the per-wavelength row. Scalar fields support simple fallback routes; layers,             |
+//   source_interfaces, rtm_quadrature, and pseudo_spherical_grid are borrowed prepared storage. No file I/O,  |
+//   parsing, or hidden global state is allowed at this boundary.                                              |
+//                                                                                                             |
+// output model                                                                                                |
+//   ForwardResult contains top-of-atmosphere reflectance and an optional Jacobian vector. Derivative mode is  |
+//   selected in SolveConfig before the solve; unsupported derivative routes are rejected before LABOS work.   |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Wavelength workers call the prepared workspace route repeatedly. Reusing labos.Workspace keeps geometry,  |
+//   attenuation, layer, phase-basis, and order buffers out of the per-sample allocation path.                 |
+//                                                                                                             |
 // ownership                                                                                                   |
-//   ForwardInput borrows layer/source/quadrature slices. LABOS workspace ownership stays in labos.Workspace.  |
+//   This file defines owner/view row contracts only. ForwardInput borrows layer/source/quadrature slices, and |
+//   LABOS scratch ownership stays in labos.Workspace.                                                         |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const labos = struct {
@@ -710,7 +733,11 @@ pub const Jacobian = jacobian;
 
 pub fn prepareSolveConfig(config: SolveConfig) PrepareError!SolveConfig {
     // prepareSolveConfig -------------------------------------------------------------------------------------|
-    // Validate public RTM controls before callers use the prepared path.                                      |
+    // Validate public RTM controls and return the SolveConfig shape used by prepared execution.               |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This is the last public control check before wavelength workers call executePrepared*. The prepared   |
+    //   route assumes thresholds, stream count, and scattering mode already passed this check.                |
     // --------------------------------------------------------------------------------------------------------|
 
     try config.rtm_controls.validate();
@@ -724,6 +751,10 @@ pub fn executePrepared(
 ) ExecuteError!ForwardResult {
     // executePrepared ----------------------------------------------------------------------------------------|
     // Prepared solve without caller-owned LABOS scratch memory.                                               |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   Use this for one-shot solves after prepareSolveConfig has already validated controls. Repeated        |
+    //   wavelength workers should prefer executePreparedWithLabosWorkspace so LABOS scratch can be reused.    |
     // --------------------------------------------------------------------------------------------------------|
 
     return executePreparedWithLabosWorkspace(allocator, rtm_config, input, null);
@@ -737,7 +768,11 @@ pub fn executePreparedWithLabosWorkspace(
 ) ExecuteError!ForwardResult {
     // executePreparedWithLabosWorkspace ----------------------------------------------------------------------|
     // Prepared solve that can reuse caller-owned LABOS scratch memory across wavelength samples.              |
-    // The transport solve stays under labos.executeWithWorkspace.                                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   The transport solve stays under labos.executeWithWorkspace. This wrapper does not allocate the        |
+    //   workspace and does not re-validate controls; it keeps the public RTM boundary stable while letting    |
+    //   product workers pass their retained worker-local LABOS scratch.                                       |
     // --------------------------------------------------------------------------------------------------------|
 
     return labos.executeWithWorkspace(allocator, rtm_config, input, workspace);
@@ -750,6 +785,10 @@ pub fn execute(
 ) ExecuteError!ForwardResult {
     // execute ------------------------------------------------------------------------------------------------|
     // Public one-shot path. Validate controls, then run the prepared path without a saved LABOS workspace.    |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   This is convenient for tests and simple callers. Product simulation usually prepares once and calls   |
+    //   executePreparedWithLabosWorkspace repeatedly.                                                         |
     // --------------------------------------------------------------------------------------------------------|
 
     const rtm_config = try prepareSolveConfig(config);
