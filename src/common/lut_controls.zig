@@ -2,31 +2,39 @@ const std = @import("std");
 const errors = @import("errors.zig");
 
 // lut_controls.zig -------------------------------------------------------------------------------------------|
-// LUT compatibility rows shared by scene input, bundled asset workflows, and prepared optical-state caches.   |
+// Typed LUT compatibility controls shared by public Scene input, bundled reference-data workflows, and        |
+// PreparedOpticalState generated-asset metadata.                                                              |
 //                                                                                                             |
-// called from                                                                                                 |
-//   Scene.validate checks the control rows before execution.                                                  |
-//   Scene.lutCompatibilityKey folds geometry, surface, instrument support, spectroscopy identity, and these   |
-//   controls into the value key passed to generated/consumed LUT workflows.                                   |
-//   input/reference_data/bundled/workflows.zig uses the key when deciding which reflectance or cross-section  |
-//   LUT products to generate, consume, or reject.                                                             |
-//   input/instrument/cross_section_lut.zig uses XsecControls while building operational pressure/temperature  |
-//   Legendre coefficient tables.                                                                              |
+// call chain                                                                                                  |
+//   Scene.validate -> Controls.validate rejects incomplete active LUT requests before preparation.            |
+//   Scene.lutCompatibilityKey -> CompatibilityKey copies the scene identity that changes generated LUTs.      |
+//   bundled/load.zig -> workflows.applyLutWorkflows reads controls, may clone only the mutated Scene          |
+//   subtrees, then appends GeneratedLutAsset rows carrying the same key into PreparedOpticalState.            |
+//   input/instrument/cross_section_lut.zig -> XsecControls sizes the pressure/temperature Legendre grid used  |
+//   when an operational cross-section LUT is generated from spectroscopy or cross-section source tables.      |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   Mode.parse/label keeps text adapters out of the forward model.                                            |
-//   ReflectanceControls and XsecControls validate the knobs for one LUT surface.                              |
-//   Controls groups both surfaces so Scene can validate and compare them together.                            |
-//   CompatibilityKey.matches compares the scene identity with exact enum/count/hash checks and tolerant f64   |
-//   checks for numeric controls that are serialized through text or generated assets.                         |
+// modes                                                                                                       |
+//   .direct   means use ordinary preparation/runtime paths and do not add generated-asset metadata.           |
+//   .generate means build a LUT during bundled-asset preparation and retain a compatibility key for it.       |
+//   .consume  means the caller supplied a compatible LUT and preparation must reject missing/inert payloads.  |
+//   Reflectance consume is intentionally rejected in workflows today because no reflectance asset loader      |
+//   exists yet; the typed mode stays here so unsupported requests fail explicitly.                            |
+//                                                                                                             |
+// compatibility contract                                                                                      |
+//   The key contains geometry, effective nominal wavelength identity, surface albedo, instrument support,     |
+//   spectroscopy source identity, and the active control rows. Enums, counts, and hashes must match exactly.  |
+//   Float fields use a small abs/rel tolerance because controls can cross text/generated-asset boundaries     |
+//   before being compared. This is a compatibility test, not a raw memory equality check.                     |
 //                                                                                                             |
 // runtime shape                                                                                               |
-//   These rows are setup/cache identity data. They do not load assets, open files, or run the RTM.            |
-//   The generated LUT evaluators may be hot, but these control structs stay outside the per-sample loop.      |
+//   These structs are setup/cache identity rows. They do not own assets, open files, parse user text, or run  |
+//   the RTM. The hot wavelength loops consume prepared optical/instrument data; they should not re-interpret  |
+//   these public controls.                                                                                    |
 //                                                                                                             |
 // memory                                                                                                      |
-//   CompatibilityKey is a 160 B value copied and compared directly. It contains no slices, pointers, or owned |
-//   heap storage, so cache entries can retain it without a deinit path.                                       |
+//   All rows are plain values with no slices, pointers, or heap ownership. CompatibilityKey is 160 B and can  |
+//   be copied into GeneratedLutAsset. Generated strings/assets are owned by load/workflows or prepared state, |
+//   not by this module.                                                                                       |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Mode = enum {
