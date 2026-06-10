@@ -127,6 +127,25 @@ pub fn loadCollisionInducedAbsorptionForScene(
 }
 
 pub fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64 {
+    // sampleSceneWavelengthsOwned ---------------------------------------------------------------------------|
+    // Build the wavelength support used while generating operational O2 or O2-O2 LUTs from the source scene. |
+    //                                                                                                        |
+    // call path                                                                                              |
+    //   workflows.zig calls this only for .generate LUT modes before replacing the working scene LUT handle. |
+    //                                                                                                        |
+    // route order                                                                                            |
+    //   1. high-resolution LUT sampling expands nominal bounds by the instrument response half-span          |
+    //   2. measured-channel scenes clone the measured wavelength list exactly                                |
+    //   3. ordinary scenes build a uniform grid from spectral_grid start/end/sample_count                    |
+    //                                                                                                        |
+    // ownership                                                                                              |
+    //   The returned slice is owned by the caller and freed after the generated LUT is built. The source     |
+    //   Scene is borrowed and is not mutated here.                                                           |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   lambda_i = start_nm + i * (end_nm - start_nm) / (sample_count - 1)                                   |
+    // -------------------------------------------------------------------------------------------------------|
+
     const support = scene.observation_model.primaryOperationalBandSupport();
     const nominal_bounds = scene.lutNominalWavelengthBounds();
     const support_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
@@ -166,6 +185,20 @@ fn uniformWavelengthGridOwned(
     end_nm: f64,
     step_nm: f64,
 ) ![]f64 {
+    // uniformWavelengthGridOwned ----------------------------------------------------------------------------|
+    // Allocate an inclusive uniform grid for high-resolution LUT sampling.                                   |
+    //                                                                                                        |
+    // boundary                                                                                               |
+    //   Invalid spans or non-positive steps are rejected before LUT generation can allocate empty or         |
+    //   backwards support rows.                                                                              |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   interval_count = ceil((end_nm - start_nm) / step_nm - 1.0e-12)                                       |
+    //   lambda_i       = min(start_nm + i * step_nm, end_nm)                                                 |
+    //                                                                                                        |
+    // The small epsilon keeps an exact multiple of step_nm from gaining one extra endpoint from roundoff.    |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (!(step_nm > 0.0) or !std.math.isFinite(start_nm) or !std.math.isFinite(end_nm) or end_nm < start_nm) {
         return error.InvalidRequest;
     }
