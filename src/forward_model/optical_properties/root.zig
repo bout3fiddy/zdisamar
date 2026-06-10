@@ -7,24 +7,34 @@ const Finalize = @import("state_build/finalize.zig");
 const Trace = @import("../instrumentation/trace.zig");
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Optical-property preparation entry point for the forward model.                                             |
-//                                                                                                             |
-// main path                                                                                                   |
-//   Scene + PreparationInputs                                                                                 |
-//     -> PreparationContext                                                                                   |
-//     -> AbsorberBuildState                                                                                   |
-//     -> PreparedMeans                                                                                        |
-//     -> PreparedOpticalState                                                                                 |
+// Public optical-property preparation facade for Scene -> PreparedOpticalState.                               |
 //                                                                                                             |
 // called by                                                                                                   |
-//   forward-model implementations before they build transport inputs.                                         |
+//   src/root.zig prepare() reaches this through bundled/reference-data loading.                               |
+//   input/reference_data/bundled/load.zig uses prepare() after it hydrates the working Scene and reference    |
+//   tables. input/o2a_reference/run.zig refreshes PreparedOpticalState for vendor O2 A cases and retrievals.  |
+//   optimal_estimation/retrieval.zig calls this while mutating state-dependent O2 A scenes.                   |
+//                                                                                                             |
+// public surface                                                                                              |
+//   PreparationInputs and BorrowedProfilePreparation are setup contracts. PreparedLayer, PreparedSublayer,    |
+//   OpticalDepthBreakdown, and PreparedOpticalState are re-exported so callers use one preparation facade     |
+//   instead of importing the state_build file split directly.                                                 |
+//                                                                                                             |
+// prepare route                                                                                               |
+//   Scene + PreparationInputs                                                                                 |
+//     -> Context.init                   borrows reference inputs and allocates temporary preparation rows     |
+//     -> Absorbers.build                prepares active line/cross-section absorber rows and spectroscopy     |
+//     -> Accumulation.accumulate        reduces atmosphere/support rows into layer means and optical depths   |
+//     -> Finalize.assemble              moves owners into PreparedOpticalState and clears setup owners        |
+//     -> ensureSharedRtmGeometryCache   builds reusable transport geometry for wavelength-time routes         |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   Trace zones split context setup, absorber preparation, layer accumulation, final assembly, and shared     |
 //   RTM geometry so retained benchmark traces can show where optical preparation time moved.                  |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   Context and AbsorberBuildState own temporary arrays until Finalize moves them into PreparedOpticalState.  |
+//   Context and AbsorberBuildState own temporary arrays until Finalize.assemble moves them into the final     |
+//   PreparedOpticalState header. After that handoff, PreparedOpticalState.deinit owns the release order.      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const state = @import("state_build/state.zig");

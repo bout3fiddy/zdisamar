@@ -2,25 +2,26 @@ const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
 // operational_o2.zig ----------------------------------------------------------------------------------------- |
-// Adapts the operational O2 lookup table to the spectroscopy evaluation shape used by state builders.          |
+// Adapts an operational O2 cross-section LUT into the SpectroscopyEvaluation shape used by prepared optics.    |
 //                                                                                                              |
 // called by                                                                                                    |
-//   spectroscopy.zig exposes this through the state-build spectroscopy facade                                  |
-//   state_spectroscopy.zig uses it for continuum/profile spectroscopy when operational O2 LUTs replace lines   |
-//   layer_spectroscopy.zig uses the same evaluation shape for support-row and profile-node line values         |
+//   spectroscopy.zig exposes this through the state-build spectroscopy facade.                                 |
+//   state_spectroscopy.zig calls it when an operational O2 LUT replaces line-by-line O2 spectroscopy.          |
+//   carrier_eval.zig and layer_spectroscopy.zig then density-weight the returned evaluation with other active  |
+//   line absorbers for support-row, profile-node, and altitude carrier routes.                                 |
 //                                                                                                              |
-// main path                                                                                                    |
-//   operationalO2EvaluationAtWavelength                                                                        |
-//     -> evaluate sigma from OperationalCrossSectionLut                                                        |
-//     -> evaluate d_sigma/dT from the same LUT                                                                 |
-//     -> fill the ReferenceData.SpectroscopyEvaluation fields expected by line-spectroscopy callers            |
+// mapping                                                                                                      |
+//   OperationalCrossSectionLut.sigmaAt becomes weak_line_sigma, line_sigma, and total_sigma. Strong-line and   |
+//   line-mixing fields are zero because the LUT is already the operational cross-section product, not a split  |
+//   HITRAN weak/strong-line decomposition. d_sigma_d_temperature comes from the same LUT.                      |
 //                                                                                                              |
 // hot path                                                                                                     |
-//   Support-row spectroscopy calls this for one wavelength and thermodynamic state before carrier rows reuse   |
-//   the resulting sigma and temperature derivative.                                                            |
+//   Runs at wavelength time for each O2 operational thermodynamic sample. Keep this as one borrowed-LUT value  |
+//   adapter; setup ownership and LUT generation/consumption live in input/instrument and state_build/context.  |
 //                                                                                                              |
 // memory                                                                                                       |
-//   Returns one value row. The LUT storage stays borrowed from PreparedOpticalState/Context.                   |
+//   Returns one ReferenceData.SpectroscopyEvaluation value row. The LUT rows stay borrowed from                |
+//   PreparedOpticalState or the setup Context; no allocation or retained state is created here.                |
 // ------------------------------------------------------------------------------------------------------------ |
 
 pub fn operationalO2EvaluationAtWavelength(
