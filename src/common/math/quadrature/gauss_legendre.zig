@@ -128,32 +128,7 @@ pub fn fillDisamarDivPoints01(
     //   gausq2Disamar                                                                                         |
     // --------------------------------------------------------------------------------------------------------|
 
-    if (order == 0 or
-        nodes_out.len < order or
-        weights_out.len < order or
-        order > max_disamar_division_points)
-    {
-        return error.InvalidOrder;
-    }
-
-    const order_usize: usize = @intCast(order);
-    var diagonal: [max_disamar_division_points]f64 = undefined;
-    var off_diagonal: [max_disamar_division_points]f64 = undefined;
-    var first_row: [max_disamar_division_points]f64 = undefined;
-
-    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
-    initDisamarFirstRow(order_usize, &first_row);
-
-    try gausq2Disamar(
-        diagonal[0..order_usize],
-        off_diagonal[0..order_usize],
-        first_row[0..order_usize],
-    );
-
-    for (0..order_usize) |index| {
-        nodes_out[index] = (diagonal[index] + 1.0) * 0.5;
-        weights_out[index] = first_row[index] * first_row[index];
-    }
+    try fillDisamarDivPointsScaled(order, 0.5, 0.5, nodes_out, weights_out, 1.0);
 }
 
 pub fn fillDisamarDivPointsInterval(
@@ -176,33 +151,9 @@ pub fn fillDisamarDivPointsInterval(
     //   w_interval = w_unit / 2 * (b0 - a0)                                                                   |
     // --------------------------------------------------------------------------------------------------------|
 
-    if (order == 0 or
-        nodes_out.len < order or
-        weights_out.len < order or
-        order > max_disamar_division_points)
-    {
-        return error.InvalidOrder;
-    }
-
-    const order_usize: usize = @intCast(order);
-    var diagonal: [max_disamar_division_points]f64 = undefined;
-    var off_diagonal: [max_disamar_division_points]f64 = undefined;
-    var first_row: [max_disamar_division_points]f64 = undefined;
-
-    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
-    initDisamarFirstRow(order_usize, &first_row);
-
-    try gausq2Disamar(
-        diagonal[0..order_usize],
-        off_diagonal[0..order_usize],
-        first_row[0..order_usize],
-    );
-
     const span = b0 - a0;
-    for (0..order_usize) |index| {
-        weights_out[index] = first_row[index] * first_row[index] / 2.0 * span;
-        nodes_out[index] = (diagonal[index] + 1.0) / 2.0 * span + a0;
-    }
+    const half_span = span / 2.0;
+    try fillDisamarDivPointsScaled(order, a0 + half_span, half_span, nodes_out, weights_out, half_span);
 }
 
 pub fn fillDisamarDivPointsIntervalNodes(
@@ -224,10 +175,30 @@ pub fn fillDisamarDivPointsIntervalNodes(
     //   gausq2DisamarNodes                                                                                    |
     // --------------------------------------------------------------------------------------------------------|
 
-    if (order == 0 or
-        nodes_out.len < order or
-        order > max_disamar_division_points)
-    {
+    const span = b0 - a0;
+    const half_span = span / 2.0;
+    try fillDisamarDivPointsScaled(order, a0 + half_span, half_span, nodes_out, null, 0.0);
+}
+
+fn fillDisamarDivPointsScaled(
+    order: u32,
+    node_offset: f64,
+    node_scale: f64,
+    nodes_out: []f64,
+    weights_out: ?[]f64,
+    weight_scale: f64,
+) error{InvalidOrder}!void {
+    // fillDisamarDivPointsScaled -----------------------------------------------------------------------------|
+    // Runs the shared DISAMAR tridiagonal solve and applies the caller's interval scaling.                    |
+    // Unit-interval weights intentionally use scale 1.0; generic interval weights use half the interval span. |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const empty_order = order == 0;
+    const order_too_large = order > max_disamar_division_points;
+    const missing_nodes = nodes_out.len < order;
+    const missing_weights = if (weights_out) |weights| weights.len < order else false;
+    const invalid_order = empty_order or order_too_large or missing_nodes or missing_weights;
+    if (invalid_order) {
         return error.InvalidOrder;
     }
 
@@ -236,14 +207,29 @@ pub fn fillDisamarDivPointsIntervalNodes(
     var off_diagonal: [max_disamar_division_points]f64 = undefined;
 
     initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
-    try gausq2DisamarNodes(
-        diagonal[0..order_usize],
-        off_diagonal[0..order_usize],
-    );
 
-    const span = b0 - a0;
-    for (0..order_usize) |index| {
-        nodes_out[index] = (diagonal[index] + 1.0) / 2.0 * span + a0;
+    if (weights_out) |weights| {
+        var first_row: [max_disamar_division_points]f64 = undefined;
+        initDisamarFirstRow(order_usize, &first_row);
+        try gausq2Disamar(
+            diagonal[0..order_usize],
+            off_diagonal[0..order_usize],
+            first_row[0..order_usize],
+        );
+
+        for (0..order_usize) |index| {
+            nodes_out[index] = diagonal[index] * node_scale + node_offset;
+            weights[index] = first_row[index] * first_row[index] * weight_scale;
+        }
+    } else {
+        try gausq2DisamarNodes(
+            diagonal[0..order_usize],
+            off_diagonal[0..order_usize],
+        );
+
+        for (0..order_usize) |index| {
+            nodes_out[index] = diagonal[index] * node_scale + node_offset;
+        }
     }
 }
 
