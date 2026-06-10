@@ -456,7 +456,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     };
                     const breakdown =
                         shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(&layer_request);
-                    if (request.compute_jacobian) attachAerosolOpticalDepthJacobian(request.scene, layer_input);
+                    if (request.compute_jacobian) {
+                        attachAerosolOpticalDepthJacobian(request.scene.aerosol.optical_depth, layer_input);
+                    }
                     Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
@@ -495,7 +497,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 };
                 const breakdown =
                     shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(&layer_request);
-                if (request.compute_jacobian) attachAerosolOpticalDepthJacobian(request.scene, layer_input);
+                if (request.compute_jacobian) {
+                    attachAerosolOpticalDepthJacobian(request.scene.aerosol.optical_depth, layer_input);
+                }
                 Evaluation.accumulateBreakdown(&totals, breakdown);
             }
             return totals;
@@ -520,7 +524,10 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 );
                 request.layer_inputs[sublayer_index] = Evaluation.layerInputFromEvaluated(evaluated);
                 if (request.compute_jacobian) {
-                    attachAerosolOpticalDepthJacobian(request.scene, &request.layer_inputs[sublayer_index]);
+                    attachAerosolOpticalDepthJacobian(
+                        request.scene.aerosol.optical_depth,
+                        &request.layer_inputs[sublayer_index],
+                    );
                 }
                 Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
             }
@@ -552,7 +559,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 request.profile_cache,
             );
             layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
-            if (request.compute_jacobian) attachAerosolOpticalDepthJacobian(request.scene, layer_input);
+            if (request.compute_jacobian) {
+                attachAerosolOpticalDepthJacobian(request.scene.aerosol.optical_depth, layer_input);
+            }
             Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
         }
         return totals;
@@ -629,7 +638,9 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             .view_mu = request.scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
             .phase = PhaseFunctions.PhaseMixture.fromUnitPhase(&request.prepared.aerosol_phase_coefficients),
         };
-        if (request.compute_jacobian) attachAerosolOpticalDepthJacobian(request.scene, layer_input);
+        if (request.compute_jacobian) {
+            attachAerosolOpticalDepthJacobian(request.scene.aerosol.optical_depth, layer_input);
+        }
         totals.gas_absorption_optical_depth += gas_absorption_optical_depth;
         totals.gas_scattering_optical_depth += gas_scattering_optical_depth;
         totals.cia_optical_depth += layer.cia_optical_depth;
@@ -702,7 +713,9 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                     };
                     const breakdown =
                         shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache(&layer_request);
-                    if (request.compute_jacobian) attachAerosolOpticalDepthJacobian(request.scene, layer_input);
+                    if (request.compute_jacobian) {
+                        attachAerosolOpticalDepthJacobian(request.scene.aerosol.optical_depth, layer_input);
+                    }
                     Evaluation.accumulateBreakdown(&totals, breakdown);
                 }
                 return totals;
@@ -724,7 +737,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
 }
 
 fn attachAerosolOpticalDepthJacobian(
-    scene: *const Scene,
+    aerosol_tau: f64,
     layer_input: *transport_common.LayerInput,
 ) void {
     // attachAerosolOpticalDepthJacobian -------------------------------------------------------------------- |
@@ -732,7 +745,6 @@ fn attachAerosolOpticalDepthJacobian(
     // beside the scalar layer values because LABOS and RTM quadrature read the row as one transport unit.    |
     // -------------------------------------------------------------------------------------------------------|
 
-    const aerosol_tau = scene.aerosol.optical_depth;
     if (aerosol_tau <= 0.0) return;
     const optical_derivative = layer_input.aerosol_optical_depth / aerosol_tau;
     const scattering_derivative = layer_input.aerosol_scattering_optical_depth / aerosol_tau;
