@@ -307,13 +307,7 @@ fn loadFixedClimatologyProfile(
 ) !ReferenceDataModel.ClimatologyProfile {
     if (try fixed_asset_cache.loadProfile(allocator, asset)) |cached| return cached;
 
-    var profile_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .climatology_profile,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var profile_asset = try loadFixedExternalAsset(allocator, .climatology_profile, asset);
     defer profile_asset.deinit(allocator);
     var profile = try profile_asset.toClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
@@ -327,13 +321,7 @@ fn loadFixedCiaTable(
 ) !ReferenceDataModel.CollisionInducedAbsorptionTable {
     if (try fixed_asset_cache.loadCia(allocator, asset)) |cached| return cached;
 
-    var loaded_cia = try reference_assets.loadExternalAsset(
-        allocator,
-        .collision_induced_absorption_table,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var loaded_cia = try loadFixedExternalAsset(allocator, .collision_induced_absorption_table, asset);
     defer loaded_cia.deinit(allocator);
     var table = try loaded_cia.toCollisionInducedAbsorptionTable(allocator);
     errdefer table.deinit(allocator);
@@ -347,13 +335,7 @@ fn loadFixedAirmassLut(
 ) !ReferenceDataModel.AirmassFactorLut {
     if (try fixed_asset_cache.loadAirmassLut(allocator, asset)) |cached| return cached;
 
-    var lut_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .lookup_table,
-        asset.id,
-        asset.path,
-        asset.format,
-    );
+    var lut_asset = try loadFixedExternalAsset(allocator, .lookup_table, asset);
     defer lut_asset.deinit(allocator);
     var lut = try lut_asset.toAirmassFactorLut(allocator);
     errdefer lut.deinit(allocator);
@@ -383,6 +365,20 @@ fn loadFixedSolarSpectrumSamples(
     errdefer allocator.free(samples);
     try fixed_asset_cache.storeSolarSamples(asset, samples);
     return samples;
+}
+
+fn loadFixedExternalAsset(
+    allocator: Allocator,
+    kind: reference_assets.AssetKind,
+    asset: ExternalAsset,
+) !reference_assets.LoadedAsset {
+    return reference_assets.loadExternalAsset(
+        allocator,
+        kind,
+        asset.id,
+        asset.path,
+        asset.format,
+    );
 }
 
 fn buildVendorTraceGasSpectroscopyProfile(
@@ -1226,36 +1222,26 @@ pub fn loadResolvedVendorO2ALineList(
         return cached;
     }
 
-    var asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .spectroscopy_line_list,
-        spec.line_list_asset.id,
-        spec.line_list_asset.path,
-        spec.line_list_asset.format,
-    );
+    var asset = try loadFixedExternalAsset(allocator, .spectroscopy_line_list, spec.line_list_asset);
     defer asset.deinit(allocator);
 
     var line_list = try asset.toSpectroscopyLineList(allocator);
     errdefer line_list.deinit(allocator);
 
-    var strong_lines_asset = try reference_assets.loadExternalAsset(
+    var strong_lines_asset = try loadFixedExternalAsset(
         allocator,
         .spectroscopy_strong_line_set,
-        spec.strong_lines_asset.id,
-        spec.strong_lines_asset.path,
-        spec.strong_lines_asset.format,
+        spec.strong_lines_asset,
     );
     defer strong_lines_asset.deinit(allocator);
 
     var strong_lines = try strong_lines_asset.toSpectroscopyStrongLineSet(allocator);
     defer strong_lines.deinit(allocator);
 
-    var relaxation_asset = try reference_assets.loadExternalAsset(
+    var relaxation_asset = try loadFixedExternalAsset(
         allocator,
         .spectroscopy_relaxation_matrix,
-        spec.line_mixing_asset.id,
-        spec.line_mixing_asset.path,
-        spec.line_mixing_asset.format,
+        spec.line_mixing_asset,
     );
     defer relaxation_asset.deinit(allocator);
 
