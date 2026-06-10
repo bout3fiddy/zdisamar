@@ -113,6 +113,52 @@ pub const SimulationRunRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------------------|
 
+// SummaryRequest --------------------------------------------------------------------------------------------------------|
+// Borrowed inputs for the lightweight summary route when the caller does not retain product workspace state.             |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 96 B (0.094 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene      : *const Scene                                                                                     |
+// [ 8..87] rtm_config : common.SolveConfig                                                                               |
+// [88..95] prepared   : *const OpticsPreparation.PreparedOpticalState                                                    |
+//                                                                                                                        |
+// referenced storage: scene and prepared are read-only borrowed inputs; this request owns no arrays.                     |
+// unused bits: inherited from nested SolveConfig layout                                                                  |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 96 B (0.094 KiB); no out-of-line storage                                                     |
+pub const SummaryRequest = struct {
+    scene: *const Scene,
+    rtm_config: common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// SummaryWorkspaceRequest -----------------------------------------------------------------------------------------------|
+// Borrowed inputs and retained workspace for the lightweight summary route.                                              |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 104 B (0.102 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] storage    : *Storage.ProductStorage                                                                        |
+// [  8.. 15] scene      : *const Scene                                                                                   |
+// [ 16.. 95] rtm_config : common.SolveConfig                                                                             |
+// [ 96..103] prepared   : *const OpticsPreparation.PreparedOpticalState                                                  |
+//                                                                                                                        |
+// referenced storage: ProductStorage owns reusable buffers; scene and prepared are read-only borrowed inputs.            |
+// unused bits: inherited from nested SolveConfig layout                                                                  |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 104 B (0.102 KiB); total excludes retained workspace storage                                 |
+pub const SummaryWorkspaceRequest = struct {
+    storage: *Storage.ProductStorage,
+    scene: *const Scene,
+    rtm_config: common.SolveConfig,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // ResolvedSimulationPlan ----------------------------------------------------------------------------------------------- |
 // Borrowed or owned wavelength sampling, forward miss, and profile-cache state for one simulation.                       |
 //                                                                                                                        |
@@ -244,7 +290,7 @@ const ForwardPrefetchRequest = struct {
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
 // cache span: 1 cache line at 64 B per line                                                                              |
 // footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
-const WarmWavelengthPlanRequest = struct {
+pub const WarmWavelengthPlanRequest = struct {
     storage: *Storage.ProductStorage,
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -777,7 +823,7 @@ pub fn warmWavelengthPlan(
     try warmWavelengthPlanFromRequest(allocator, &request);
 }
 
-fn warmWavelengthPlanFromRequest(
+pub fn warmWavelengthPlanFromRequest(
     allocator: Allocator,
     request: *const WarmWavelengthPlanRequest,
 ) Storage.Error!void {
@@ -1911,9 +1957,32 @@ pub fn simulateSummary(
     // Convenience summary route with temporary ProductStorage.                                                           |
     // -------------------------------------------------------------------------------------------------------------------|
 
+    const request = SummaryRequest{
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+    };
+    return simulateSummaryFromRequest(allocator, &request);
+}
+
+pub fn simulateSummaryFromRequest(
+    allocator: Allocator,
+    request: *const SummaryRequest,
+) Storage.Error!Types.InstrumentGridSummary {
+    // simulateSummaryFromRequest ----------------------------------------------------------------------------------------|
+    // Allocate temporary summary workspace for a borrowed request row. This keeps one-shot ownership local               |
+    // while the reusable path receives the same named data shape as workspace-backed callers.                            |
+    // -------------------------------------------------------------------------------------------------------------------|
+
     var storage: Storage.ProductStorage = .{};
     defer storage.deinit(allocator);
-    return simulateSummaryWithWorkspace(allocator, &storage, scene, rtm_config, prepared);
+    const workspace_request = SummaryWorkspaceRequest{
+        .storage = &storage,
+        .scene = request.scene,
+        .rtm_config = request.rtm_config,
+        .prepared = request.prepared,
+    };
+    return simulateSummaryWithWorkspaceFromRequest(allocator, &workspace_request);
 }
 
 pub fn simulateSummaryWithWorkspace(
@@ -1928,7 +1997,25 @@ pub fn simulateSummaryWithWorkspace(
     // reports means and should stay lightweight.                                                                         |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    var summary_scene = scene.*;
+    const request = SummaryWorkspaceRequest{
+        .storage = storage,
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+    };
+    return simulateSummaryWithWorkspaceFromRequest(allocator, &request);
+}
+
+pub fn simulateSummaryWithWorkspaceFromRequest(
+    allocator: Allocator,
+    request: *const SummaryWorkspaceRequest,
+) Storage.Error!Types.InstrumentGridSummary {
+    // simulateSummaryWithWorkspaceFromRequest ---------------------------------------------------------------------------|
+    // Build the capped summary scene and reusable buffers from one borrowed request row. Summary mode keeps              |
+    // the product grid small because it only returns mean values, not per-sample arrays.                                 |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    var summary_scene = request.scene.*;
 
     // Summary mode truncates very long spectral grids while the full product route preserves every sample.
     if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
@@ -1936,15 +2023,15 @@ pub fn simulateSummaryWithWorkspace(
     }
     const buffer_request = Storage.BufferHintRequest{
         .scene = &summary_scene,
-        .rtm_config = &rtm_config,
+        .rtm_config = &request.rtm_config,
     };
-    const request = SimulationRunRequest{
+    const simulation_request = SimulationRunRequest{
         .scene = &summary_scene,
-        .rtm_config = rtm_config,
-        .prepared = prepared,
-        .buffers = try storage.buffersFromHint(allocator, &buffer_request),
-        .evaluation_cache = try storage.spectralCache(allocator),
-        .wavelength_plan_storage = storage,
+        .rtm_config = request.rtm_config,
+        .prepared = request.prepared,
+        .buffers = try request.storage.buffersFromHint(allocator, &buffer_request),
+        .evaluation_cache = try request.storage.spectralCache(allocator),
+        .wavelength_plan_storage = request.storage,
     };
-    return simulateInternal(allocator, &request);
+    return simulateInternal(allocator, &simulation_request);
 }

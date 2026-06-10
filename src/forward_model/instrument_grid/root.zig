@@ -50,6 +50,54 @@ pub const InstrumentGridProductView = types.InstrumentGridProductView;
 pub const ProductStorage = storage.ProductStorage;
 pub const Error = storage.Error;
 
+// ProductWorkspaceRequest -----------------------------------------------------------------------------------------------|
+// Borrowed public-facade inputs for a product run backed by reusable ProductStorage.                                     |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 104 B (0.102 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] product_workspace : *ProductStorage                                                                         |
+// [  8.. 15] scene             : *const Scene                                                                            |
+// [ 16.. 95] rtm_config        : SolveConfig                                                                             |
+// [ 96..103] prepared          : *const PreparedOpticalState                                                             |
+//                                                                                                                        |
+// referenced storage: ProductStorage owns reusable rows; scene and prepared are read-only borrowed inputs.               |
+// unused bits: inherited from nested SolveConfig layout                                                                  |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 104 B (0.102 KiB); total excludes retained workspace storage                                 |
+const ProductWorkspaceRequest = struct {
+    product_workspace: *ProductStorage,
+    scene: *const Scene,
+    rtm_config: SolveConfig,
+    prepared: *const PreparedOpticalState,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
+// WarmProductWorkspaceRequest -------------------------------------------------------------------------------------------|
+// Borrowed public-facade inputs used to prebuild reusable product buffers and plan caches.                               |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 104 B (0.102 KiB), align: 8 B                                                                                    |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [  0..  7] product_workspace : *ProductStorage                                                                         |
+// [  8.. 15] scene             : *const Scene                                                                            |
+// [ 16.. 95] rtm_config        : SolveConfig                                                                             |
+// [ 96..103] prepared          : *const PreparedOpticalState                                                             |
+//                                                                                                                        |
+// referenced storage: ProductStorage owns reusable rows; scene and prepared are read-only borrowed inputs.               |
+// unused bits: inherited from nested SolveConfig layout                                                                  |
+// cache span: 2 cache lines at 64 B per line                                                                             |
+// footprint: per instance = 104 B (0.102 KiB); total excludes retained workspace storage                                 |
+const WarmProductWorkspaceRequest = struct {
+    product_workspace: *ProductStorage,
+    scene: *const Scene,
+    rtm_config: SolveConfig,
+    prepared: *const PreparedOpticalState,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 pub fn simulateSummary(
     allocator: Allocator,
     scene: *const Scene,
@@ -61,7 +109,12 @@ pub fn simulateSummary(
     // and does not want to retain product arrays.                                                                        |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    return simulate.simulateSummary(allocator, scene, rtm_config, prepared);
+    const request = simulate_core.SummaryRequest{
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+    };
+    return simulate_core.simulateSummaryFromRequest(allocator, &request);
 }
 
 pub fn simulateSummaryWithWorkspace(
@@ -76,13 +129,13 @@ pub fn simulateSummaryWithWorkspace(
     // profile caches warm across repeated retrieval iterations.                                                          |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    return simulate.simulateSummaryWithWorkspace(
-        allocator,
-        product_workspace,
-        scene,
-        rtm_config,
-        prepared,
-    );
+    const request = simulate_core.SummaryWorkspaceRequest{
+        .storage = product_workspace,
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+    };
+    return simulate_core.simulateSummaryWithWorkspaceFromRequest(allocator, &request);
 }
 
 pub fn simulateProduct(
@@ -98,13 +151,13 @@ pub fn simulateProduct(
 
     var product_workspace: ProductStorage = .{};
     defer product_workspace.deinit(allocator);
-    const view = try simulateProductWithWorkspace(
-        allocator,
-        &product_workspace,
-        scene,
-        rtm_config,
-        prepared,
-    );
+    const request = ProductWorkspaceRequest{
+        .product_workspace = &product_workspace,
+        .scene = scene,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
+    };
+    const view = try simulateProductWithWorkspaceFromRequest(allocator, &request);
     return view.toOwned(allocator);
 }
 
@@ -127,18 +180,36 @@ pub fn simulateProductWithWorkspace(
     //   into the view so downstream output code can report the physical state used for the spectrum.                     |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const buffer_request = storage.BufferHintRequest{
-        .scene = scene,
-        .rtm_config = &rtm_config,
-    };
-    const buffers = try product_workspace.buffersFromHint(allocator, &buffer_request);
-    const simulation_request = simulate_core.SimulationRunRequest{
+    const request = ProductWorkspaceRequest{
+        .product_workspace = product_workspace,
         .scene = scene,
         .rtm_config = rtm_config,
         .prepared = prepared,
+    };
+    return simulateProductWithWorkspaceFromRequest(allocator, &request);
+}
+
+fn simulateProductWithWorkspaceFromRequest(
+    allocator: Allocator,
+    request: *const ProductWorkspaceRequest,
+) !InstrumentGridProductView {
+    // simulateProductWithWorkspaceFromRequest ---------------------------------------------------------------------------|
+    // Run the product route from one borrowed facade request. The workspace owns reusable buffers and the                |
+    // returned product view borrows those buffers until the workspace is mutated or released.                            |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    const buffer_request = storage.BufferHintRequest{
+        .scene = request.scene,
+        .rtm_config = &request.rtm_config,
+    };
+    const buffers = try request.product_workspace.buffersFromHint(allocator, &buffer_request);
+    const simulation_request = simulate_core.SimulationRunRequest{
+        .scene = request.scene,
+        .rtm_config = request.rtm_config,
+        .prepared = request.prepared,
         .buffers = buffers,
-        .evaluation_cache = try product_workspace.spectralCache(allocator),
-        .wavelength_plan_storage = product_workspace,
+        .evaluation_cache = try request.product_workspace.spectralCache(allocator),
+        .wavelength_plan_storage = request.product_workspace,
     };
     const summary = try simulate_core.simulateInternal(allocator, &simulation_request);
     const jacobian_values = if (buffers.jacobian) |values| values else null;
@@ -151,16 +222,16 @@ pub fn simulateProductWithWorkspace(
         .reflectance = buffers.reflectance,
         .jacobian = jacobian_values,
         .jacobian_state_mask = buffers.jacobian_state_mask,
-        .effective_air_mass_factor = prepared.effective_air_mass_factor,
-        .effective_single_scatter_albedo = prepared.effective_single_scatter_albedo,
-        .effective_temperature_k = prepared.effective_temperature_k,
-        .effective_pressure_hpa = prepared.effective_pressure_hpa,
-        .gas_optical_depth = prepared.gas_optical_depth,
-        .cia_optical_depth = prepared.cia_optical_depth,
-        .aerosol_optical_depth = prepared.aerosol_optical_depth,
-        .total_optical_depth = prepared.total_optical_depth,
-        .depolarization_factor = prepared.depolarization_factor,
-        .d_optical_depth_d_temperature = prepared.d_optical_depth_d_temperature,
+        .effective_air_mass_factor = request.prepared.effective_air_mass_factor,
+        .effective_single_scatter_albedo = request.prepared.effective_single_scatter_albedo,
+        .effective_temperature_k = request.prepared.effective_temperature_k,
+        .effective_pressure_hpa = request.prepared.effective_pressure_hpa,
+        .gas_optical_depth = request.prepared.gas_optical_depth,
+        .cia_optical_depth = request.prepared.cia_optical_depth,
+        .aerosol_optical_depth = request.prepared.aerosol_optical_depth,
+        .total_optical_depth = request.prepared.total_optical_depth,
+        .depolarization_factor = request.prepared.depolarization_factor,
+        .d_optical_depth_d_temperature = request.prepared.d_optical_depth_d_temperature,
     };
 }
 
@@ -176,15 +247,32 @@ pub fn warmProductWorkspace(
     // use allocation and plan construction out of the next measured run.                                                 |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const buffer_request = storage.BufferHintRequest{
+    const request = WarmProductWorkspaceRequest{
+        .product_workspace = product_workspace,
         .scene = scene,
-        .rtm_config = &rtm_config,
+        .rtm_config = rtm_config,
+        .prepared = prepared,
     };
-    _ = try product_workspace.buffersFromHint(allocator, &buffer_request);
-    return simulate_core.warmWavelengthPlan(
-        allocator,
-        product_workspace,
-        scene,
-        prepared,
-    );
+    return warmProductWorkspaceFromRequest(allocator, &request);
+}
+
+fn warmProductWorkspaceFromRequest(
+    allocator: Allocator,
+    request: *const WarmProductWorkspaceRequest,
+) !void {
+    // warmProductWorkspaceFromRequest -----------------------------------------------------------------------------------|
+    // Prebuild buffers and retained wavelength-plan state from one borrowed facade request.                              |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    const buffer_request = storage.BufferHintRequest{
+        .scene = request.scene,
+        .rtm_config = &request.rtm_config,
+    };
+    _ = try request.product_workspace.buffersFromHint(allocator, &buffer_request);
+    const warm_request = simulate_core.WarmWavelengthPlanRequest{
+        .storage = request.product_workspace,
+        .scene = request.scene,
+        .prepared = request.prepared,
+    };
+    return simulate_core.warmWavelengthPlanFromRequest(allocator, &warm_request);
 }
