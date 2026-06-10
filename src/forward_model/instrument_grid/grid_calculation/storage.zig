@@ -44,10 +44,10 @@ const Allocator = std.mem.Allocator;
 //   or Jacobian data cannot survive into a route that should not read them.                                              |
 // -----------------------------------------------------------------------------------------------------------------------|
 
-// migration note: Zig 0.15.2 runtime boundary ---------------------------------------------------------------------------|
-// Product storage keeps the existing std.Thread.Pool route while the project is pinned to Zig 0.15.2.                    |
-// The failed 0.16 migration briefly moved this path to std.Io.Threaded; do not reintroduce that API here.                |
-// end migration note: Zig 0.15.2 runtime boundary -----------------------------------------------------------------------|
+// runtime boundary ------------------------------------------------------------------------------------------------------|
+// Product storage owns buffers and retained plans. Thread-pool lifetime stays in spectral_forward.zig and simulate.zig,  |
+// so storage does not become a scheduler or worker runtime wrapper.                                                      |
+// -----------------------------------------------------------------------------------------------------------------------|
 
 pub const trace_phase_timing_enabled: bool = enabled_by_build: {
     if (!@hasDecl(build_options, "enable_trace_phase_timing")) break :enabled_by_build false;

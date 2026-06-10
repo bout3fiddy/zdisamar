@@ -1,10 +1,10 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-// migration note: Zig 0.15.2 phase clock --------------------------------------------------------------------|
-// This retained trace harness uses std.time.nanoTimestamp while product builds stay on Zig 0.15.2.           |
-// The abandoned 0.16 migration used std.Io.Clock/Timestamp here; that API must not return in this branch.    |
-// end migration note: Zig 0.15.2 phase clock ----------------------------------------------------------------|
+// phase clock -----------------------------------------------------------------------------------------------|
+// The opt-in trace build records LABOS phase timings with std.time.nanoTimestamp. Product and test builds    |
+// compile the same calls to zero-size/no-op timing state when enabled=false.                                 |
+// -----------------------------------------------------------------------------------------------------------|
 
 // phase_timing.zig ------------------------------------------------------------------------------------------|
 // Opt-in LABOS phase timers for the trace executable. Product, test, telemetry, and perturbation builds keep |

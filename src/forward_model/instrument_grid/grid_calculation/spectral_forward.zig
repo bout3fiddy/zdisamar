@@ -55,10 +55,10 @@ const forward_prefetch_chunk_size: usize = 8;
 // more queue traffic for less tail imbalance across thousands of LABOS misses.
 const forward_prefetch_pooled_chunk_size: usize = 8;
 
-// migration note: Zig 0.15.2 prefetch runtime ---------------------------------------------------------------------------|
-// Forward prefetch uses std.Thread.Pool while product builds remain pinned to Zig 0.15.2.                                |
-// The abandoned 0.16 migration used std.Io.Threaded/Group here; keep retained timing independent of that.                |
-// end migration note: Zig 0.15.2 prefetch runtime -----------------------------------------------------------------------|
+// prefetch runtime ------------------------------------------------------------------------------------------------------|
+// Forward prefetch uses std.Thread.Pool. The pool owns worker lifetime; ForwardSampleScratch owns the mutable transport  |
+// buffers, carrier cache, and LABOS workspace used by each worker.                                                       |
+// -----------------------------------------------------------------------------------------------------------------------|
 
 const TracePrefetchRoute = if (Storage.trace_phase_timing_enabled) struct {
     const WorkerLabosTiming = ?*labos.PhaseTiming;
