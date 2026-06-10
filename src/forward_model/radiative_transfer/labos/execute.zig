@@ -116,6 +116,42 @@ const DirectSurfaceOnlyComputation = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// NonIntegratedReflectanceTangentRequest ---------------------------------------------------------------------|
+// Borrowed inputs for one non-integrated aerosol Jacobian tangent and Fourier term.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] layers         : []const LayerInput                                                              |
+// [ 16.. 23] i_fourier      : usize                                                                           |
+// [ 24.. 31] geo            : *const Geometry                                                                 |
+// [ 32.. 47] rt             : []const LayerRT                                                                 |
+// [ 48.. 55] controls       : *const RadiativeTransferControls                                                |
+// [ 56.. 63] plm_basis      : *const FourierPlmBasis                                                          |
+// [ 64.. 71] num_orders_max : usize                                                                           |
+// [ 72.. 72] state          : Jacobian.State                                                                  |
+// [ 73.. 79] padding        : 7 B                                                                             |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   layers, geometry, RT rows, controls, and PLM basis are borrowed from the surrounding LABOS solve. This    |
+//   request owns no heap storage and only names the hot tangent data path.                                    |
+//                                                                                                             |
+// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// cache span: 3 cache lines at 64 B per line                                                                  |
+// footprint: per tangent call = 80 B (0.078 KiB); referenced storage is owned by the caller/workspace         |
+const NonIntegratedReflectanceTangentRequest = struct {
+    layers: []const common.LayerInput,
+    state: common.Jacobian.State,
+    i_fourier: usize,
+    geo: *const Geometry,
+    rt: []const LayerRT,
+    controls: *const common.RadiativeTransferControls,
+    plm_basis: *const basis.FourierPlmBasis,
+    num_orders_max: usize,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 fn directSurfaceOnly(
     input: common.ForwardInput,
     compute_surface_albedo_tangent: bool,
@@ -816,15 +852,17 @@ fn layerResolvedLabosWithWorkspace(
                         if (dynamic_atten) |*atten| {
                             break :choose_non_integrated_aod_tangent try nonIntegratedReflectanceTangent(
                                 allocator,
-                                input.layers,
-                                .aerosol_optical_depth,
-                                i_fourier,
-                                geo,
+                                .{
+                                    .layers = input.layers,
+                                    .state = .aerosol_optical_depth,
+                                    .i_fourier = i_fourier,
+                                    .geo = geo,
+                                    .rt = rt,
+                                    .controls = &controls,
+                                    .plm_basis = plm_basis,
+                                    .num_orders_max = num_orders_max,
+                                },
                                 atten,
-                                rt,
-                                controls,
-                                plm_basis,
-                                num_orders_max,
                             );
                         }
                         unreachable;
@@ -875,15 +913,17 @@ fn layerResolvedLabosWithWorkspace(
                         if (dynamic_atten) |*atten| {
                             break :choose_non_integrated_pressure_tangent try nonIntegratedReflectanceTangent(
                                 allocator,
-                                input.layers,
-                                .aerosol_layer_mid_pressure_hpa,
-                                i_fourier,
-                                geo,
+                                .{
+                                    .layers = input.layers,
+                                    .state = .aerosol_layer_mid_pressure_hpa,
+                                    .i_fourier = i_fourier,
+                                    .geo = geo,
+                                    .rt = rt,
+                                    .controls = &controls,
+                                    .plm_basis = plm_basis,
+                                    .num_orders_max = num_orders_max,
+                                },
                                 atten,
-                                rt,
-                                controls,
-                                plm_basis,
-                                num_orders_max,
                             );
                         }
                         unreachable;
@@ -999,15 +1039,8 @@ fn layerResolvedLabosWithWorkspace(
 
 fn nonIntegratedReflectanceTangent(
     allocator: std.mem.Allocator,
-    layers: []const common.LayerInput,
-    state: common.Jacobian.State,
-    i_fourier: usize,
-    geo: *const Geometry,
+    request: NonIntegratedReflectanceTangentRequest,
     atten: anytype,
-    rt: []const LayerRT,
-    controls: common.RadiativeTransferControls,
-    plm_basis: *const basis.FourierPlmBasis,
-    num_orders_max: usize,
 ) !f64 {
     // nonIntegratedReflectanceTangent ------------------------------------------------------------------------|
     // Non-integrated Jacobian path for one retrieval state and Fourier term. Steps:                           |
@@ -1029,42 +1062,42 @@ fn nonIntegratedReflectanceTangent(
     // ordersScatTangent, then extract d rho_m/dx.
     var atten_tangent = try fillAttenuationTangentDynamic(
         allocator,
-        layers,
-        state,
-        geo,
+        request.layers,
+        request.state,
+        request.geo,
     );
     defer atten_tangent.deinit();
 
-    const rt_tangent = try allocator.alloc(LayerRT, layers.len + 1);
+    const rt_tangent = try allocator.alloc(LayerRT, request.layers.len + 1);
     defer allocator.free(rt_tangent);
 
     // Tangent RT_fc mirrors the base RT_fc shape: surface slot plus layers.
     calcRTlayersTangentIntoWithBasis(
         rt_tangent,
-        layers,
-        state,
-        i_fourier,
-        geo,
-        controls,
-        plm_basis,
+        request.layers,
+        request.state,
+        request.i_fourier,
+        request.geo,
+        request.controls.*,
+        request.plm_basis,
     );
 
     // Run the same scattering-order transport on the derivative fields.
     var tangent_orders = try orders_mod.ordersScatTangent(
         allocator,
         0,
-        layers.len,
-        geo,
+        request.layers.len,
+        request.geo,
         atten,
         &atten_tangent,
-        rt,
+        request.rt,
         rt_tangent,
-        controls,
-        num_orders_max,
+        request.controls.*,
+        request.num_orders_max,
     );
     defer tangent_orders.deinit();
 
-    return reflectance_mod.calcReflectanceTangent(tangent_orders.ud, layers.len, geo);
+    return reflectance_mod.calcReflectanceTangent(tangent_orders.ud, request.layers.len, request.geo);
 }
 
 fn singleLayerLabos(
