@@ -1,13 +1,15 @@
 // errors.zig ------------------------------------------------------------------------------------------------|
-// Shared typed error set for validation and caller-visible source-tree failures.                             |
+// Shared typed error set for validation failures that should cross input, setup, and storage boundaries.     |
 //                                                                                                            |
 // used by                                                                                                    |
-//   input structs when a Scene or nested control row is incomplete or invalid                                |
-//   forward-model setup and storage code when they compose input, RTM, grid, and allocation errors           |
+//   input structs when a Scene or nested control row is incomplete, inconsistent, or outside bounds          |
+//   instrument/grid storage when public buffer checks compose allocation and input-validation failures       |
+//   unit tests that assert invalid controls are rejected instead of repaired or ignored                      |
 //                                                                                                            |
-// boundary                                                                                                   |
-//   These errors are deliberately small. Product code should reject bad input with one of these typed errors |
-//   instead of accepting a partially ignored control or silently falling back to another physics path.       |
+// contract                                                                                                   |
+//   Keep this set small and caller-visible. Code that parses or validates controls should return one of      |
+//   these typed failures instead of accepting a partially ignored control or silently choosing another       |
+//   physics path.                                                                                            |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{

@@ -1,17 +1,35 @@
 const std = @import("std");
 
 // gauss_legendre.zig -----------------------------------------------------------------------------------------|
-// Gauss-Legendre quadrature support for fixed reference rules and DISAMAR-style dynamic division points.      |
+// Gauss-Legendre quadrature rule builders shared by optical preparation, instrument integration, and          |
+// reference-data setup. The file has two rule families: ordinary symmetric rules on [-1, 1], and              |
+// DISAMAR-compatible division points whose node ordering and first-row weights must match validation paths.   |
+//                                                                                                             |
+// called by                                                                                                   |
+//   vertical_grid.zig builds support and RTM altitude nodes during optical-state preparation                  |
+//   shared_geometry.zig and RTM setup resolve small fixed orders before wavelength loops                      |
+//   adaptive_plan.zig emits high-resolution instrument samples, with DISAMAR mode using division points       |
+//   cross_section_lut.zig and climatology.zig build reference-data integration/sample grids                   |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   rule                         returns a fixed table for orders 1 through 10                                |
-//   fillNodesAndWeights           computes a symmetric Gauss-Legendre rule from Legendre roots                |
+//   rule                          returns fixed inline tables for ordinary orders 1 through 10                |
+//   fillNodesAndWeights           computes ordinary symmetric nodes and weights from Legendre roots           |
 //   fillDisamarDivPoints01        computes DISAMAR unit-interval division points and weights                  |
 //   fillDisamarDivPointsInterval  computes DISAMAR division points and scales them to an interval             |
 //   fillDisamarDivPointsIntervalNodes computes DISAMAR interval nodes without weights                         |
 //                                                                                                             |
+// route choice                                                                                                |
+//   Small ordinary orders use rule() when the caller wants a fixed table. Larger ordinary orders use Newton   |
+//   root solves. DISAMAR paths build a tridiagonal system and diagonalize it with gausq2DisamarImpl because   |
+//   last-bit node differences are visible in steep O2 A high-resolution support samples.                      |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Most calls are setup for a row, interval, or cached geometry plan rather than LABOS inner transport.      |
+//   Callers pass output slices so the generated rule can be written into stack or retained scratch storage.   |
+//                                                                                                             |
 // memory                                                                                                      |
-//   Fixed Rule values carry inline arrays. Dynamic DISAMAR paths use bounded stack work arrays.               |
+//   Fixed Rule values carry inline arrays. Ordinary dynamic paths write caller slices. DISAMAR dynamic paths  |
+//   use bounded stack work arrays capped by max_disamar_division_points.                                      |
 // ------------------------------------------------------------------------------------------------------------|
 
 // Rule -------------------------------------------------------------------------------------------------------|
