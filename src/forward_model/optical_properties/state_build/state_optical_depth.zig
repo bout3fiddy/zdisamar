@@ -37,6 +37,28 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //   aerosol scattering = aerosol extinction * resolved single-scatter albedo.                                |
 // -----------------------------------------------------------------------------------------------------------|
 
+// OpticalDepthBreakdownRequest ------------------------------------------------------------------------------|
+// Borrowed prepared-state header and wavelength for scalar optical-depth totals.                             |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 16 B (0.016 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] prepared      : *const PreparedOpticalState                                                       |
+// [ 8..15] wavelength_nm : f64                                                                               |
+//                                                                                                            |
+// out-of-line                                                                                                |
+//   prepared is borrowed. The optional profile cache created by the reducer is wavelength-local stack state. |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// cache span: 1 cache line at 64 B per line                                                                  |
+// footprint: per instance = 16 B plus borrowed prepared-state storage                                        |
+pub const OpticalDepthBreakdownRequest = struct {
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+};
+// -----------------------------------------------------------------------------------------------------------|
+
 // LayerEvaluationRequest ------------------------------------------------------------------------------------|
 // Borrowed prepared-state data and support rows needed to evaluate one physical layer span.                  |
 //                                                                                                            |
@@ -72,8 +94,7 @@ pub const LayerEvaluationRequest = struct {
 // -----------------------------------------------------------------------------------------------------------|
 
 pub fn opticalDepthBreakdownAtWavelength(
-    self: *const PreparedOpticalState,
-    wavelength_nm: f64,
+    request: *const OpticalDepthBreakdownRequest,
 ) OpticalDepthBreakdown {
     // opticalDepthBreakdownAtWavelength -------------------------------------------------------------------- |
     // Accumulate gas, CIA, aerosol, and scattering optical depths at one wavelength.                         |
@@ -96,6 +117,8 @@ pub fn opticalDepthBreakdownAtWavelength(
     //   tau_aerosol_sca  = tau_aerosol * omega0_aerosol                                                      |
     // -------------------------------------------------------------------------------------------------------|
 
+    const self = request.prepared;
+    const wavelength_nm = request.wavelength_nm;
     var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
 
     if (self.sublayers) |sublayers| {
@@ -109,7 +132,7 @@ pub fn opticalDepthBreakdownAtWavelength(
             else
                 null;
 
-            const request = LayerEvaluationRequest{
+            const layer_request = LayerEvaluationRequest{
                 .prepared = self,
                 .scene = null,
                 .altitude_km = layer.altitude_km,
@@ -119,7 +142,7 @@ pub fn opticalDepthBreakdownAtWavelength(
                 .strong_line_states = strong_line_state,
                 .profile_cache = &profile_cache,
             };
-            const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(&request);
+            const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(&layer_request);
 
             totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
             totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;

@@ -485,7 +485,11 @@ pub const PreparedOpticalState = struct {
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
     ) Types.OpticalDepthBreakdown {
-        return StateOpticalDepth.opticalDepthBreakdownAtWavelength(self, wavelength_nm);
+        const request = StateOpticalDepth.OpticalDepthBreakdownRequest{
+            .prepared = self,
+            .wavelength_nm = wavelength_nm,
+        };
+        return StateOpticalDepth.opticalDepthBreakdownAtWavelength(&request);
     }
 
     pub fn evaluateLayerAtWavelength(
