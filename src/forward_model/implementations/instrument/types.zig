@@ -21,8 +21,8 @@ const InstrumentModel = @import("../../../input/Instrument.zig");
 //                                                                                                             |
 // memory                                                                                                      |
 //   IntegrationKernel is 32784 B: two [2048]f64 arrays plus sample_count and enabled. It owns no heap         |
-//   storage. Passing it by value would copy 513 cache lines, so route builders take a pointer and rewrite the |
-//   active prefix. Large adaptive/measured kernels move into side arrays after this scratch step; common      |
+//   storage. Route builders take a pointer and rewrite the active prefix, avoiding a 513-cache-line copy.     |
+//   Large adaptive/measured kernels move into side arrays after this scratch step; common                     |
 //   direct and five-sample rows stay compact in the retained plan.                                            |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -51,6 +51,10 @@ pub const max_integration_sample_count: usize = InstrumentModel.max_line_shape_s
 // unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
 // cache span: 513 cache lines at 64 B per line                                                                |
 // footprint: per instance = 32784 B; one large stack/caller-owned kernel row                                  |
+//                                                                                                             |
+// hot use                                                                                                     |
+//   Wavelength-plan workers pass this row by pointer while building radiance and irradiance kernels. Only     |
+//   offsets_nm[0..sample_count] and weights[0..sample_count] are meaningful after a builder returns.          |
 pub const IntegrationKernel = struct {
     enabled: bool,
     sample_count: usize,
