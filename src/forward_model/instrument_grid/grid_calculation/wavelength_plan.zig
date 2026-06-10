@@ -3,17 +3,43 @@ const instrument_types = @import("../../implementations/instrument/types.zig");
 pub const inline_integration_sample_count: usize = instrument_types.default_integration_sample_count;
 
 // wavelength_plan.zig ---------------------------------------------------------------------------------------------------|
-// Compact storage types for instrument-response sampling plans. A nominal output wavelength can map to one               |
-// direct forward sample or to several high-resolution samples with weights.                                              |
+// Retained row types for the nominal-wavelength sampling plan used by instrument-grid simulation. The plan               |
+// turns channel calibration plus instrument-response integration into compact rows that later loops can read             |
+// without asking the Scene, rebuilding response kernels, or hashing high-resolution wavelengths.                         |
 //                                                                                                                        |
-// used by                                                                                                                |
-//   wavelength_sampling.zig builds these rows                                                                            |
-//   spectral_eval.zig consumes them without hashing inside the hot nominal-row loop                                      |
+// build route                                                                                                            |
+//   wavelength_sampling.zig                                                                                              |
+//     -> integration.zig writes one large IntegrationKernel scratch per channel and nominal wavelength                   |
+//     -> compactIntegrationKernel encodes that scratch as disabled, inline, or side-array samples                        |
+//     -> buildForwardMissPlan deduplicates radiance high-resolution wavelengths into ForwardCacheMiss rows               |
+//     -> simulate.zig stores OwnedWavelengthSampling and OwnedForwardMissPlan in ProductStorage                          |
 //                                                                                                                        |
-// storage idea                                                                                                           |
-//   Small kernels live inline in each row. Larger kernels point into side arrays owned by the table. This                |
-//   keeps the common no-integration and five-sample cases compact while still supporting large adaptive                  |
-//   kernels near strong spectral lines.                                                                                  |
+// read route                                                                                                             |
+//   spectral_forward.zig prefetches every ForwardCacheMiss into a dense ForwardIntegratedSample array.                   |
+//   spectral_eval.zig then walks WavelengthSampling rows: radiance rows use ForwardSampleIndexRef into the               |
+//   dense prefetch result array, and irradiance rows use the same integration offsets to sample solar support.           |
+//                                                                                                                        |
+// encoding model                                                                                                         |
+//   disabled       : one direct sample at the shifted channel wavelength; no offset/weight slice is needed               |
+//   inline_samples : up to the legacy five samples stored directly in IntegrationKernelRef                               |
+//   side_samples   : larger measured/adaptive kernels stored once in table-wide offsets/weights side arrays              |
+//                                                                                                                        |
+// ownership                                                                                                              |
+//   OwnedWavelengthSampling owns row storage plus side arrays. WavelengthSamplingTable is the borrowed view              |
+//   handed to simulation. OwnedForwardMissPlan owns the dense miss rows and row-local index stream. The plain            |
+//   ForwardMissPlan view is borrowed by spectral prefetch/evaluation loops.                                              |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   The nominal-row gather runs for every product wavelength. Keeping no-integration and five-sample kernels             |
+//   inline avoids extra slice chasing in the common cases, while side arrays keep rare 1000+ sample adaptive             |
+//   kernels out of every row. ForwardSampleIndexRef stores one u32 start offset so the gather walks a dense              |
+//   sample-index stream instead of probing the miss hash map again.                                                      |
+//                                                                                                                        |
+// math names                                                                                                             |
+//   lambda_i  : nominal product wavelength after channel wavelength shift                                                |
+//   offset_j  : integration sample offset relative to lambda_i                                                           |
+//   weight_j  : normalized instrument-response weight                                                                    |
+//   y_i       = sum_j weight_j * y(lambda_i + offset_j)                                                                  |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // IntegrationKernelStorage ----------------------------------------------------------------------------------------------|

@@ -124,6 +124,7 @@ pub const forward_model = struct {
         pub const forward_input = root.forward_input;
         pub const spectral_eval = root.spectral_eval;
         pub const simulate = root.simulate;
+        pub const wavelength_plan = @import("forward_model/instrument_grid/grid_calculation/wavelength_plan.zig");
 
         pub const reflectance_export_name = root.reflectance_export_name;
         pub const fitted_reflectance_export_name = root.fitted_reflectance_export_name;
