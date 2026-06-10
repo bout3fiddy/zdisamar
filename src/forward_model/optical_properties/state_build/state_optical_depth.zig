@@ -2,6 +2,7 @@ const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
+const Evaluation = @import("evaluation.zig");
 const PreparedState = @import("prepared_state.zig");
 const Scalar = @import("state_scalar.zig");
 const Spectroscopy = @import("state_spectroscopy.zig");
@@ -148,11 +149,7 @@ pub fn opticalDepthBreakdownAtWavelength(
             };
             const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(&layer_request);
 
-            totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
-            totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
-            totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
-            totals.aerosol_optical_depth += evaluated.breakdown.aerosol_optical_depth;
-            totals.aerosol_scattering_optical_depth += evaluated.breakdown.aerosol_scattering_optical_depth;
+            Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
         }
         return totals;
     }
