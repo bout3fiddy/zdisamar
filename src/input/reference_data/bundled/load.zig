@@ -13,29 +13,48 @@ const workflows = @import("workflows.zig");
 const Allocator = std.mem.Allocator;
 
 // load.zig ---------------------------------------------------------------------------------------------------|
-// Bundled reference-data loader and optical-state handoff for public prepare() calls.                         |
+// Bundled reference-data orchestration behind public zdisamar.prepare(). Public prepare needs matching        |
+// owners: loaded reference rows must live as long as the PreparedOpticalState pointers that refer to them.    |
+// This file builds the owner first, mutates only a working Scene copy when LUT workflows need generated       |
+// assets, then prepares optical state from the owned rows.                                                    |
 //                                                                                                             |
 // called by                                                                                                   |
-//   src/root.zig prepare() loads bundled assets, builds a working scene, then prepares optical properties     |
-//   prepareForScene() gives tests and internal callers a one-shot bundled-data-to-optics path                 |
+//   src/root.zig prepare() calls load, then buildOptics, and stores both Data and PreparedOpticalState in     |
+//   PreparedInput. prepareForScene gives tests and internal callers a one-shot path when they do not need     |
+//   to retain Data separately.                                                                                |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   load        reads bundled climatology, continuum, CIA, spectroscopy, and airmass LUT assets               |
-//               then applies generated/consumed LUT workflows to a working scene copy                         |
-//   buildOptics prepares the forward-model optical state from Data and transfers generated LUT metadata       |
-//   prepareForScene wraps load + buildOptics for callers that do not need retained Data                       |
+// route map                                                                                                   |
+//   load            -> select/load climatology, continuum, CIA, spectroscopy, and airmass LUT assets          |
+//                   -> apply LUT workflows to a shallow working Scene copy, cloning only mutated subtrees     |
+//                   -> return Data owning loaded tables, working-case slices, and generated LUT metadata      |
+//   buildOptics     -> OpticsPrepare.prepare(Data.working_case, Data tables)                                  |
+//                   -> move generated_lut_assets and lut_execution_entries into PreparedOpticalState          |
+//   prepareForScene -> one-shot load + buildOptics + Data cleanup                                             |
+//                                                                                                             |
+// why this file exists                                                                                        |
+//   selection.zig decides which reference rows a Scene is allowed to use; assets.zig performs concrete asset  |
+//   loads and clones; workflows.zig applies LUT controls that may generate operational tables. This file      |
+//   keeps those setup concerns together so forward_model/optical_properties still receives a normal           |
+//   Scene + PreparationInputs shape instead of knowing about bundled asset policy or generated-LUT ownership. |
 //                                                                                                             |
 // boundary shape                                                                                              |
-//   This module belongs to input/reference-data preparation. It may load bundled assets and adjust a working  |
-//   input scene, but it does not run the RTM or write reports. Forward-model code receives prepared values.   |
+//   This module belongs to input/reference-data preparation. It may read retained asset bundles and adjust a  |
+//   working input scene, but it does not run the RTM, write reports, parse user text, or keep global state.   |
+//   Forward-model code receives prepared values and borrowed table pointers only through OpticsPrepare.       |
+//                                                                                                             |
+// setup cost                                                                                                  |
+//   This is not the wavelength hot loop. The performance-sensitive choice is to clone only absorber/support   |
+//   subtrees that LUT workflows actually mutate, pass large reference tables by pointer into preparation, and |
+//   move generated metadata into PreparedOpticalState instead of duplicating it.                              |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Data owns loaded asset tables, the working scene copy, generated LUT descriptors, and execution labels.   |
-//   buildOptics transfers generated LUT ownership into PreparedOpticalState and clears Data's slices.         |
+//   Data owns loaded asset tables, generated LUT descriptors, execution labels, and any working-scene slices  |
+//   cloned by workflows.zig. The source Scene stays borrowed. buildOptics transfers generated LUT metadata    |
+//   into PreparedOpticalState and clears Data's slices so Data.deinit does not release moved ownership.       |
 // ------------------------------------------------------------------------------------------------------------|
 
 // Data -------------------------------------------------------------------------------------------------------|
-// Owner for bundled reference assets and the scene copy prepared from them.                                   |
+// Owner for bundled reference assets, generated LUT metadata, and the working scene prepared from them.       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 1008 B (0.984 KiB), align: 8 B                                                                        |
@@ -55,6 +74,7 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Asset tables, generated LUT assets, execution strings, and working-case slices are held out-of-line.      |
+//   working_case is the only large inline member; its cloned subtrees stay behind pointers and slices.        |
 //   The two owns_* flags decide whether deinit releases prepared scene buffers or treats them as borrowed.    |
 //                                                                                                             |
 // unused bits: 48 padding + 14 bool-storage slack = 62 bits                                                   |
@@ -73,6 +93,16 @@ pub const Data = struct {
     lut_execution_entries: []const []const u8 = &.{},
 
     pub fn deinit(self: *Data, allocator: Allocator) void {
+        // Data.deinit ----------------------------------------------------------------------------------------|
+        // Release every owned table, scene subtree, generated asset row, and execution label retained by      |
+        // load. buildOptics clears generated_lut_assets and lut_execution_entries after moving them into      |
+        // PreparedOpticalState, so this cleanup only releases metadata still owned by Data.                   |
+        //                                                                                                     |
+        // ownership                                                                                           |
+        //   owns_absorbers and owns_operational_band_support are paired with the working_case fields because  |
+        //   load starts from a shallow Scene copy and workflows only clone the subtrees they mutate.          |
+        // ----------------------------------------------------------------------------------------------------|
+
         self.profile.deinit(allocator);
         self.cross_sections.deinit(allocator);
 
@@ -111,6 +141,20 @@ pub const Data = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn load(allocator: Allocator, scene: *const Scene) !Data {
+    // load ---------------------------------------------------------------------------------------------------|
+    // Build the owned reference-data bundle and working Scene used by public prepare().                       |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   1. load/select owned reference tables from bundled assets or resolved scene payloads                  |
+    //   2. make a shallow working_case copy of the source Scene                                               |
+    //   3. let workflows.zig clone and mutate only the absorber/support subtrees needed for LUT generation    |
+    //   4. return Data with ownership flags naming which working_case slices must be freed                    |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Temporary generated LUT handles are owned locally until workflows clone them into working_case or     |
+    //   generated asset metadata. ArrayLists are converted to owned slices in the returned Data.              |
+    // --------------------------------------------------------------------------------------------------------|
+
     var profile = try assets.loadStandardClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
 
@@ -190,10 +234,22 @@ pub fn load(allocator: Allocator, scene: *const Scene) !Data {
 
 pub fn buildOptics(
     allocator: Allocator,
-    scene: *const Scene,
     data: *Data,
 ) !OpticsPrepare.PreparedOpticalState {
-    _ = scene;
+    // buildOptics --------------------------------------------------------------------------------------------|
+    // Prepare optical state from Data's working Scene and move generated LUT metadata into the final state.   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   src/root.zig calls this after load and keeps both Data and PreparedOpticalState in PreparedInput.     |
+    //   prepareForScene uses the same route for one-shot internal callers.                                    |
+    //   The function accepts Data, not a separate Scene pointer, so the optical state is always prepared      |
+    //   from the working_case that owns any LUT workflow mutations.                                           |
+    //                                                                                                         |
+    // ownership                                                                                               |
+    //   OpticsPrepare.prepare clones or borrows reference tables according to PreparationInputs. The          |
+    //   generated LUT descriptor slices are moved from Data into PreparedOpticalState after preparation, then |
+    //   Data is cleared so Data.deinit cannot free moved metadata.                                            |
+    // --------------------------------------------------------------------------------------------------------|
 
     const cia_ptr: ?*const ReferenceData.CollisionInducedAbsorptionTable = resolve_cia_ptr: {
         if (data.collision_induced_absorption) |*table| break :resolve_cia_ptr table;
@@ -224,7 +280,11 @@ pub fn buildOptics(
 }
 
 pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare.PreparedOpticalState {
+    // prepareForScene ----------------------------------------------------------------------------------------|
+    // One-shot helper for callers that only need PreparedOpticalState and not the retained Data owner bundle. |
+    // --------------------------------------------------------------------------------------------------------|
+
     var loaded = try load(allocator, scene);
     defer loaded.deinit(allocator);
-    return buildOptics(allocator, scene, &loaded);
+    return buildOptics(allocator, &loaded);
 }

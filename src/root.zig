@@ -103,7 +103,7 @@ pub fn prepare(
     var reference_data = try bundled_data.load(allocator, input);
     errdefer reference_data.deinit(allocator);
 
-    var optical_properties = try bundled_data.buildOptics(allocator, &reference_data.working_case, &reference_data);
+    var optical_properties = try bundled_data.buildOptics(allocator, &reference_data);
     errdefer optical_properties.deinit(allocator);
 
     return .{
