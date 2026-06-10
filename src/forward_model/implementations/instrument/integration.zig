@@ -11,8 +11,8 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 // Builds the normalized instrument-response stencil for one channel at one nominal product wavelength. This   |
 // file is the only route chooser between scene metadata and product sampling: measured line-shape tables,     |
 // explicit fixed kernels, DISAMAR high-resolution grids, adaptive strong-line grids, and the old five-tap     |
-// fallback all become the same offsets/weights row here. It does not run LABOS, sample solar irradiance, or   |
-// apply channel calibration; later wavelength-plan and spectral-evaluation code consume this builder output.  |
+// fallback all become the same offsets/weights row here. Later wavelength-plan and spectral-evaluation code   |
+// use this builder output while LABOS, solar irradiance, and channel calibration stay in their own stages.    |
 //                                                                                                             |
 // called by                                                                                                   |
 //   simulate.zig resolves channel flags with usesIntegratedInstrumentSampling, then calls                     |
@@ -44,10 +44,9 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   side-array samples in the retained wavelength plan.                                                       |
 //                                                                                                             |
 // convolution guard                                                                                           |
-//   The per-row enabled flag is not the whole "skip convolution" rule. simulate.zig uses                      |
-//   usesIntegratedInstrumentSampling to skip legacy slit convolution for measured/operational channels even   |
-//   when this file returns an identity direct-sample row because no explicit line-shape metadata was present. |
-//   That keeps measured product rows from being broadened by a fallback kernel the input did not request.     |
+//   simulate.zig uses usesIntegratedInstrumentSampling as the product-level convolution guard for measured    |
+//   and operational channels. The guard remains true even when this file returns an identity direct-sample    |
+//   row because no explicit line-shape metadata was present.                                                  |
 //                                                                                                             |
 // route order                                                                                                 |
 //   integrationForWavelengthWithAdaptiveCacheChecked chooses one route and stops:                             |
@@ -63,9 +62,9 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   wavelength_sampling.zig compacts this temporary row into disabled, inline-five-sample, or side-array      |
 //   storage under OwnedWavelengthSampling. simulate.zig then gathers radiance/irradiance through that plan    |
 //   and skips later slit convolution when integrated sampling already applied the instrument response.        |
-//   spectral_eval.zig reads only the compact WavelengthSampling view; it does not call back into this file    |
-//   from the per-forward-sample RTM path. Channel wavelength shifts are stored beside the compact row, then   |
-//   offsets from this file are added to the shifted center when wavelength_sampling builds the miss plan.     |
+//   spectral_eval.zig reads only the compact WavelengthSampling view on the per-forward-sample RTM path.      |
+//   Channel wavelength shifts are stored beside the compact row, then offsets from this file are added to     |
+//   the shifted center when wavelength_sampling builds the miss plan.                                         |
 //                                                                                                             |
 // module split                                                                                                |
 //   response.zig owns scalar response weights and identity/reset helpers. adaptive_plan.zig owns interval     |
@@ -77,8 +76,7 @@ const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel
 //   Table, explicit, DISAMAR, adaptive, and fallback kernels all use the same compact row contract, so later  |
 //   code never needs to know which route produced the samples.                                                |
 //   Checked entry points return InstrumentKernelRealizationFailed when an explicitly requested route cannot   |
-//   produce a finite non-empty kernel. High-resolution and adaptive controls fail here instead of silently    |
-//   falling through to the legacy five-tap fallback.                                                          |
+//   produce a finite non-empty kernel. High-resolution and adaptive controls use that error boundary.         |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Wavelength-plan workers call this inside the output-sample loop. The 32 KiB IntegrationKernel is reused   |

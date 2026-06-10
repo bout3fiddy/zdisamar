@@ -14,7 +14,7 @@ const Allocator = std.mem.Allocator;
 // prepared_state.zig -----------------------------------------------------------------------------------------|
 // Public owner/view boundary for optical properties after a Scene has been reduced into prepared rows. This   |
 // file owns the stable PreparedOpticalState header, the deinit contract for moved preparation storage, and    |
-// the small method facade that downstream code reads instead of reaching back into setup internals.           |
+// the small method facade used by downstream optical-depth, RTM, and diagnostics code.                        |
 //                                                                                                             |
 // build route                                                                                                 |
 //   optical_properties/root.prepare                                                                           |
@@ -415,16 +415,14 @@ pub const PreparedOpticalState = struct {
         //                                                                                                     |
         // shape                                                                                               |
         //   If adjacent layers share a boundary support row, the summed references are larger than the unique |
-        //   sublayer row count. That is the shape that needs reduced shared-RTM layer handling: transport     |
-        //   must keep the coarser PreparedLayer rows instead of treating each unique support row as a layer.  |
+        //   sublayer row count. Reduced shared-RTM handling keeps the coarser PreparedLayer transport rows    |
+        //   for that interval shape.                                                                          |
         //                                                                                                     |
         // memory                                                                                              |
         //   This is an index-only PreparedLayer walk: one u32 load, sublayer_count at [204..207], from each   |
         //   208 B row. It runs during storage sizing and cache-shape selection, before the LABOS              |
         //   order/Fourier loops. The layer array stays row-based because the per-wavelength builders consume  |
-        //   the same rows' altitude, pressure, aerosol, and optical-depth fields nearby. A separate           |
-        //   sublayer-count column would add ownership and call surface only for this rare shape check unless  |
-        //   a retained benchmark proves a repeated-boundary win.                                              |
+        //   the same rows' altitude, pressure, aerosol, optical-depth fields, and support-span tail nearby.   |
         // ----------------------------------------------------------------------------------------------------|
 
         if (self.interval_semantics == .none) return false;

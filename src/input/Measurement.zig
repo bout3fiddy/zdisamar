@@ -10,8 +10,8 @@ const Allocator = std.mem.Allocator;
 // called from                                                                                                 |
 //   Scene re-exports Measurement, MeasurementVector, SpectralMask, and ErrorModel for public input assembly.  |
 //   tests/unit/measurement_model_test.zig exercises validation and wavelength exclusion behavior directly.    |
-//   Optimal-estimation C/API code has its own dense MeasurementWorkspace; this file is the input-side request |
-//   shape, not the retrieval workspace.                                                                       |
+//   This file is the input-side request shape. Optimal-estimation C/API code has its own dense                |
+//   MeasurementWorkspace for retrieval-time vectors.                                                          |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   Measurement.validate checks the source binding, mask rows, non-zero sample count, and error model floor.  |
@@ -21,10 +21,9 @@ const Allocator = std.mem.Allocator;
 //   samples from the selected measurement wavelength set.                                                     |
 //                                                                                                             |
 // mask band boundary                                                                                          |
-//   SpectralMask.band is retained as the caller's band label, but this file does not resolve that label       |
-//   against Scene.bands because Measurement only receives already-built wavelength arrays. At this boundary,  |
-//   only mask.exclude changes sample selection; band-aware wavelength-grid construction belongs beside Scene  |
-//   band resolution. Tests cover that a band label by itself is inert here instead of silently filtering.     |
+//   SpectralMask.band is retained as the caller's band label. Scene.bands resolution happens while building   |
+//   wavelength arrays, before Measurement receives them. At this boundary, mask.exclude changes sample        |
+//   selection; tests cover that a band label alone leaves the provided wavelength array unchanged.            |
 //                                                                                                             |
 // row model                                                                                                   |
 //   SpectralMask stores one band id plus optional exclusion windows.                                          |
@@ -34,7 +33,7 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // ownership                                                                                                   |
 //   Measurement owns only nested mask exclusion rows when cloned by callers. The source binding manages its   |
-//   own copied names, and this file does not own measurement vectors or product arrays.                       |
+//   copied names; measurement vectors and product arrays are owned by caller/workspace layers.                |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralMask -----------------------------------------------------------------------------------------------|
@@ -61,8 +60,8 @@ pub const SpectralMask = struct {
         // Validate exclusion windows for the local measurement mask.                                          |
         //                                                                                                     |
         // boundary                                                                                            |
-        //   band is a retained label, not resolved here. This type does not have the Scene.bands table needed |
-        //   to turn that label into wavelength bounds, so validation only checks exclusion-window shape.      |
+        //   band is a retained label. Scene.bands turns labels into wavelength bounds before this type        |
+        //   validates the exclusion-window shape.                                                             |
         // ----------------------------------------------------------------------------------------------------|
 
         var previous_end_nm: f64 = 0.0;

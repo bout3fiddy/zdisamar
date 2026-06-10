@@ -14,27 +14,25 @@ const errors = @import("errors.zig");
 //   when an operational cross-section LUT is generated from spectroscopy or cross-section source tables.      |
 //                                                                                                             |
 // modes                                                                                                       |
-//   .direct   means use ordinary preparation/runtime paths and do not add generated-asset metadata.           |
+//   .direct   means use ordinary preparation/runtime paths with no generated-asset metadata.                  |
 //   .generate means build a LUT during bundled-asset preparation and retain a compatibility key for it.       |
 //   .consume  means the caller supplied a compatible LUT and preparation must reject missing/inert payloads.  |
-//   Reflectance consume is intentionally rejected in workflows today because no reflectance asset loader      |
-//   exists yet; the typed mode stays here so unsupported requests fail explicitly.                            |
+//   Reflectance consume is rejected by workflows until a reflectance asset loader exists; the typed mode      |
+//   gives callers an explicit unsupported-request error.                                                      |
 //                                                                                                             |
 // compatibility contract                                                                                      |
 //   The key contains geometry, effective nominal wavelength identity, surface albedo, instrument support,     |
 //   spectroscopy source identity, and the active control rows. Enums, counts, and hashes must match exactly.  |
 //   Float fields use a small abs/rel tolerance because controls can cross text/generated-asset boundaries     |
-//   before being compared. This is a compatibility test, not a raw memory equality check.                     |
+//   before comparison. The key compares the semantic values that define LUT compatibility.                    |
 //                                                                                                             |
 // runtime shape                                                                                               |
-//   These structs are setup/cache identity rows. They do not own assets, open files, parse user text, or run  |
-//   the RTM. The hot wavelength loops consume prepared optical/instrument data; they should not re-interpret  |
-//   these public controls.                                                                                    |
+//   These structs are setup/cache identity rows. Asset ownership, file loading, text parsing, and RTM         |
+//   execution live at their own boundaries. Hot wavelength loops consume prepared optical/instrument data.    |
 //                                                                                                             |
 // memory                                                                                                      |
 //   All rows are plain values with no slices, pointers, or heap ownership. CompatibilityKey is 160 B and can  |
-//   be copied into GeneratedLutAsset. Generated strings/assets are owned by load/workflows or prepared state, |
-//   not by this module.                                                                                       |
+//   be copied into GeneratedLutAsset. Generated strings/assets are owned by load/workflows or prepared state. |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Mode = enum {
