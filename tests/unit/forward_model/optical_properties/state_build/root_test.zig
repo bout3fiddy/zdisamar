@@ -133,14 +133,32 @@ test "prepared line absorber layout matches documented comments" {
     try expectOffset(State.PreparedLineAbsorber, "species", 272);
 }
 
-test "prepared layer layout matches documented support-tail comments" {
+test "prepared layer layout matches documented comments" {
     const State = internal.forward_model.optical_properties.state;
 
     try std.testing.expectEqual(@as(usize, 208), @sizeOf(State.PreparedLayer));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(State.PreparedLayer));
     try expectOffset(State.PreparedLayer, "aerosol_optical_depth", 0);
+    try expectOffset(State.PreparedLayer, "bottom_altitude_km", 8);
+    try expectOffset(State.PreparedLayer, "aerosol_fraction", 16);
     try expectOffset(State.PreparedLayer, "altitude_km", 24);
+    try expectOffset(State.PreparedLayer, "bottom_pressure_hpa", 32);
+    try expectOffset(State.PreparedLayer, "temperature_k", 40);
+    try expectOffset(State.PreparedLayer, "number_density_cm3", 48);
+    try expectOffset(State.PreparedLayer, "continuum_cross_section_cm2_per_molecule", 56);
+    try expectOffset(State.PreparedLayer, "line_cross_section_cm2_per_molecule", 64);
+    try expectOffset(State.PreparedLayer, "line_mixing_cross_section_cm2_per_molecule", 72);
+    try expectOffset(State.PreparedLayer, "cia_optical_depth", 80);
+    try expectOffset(State.PreparedLayer, "d_cross_section_d_temperature_cm2_per_molecule_per_k", 88);
+    try expectOffset(State.PreparedLayer, "top_pressure_hpa", 96);
     try expectOffset(State.PreparedLayer, "gas_optical_depth", 104);
+    try expectOffset(State.PreparedLayer, "pressure_hpa", 112);
+    try expectOffset(State.PreparedLayer, "aerosol_base_optical_depth", 120);
+    try expectOffset(State.PreparedLayer, "aerosol_single_scatter_albedo", 128);
+    try expectOffset(State.PreparedLayer, "aerosol_reference_wavelength_nm", 136);
+    try expectOffset(State.PreparedLayer, "aerosol_angstrom_exponent", 144);
+    try expectOffset(State.PreparedLayer, "layer_single_scatter_albedo", 152);
+    try expectOffset(State.PreparedLayer, "depolarization_factor", 160);
     try expectOffset(State.PreparedLayer, "optical_depth", 168);
     try expectOffset(State.PreparedLayer, "top_altitude_km", 176);
     try expectOffset(State.PreparedLayer, "gas_scattering_optical_depth", 184);
