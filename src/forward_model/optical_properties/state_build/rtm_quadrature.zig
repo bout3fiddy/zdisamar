@@ -42,9 +42,23 @@ fn fillAerosolSourceJacobian(
     rtm_level: *transport_common.RtmQuadratureLevel,
     aerosol_scattering_optical_depth_per_km: f64,
 ) void {
+    // fillAerosolSourceJacobian -----------------------------------------------------------------------------|
+    // Write the aerosol source Jacobian scale for one RTM quadrature level.                                  |
+    //                                                                                                        |
+    // boundary                                                                                               |
+    //   This is source-function Jacobian weighting, not the layer optical-depth Jacobian itself. The caller  |
+    //   has already evaluated the local aerosol scattering carrier for this level.                           |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   aerosol_ksca_jacobian                                                                                |
+    //     = local aerosol scattering optical depth per km / total aerosol optical depth                      |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   Writes only aerosol_ksca_jacobian at [40..47] in the 64 B RtmQuadratureLevel row.                    |
+    // -------------------------------------------------------------------------------------------------------|
+
     if (self.aerosol_optical_depth <= 0.0 or aerosol_scattering_optical_depth_per_km <= 0.0) return;
 
-    // Aerosol scattering Jacobian scales local scattering by the inverse column aerosol optical depth.
     const derivative_scale = aerosol_scattering_optical_depth_per_km / self.aerosol_optical_depth;
     rtm_level.aerosol_ksca_jacobian = derivative_scale;
 }
@@ -100,6 +114,8 @@ fn fillSharedAerosolSourceJacobianFromLayers(
         total_scattering_derivative += derivative;
     }
 
+    // No active derivative, or no aerosol phase support. The shared-grid source Jacobian only contributes
+    // when aerosol phase participates in the source term.
     if (total_scattering_derivative <= 0.0 or self.aerosol_phase_coefficients[0] == 0.0) return;
 
     for (rtm_levels, 0..) |*level, level_index| {
