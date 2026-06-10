@@ -24,12 +24,40 @@
 // ------------------------------------------------------------------------------------------------------------|
 pub const available = false;
 
+// Stage ------------------------------------------------------------------------------------------------------|
+// Stable stage tags mirrored from the retained telemetry sink.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] enum tag : i64                                                                                       |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 8 B (0.008 KiB); used only when a caller names a stage value                      |
 pub const Stage = enum(i64) {
     none = 0,
     fast = 1,
     correction = 2,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub const max_state_value_count = 3;
 
+// Context ----------------------------------------------------------------------------------------------------|
+// Empty context row used when calculation telemetry is disabled.                                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// disabled path                                                                                               |
+//   telemetry.zig returns this from currentContext and accepts it in setContext so product/OE code can keep   |
+//   one typed call surface without carrying thread-local telemetry state.                                     |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 0 B; no row buffers, thread-local storage, or out-of-line payload                 |
 pub const Context = struct {};
+// ------------------------------------------------------------------------------------------------------------|
