@@ -27,6 +27,14 @@ const centimeters_per_kilometer = 1.0e5;
 //   carrier-cache path -> reuse per-wavelength scalar rows after WavelengthCarrierCache.init                   |
 //   direct path        -> evaluate the same rows with only a profile spectroscopy cache                        |
 //                                                                                                              |
+// function families                                                                                            |
+//   sharedOptical*     : full gas/CIA/Rayleigh/aerosol carrier rows for support rows or altitudes              |
+//   sharedBoundary*    : interface rows with separate above/below aerosol scattering for shared RTM levels     |
+//   fillSource*        : SourceInterfaceInput writers consumed by LABOS integrated-source routes               |
+//   fillRtmQuadrature* : RtmQuadratureLevel writers used by source-function quadrature                         |
+//   sharedActive*      : active-level carriers used by pseudo-spherical and direct attenuation paths           |
+//   cache helpers       : epoch-tagged scalar support-row reuse and wavelength-local sigma/Rayleigh constants  |
+//                                                                                                              |
 // hot path                                                                                                     |
 //   Runs for each high-resolution wavelength sample. WavelengthCarrierCache precomputes continuum sigma, CIA   |
 //   coefficients, Rayleigh cross section/P2, and aerosol wavelength scales, then tags support-row scalar rows  |
@@ -856,6 +864,23 @@ pub fn fillSourceInterfaceAtLevelWithCarrierCache(
     wavelength_cache: *WavelengthCarrierCache,
     source_interface: *transport_common.SourceInterfaceInput,
 ) void {
+    // fillSourceInterfaceAtLevelWithCarrierCache ------------------------------------------------------------  |
+    // Writes one shared-grid source-interface row using wavelength-local carrier cache state.                  |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Called by source_interfaces.zig after forward_input has already built WavelengthCarrierCache for the   |
+    //   current wavelength. Gas/Rayleigh/CIA scalar rows come through the epoch cache; only above/below        |
+    //   particle boundary rows and the final phase mix are assembled here.                                     |
+    //                                                                                                          |
+    // output                                                                                                   |
+    //   source_interface is caller-owned ForwardInput storage. Invalid support indexes are written as a        |
+    //   zero-scattering interface with the retained RTM weight so stale rows cannot survive a failed lookup.   |
+    //                                                                                                          |
+    // calls                                                                                                    |
+    //   WavelengthCarrierCache.cachedSupportRowScalarsRef                                                      |
+    //   fillSourceInterfaceFromBoundaryParts                                                                   |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
         source_interface.* = .{ .rtm_weight = rtm_weight };
@@ -903,6 +928,20 @@ fn fillSourceInterfaceFromBoundaryParts(
     rayleigh_phase_coefficient2: ?f64,
     source_interface: *transport_common.SourceInterfaceInput,
 ) void {
+    // fillSourceInterfaceFromBoundaryParts ------------------------------------------------------------------- |
+    // Compose the final LABOS source-interface row from one gas carrier and the particle rows on each side of  |
+    // an interface. The caller chooses whether Rayleigh P2(lambda) was cached or should be computed here.      |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   k_sca_above = k_sca_gas + k_sca_particle_above                                                         |
+    //   phase_above = mix(P_rayleigh, P_aerosol, k_sca_gas, k_sca_aerosol_above)                               |
+    //   phase_below = mix(P_rayleigh, P_aerosol, k_sca_gas, k_sca_aerosol_below)                               |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Writes one caller-owned SourceInterfaceInput. PhaseMixture is a compact value row that references the  |
+    //   prepared aerosol phase coefficient array owned by PreparedOpticalState.                                |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const particle_above_total = particle_above.totalScatteringOpticalDepthPerKm();
     const rayleigh_coef2 = rayleigh_phase_coefficient2 orelse
         PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
@@ -995,6 +1034,19 @@ pub fn fillRtmQuadratureLevelAtLevelWithCarrierCache(
     rtm_level: *transport_common.RtmQuadratureLevel,
     compute_jacobian: bool,
 ) void {
+    // fillRtmQuadratureLevelAtLevelWithCarrierCache ---------------------------------------------------------  |
+    // Writes one shared-grid RTM quadrature level using WavelengthCarrierCache.                                |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   rtm_quadrature.zig calls this for integrated-source solves after the same wavelength cache has filled  |
+    //   forward-layer and source-interface rows. The cached gas scalar row avoids repeating spectroscopy, CIA  |
+    //   interpolation, Rayleigh cross-section lookup, and aerosol wavelength scaling for the boundary row.     |
+    //                                                                                                          |
+    // output                                                                                                   |
+    //   rtm_level is caller-owned ForwardInput storage. Invalid support indexes keep geometry altitude/weight  |
+    //   but clear scattering and phase weights through fillZeroRtmQuadratureLevel.                             |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) {
         fillZeroRtmQuadratureLevel(level_geometry, rtm_level, compute_jacobian);
@@ -1042,6 +1094,21 @@ fn fillRtmQuadratureLevelFromBoundaryParts(
     rtm_level: *transport_common.RtmQuadratureLevel,
     compute_jacobian: bool,
 ) void {
+    // fillRtmQuadratureLevelFromBoundaryParts ---------------------------------------------------------------  |
+    // Compose the final quadrature transport row from shared geometry, gas scattering, and above/below         |
+    // particle carriers. Source-function integration reads ksca, phase weights, and optional aerosol           |
+    // Jacobian slots from this row.                                                                            |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   ksca       = k_sca_gas + k_sca_particle_above                                                          |
+    //   weight     = SharedRtmLevelGeometry.weight_km                                                          |
+    //   source sum = sum(level.weight * level.ksca) in LABOS source integration                                |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Writes one 64 B RtmQuadratureLevel. Above and below aerosol slots stay separate so Jacobian and        |
+    //   interface routes can keep the same shared-RTM boundary convention.                                     |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const aerosol_ksca = particle_above.aerosol_scattering_optical_depth_per_km;
     rtm_level.altitude_km = level_geometry.altitude_km;
     rtm_level.weight = level_geometry.weight_km;
@@ -1343,6 +1410,17 @@ pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
     altitude_km: f64,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) PreparedQuadratureCarrier {
+    // quadratureCarrierAtAltitudeWithSpectroscopyCache ------------------------------------------------------  |
+    // Return the scattering-only carrier used by fallback RTM quadrature when it samples away from prepared    |
+    // support rows. The full altitude carrier is evaluated first, then reduced to the fields required by       |
+    // RtmQuadratureLevel.                                                                                      |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   Used by the non-shared quadrature fallback in rtm_quadrature.zig. It may interpolate prepared          |
+    //   thermodynamic rows, so callers should reuse a ProfileNodeSpectroscopyCache when several levels share   |
+    //   the same wavelength.                                                                                   |
+    // -------------------------------------------------------------------------------------------------------- |
+
     const carrier = sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
         self,
         wavelength_nm,
