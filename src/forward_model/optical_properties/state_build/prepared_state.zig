@@ -25,11 +25,14 @@ const Allocator = std.mem.Allocator;
 //     -> ensureSharedRtmGeometryCache  builds retained shared-RTM geometry when interval semantics allow      |
 //                                                                                                             |
 // public surface                                                                                              |
-//   PreparedOpticalState              : wide header over owned or borrowed out-of-line preparation storage    |
-//   deinit                            : follows owns_* flags set while Context/AbsorberBuildState are moved   |
-//   transportLayerCount               : exposes the reduced/shared RTM layer count to product storage         |
-//   computeSpectroscopy*Key           : cache identity for line-list and profile-node spectroscopy reuse      |
-//   spectroscopy/optical-depth helpers : thin methods that delegate to state_spectroscopy/state_scalar/etc.   |
+//   PreparedOpticalState : wide header over owned or borrowed out-of-line preparation storage                 |
+//   deinit               : follows owns_* flags set while Context/AbsorberBuildState are moved                |
+//   shape methods        : transportLayerCount, intervalSemanticsUseReducedSharedRtmLayers, and               |
+//                          ensureSharedRtmGeometryCache choose the retained transport geometry                |
+//   cache-key methods    : computeSpectroscopyPlanKey and computeSpectroscopyProfileCacheInputsKey protect    |
+//                          wavelength-plan and profile-node spectroscopy caches from stale prepared state     |
+//   delegate methods     : scalar, spectroscopy, and optical-depth methods keep the public method surface     |
+//                          on PreparedOpticalState while the implementation lives in smaller read-side files  |
 //                                                                                                             |
 // caller map                                                                                                  |
 //   instrument_grid/grid_calculation reads this for wavelength plans, forward inputs, spectral eval, storage, |
@@ -76,6 +79,9 @@ const Allocator = std.mem.Allocator;
 // cache keys                                                                                                  |
 //   spectroscopy_plan_key tracks the active line-list plan. spectroscopy_profile_cache_inputs_key tracks      |
 //   profile arrays plus the spectroscopy controls that make profile-node caches reusable.                     |
+//   The private update* helpers at the bottom intentionally hash concrete line-list fields, prepared strong   |
+//   and weak line-state arrays, and runtime controls by value. They are cache invalidation code, not a        |
+//   cryptographic digest or persisted file format.                                                            |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   Deinit follows the owns_* flags set by Finalize.assemble when buffers are moved out of Context and        |
@@ -742,6 +748,18 @@ fn updateSpectroscopyCacheInputs(
     hash: *std.hash.Wyhash,
     prepared: *const PreparedOpticalState,
 ) void {
+    // updateSpectroscopyCacheInputs --------------------------------------------------------------------------|
+    // Add the non-profile-array inputs that can change profile-node spectroscopy reuse.                       |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   computeSpectroscopyProfileCacheInputsKey hashes altitude, pressure, and temperature arrays first,     |
+    //   then calls this helper for the retained line/LUT/control state attached to PreparedOpticalState.      |
+    //                                                                                                         |
+    // cache shape                                                                                             |
+    //   A cache hit means the same profile arrays are paired with the same full line-list inputs, same O2     |
+    //   LUT enabled state, and same prepared strong/weak line-state payloads.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateInt(hash, prepared.spectroscopy_lines != null);
     if (prepared.spectroscopy_lines) |line_list| updateFullLineListInputs(hash, line_list);
     updateInt(hash, prepared.operational_o2_lut.enabled());
@@ -750,6 +768,11 @@ fn updateSpectroscopyCacheInputs(
 }
 
 fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    // updateStrongLinePreparedStates -------------------------------------------------------------------------|
+    // Hash prepared strong-line rows by presence, row count, and the arrays used by line-shape evaluation.    |
+    // These rows are owned or borrowed by PreparedOpticalState; this helper only reads them.                  |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateInt(hash, states != null);
     if (states) |resolved| {
         updateInt(hash, resolved.len);
@@ -766,6 +789,11 @@ fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void 
 }
 
 fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    // updateWeakLinePreparedStates ---------------------------------------------------------------------------|
+    // Hash prepared weak-line rows by presence, row count, thermodynamic guards, and per-line coefficients.   |
+    // This protects profile-node caches from reusing line-shape work after weak-line preparation changes.     |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateInt(hash, states != null);
     if (states) |resolved| {
         updateInt(hash, resolved.len);
@@ -785,6 +813,12 @@ fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
 }
 
 fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    // updateLineListPlanInputs -------------------------------------------------------------------------------|
+    // Hash the small subset that changes wavelength-plan line selection: runtime threshold, line count,       |
+    // center wavelength, and strength. This is intentionally narrower than updateFullLineListInputs because   |
+    // planning does not need pressure broadening, partition metadata, or line-mixing payloads.                |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
     updateInt(hash, line_list.lines.len);
     for (line_list.lines) |line| {
@@ -794,6 +828,15 @@ fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
 }
 
 fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    // updateFullLineListInputs -------------------------------------------------------------------------------|
+    // Hash every retained line-list field that can change spectroscopy evaluation for a profile node.         |
+    //                                                                                                         |
+    // cache shape                                                                                             |
+    //   This includes runtime controls, weak-line rows, strong-line rows, branch metadata, isotope filters,   |
+    //   vendor partition data, and relaxation-matrix coefficients. A profile-cache hit should mean the        |
+    //   same physical spectroscopy inputs, not only the same wavelength-plan shape.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateFloat(hash, line_list.strong_line_tolerance_nm);
     updateInt(hash, line_list.lines_sorted_ascending);
     updateInt(hash, line_list.preserve_anchor_weak_lines);
@@ -850,6 +893,12 @@ fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
 }
 
 fn updateFullRuntimeControls(hash: *std.hash.Wyhash, controls: anytype) void {
+    // updateFullRuntimeControls ------------------------------------------------------------------------------|
+    // Hash spectroscopy runtime controls that alter active isotopes, line pruning, cutoff grids, or           |
+    // line-mixing strength. These fields belong to the cache key because they can change line evaluation      |
+    // without changing the profile arrays.                                                                    |
+    // --------------------------------------------------------------------------------------------------------|
+
     updateOptionalInt(hash, controls.gas_index);
     updateInt(hash, controls.active_isotopes.len);
     hash.update(controls.active_isotopes);
