@@ -65,11 +65,23 @@ pub fn zeroContinuumTable(
     start_nm: f64,
     end_nm: f64,
 ) !ReferenceData.CrossSectionTable {
+    // zeroContinuumTable -------------------------------------------------------------------------------------|
+    // Build an owned three-point continuum table that preserves the scene wavelength support with zero sigma. |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   selection.zig uses this when no supported continuum asset is requested. o2a_reference/run.zig uses    |
+    //   the same shape for reference-case setup.                                                              |
+    //                                                                                                         |
+    // units                                                                                                   |
+    //   Wavelength support stays in nanometers so downstream interpolation sees the same spectral axis even   |
+    //   though every coefficient value is zero.                                                               |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Returns an owned 3-row CrossSectionPoint slice; the caller releases it through CrossSectionTable.     |
+    // --------------------------------------------------------------------------------------------------------|
+
     const midpoint_nm = (start_nm + end_nm) * 0.5;
 
-    // UNITS:
-    //   The continuum grid is kept in nanometers so downstream interpolation sees the same
-    //   spectral support even when the coefficient values are zero.
     return .{
         .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
@@ -185,19 +197,29 @@ pub fn loadAirmassFactorLut(
 }
 
 pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
+    // shouldLoadBundledO2ALineList ---------------------------------------------------------------------------|
+    // Decide whether absent line-list bindings should use the bundled O2 A line list.                         |
+    //                                                                                                         |
+    // policy                                                                                                  |
+    //   Empty absorber lists are the bundled-default scene. Otherwise, the bundled line list is selected      |
+    //   only for an explicit O2 line-by-line request; unsupported explicit bindings are rejected in           |
+    //   selection.zig before this helper can act as a fallback.                                               |
+    // --------------------------------------------------------------------------------------------------------|
 
-    // DECISION:
-    //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
-    //   explicit configuration.
     if (scene.absorbers.items.len == 0) return true;
     return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line);
 }
 
 pub fn shouldLoadBundledO2ACia(scene: *const Scene) bool {
+    // shouldLoadBundledO2ACia --------------------------------------------------------------------------------|
+    // Decide whether absent CIA bindings should use the bundled O2-O2 table.                                  |
+    //                                                                                                         |
+    // policy                                                                                                  |
+    //   Empty absorber lists are the bundled-default scene. Otherwise, O2 line-by-line or explicit O2-O2 CIA  |
+    //   requests can use the bundled CIA table when the scene overlaps O2 A support. selection.zig rejects    |
+    //   unresolved explicit CIA bindings before this helper can act as a fallback.                            |
+    // --------------------------------------------------------------------------------------------------------|
 
-    // DECISION:
-    //   Empty absorber lists are treated as a bundled-default scene, not as a fully specified
-    //   explicit configuration.
     if (scene.absorbers.items.len == 0) return true;
     return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line) or
         sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
@@ -208,6 +230,15 @@ pub fn sceneRequestsSpectroscopyMode(
     species: AbsorberSpecies,
     mode: AbsorberModel.SpectroscopyMode,
 ) bool {
+    // sceneRequestsSpectroscopyMode --------------------------------------------------------------------------|
+    // Scan scene absorber controls for one typed species and spectroscopy mode.                               |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Unknown absorber identifiers are ignored here because selection only needs to know whether a known    |
+    //   species requested the mode. The typed rejection for unsupported explicit asset bindings happens in    |
+    //   selection.zig before bundled defaults are loaded.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != mode) continue;
 
