@@ -2,24 +2,37 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 // airmass_phase.zig ------------------------------------------------------------------------------------------|
-// Reference airmass and phase-support helpers used while preparing O2 A optical state.                        |
+// Reference support rows for geometry-dependent airmass factors and phase-support markers. These are setup    |
+// helpers for O2 A preparation: they shape inputs before optical-state rows are built, but they do not sample |
+// absorption cross sections or run RTM transport.                                                             |
 //                                                                                                             |
-// called by                                                                                                   |
-//   bundled/assets.zig and o2a_reference/run.zig load AirmassFactorLut rows from reference assets.            |
-//   absorbers.zig resolves one airmass factor for the scene geometry before spectroscopy state is prepared.   |
-//   prepared_state.zig/finalize.zig carry PhaseSupportKind for downstream aerosol/Rayleigh phase handling.    |
+// route                                                                                                       |
+//   bundled/assets.zig loads the bundled AirmassFactorLut. o2a_reference/run.zig can load the same shape from |
+//   an explicit fixed asset, with fixed_asset_cache owning cache reuse.                                       |
+//   bundled/load.zig carries the LUT beside spectroscopy and CIA assets before buildOptics prepares the scene.|
+//   optical-property preparation resolves one nearest airmass factor for the scene geometry, then stores the  |
+//   resulting scalar/profile data in prepared state.                                                          |
+//   finalize.zig chooses PhaseSupportKind.analytic_hg only when aerosol is enabled; LABOS later uses prepared |
+//   phase coefficients and max phase indexes, not this public tag directly.                                   |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   nearest                         -> scene angles -> nearest reference airmass support row                  |
-//   providesSupportOnly             -> marker for reference assets that are support data, not physics tables  |
-//   spectralProfileFromOpticalDepth -> optical-depth proxy samples -> normalized airmass-shaped profile       |
+// data shapes                                                                                                 |
+//   AirmassFactorPoint : one angular support row, 32 B, scanned by nearest                                    |
+//   AirmassFactorLut   : owned slice of support rows from the reference-data loader                           |
+//   PhaseSupportKind   : tag copied into prepared state to describe the aerosol phase-support family          |
 //                                                                                                             |
-// hot path                                                                                                    |
-//   nearest runs once during optical-state preparation. spectralProfileFromOpticalDepth writes one f64 per    |
-//   wavelength when reference support materializes a profile from proxy optical-depth samples.                |
+// profile builder                                                                                             |
+//   spectralProfileFromOpticalDepth converts wavelength-aligned optical-depth proxy samples into an airmass   |
+//   profile with the requested mean. It clips negative proxy values to zero, adds a weak wavelength tilt so   |
+//   the profile is not flat, then renormalizes the final profile back to mean_airmass_factor.                 |
+//                                                                                                             |
+// hot path boundary                                                                                           |
+//   nearest is setup work: it runs once for the scene geometry and linearly scans the support rows.           |
+//   spectralProfileFromOpticalDepth writes one f64 per wavelength when support assets are materialized.       |
+//   Repeated wavelength execution consumes prepared optical rows and never calls back into this file.         |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   AirmassFactorLut owns the row storage returned by the reference-data loader and releases it in deinit.    |
+//   spectralProfileFromOpticalDepth returns an owned f64 profile slice; the caller releases it.               |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const PhaseSupportKind = enum {
@@ -102,15 +115,6 @@ pub const AirmassFactorLut = struct {
         }
         return best_value;
     }
-
-    pub fn providesSupportOnly(_: AirmassFactorLut) bool {
-        // AirmassFactorLut.providesSupportOnly ---------------------------------------------------------------|
-        // Identify this LUT as support metadata. It selects preparation context but does not directly sample  |
-        // a wavelength-dependent absorption cross section.                                                    |
-        // ----------------------------------------------------------------------------------------------------|
-
-        return true;
-    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -121,12 +125,26 @@ pub fn spectralProfileFromOpticalDepth(
     optical_depth_proxy: []const f64,
 ) ![]f64 {
     // spectralProfileFromOpticalDepth ------------------------------------------------------------------------|
-    // Build an airmass-shaped spectral profile from optical-depth proxy samples.                              |
+    // Build a wavelength-aligned airmass profile from optical-depth proxy samples.                            |
+    //                                                                                                         |
+    // call shape                                                                                              |
+    //   Reference support loaders pass matching wavelength and proxy slices. The returned profile is owned by |
+    //   the caller and has the same length/order as wavelengths_nm.                                           |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : when reference support materializes band profiles                                          |
-    //   work     : normalize proxy samples, apply a weak wavelength tilt, then restore the requested mean     |
+    //   work     : one pass for proxy mean, one pass to write the profile, one pass to renormalize            |
     //   memory   : writes one f64 profile sample per input wavelength                                         |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   proxy_mean = mean(max(proxy_i, 0))                                                                    |
+    //   normalized_proxy_i = max(proxy_i, 0) / proxy_mean, or 1 when proxy_mean is zero                       |
+    //   coordinate_i = (wavelength_i - midpoint_nm) / half_span_nm                                            |
+    //   profile_i = safe_mean_airmass * normalized_proxy_i * (1 + 0.05 * coordinate_i)                        |
+    //   final profile is scaled so mean(profile) = safe_mean_airmass                                          |
+    //                                                                                                         |
+    // fallback                                                                                                |
+    //   Non-finite or non-positive mean_airmass_factor becomes 1.0. Empty inputs return an empty owned slice. |
     // --------------------------------------------------------------------------------------------------------|
 
     if (wavelengths_nm.len != optical_depth_proxy.len) return error.ShapeMismatch;
