@@ -1,15 +1,27 @@
 const std = @import("std");
 
 // calibration.zig -------------------------------------------------------------------------------------------------------|
-// Scalar channel calibration used after radiance, irradiance, and derivative columns are sampled.                        |
+// Scalar channel calibration for measurement-space arrays. The sampling path computes raw radiance, irradiance,          |
+// and active Jacobian columns first; this file applies per-channel correction after integration/convolution.             |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   grid_calculation/simulate.zig after convolution or integrated instrument sampling                                    |
+//   grid_calculation/simulate.zig after integrated sampling or slit convolution for radiance and irradiance.             |
+//   The same simulation route applies applySignalDerivative to active state-major Jacobian columns.                      |
+//   wavelength_sampling.zig uses shiftedWavelength while writing retained sampling rows for radiance/irradiance.         |
 //                                                                                                                        |
 // main paths                                                                                                             |
 //   applySignal           -> gain/offset plus stray-light mixing for measured signal arrays                              |
 //   applySignalDerivative -> derivative-column calibration without additive offset                                       |
 //   shiftedWavelength     -> channel-specific wavelength shift before integration planning                               |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   applySignal walks one output channel array after each spectrum is gathered. applySignalDerivative walks each         |
+//   active Jacobian column after optional convolution. Both helpers compute a channel mean first, then write the         |
+//   corrected samples in place when caller input and output slices are the same.                                         |
+//                                                                                                                        |
+// memory                                                                                                                 |
+//   Calibration is a 32 B value copied into simulation setup and wavelength-sampling setup rows. It owns no              |
+//   storage, so repeated loops read four scalar f64 controls and stream caller-owned slices.                             |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // Calibration -----------------------------------------------------------------------------------------------------------|

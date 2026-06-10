@@ -4,15 +4,26 @@ const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
 pub const spectrum_name = "generated_spectrum.csv";
 
 // json.zig ---------------------------------------------------------------------------------------------------|
-// Writes small product summaries and generated spectra for output/reporting boundaries.                       |
+// File-output helpers for product summaries and generated spectra. This module is an output boundary, so it   |
+// owns JSON/CSV formatting that must stay out of RTM and optical-property compute routines.                   |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.writeReport writes a SummaryReport to a caller-selected path. api/c.zig uses summaryReportFromProduct|
+//   to fill ZdsDiagnosticReport without file I/O. validation/o2a_plot_spectrum_cli.zig writes                 |
+//   generated_spectrum.csv for local plotting.                                                                |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   summaryReportFromProduct  copies product summary fields into a JSON-friendly value                        |
-//   writeSummaryReport        writes that value as indented JSON                                              |
-//   writeGeneratedSpectrumCsv writes wavelength, irradiance, radiance, and reflectance columns                |
+//   summaryReportFromProduct  -> copy scalar InstrumentGridProduct summary fields into SummaryReport          |
+//   writeSummaryReport        -> stream indented JSON for one SummaryReport                                   |
+//   writeGeneratedSpectrumCsv -> stream wavelength, irradiance, radiance, and reflectance columns             |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   SummaryReport is the small scalar report value shared by file output and the C diagnostic-report API.     |
+//   The generated-spectrum CSV is a validation/plotting artifact, not an internal transport format.           |
 //                                                                                                             |
 // memory                                                                                                      |
-//   SummaryReport is a compact value. File writers stream rows without retaining extra output buffers.        |
+//   SummaryReport is a compact value. File writers stream rows directly to std.fs.File writers and do not     |
+//   retain additional row buffers.                                                                            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SummaryReport ----------------------------------------------------------------------------------------------|

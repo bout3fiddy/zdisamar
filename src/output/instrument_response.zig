@@ -13,15 +13,27 @@ pub const channel_mask_radiance: u32 = 1 << 0;
 pub const channel_mask_irradiance: u32 = 1 << 1;
 
 // instrument_response.zig ------------------------------------------------------------------------------------|
-// Expands nominal instrument wavelengths into response-support diagnostic rows.                               |
+// Instrument-response support diagnostics for nominal product wavelengths. The rows expose the same sampling  |
+// kernels used before radiance/irradiance are assembled into measurement-space spectra.                       |
 //                                                                                                             |
 // called by                                                                                                   |
-//   API/reporting paths that need to inspect the integration support points behind a product wavelength.      |
+//   root.zig exposes buildInstrumentResponse for Zig callers. api/c.zig calls the same builder, copies rows   |
+//   into Context-owned C ABI storage, and frees the native temporary slice. integration.zig lists this file   |
+//   as the diagnostic expansion of its kernels.                                                               |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   build              walks requested nominal wavelengths and enabled channels                               |
-//   appendResponseRows resolves one channel response and writes support samples                               |
-//   nearestNominalIndex maps diagnostic rows back to the scene spectral grid                                  |
+//   build              -> requested nominal wavelengths x enabled radiance/irradiance channels                |
+//   appendResponseRows -> integrationForWavelengthChecked -> write one row per support sample                 |
+//   nearestNominalIndex -> map diagnostic rows back to the scene's uniform spectral grid                      |
+//                                                                                                             |
+// diagnostic contract                                                                                         |
+//   channel_mask selects radiance and/or irradiance. Disabled kernels still emit one identity support sample  |
+//   with weight 1 so callers can distinguish direct sampling from an empty response.                          |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is diagnostic work over wavelength x channel x response support. The expensive part is resolving the |
+//   same integration kernel used by product sampling; row append then copies offsets, weights, width, FWHM,   |
+//   high-resolution grid metadata, and integration mode into exported value rows.                             |
 //                                                                                                             |
 // memory                                                                                                      |
 //   The returned row slice is owned by the caller. ResponseSampling is stack-local per channel/wavelength.    |

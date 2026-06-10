@@ -16,16 +16,31 @@ const SpectroscopyStrongLine = ReferenceData.SpectroscopyStrongLine;
 const missing_index = std.math.maxInt(u32);
 
 // o2_line_contributions.zig ----------------------------------------------------------------------------------|
-// Builds O2 spectroscopy diagnostic rows for weak-line and strong-line sidecar contributions.                 |
+// O2 spectroscopy contribution diagnostics for prepared weak-line windows and strong-line sidecars. This file |
+// renders line-level explanation rows; it does not feed the forward RTM solve.                                |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.zig exposes buildO2LineContributions for Zig callers. api/c.zig calls the same builder, copies       |
+//   rows into Context-owned C ABI storage, reports total_row_count/truncated, and frees the native table.     |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   build                   walks requested wavelengths and profile nodes                                     |
-//   appendRowsForWavelength expands weak-line rows and strong-line sidecar rows for one state                 |
-//   weakLineRow             evaluates one weak line unless it is owned by a strong-line sidecar               |
-//   strongLineRow           evaluates one strong-line sidecar and attaches anchor-line metadata               |
+//   build                   -> primary O2 line list -> requested wavelengths -> profile nodes                 |
+//   appendRowsForWavelength -> relevant weak-line window plus strong-line sidecar rows for one state          |
+//   weakLineRow             -> weak-line sigma unless the line is owned by a strong-line sidecar              |
+//   strongLineRow           -> strong-line sidecar sigma and anchor-line metadata                             |
+//                                                                                                             |
+// diagnostic contract                                                                                         |
+//   row_kind separates weak-line and strong-line rows. status explains inclusion, strong-line ownership, or   |
+//   cutoff. max_rows limits materialized rows for large line lists; total_row_count still reports how many    |
+//   rows would have been emitted without truncation.                                                          |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   This is diagnostic work over wavelength x profile-node x relevant-line grids. The prepared line states    |
+//   and sidecar indexes are reused; the output path still does per-row spectroscopy evaluation by design.     |
 //                                                                                                             |
 // memory                                                                                                      |
-//   The returned table owns its row slice. Rows are wide value records because they are exported diagnostics. |
+//   ArrayList owns only the materialized rows up to max_rows. Rows are wide value records because they are    |
+//   exported diagnostics with no referenced storage.                                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const O2LineRowKind = enum(u32) {

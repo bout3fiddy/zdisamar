@@ -8,15 +8,27 @@ const Allocator = std.mem.Allocator;
 const PreparedOpticalState = Optics.PreparedOpticalState;
 
 // radiative_transfer_diagnostics.zig -------------------------------------------------------------------------|
-// Builds RT diagnostic rows by joining atmospheric-budget rows with optional final spectrum columns.          |
+// Radiative-transfer diagnostic table built from atmospheric-budget rows plus optional final spectrum columns.|
+// It explains the vertical RTM state used for a spectrum without running LABOS again.                         |
+//                                                                                                             |
+// called by                                                                                                   |
+//   root.zig exposes buildRadiativeTransferDiagnostics for Zig callers. api/c.zig accepts an optional         |
+//   spectrum handle, turns it into SpectrumView, copies native rows into Context-owned C ABI storage, and     |
+//   frees the temporary native slice.                                                                         |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   build              allocates diagnostics for all budget rows and groups them by wavelength                |
-//   fillWavelengthRows walks one wavelength's vertical rows and accumulates optical depth above               |
-//   interpolateSpectrum samples final radiance or reflectance from an optional spectrum view                  |
+//   build              -> atmospheric_budget.build -> group rows by wavelength -> fillWavelengthRows          |
+//   fillWavelengthRows -> top-down cumulative optical depth and RT proxy columns                              |
+//   interpolateSpectrum -> attach final radiance/reflectance from an optional borrowed spectrum               |
+//                                                                                                             |
+// diagnostic columns                                                                                          |
+//   The table records optical-depth totals, single-scatter albedo, simple transmission/source proxies,        |
+//   pseudo-spherical airmass, RTM stream count, integrated-source flag, and optional final spectrum values.   |
+//   These proxy columns are for inspection and regression triage; they are not alternate transport outputs.   |
 //                                                                                                             |
 // memory                                                                                                      |
-//   SpectrumView borrows caller-owned slices. The returned diagnostic row slice is owned by the caller.       |
+//   SpectrumView borrows caller-owned product slices. atmospheric_budget.build returns a temporary owned      |
+//   slice that is freed before return. The returned diagnostic row slice is owned by the caller.              |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectrumView -----------------------------------------------------------------------------------------------|

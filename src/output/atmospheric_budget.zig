@@ -12,16 +12,26 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 const PreparedSublayer = Optics.PreparedSublayer;
 
 // atmospheric_budget.zig -------------------------------------------------------------------------------------|
-// Builds per-wavelength vertical diagnostic rows from prepared optical state.                                 |
+// Base vertical diagnostic table for prepared optical state. It materializes wavelength x layer/sublayer rows |
+// that other output tables reuse instead of recomputing their own vertical optical-depth views.               |
 //                                                                                                             |
 // called by                                                                                                   |
-//   output.o2_o2_cia                      reuses the atmospheric rows and derives CIA share columns           |
-//   output.radiative_transfer_diagnostics reuses the rows and derives RTM proxy columns                       |
+//   root.zig exposes buildAtmosphericBudget for Zig callers. api/c.zig copies rows into Context-owned C ABI   |
+//   storage. output.o2_o2_cia reuses the rows for CIA share columns. output.radiative_transfer_diagnostics    |
+//   reuses the rows for RTM proxy columns.                                                                    |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   build         allocates the full wavelength x vertical-row table                                          |
-//   sublayerRow   evaluates sublayer-resolved optical properties through the profile spectroscopy cache       |
-//   layerRow      writes legacy layer-level rows when sublayers are not prepared                              |
+//   build       -> allocate full wavelength x vertical-row table                                              |
+//   sublayerRow -> evaluate sublayer-resolved optical properties through the profile spectroscopy cache       |
+//   layerRow    -> write legacy layer-level rows when sublayers are not prepared                              |
+//                                                                                                             |
+// row model                                                                                                   |
+//   Sublayer rows preserve interval-grid support kind and global sublayer index. Layer rows preserve the      |
+//   older layer-level output shape when no prepared sublayer grid exists.                                     |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Diagnostics can request many wavelengths. For sublayer grids, build creates one profile spectroscopy      |
+//   cache per wavelength and reuses it while walking all vertical support rows at that wavelength.            |
 //                                                                                                             |
 // memory                                                                                                      |
 //   The returned row slice is owned by the caller. Rows are value records with no referenced storage.         |

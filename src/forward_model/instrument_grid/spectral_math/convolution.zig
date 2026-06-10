@@ -3,16 +3,26 @@ pub const Error = error{
 };
 
 // convolution.zig -------------------------------------------------------------------------------------------------------|
-// One-dimensional slit convolution for measurement-space arrays. Radiance, irradiance, and active Jacobian               |
-// columns all use this helper when the instrument response was not already integrated during sampling.                   |
+// One-dimensional slit convolution for measurement-space arrays. It is the fallback spectral-response path used          |
+// when instrument integration has not already averaged radiance, irradiance, or active Jacobian columns.                 |
+//                                                                                                                        |
+// called by                                                                                                              |
+//   grid_calculation/simulate.zig applies this to radiance and irradiance scratch arrays before channel                  |
+//   calibration. The same file applies it to each active state-major Jacobian column before derivative calibration.      |
+//   implementations/instrument/integration.zig documents the legacy five-tap kernel that reaches this helper.            |
 //                                                                                                                        |
 // main paths                                                                                                             |
 //   apply               -> whole signal, including boundary and interior samples                                         |
 //   applyBoundarySample -> clipped edge normalization                                                                    |
 //   applyFullKernelSample -> fixed-window interior dot product                                                           |
 //                                                                                                                        |
-// convention                                                                                                             |
-//   Boundaries normalize by the valid part of the kernel only. Interior samples reuse the full kernel norm.              |
+// hot path                                                                                                               |
+//   The dense interior streams a fixed window over one caller-owned slice and uses a two-lane vector dot product.        |
+//   Boundaries are handled separately because the kernel clips at the first and last samples.                            |
+//                                                                                                                        |
+// contract                                                                                                               |
+//   Boundaries normalize by the valid part of the kernel only, so constant input stays constant at the edges.            |
+//   Interior samples reuse the full kernel norm. signal and output may be the same length-matched slice.                 |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
