@@ -660,17 +660,17 @@ pub fn populate(
     if (usesDisamarParitySupportGrid(context)) {
         seedParitySupportRowLayerIndices(context);
         if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
-            try populateParitySupportRowsParallel(
+            const parity_totals = try populateParitySupportRowsParallel(
                 allocator,
                 &accumulation_request,
-                &totals,
             );
+            mergeLayerAccumulationTotals(&totals, parity_totals);
         } else {
-            try populateParitySupportRows(
+            const parity_totals = try populateParitySupportRows(
                 allocator,
                 &accumulation_request,
-                &totals,
             );
+            mergeLayerAccumulationTotals(&totals, parity_totals);
         }
         for (context.layers, 0..) |*layer, index| {
             reduceParityLayer(
@@ -683,13 +683,13 @@ pub fn populate(
     }
 
     for (context.layers, 0..) |*layer, index| {
-        try populateLayer(
+        const layer_totals = try populateLayer(
             allocator,
             &accumulation_request,
-            &totals,
             layer,
             index,
         );
+        mergeLayerAccumulationTotals(&totals, layer_totals);
     }
 
     return totals;
@@ -931,26 +931,26 @@ fn profileEquivalentPhaseCoefficients(
 fn populateParitySupportRows(
     allocator: Allocator,
     request: *const LayerAccumulationRequest,
-    totals: *LayerAccumulation,
-) !void {
+) !LayerAccumulation {
+    var totals: LayerAccumulation = .{};
     for (0..request.context.sublayers.len) |write_index| {
         const current_layer_index: usize = @intCast(request.context.sublayers[write_index].parent_layer_index);
-        try populateParitySupportRow(
+        const row_totals = try populateParitySupportRow(
             allocator,
             request,
-            totals,
             current_layer_index,
             @intCast(request.context.sublayers[write_index].sublayer_index),
             write_index,
         );
+        mergeLayerAccumulationTotals(&totals, row_totals);
     }
+    return totals;
 }
 
 fn populateParitySupportRowsParallel(
     allocator: Allocator,
     request: *const LayerAccumulationRequest,
-    totals: *LayerAccumulation,
-) !void {
+) !LayerAccumulation {
     // populateParitySupportRowsParallel -----------------------------------------------------------------------  |
     // Fills independent parity support rows used by later wavelength carrier caching.                            |
     //                                                                                                            |
@@ -968,7 +968,6 @@ fn populateParitySupportRowsParallel(
         return populateParitySupportRows(
             allocator,
             request,
-            totals,
         );
     }
 
@@ -1008,9 +1007,11 @@ fn populateParitySupportRowsParallel(
 
     if (error_state.err) |err| return err;
 
+    var totals: LayerAccumulation = .{};
     for (workers) |worker| {
-        mergeParitySupportTotals(totals, worker.totals);
+        mergeLayerAccumulationTotals(&totals, worker.totals);
     }
+    return totals;
 }
 
 fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
@@ -1051,10 +1052,9 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                 //   indexes directly instead of scanning layer starts.
                 const context = worker.request.context;
                 const current_layer_index: usize = @intCast(context.sublayers[write_index].parent_layer_index);
-                populateParitySupportRow(
+                const row_totals = populateParitySupportRow(
                     worker.allocator,
                     worker.request,
-                    &worker.totals,
                     current_layer_index,
                     @intCast(context.sublayers[write_index].sublayer_index),
                     write_index,
@@ -1062,6 +1062,7 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
                     worker.error_state.store(err);
                     return;
                 };
+                mergeLayerAccumulationTotals(&worker.totals, row_totals);
             }
         }
     }
@@ -1070,11 +1071,10 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
 fn populateParitySupportRow(
     allocator: Allocator,
     request: *const LayerAccumulationRequest,
-    totals: *LayerAccumulation,
     current_layer_index: usize,
     current_sublayer_index: usize,
     write_index: usize,
-) !void {
+) !LayerAccumulation {
     const context = request.context;
     const layer_thickness_km = @max(
         context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
@@ -1082,10 +1082,9 @@ fn populateParitySupportRow(
         1.0e-9,
     );
     var ignored_layer_sums: LayerSums = .{};
-    try populateSublayer(
+    return populateSublayer(
         allocator,
         request,
-        totals,
         .{
             .layer_thickness_km = layer_thickness_km,
             .parent_layer_index = current_layer_index,
@@ -1130,12 +1129,24 @@ fn seedParitySupportRowLayerIndices(context: *Context) void {
     }
 }
 
-fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
+fn mergeLayerAccumulationTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
+    total.base_single_scatter_albedo += local.base_single_scatter_albedo;
+    total.aerosol_single_scatter_albedo += local.aerosol_single_scatter_albedo;
+    total.total_optical_depth += local.total_optical_depth;
+    total.total_temperature_weighted += local.total_temperature_weighted;
+    total.total_pressure_weighted += local.total_pressure_weighted;
+    total.total_weight += local.total_weight;
     total.air_column_density_factor += local.air_column_density_factor;
     total.oxygen_column_density_factor += local.oxygen_column_density_factor;
     total.column_density_factor += local.column_density_factor;
     total.cia_pair_path_factor_cm5 += local.cia_pair_path_factor_cm5;
+    total.total_gas_optical_depth += local.total_gas_optical_depth;
+    total.total_cia_optical_depth += local.total_cia_optical_depth;
+    total.total_aerosol_optical_depth += local.total_aerosol_optical_depth;
+    total.total_aerosol_base_optical_depth += local.total_aerosol_base_optical_depth;
+    total.total_scattering_optical_depth += local.total_scattering_optical_depth;
     total.total_d_optical_depth_d_temperature += local.total_d_optical_depth_d_temperature;
+    total.depolarization_weighted += local.depolarization_weighted;
 }
 
 fn reduceParityLayer(
@@ -1264,10 +1275,9 @@ fn reduceParityLayer(
 fn populateLayer(
     allocator: Allocator,
     request: *const LayerAccumulationRequest,
-    totals: *LayerAccumulation,
     layer: *State.PreparedLayer,
     index: usize,
-) !void {
+) !LayerAccumulation {
     // populateLayer -------------------------------------------------------------------------------------------  |
     // Iterates sublayers and accumulates optical depth, scattering, particle, and phase terms for one layer.     |
     //                                                                                                            |
@@ -1287,13 +1297,13 @@ fn populateLayer(
     const context = request.context;
     const geometry = layerGeometry(context, index);
     var layer_sums: LayerSums = .{};
+    var layer_totals: LayerAccumulation = .{};
 
     for (0..geometry.sublayer_count) |sublayer_index| {
         const write_index = @as(usize, geometry.sublayer_start_index) + sublayer_index;
-        try populateSublayer(
+        const sublayer_totals = try populateSublayer(
             allocator,
             request,
-            totals,
             .{
                 .layer_thickness_km = geometry.thickness_km,
                 .parent_layer_index = index,
@@ -1302,6 +1312,7 @@ fn populateLayer(
             },
             &layer_sums,
         );
+        mergeLayerAccumulationTotals(&layer_totals, sublayer_totals);
     }
 
     const density = layer_sums.density;
@@ -1338,16 +1349,16 @@ fn populateLayer(
         layer_aerosol_fraction_value = layer_aerosol_fraction;
     }
 
-    totals.total_optical_depth += optical_depth;
-    totals.total_temperature_weighted += temperature * density;
-    totals.total_pressure_weighted += pressure * density;
-    totals.total_weight += density;
-    totals.total_gas_optical_depth += gas_optical_depth;
-    totals.total_cia_optical_depth += layer_sums.cia_optical_depth;
-    totals.total_aerosol_optical_depth += aerosol_optical_depth;
-    totals.total_aerosol_base_optical_depth += aerosol_base_optical_depth;
-    totals.total_scattering_optical_depth += scattering;
-    totals.depolarization_weighted += depolarization * optical_depth;
+    layer_totals.total_optical_depth += optical_depth;
+    layer_totals.total_temperature_weighted += temperature * density;
+    layer_totals.total_pressure_weighted += pressure * density;
+    layer_totals.total_weight += density;
+    layer_totals.total_gas_optical_depth += gas_optical_depth;
+    layer_totals.total_cia_optical_depth += layer_sums.cia_optical_depth;
+    layer_totals.total_aerosol_optical_depth += aerosol_optical_depth;
+    layer_totals.total_aerosol_base_optical_depth += aerosol_base_optical_depth;
+    layer_totals.total_scattering_optical_depth += scattering;
+    layer_totals.depolarization_weighted += depolarization * optical_depth;
     const layer_temperature_derivative = layer_sums.meanTemperatureDerivative(geometry.sublayer_count);
 
     layer.* = .{
@@ -1380,15 +1391,15 @@ fn populateLayer(
         .interval_index_1based = geometry.interval_index_1based,
         .aerosol_fraction = layer_aerosol_fraction_value,
     };
+    return layer_totals;
 }
 
 fn populateSublayer(
     allocator: Allocator,
     request: *const LayerAccumulationRequest,
-    totals: *LayerAccumulation,
     target: SublayerTarget,
     layer_sums: *LayerSums,
-) !void {
+) !LayerAccumulation {
     // populateSublayer ----------------------------------------------------------------------------------------  |
     // Evaluates cross sections, line spectroscopy, CIA, Rayleigh, and particles for one sublayer/support row.    |
     //                                                                                                            |
@@ -1669,12 +1680,14 @@ fn populateSublayer(
         .aerosol_reference_wavelength_nm = aerosol_property.reference_wavelength_nm,
         .aerosol_angstrom_exponent = aerosol_property.angstrom_exponent,
     });
-    totals.air_column_density_factor += density * sublayer_path_length_cm;
-    totals.oxygen_column_density_factor += o2_density_cm3 * sublayer_path_length_cm;
-    totals.column_density_factor += total_gas_column_density_cm2;
-    totals.cia_pair_path_factor_cm5 += cia_pair_column_factor_cm5;
-    totals.total_d_optical_depth_d_temperature +=
-        d_gas_optical_depth_d_temperature + d_cia_optical_depth_d_temperature;
+    return .{
+        .air_column_density_factor = density * sublayer_path_length_cm,
+        .oxygen_column_density_factor = o2_density_cm3 * sublayer_path_length_cm,
+        .column_density_factor = total_gas_column_density_cm2,
+        .cia_pair_path_factor_cm5 = cia_pair_column_factor_cm5,
+        .total_d_optical_depth_d_temperature = d_gas_optical_depth_d_temperature +
+            d_cia_optical_depth_d_temperature,
+    };
 }
 
 fn layerGeometry(context: *const Context, index: usize) LayerGeometry {
