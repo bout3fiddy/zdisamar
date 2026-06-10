@@ -1,17 +1,29 @@
 // reference_assets_types.zig ---------------------------------------------------------------------------------|
-// Small shared types for reference-asset manifest loading.                                                    |
+// Shared manifest-level reference-asset tags and embedded-byte views.                                         |
 //                                                                                                             |
 // called by                                                                                                   |
-//   reference_assets.zig re-exports AssetKind and EmbeddedAsset for bundle loaders                            |
-//   reference_assets_loaded_asset.zig tags parsed tables with AssetKind before typed conversion               |
-//   bundled/assets.zig passes EmbeddedAsset byte slices for compile-time bundled reference data               |
+//   reference_assets.zig re-exports these names for bundled, embedded, and external asset loading.            |
+//   reference_assets_loaded_asset.zig stores AssetKind on ParsedTable output before typed conversion.         |
+//   bundled/assets.zig passes EmbeddedAsset rows for compile-time embedded O2 A reference tables.             |
 //                                                                                                             |
-// boundary shape                                                                                              |
-//   AssetKind is the manifest-level table category. EmbeddedAsset is a borrowed pointer pair over compile-    |
-//   time embedded bytes; ownership stays with the binary image, not the loader.                               |
+// asset kind map                                                                                              |
+//   climatology_profile                    -> atmospheric profile rows                                        |
+//   cross_section_table / lookup_table     -> absorber xsec tables and generated/consumed LUT inputs          |
+//   collision_induced_absorption_table     -> O2-O2 CIA polynomial rows                                       |
+//   spectroscopy_line_list/strong_line_set -> HITRAN/LISA line and strong-line support                        |
+//   spectroscopy_relaxation_matrix         -> LISA relaxation-matrix sidecar                                  |
+//                                                                                                             |
+// embedded asset shape                                                                                        |
+//   EmbeddedAsset.path is the manifest path key. EmbeddedAsset.contents is the byte slice produced by         |
+//   @embedFile. Both slices borrow binary-image storage; loaders must not free or mutate them.                |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   This file performs no parsing, allocation, hashing, or typed conversion. It only names the dispatch       |
+//   categories used by the ingest layer so forward-model code receives typed ReferenceData owners later.      |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Enum tags and borrowed slices only. This file owns no buffers and performs no parsing.                    |
+//   AssetKind is an enum tag. EmbeddedAsset is two borrowed slices, 32 B on 64-bit targets, with no owner     |
+//   state and no deinit path.                                                                                 |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const AssetKind = enum {

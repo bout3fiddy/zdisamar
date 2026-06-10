@@ -6,6 +6,12 @@
 //   source-path unit tests import private preparation, instrument-grid, spectroscopy, and LABOS helpers       |
 //   validation tests use selected internal rows without widening the public zdisamar API                      |
 //                                                                                                             |
+// route map                                                                                                   |
+//   input/reference exports expose loaders and typed reference tables for focused parsing and physics tests.  |
+//   forward_model.optical_properties exposes state-build modules that public callers reach only through       |
+//   prepare(). instrument_grid exposes workspace/storage internals for cache and sampling tests.              |
+//   radiative_transfer exposes LABOS and shared transport rows so matrix/order tests use the same types.      |
+//                                                                                                             |
 // boundary                                                                                                    |
 //   Product code should not depend on this router. Public callers use src/root.zig; this file keeps tests     |
 //   close to private helpers while preserving the narrower public input -> RTM -> output surface.             |

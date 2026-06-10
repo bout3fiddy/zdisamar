@@ -23,25 +23,42 @@ pub const no_lower_bound = -std.math.inf(f64);
 pub const no_upper_bound = std.math.inf(f64);
 
 // retrieval.zig ---------------------------------------------------------------------------------------------|
-// Native optimal-estimation retrieval for O2 A cases.                                                        |
+// Native O2 A optimal-estimation workflow and retained result owners.                                        |
 //                                                                                                            |
-// public entry points                                                                                        |
-//   runO2A              : one full retrieval, returns a retained Result handle.                              |
-//   runO2ABatch         : repeated starts sharing one prepared retrieval case and output buffers.            |
-//   runO2AFastmodeBatch : fast-stage starts plus full-correction refinement.                                 |
-//   correctPreparedO2A  : correction path for an already prepared O2 A case.                                 |
+// called by                                                                                                  |
+//   src/root.zig exposes this file as zdisamar.optimal_estimation.                                           |
+//   src/api/c.zig is the external C/Python boundary: it normalizes measurement slices, builds StateSpec      |
+//   rows, creates pressure-profile spline scratch, and stores returned Result/BatchResult handles.           |
+//   src/internal.zig imports this file for focused tests without widening the public facade.                 |
 //                                                                                                            |
-// main flow                                                                                                  |
-//   StateSpec inputs -> RetrievalPreparedCase -> runPreparedO2ACore -> Result or batch buffers.              |
-//   Each iteration evaluates the RTM/Jacobian, accumulates the normal system, then solves the OE update.     |
+// public routes                                                                                              |
+//   runO2A              : one full solve from a resolved O2 A case to an owned Result.                       |
+//   runO2ABatch         : repeated starts over one state template, writing run-major SoA batch outputs.      |
+//   runO2AFastmodeBatch : fast-stage batch solve, then a full-correction batch seeded from fast states.      |
+//   correctPreparedO2A  : one retained correction solve against an already prepared O2 A forward case.       |
+//   buildPressureProfile/freePressureProfile build the spline side data used by pressure-state retrievals.   |
 //                                                                                                            |
-// memory ownership                                                                                           |
-//   MeasurementWorkspace and Result own dense buffers. BatchResult and FastmodeBatchResult own SoA outputs.  |
-//   RetrievalPreparedCase owns mutable case copies and borrows caller-provided StateSpec rows.               |
+// input and preparation flow                                                                                 |
+//   StateSpec rows describe the OE state vector. RetrievalPreparedCase copies the resolved O2 A input into   |
+//   mutable scene/interval storage, owns the measurement workspace, captures reusable spectroscopy profile   |
+//   arrays after the first preparation, and borrows the caller-owned ProductStorage used for RTM products.   |
+//                                                                                                            |
+// iteration flow                                                                                             |
+//   runPreparedO2ACore initializes StateSpace, enables semi-analytical Jacobians, evaluates RTM/Jacobian,    |
+//   streams samples into Jt * Se^-1 * J and Jt * Se^-1 * residual, solves the Rodgers transformed update,    |
+//   clamps physical bounds, records history, and converts posterior precision to covariance and              |
+//   averaging-kernel output.                                                                                 |
+//                                                                                                            |
+// memory layout model                                                                                        |
+//   Small state-space values live in fixed [max_state_count=3] vectors and matrices from algebra.zig.        |
+//   Spectral-length data stays in MeasurementWorkspace, ProductStorage, and retained output slices.          |
+//   BatchResult and FastmodeBatchResult are run-major SoA owners so C/Python views can borrow contiguous     |
+//   status, state, iteration, convergence, and history arrays until the native handle is freed.              |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   runPreparedO2ACore is repeated per start. accumulateNormalSystem streams wavelength samples and projects |
-//   native Jacobian columns into max_state_count=3 OE state columns.                                         |
+//   Batches reuse one RetrievalPreparedCase per worker. The per-start loop mutates only state-dependent      |
+//   scene rows, then accumulateNormalSystem walks the wavelength grid once while projecting active native    |
+//   Jacobian columns into the <=3 OE state columns. Keep allocation and text/API handling outside this loop. |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{
