@@ -204,7 +204,8 @@ fn computePreparedMeans(
 
         var line_mean_weight: f64 = 0.0;
         var weighted: BandMeans.LineBandMeans = .{};
-        if (operational_o2_lut.enabled() and layer_totals.oxygen_column_density_factor > 0.0) {
+        const skip_o2_line_absorbers = operational_o2_lut.enabled();
+        if (skip_o2_line_absorbers and layer_totals.oxygen_column_density_factor > 0.0) {
             const operational_mean = BandMeans.computeOperationalBandMean(
                 scene,
                 operational_o2_lut,
@@ -217,7 +218,7 @@ fn computePreparedMeans(
         }
 
         for (absorbers.owned_line_absorbers) |*line_absorber| {
-            if (operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+            if (skip_o2_line_absorbers and line_absorber.species == .o2) continue;
 
             const weight = line_absorber.column_density_factor;
             if (weight <= 0.0) continue;

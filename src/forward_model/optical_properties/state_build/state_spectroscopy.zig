@@ -45,6 +45,43 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 //   those slices, writes caller-owned ProfileNodeSpectroscopyCache rows, and returns scalar evaluations.      |
 // ------------------------------------------------------------------------------------------------------------|
 
+pub inline fn zeroSpectroscopyEvaluation() ReferenceData.SpectroscopyEvaluation {
+    return .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
+}
+
+pub inline fn addWeightedSpectroscopyEvaluation(
+    weighted: *ReferenceData.SpectroscopyEvaluation,
+    evaluation: ReferenceData.SpectroscopyEvaluation,
+    weight: f64,
+) void {
+    weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
+    weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
+    weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
+    weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
+    weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
+    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+}
+
+pub inline fn normalizeSpectroscopyEvaluation(
+    weighted: *ReferenceData.SpectroscopyEvaluation,
+    total_weight: f64,
+) void {
+    weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
+    weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
+    weighted.line_sigma_cm2_per_molecule /= total_weight;
+    weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
+    weighted.total_sigma_cm2_per_molecule /= total_weight;
+    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
+}
+
 // ProfileNodeSpectroscopyCache -------------------------------------------------------------------------------|
 // Cached sigma_total profile and spline second derivatives for one wavelength.                                |
 //                                                                                                             |
@@ -600,16 +637,10 @@ pub fn weightedSpectroscopyEvaluationAtWavelength(
     // ------------------------------------------------------------------------------------------------------  |
 
     var total_weight: f64 = 0.0;
-    var weighted: ReferenceData.SpectroscopyEvaluation = .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
+    var weighted = zeroSpectroscopyEvaluation();
 
-    if (self.operational_o2_lut.enabled() and self.oxygen_column_density_factor > 0.0) {
+    const skip_o2_line_absorbers = self.operational_o2_lut.enabled();
+    if (skip_o2_line_absorbers and self.oxygen_column_density_factor > 0.0) {
         const o2_evaluation = OperationalO2.operationalO2EvaluationAtWavelength(
             self.operational_o2_lut,
             wavelength_nm,
@@ -617,22 +648,11 @@ pub fn weightedSpectroscopyEvaluationAtWavelength(
             pressure_hpa,
         );
         total_weight += self.oxygen_column_density_factor;
-        weighted.weak_line_sigma_cm2_per_molecule +=
-            o2_evaluation.weak_line_sigma_cm2_per_molecule * self.oxygen_column_density_factor;
-        weighted.strong_line_sigma_cm2_per_molecule +=
-            o2_evaluation.strong_line_sigma_cm2_per_molecule * self.oxygen_column_density_factor;
-        weighted.line_sigma_cm2_per_molecule +=
-            o2_evaluation.line_sigma_cm2_per_molecule * self.oxygen_column_density_factor;
-        weighted.line_mixing_sigma_cm2_per_molecule +=
-            o2_evaluation.line_mixing_sigma_cm2_per_molecule * self.oxygen_column_density_factor;
-        weighted.total_sigma_cm2_per_molecule +=
-            o2_evaluation.total_sigma_cm2_per_molecule * self.oxygen_column_density_factor;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            o2_evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * self.oxygen_column_density_factor;
+        addWeightedSpectroscopyEvaluation(&weighted, o2_evaluation, self.oxygen_column_density_factor);
     }
 
     for (self.line_absorbers) |line_absorber| {
-        if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+        if (skip_o2_line_absorbers and line_absorber.species == .o2) continue;
 
         const weight = if (line_absorber.column_density_factor > 0.0)
             line_absorber.column_density_factor
@@ -641,30 +661,14 @@ pub fn weightedSpectroscopyEvaluationAtWavelength(
         const evaluation = line_absorber.line_list.evaluateAt(wavelength_nm, temperature_k, pressure_hpa);
 
         total_weight += weight;
-        weighted.weak_line_sigma_cm2_per_molecule +=
-            evaluation.weak_line_sigma_cm2_per_molecule * weight;
-        weighted.strong_line_sigma_cm2_per_molecule +=
-            evaluation.strong_line_sigma_cm2_per_molecule * weight;
-        weighted.line_sigma_cm2_per_molecule +=
-            evaluation.line_sigma_cm2_per_molecule * weight;
-        weighted.line_mixing_sigma_cm2_per_molecule +=
-            evaluation.line_mixing_sigma_cm2_per_molecule * weight;
-        weighted.total_sigma_cm2_per_molecule +=
-            evaluation.total_sigma_cm2_per_molecule * weight;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+        addWeightedSpectroscopyEvaluation(&weighted, evaluation, weight);
     }
 
     if (total_weight <= 0.0) {
         return spectroscopyEvaluationAtWavelength(self, wavelength_nm, 0.0, 0.0, null);
     }
 
-    weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
-    weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
-    weighted.line_sigma_cm2_per_molecule /= total_weight;
-    weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
-    weighted.total_sigma_cm2_per_molecule /= total_weight;
-    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
+    normalizeSpectroscopyEvaluation(&weighted, total_weight);
     return weighted;
 }
 
@@ -678,16 +682,10 @@ pub fn weightedSpectroscopyEvaluationAtAltitude(
     oxygen_density_cm3: f64,
 ) ReferenceData.SpectroscopyEvaluation {
     var total_weight: f64 = 0.0;
-    var weighted: ReferenceData.SpectroscopyEvaluation = .{
-        .weak_line_sigma_cm2_per_molecule = 0.0,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = 0.0,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = 0.0,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-    };
+    var weighted = zeroSpectroscopyEvaluation();
 
-    if (self.operational_o2_lut.enabled() and oxygen_density_cm3 > 0.0) {
+    const skip_o2_line_absorbers = self.operational_o2_lut.enabled();
+    if (skip_o2_line_absorbers and oxygen_density_cm3 > 0.0) {
         const o2_evaluation = OperationalO2.operationalO2EvaluationAtWavelength(
             self.operational_o2_lut,
             wavelength_nm,
@@ -695,22 +693,11 @@ pub fn weightedSpectroscopyEvaluationAtAltitude(
             pressure_hpa,
         );
         total_weight += oxygen_density_cm3;
-        weighted.weak_line_sigma_cm2_per_molecule +=
-            o2_evaluation.weak_line_sigma_cm2_per_molecule * oxygen_density_cm3;
-        weighted.strong_line_sigma_cm2_per_molecule +=
-            o2_evaluation.strong_line_sigma_cm2_per_molecule * oxygen_density_cm3;
-        weighted.line_sigma_cm2_per_molecule +=
-            o2_evaluation.line_sigma_cm2_per_molecule * oxygen_density_cm3;
-        weighted.line_mixing_sigma_cm2_per_molecule +=
-            o2_evaluation.line_mixing_sigma_cm2_per_molecule * oxygen_density_cm3;
-        weighted.total_sigma_cm2_per_molecule +=
-            o2_evaluation.total_sigma_cm2_per_molecule * oxygen_density_cm3;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            o2_evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * oxygen_density_cm3;
+        addWeightedSpectroscopyEvaluation(&weighted, o2_evaluation, oxygen_density_cm3);
     }
 
     for (self.line_absorbers) |line_absorber| {
-        if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+        if (skip_o2_line_absorbers and line_absorber.species == .o2) continue;
         const weight = Scalar.interpolatePreparedScalarAtAltitude(
             sublayers,
             line_absorber.number_densities_cm3,
@@ -729,32 +716,11 @@ pub fn weightedSpectroscopyEvaluationAtAltitude(
             ),
         );
         total_weight += weight;
-        weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
-        weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
-        weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
-        weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
-        weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
-        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
-            evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+        addWeightedSpectroscopyEvaluation(&weighted, evaluation, weight);
     }
 
-    if (total_weight <= 0.0) {
-        return .{
-            .weak_line_sigma_cm2_per_molecule = 0.0,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = 0.0,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = 0.0,
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-        };
-    }
-
-    weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
-    weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
-    weighted.line_sigma_cm2_per_molecule /= total_weight;
-    weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
-    weighted.total_sigma_cm2_per_molecule /= total_weight;
-    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
+    if (total_weight <= 0.0) return zeroSpectroscopyEvaluation();
+    normalizeSpectroscopyEvaluation(&weighted, total_weight);
     return weighted;
 }
 

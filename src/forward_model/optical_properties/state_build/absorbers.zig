@@ -691,16 +691,17 @@ fn buildLineAbsorbers(
     const line_list = owned_lines.*;
     if (line_list == null) return;
     var line_list_value = line_list.?;
+    const operational_o2_lut_enabled = operational_o2_lut.enabled();
 
     if (state.active_line_absorbers.len > 1 or
-        (operational_o2_lut.enabled() and state.active_line_absorbers.len != 0))
+        (operational_o2_lut_enabled and state.active_line_absorbers.len != 0))
     {
         state.owned_line_absorbers = try allocator.alloc(State.PreparedLineAbsorber, state.active_line_absorbers.len);
 
         for (state.active_line_absorbers, 0..) |line_absorber, index| {
             var filtered = try line_list_value.clone(allocator);
             errdefer filtered.deinit(allocator);
-            const use_operational_o2_lut = operational_o2_lut.enabled() and line_absorber.species == .o2;
+            const use_operational_o2_lut = operational_o2_lut_enabled and line_absorber.species == .o2;
 
             try applyRuntimeControls(
                 allocator,
@@ -758,18 +759,19 @@ fn buildLineAbsorbers(
     }
 
     if (state.single_active_line_absorber) |line_absorber| {
+        const use_operational_o2_lut = operational_o2_lut_enabled and line_absorber.species == .o2;
         try applyRuntimeControls(
             allocator,
             &line_list_value,
             line_absorber,
-            operational_o2_lut.enabled() and line_absorber.species == .o2,
+            use_operational_o2_lut,
         );
-        if (!operational_o2_lut.enabled() and line_list_value.lines.len == 0) {
+        if (!operational_o2_lut_enabled and line_list_value.lines.len == 0) {
             return error.InvalidRequest;
         }
     }
     sortLineList(&line_list_value);
-    if (!operational_o2_lut.enabled()) {
+    if (!operational_o2_lut_enabled) {
         try line_list_value.buildStrongLineMatchIndex(allocator);
     }
     state.owned_lines = line_list_value;

@@ -216,9 +216,10 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
             }
 
             if (self.line_absorbers.len != 0) {
+                const skip_o2_line_absorbers = self.operational_o2_lut.enabled();
                 var line_optical_depth: f64 = 0.0;
                 for (self.line_absorbers) |line_absorber| {
-                    if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+                    if (skip_o2_line_absorbers and line_absorber.species == .o2) continue;
 
                     const absorber_density_cm3 = line_absorber.number_densities_cm3[global_sublayer_index];
                     if (absorber_density_cm3 <= 0.0) continue;
@@ -236,7 +237,7 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
                     line_optical_depth += sigma * absorber_density_cm3 * sublayer.path_length_cm;
                 }
 
-                if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
+                if (skip_o2_line_absorbers and sublayer.oxygen_number_density_cm3 > 0.0) {
                     line_optical_depth +=
                         self.operational_o2_lut.sigmaAt(
                             wavelength_nm,
