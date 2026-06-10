@@ -511,14 +511,31 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
     // fillForwardLayersAtWavelengthWithCarrierCache ---------------------------------------------------------|
     // Fill transport LayerInput rows for a cached wavelength solve.                                          |
     //                                                                                                        |
+    // call path                                                                                              |
+    //   forward_input.configuredForwardInput calls this after WavelengthCarrierCache has prepared support    |
+    //   row scalars for the same high-resolution wavelength miss.                                            |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   layer_inputs is caller-owned ForwardInput storage. The shared route writes one 176 B LayerInput per  |
+    //   transport layer; RTM quadrature, pseudo-spherical grids, source interfaces, and LABOS read the same  |
+    //   slice later in the wavelength solve.                                                                 |
+    //                                                                                                        |
     // hot path                                                                                               |
-    // called after WavelengthCarrierCache has prepared carrier values for the same wavelength.               |
-    // work: reduce shared support rows into layer inputs without repeating sigma * density * path work.      |
-    // data: shared RTM geometry, support sublayers, carrier cache, LayerInput rows.                          |
+    //   Runs once per high-resolution wavelength. The cache route reduces shared support rows into transport |
+    //   rows without repeating sigma * density * path work already stored in WavelengthCarrierCache.         |
+    //                                                                                                        |
+    // memory                                                                                                 |
+    //   Shared geometry supplies support spans; support sublayers and cached carriers remain borrowed from   |
+    //   PreparedOpticalState and WavelengthCarrierCache. This function only rewrites caller-owned LayerInput |
+    //   rows and falls back to the profile-cache route when shared RTM geometry is not active.               |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   tau_ext and phase terms are integrated over the support rows, then stored as the layer-level         |
+    //   transport row consumed by LABOS.                                                                     |
     //                                                                                                        |
     // calls                                                                                                  |
-    // shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache                                    |
-    // fillForwardLayersAtWavelengthWithSpectroscopyCache fallback                                            |
+    //   shared_carrier.fillReducedLayerInputFromSupportRowsWithCarrierCache                                  |
+    //   fillForwardLayersAtWavelengthWithSpectroscopyCache fallback                                          |
     // -------------------------------------------------------------------------------------------------------|
 
     if (request.layer_inputs.len == 0) {

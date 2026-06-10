@@ -429,19 +429,33 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     // fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache ------------------------------------------------|
     // Fill RTM quadrature levels for a cached wavelength solve.                                              |
     //                                                                                                        |
+    // call path                                                                                              |
+    //   forward_input.configuredForwardInput calls this after forward_layers has already filled LayerInput   |
+    //   rows and WavelengthCarrierCache support-row scalars for the same wavelength.                         |
+    //                                                                                                        |
+    // row handoff                                                                                            |
+    //   rtm_levels is caller-owned ForwardInput storage. carrier_eval writes one 64 B RtmQuadratureLevel per |
+    //   shared RTM level; LABOS reflectance later reads weight, k_sca, aerosol k_sca, and phase weights from |
+    //   the same row.                                                                                        |
+    //                                                                                                        |
     // hot path                                                                                               |
-    // called by integrated-source routes after WavelengthCarrierCache has already prepared carrier values.   |
-    // work: read cached boundary carriers and write the same RTM level row layout as the uncached path.      |
+    //   Runs once per integrated-source wavelength. The cache route avoids repeating spectroscopy, CIA,      |
+    //   Rayleigh, and aerosol wavelength-scaling setup while preserving the same quadrature row contract as  |
+    //   the uncached profile-cache route.                                                                    |
     //                                                                                                        |
     // memory                                                                                                 |
-    // The shared-grid loop reads aerosol_ksca_above_per_km at [24..31] from each RtmQuadratureLevel after    |
-    // carrier_eval has filled the same 64 B row. Keeping the full row avoids a side column that would have   |
-    // to be synchronized with RTM level altitude, weight, k_sca, and phase weights.                          |
+    //   The shared-grid loop reads aerosol_ksca_above_per_km at [24..31] from each RtmQuadratureLevel after  |
+    //   carrier_eval has filled the same 64 B row. Keeping the full row avoids a side column that would have |
+    //   to be synchronized with level altitude, quadrature weight, k_sca, phase weights, and LABOS handoff.  |
+    //                                                                                                        |
+    // math                                                                                                   |
+    //   source contribution = level.weight * level.ksca. Aerosol Jacobian scaling uses the same per-level    |
+    //   aerosol k_sca slot that source integration uses for phase weighting.                                 |
     //                                                                                                        |
     // calls                                                                                                  |
-    // carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache                                             |
-    // fillAerosolSourceJacobian                                                                              |
-    // fillSharedAerosolSourceJacobianFromLayers                                                              |
+    //   carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache                                           |
+    //   fillAerosolSourceJacobian                                                                            |
+    //   fillSharedAerosolSourceJacobianFromLayers                                                            |
     // -------------------------------------------------------------------------------------------------------|
 
     const sublayers = request.prepared.sublayers orelse return false;
