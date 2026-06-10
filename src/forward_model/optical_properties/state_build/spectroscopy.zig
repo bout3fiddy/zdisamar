@@ -1,4 +1,3 @@
-const std = @import("std");
 const AbsorberModel = @import("../../../input/Absorber.zig");
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
@@ -6,25 +5,23 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const OperationalO2 = @import("operational_o2.zig");
 const State = @import("state.zig");
 
-const Allocator = std.mem.Allocator;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
 // spectroscopy.zig -------------------------------------------------------------------------------------------|
 // Resolves absorber spectroscopy metadata while Context is still turning a Scene into prepared optical rows.  |
-// This is the species/ownership front door: it decides which absorbers become active, which line species is   |
-// being prepared, which species owns continuum density, and what volume-mixing-ratio fraction applies at a    |
-// pressure. Wavelength-dependent line-shape math lives in layer_spectroscopy.zig, state_spectroscopy.zig,     |
+// This is the species/ownership front door: it normalizes absorber species names, decides which line species  |
+// is being prepared, which species owns continuum density, and what volume-mixing-ratio fraction applies at   |
+// a pressure. Wavelength-dependent line-shape math lives in layer_spectroscopy.zig, state_spectroscopy.zig,   |
 // and carrier_eval.zig, not here.                                                                             |
 //                                                                                                             |
 // build route                                                                                                 |
-//   absorbers.zig calls collectActiveLineAbsorbers and collectActiveCrossSectionAbsorbers while building      |
-//   AbsorberBuildState. Later, after prepared line rows or operational O2 LUTs exist, absorbers.zig calls     |
-//   resolveActiveLineSpecies and resolveContinuumOwnerSpecies before finalize.zig moves the results into      |
-//   PreparedOpticalState.                                                                                     |
+//   absorbers.zig owns active absorber collection and prepared row allocation. After prepared line rows or    |
+//   operational O2 LUTs exist, it calls resolveActiveLineSpecies and resolveContinuumOwnerSpecies before      |
+//   finalize.zig moves the results into PreparedOpticalState. layer_accumulation.zig and layer_spectroscopy   |
+//   call speciesMixingRatioAtPressure while filling support-row density columns.                              |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   collectActiveLineAbsorbers         : scene absorbers using line_by_line spectroscopy                      |
-//   collectActiveCrossSectionAbsorbers : scene absorbers using cross-section tables or LUTs                   |
+//   resolvedAbsorberSpecies           : shared mapping from input absorber controls to typed species          |
 //   resolveActiveLineSpecies           : active line species from scene controls, O2 LUT, or HITRAN metadata  |
 //   resolveContinuumOwnerSpecies       : continuum owner when line ownership is loose                         |
 //   speciesMixingRatioAtPressure       : explicit or scene-level VMR profile interpolation at pressure        |
@@ -40,9 +37,8 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //   Later evaluation modules consume the same prepared rows for density weighting and spectroscopy lookup.    |
 //                                                                                                             |
 // memory                                                                                                      |
-//   collectActive* returns owned slices that AbsorberBuildState releases or moves forward. Other helpers      |
-//   return borrowed profile views, optional species, or scalar fractions; they do not retain scene pointers   |
-//   or allocate hidden state.                                                                                 |
+//   Helpers return optional species or scalar fractions. They borrow scene profiles, line lists, and prepared |
+//   absorber rows; they do not allocate, retain scene pointers, or own hidden state.                          |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   These helpers run during setup, not inside per-wavelength RTM kernels. The only wide-row scan reads       |
@@ -50,54 +46,6 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //   species beside the prepared line payload avoids a parallel column that every owner/deinit path would need |
 //   to maintain.                                                                                              |
 // ------------------------------------------------------------------------------------------------------------|
-
-pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
-    var active = std.ArrayList(State.ActiveLineAbsorber).empty;
-    defer active.deinit(allocator);
-
-    for (scene.absorbers.items) |absorber| {
-        const species = resolvedAbsorberSpecies(absorber) orelse continue;
-
-        if (!species.isLineAbsorbing()) continue;
-        if (absorber.spectroscopy.mode != .line_by_line) continue;
-
-        try active.append(allocator, .{
-            .species = species,
-            .controls = absorber.spectroscopy.line_gas_controls,
-            .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-        });
-    }
-    return active.toOwnedSlice(allocator);
-}
-
-pub fn collectActiveCrossSectionAbsorbers(
-    allocator: Allocator,
-    scene: *const Scene,
-    fallback_cross_sections: *const ReferenceData.CrossSectionTable,
-) ![]State.ActiveCrossSectionAbsorber {
-    var active = std.ArrayList(State.ActiveCrossSectionAbsorber).empty;
-    defer active.deinit(allocator);
-
-    for (scene.absorbers.items) |*absorber| {
-        const species = resolvedAbsorberSpecies(absorber.*) orelse continue;
-
-        if (absorber.spectroscopy.mode != .cross_sections) continue;
-
-        const representation = switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
-            .xsec_table => |table| AbsorberModel.AbsorptionRepresentation{ .xsec_table = table },
-            .xsec_lut => |lut| AbsorberModel.AbsorptionRepresentation{ .xsec_lut = lut },
-            .line_abs, .none => AbsorberModel.AbsorptionRepresentation{ .xsec_table = fallback_cross_sections },
-        };
-
-        try active.append(allocator, .{
-            .species = species,
-            .representation = representation,
-            .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-        });
-    }
-
-    return active.toOwnedSlice(allocator);
-}
 
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
     return AbsorberModel.resolvedAbsorberSpecies(absorber);
@@ -108,6 +56,21 @@ pub fn resolveActiveLineSpecies(
     line_list: ?ReferenceData.SpectroscopyLineList,
     operational_o2_lut: OperationalCrossSectionLut,
 ) !?AbsorberModel.AbsorberSpecies {
+    // resolveActiveLineSpecies -------------------------------------------------------------------------------|
+    // Resolve the line-absorbing species for the single-line-list preparation route.                          |
+    //                                                                                                         |
+    // decision order                                                                                          |
+    //   explicit active absorber species wins first                                                           |
+    //   operational O2 LUT implies O2 even without a line-list owner                                          |
+    //   runtime HITRAN gas_index wins when present                                                            |
+    //   otherwise infer from uniform non-zero line.gas_index values                                           |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Unsupported concrete HITRAN gases return UnsupportedSpectroscopyConfiguration instead of silently     |
+    //   becoming O2 or an inert line list. Mixed or empty lists return null because no single species owns    |
+    //   the line-list density.                                                                                |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (active_line_absorber) |line_absorber| return line_absorber.species;
 
     if (operational_o2_lut.enabled()) return .o2;
@@ -178,6 +141,22 @@ pub fn speciesMixingRatioAtPressure(
     pressure_hpa: f64,
     default_fraction: ?f64,
 ) ?f64 {
+    // speciesMixingRatioAtPressure ---------------------------------------------------------------------------|
+    // Resolve a species volume-mixing-ratio fraction at one pressure level.                                   |
+    //                                                                                                         |
+    // call path                                                                                               |
+    //   layer_accumulation and layer_spectroscopy call this while filling density columns for support rows.   |
+    //                                                                                                         |
+    // decision order                                                                                          |
+    //   explicit absorber profile wins first                                                                  |
+    //   matching scene absorber profile is used next                                                          |
+    //   default_fraction is returned when no profile is available                                             |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Profile slices are borrowed. The interpolation walk streams [pressure_hpa, ppmv] pairs and returns a  |
+    //   scalar fraction; no allocation or retained cache is created.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+
     const profile_ppmv = choose_profile: {
         if (explicit_profile_ppmv.len != 0) break :choose_profile explicit_profile_ppmv;
 
@@ -196,6 +175,14 @@ pub fn speciesMixingRatioAtPressure(
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) !?AbsorberModel.AbsorberSpecies {
+    // inferLineSpecies ---------------------------------------------------------------------------------------|
+    // Infer a single line species from retained spectroscopy line metadata.                                   |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Empty, gas_index=0, or mixed-gas line lists return null because no single density owner can be        |
+    //   inferred. A uniform but unsupported HITRAN gas index becomes a typed configuration error.             |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (lines.len == 0) return null;
 
     const first_gas_index = lines[0].gas_index;
@@ -227,6 +214,17 @@ fn findAbsorberBySpecies(
 }
 
 fn interpolateMixingRatioProfileFraction(profile_ppmv: []const [2]f64, pressure_hpa: f64) f64 {
+    // interpolateMixingRatioProfileFraction ------------------------------------------------------------------|
+    // Linearly interpolate a pressure/ppmv profile at one pressure and convert the result to a fraction.      |
+    //                                                                                                         |
+    // shape                                                                                                   |
+    //   Profile pressure can be ascending or descending. Values outside the profile range clamp to the        |
+    //   nearest endpoint. Duplicate pressure bounds choose the right endpoint value for that segment.         |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   fraction = max(ppmv, 0) * 1.0e-6                                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (profile_ppmv.len == 0) return 0.0;
     const safe_pressure_hpa = @max(pressure_hpa, 0.0);
     if (profile_ppmv.len == 1) return ppmvToFraction(profile_ppmv[0][1]);
