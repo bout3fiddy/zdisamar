@@ -196,6 +196,15 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
     layer_inputs: []const transport_common.LayerInput,
     rtm_levels: []transport_common.RtmQuadratureLevel,
 ) bool {
+    // fillRtmQuadratureAtWavelengthWithLayers ---------------------------------------------------------------|
+    // Convenience route for callers that do not already hold a profile spectroscopy cache. It builds one     |
+    // cache for this wavelength and then uses the shared prepared implementation below.                      |
+    //                                                                                                        |
+    // hot path                                                                                               |
+    //   Avoid this wrapper when a caller is already filling forward layers or pseudo-spherical rows for the  |
+    //   same wavelength; pass the existing cache so profile-node spectroscopy is not repeated.               |
+    // -------------------------------------------------------------------------------------------------------|
+
     var profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
     const request = RtmQuadratureSpectroscopyRequest{
         .prepared = self,
@@ -299,6 +308,10 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     var has_active_quadrature = false;
     const layers: []const State.PreparedLayer = request.prepared.layers;
     for (layers) |*layer| {
+
+        // The fallback only reads the support span from PreparedLayer here, but that span is the same layer
+        // identity used by nearby forward-layer and pseudo-spherical builders. Keep this as a pointer walk
+        // over the retained row until a benchmark proves a side span column improves this boundary.
         const start: usize = @intCast(layer.sublayer_start_index);
         const count: usize = @intCast(layer.sublayer_count);
         if (count == 0) continue;

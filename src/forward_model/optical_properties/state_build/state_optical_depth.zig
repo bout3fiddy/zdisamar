@@ -174,6 +174,11 @@ pub fn opticalDepthBreakdownAtWavelength(
 }
 
 pub fn evaluateLayerAtWavelength(request: *const LayerEvaluationRequest) EvaluatedLayer {
+    // evaluateLayerAtWavelength ---------------------------------------------------------------------------- |
+    // Evaluate one layer/support span without a caller-owned profile cache. Repeated wavelength routes should|
+    // pass the cache through LayerEvaluationRequest to the implementation below.                             |
+    // -------------------------------------------------------------------------------------------------------|
+
     var cacheless_request = request.*;
     cacheless_request.profile_cache = null;
     return evaluateLayerAtWavelengthWithSpectroscopyCache(&cacheless_request);
@@ -186,8 +191,8 @@ pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     // Evaluate one physical layer or support-row span at one wavelength.                                     |
     //                                                                                                        |
     // hot path                                                                                               |
-    // used by atmospheric budgets and non-shared layer routes.                                               |
-    // work: accumulate sublayer absorption, scattering, CIA, particles, and phase numerator fields.          |
+    //   Used by atmospheric budgets and non-shared layer routes. The loop walks PreparedSublayer rows and    |
+    //   accumulates absorption, scattering, CIA, particle, and phase numerator fields into one result row.   |
     //                                                                                                        |
     // math                                                                                                   |
     // per sublayer tau_abs = sigma_cont*N_cont + sigma_xs*N_xs + sigma_line*N_line                           |

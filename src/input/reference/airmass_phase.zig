@@ -2,19 +2,24 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 // airmass_phase.zig ------------------------------------------------------------------------------------------|
-// Reference airmass support for absorber preparation.                                                         |
+// Reference airmass and phase-support helpers used while preparing O2 A optical state.                        |
 //                                                                                                             |
-// data                                                                                                        |
-//   AirmassFactorPoint stores one angular support row.                                                        |
-//   AirmassFactorLut owns the row storage returned by the reference-data loader.                              |
+// called by                                                                                                   |
+//   bundled/assets.zig and o2a_reference/run.zig load AirmassFactorLut rows from reference assets.            |
+//   absorbers.zig resolves one airmass factor for the scene geometry before spectroscopy state is prepared.   |
+//   prepared_state.zig/finalize.zig carry PhaseSupportKind for downstream aerosol/Rayleigh phase handling.    |
 //                                                                                                             |
-// used by                                                                                                     |
-//   O2 A state preparation resolves an airmass factor for the scene geometry before spectroscopy state is     |
-//   prepared. Some call sites only need to know that the support exists.                                      |
+// main paths                                                                                                  |
+//   nearest                         -> scene angles -> nearest reference airmass support row                  |
+//   providesSupportOnly             -> marker for reference assets that are support data, not physics tables  |
+//   spectralProfileFromOpticalDepth -> optical-depth proxy samples -> normalized airmass-shaped profile       |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   nearest scans the small LUT for one preparation geometry. spectralProfileFromOpticalDepth builds an       |
-//   airmass-shaped spectral profile when only optical-depth proxy samples are available.                      |
+//   nearest runs once during optical-state preparation. spectralProfileFromOpticalDepth writes one f64 per    |
+//   wavelength when reference support materializes a profile from proxy optical-depth samples.                |
+//                                                                                                             |
+// ownership                                                                                                   |
+//   AirmassFactorLut owns the row storage returned by the reference-data loader and releases it in deinit.    |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const PhaseSupportKind = enum {
@@ -99,6 +104,11 @@ pub const AirmassFactorLut = struct {
     }
 
     pub fn providesSupportOnly(_: AirmassFactorLut) bool {
+        // AirmassFactorLut.providesSupportOnly ---------------------------------------------------------------|
+        // Identify this LUT as support metadata. It selects preparation context but does not directly sample  |
+        // a wavelength-dependent absorption cross section.                                                    |
+        // ----------------------------------------------------------------------------------------------------|
+
         return true;
     }
 };
