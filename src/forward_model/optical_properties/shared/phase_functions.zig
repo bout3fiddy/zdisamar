@@ -266,57 +266,6 @@ pub fn hgPhaseCoefficientsWithThreshold(
     return coefficients;
 }
 
-pub fn combinePhaseCoefficients(
-    wavelength_nm: f64,
-    gas_scattering_optical_depth: f64,
-    aerosol_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-) [phase_coefficient_count]f64 {
-    return combinePhaseCoefficientsWithRayleigh2(
-        rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
-        gas_scattering_optical_depth,
-        aerosol_scattering_optical_depth,
-        aerosol_phase_coefficients,
-    );
-}
-
-pub fn combinePhaseCoefficientsWithRayleigh2(
-    rayleigh_coef2: f64,
-    gas_scattering_optical_depth: f64,
-    aerosol_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: *const [phase_coefficient_count]f64,
-) [phase_coefficient_count]f64 {
-    // combinePhaseCoefficientsWithRayleigh2 -----------------------------------------------------------------  |
-    // Blends Rayleigh and aerosol phase coefficients by scattering optical depth.                              |
-    //                                                                                                          |
-    // hot path                                                                                                 |
-    //   Used by layer accumulation and carrier evaluation before LABOS phase matrices are built.               |
-    //                                                                                                          |
-    // math                                                                                                     |
-    //   P_l = aerosol_weight * P_l,aerosol                                                                     |
-    //       + rayleigh_weight * P2_rayleigh when l = 2                                                         |
-    //   P_0 = 1                                                                                                |
-    // -------------------------------------------------------------------------------------------------------  |
-
-    const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth;
-    if (total_scattering == 0.0) return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
-    if (aerosol_scattering_optical_depth == 0.0) {
-        return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
-    }
-
-    var combined: [phase_coefficient_count]f64 = undefined;
-    const inv_total = 1.0 / total_scattering;
-    const gas_weight = gas_scattering_optical_depth * inv_total;
-    const aerosol_weight = aerosol_scattering_optical_depth * inv_total;
-
-    for (0..phase_coefficient_count) |index| {
-        combined[index] = aerosol_weight * aerosol_phase_coefficients[index];
-    }
-    combined[0] = 1.0;
-    combined[2] += gas_weight * rayleigh_coef2;
-    return combined;
-}
-
 pub fn computeLayerDepolarization(
     scene: *const Scene,
     gas_scattering_tau: f64,

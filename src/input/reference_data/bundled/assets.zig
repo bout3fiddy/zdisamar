@@ -271,13 +271,6 @@ pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecie
     return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
-pub fn resolvedSpectroscopyLineList(scene: *const Scene) ?*const ReferenceData.SpectroscopyLineList {
-    for (scene.absorbers.items) |*absorber| {
-        if (absorber.spectroscopy.resolved_line_list) |*line_list| return line_list;
-    }
-    return null;
-}
-
 pub fn cloneResolvedSpectroscopyLineList(
     allocator: Allocator,
     scene: *const Scene,

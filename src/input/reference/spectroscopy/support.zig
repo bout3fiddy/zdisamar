@@ -18,8 +18,7 @@ const Types = @import("types.zig");
 //                                                                                                            |
 // vendor O2 A metadata                                                                                       |
 //   A vendor strong-line candidate must be O2 gas 7, isotope 1, branch_ic1=5, branch_ic2=1, and              |
-//   rotational_nf<=35. The *FromSource variants additionally require vendor_filter_metadata_from_source so   |
-//   inferred metadata is not mistaken for vendor-provided partition evidence.                                |
+//   rotational_nf<=35. Metadata detection accepts both source-provided and inferred branch fields.           |
 //                                                                                                            |
 // runtime controls                                                                                           |
 //   runtimeControlsMatchLine applies the active gas and isotope filters to one wide SpectroscopyLine row.    |
@@ -51,14 +50,6 @@ pub fn linePressureShiftCm1(line: *const Types.SpectroscopyLine) f64 {
         -PhysicsCore.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
 }
 
-pub fn lineIndexIsStrongAnchor(anchor_indices: []const Types.StrongLineAnchorIndex, line_index: usize) bool {
-    for (anchor_indices) |anchor| {
-        if (anchor == Types.missing_strong_line_anchor_index) continue;
-        if (@as(usize, @intCast(anchor)) == line_index) return true;
-    }
-    return false;
-}
-
 pub fn zeroEvaluation() Types.SpectroscopyEvaluation {
     return .{
         .weak_line_sigma_cm2_per_molecule = 0.0,
@@ -72,10 +63,6 @@ pub fn zeroEvaluation() Types.SpectroscopyEvaluation {
 
 pub fn lineHasVendorStrongLineMetadata(line: *const Types.SpectroscopyLine) bool {
     return line.branch_ic1 != null and line.branch_ic2 != null and line.rotational_nf != null;
-}
-
-pub fn lineHasVendorStrongLineMetadataFromSource(line: *const Types.SpectroscopyLine) bool {
-    return line.vendor_filter_metadata_from_source and lineHasVendorStrongLineMetadata(line);
 }
 
 pub fn wavenumberCm1ToWavelengthNm(wavenumber_cm1: f64) f64 {
