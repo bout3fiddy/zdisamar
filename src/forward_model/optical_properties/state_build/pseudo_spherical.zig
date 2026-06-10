@@ -42,9 +42,9 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per integrated-source wavelength when spherical correction is enabled; no allocation or file I/O.   |
-//   The shared-layer route reads one field from each 176 B LayerInput by pointer. The row is not split here  |
-//   because the same caller already needs the full transport row for LABOS, and the carrier route reuses the |
-//   wavelength cache that forward_input has already populated.                                               |
+//   The shared-layer route reads LayerInput.optical_depth at [40..47] from each 176 B row by pointer. The    |
+//   row is not split here because the same caller already needs the full transport row for LABOS, and the    |
+//   carrier route reuses the wavelength cache that forward_input has already populated.                      |
 //                                                                                                            |
 // math                                                                                                       |
 //   sample_tau_i = k_ext(lambda, z_i) * dz_i                                                                 |
@@ -159,13 +159,14 @@ pub fn fillSharedPseudoSphericalGridFromLayerInputs(
     //                                                                                                        |
     // row handoff                                                                                            |
     //   layer_inputs has the same order as SharedRtmGeometry.layers and the ForwardInput layer slice.        |
-    //   This route reads only LayerInput.optical_depth because geometry carries altitude and thickness.      |
+    //   This route reads only LayerInput.optical_depth at [40..47] because geometry carries altitude and     |
+    //   thickness.                                                                                           |
     //   output samples, level starts, and level altitudes are caller-owned worker scratch arrays.            |
     //                                                                                                        |
     // memory                                                                                                 |
-    //   This route reads one field from each 176 B LayerInput and uses pointer capture, so no transport row  |
-    //   is copied. A separate optical-depth column would have to be kept in lockstep with the transport      |
-    //   slice that LABOS already consumes.                                                                   |
+    //   This route reads one f64 from each 176 B LayerInput and uses pointer capture, so no transport row is |
+    //   copied. A separate optical-depth column would have to be kept in lockstep with the transport slice   |
+    //   that LABOS already consumes.                                                                         |
     // -------------------------------------------------------------------------------------------------------|
 
     const geometry = shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len) orelse return false;

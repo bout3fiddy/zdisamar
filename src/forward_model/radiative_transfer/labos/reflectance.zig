@@ -948,8 +948,9 @@ pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     //   root.zig also exports it for callers that need the same transport-layer total.                        |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   LayerInput is a 176 B transport row. This scan reads one f64 by pointer, so rows are not copied.      |
-    //   The same layer slice is immediately consumed by LABOS transport; a side column would need sync proof. |
+    //   LayerInput is a 176 B transport row. This scan reads scattering_optical_depth at [48..55] by          |
+    //   pointer, so rows are not copied. The same layer slice is immediately consumed by LABOS transport; a   |
+    //   side column would need sync proof.                                                                    |
     //                                                                                                         |
     // math                                                                                                    |
     //   total scattering optical depth = sum(max(layer scattering optical depth, 0))                          |
@@ -1417,8 +1418,9 @@ fn aerosolSingleScatteringAlbedo(layers: []const common.LayerInput) f64 {
     //   Aerosol Jacobian weighting calls this before optical-depth and pressure contributions are split.      |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   Reads two f64 fields from each LayerInput by pointer.                                                 |
-    //   The scan stays on the transport layer slice, so weighting uses the rows that produced reflectance.    |
+    //   LayerInput is a 176 B transport row. This scan reads aerosol_optical_depth at [24..31] and            |
+    //   aerosol_scattering_optical_depth at [32..39] by pointer, so rows are not copied. The scan stays on    |
+    //   the transport layer slice, so weighting uses the rows that produced reflectance.                      |
     //                                                                                                         |
     // math                                                                                                    |
     //   aerosol SSA = aerosol scattering optical depth / aerosol optical depth                                |
