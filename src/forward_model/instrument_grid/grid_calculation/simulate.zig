@@ -222,6 +222,25 @@ const WarmWavelengthPlanRequest = struct {
     prepared: *const OpticsPreparation.PreparedOpticalState,
 };
 
+// WavelengthPlanKeyRequest ----------------------------------------------------------------------------------------------|
+// Borrowed inputs whose spectral, instrument, and spectroscopy controls decide retained wavelength-plan reuse.           |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 16 B (0.016 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] scene    : *const Scene                                                                                       |
+// [ 8..15] prepared : *const OpticsPreparation.PreparedOpticalState                                                      |
+//                                                                                                                        |
+// referenced storage: scene and prepared are read-only borrowed inputs; this request owns no arrays.                     |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 16 B (0.016 KiB); no out-of-line storage                                                     |
+const WavelengthPlanKeyRequest = struct {
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+};
+
 inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
 
     // instrumentation: trace phase clock --------------------------------------------------------------------------------|
@@ -672,7 +691,11 @@ fn warmWavelengthPlanFromRequest(
     };
     try resolved_axis.validate();
 
-    const plan_key = wavelengthPlanKey(request.scene, request.prepared);
+    const key_request = WavelengthPlanKeyRequest{
+        .scene = request.scene,
+        .prepared = request.prepared,
+    };
+    const plan_key = wavelengthPlanKey(&key_request);
     if (request.storage.wavelength_plan_valid and request.storage.wavelength_plan_key == plan_key) {
         _ = try ensureProfileSpectroscopyCaches(
             allocator,
@@ -992,7 +1015,11 @@ fn buildSimulationSetup(request: *const SimulationSetupRequest) Storage.Error!Si
     Trace.plotU("output_wavelengths", @intCast(sample_count));
     // end instrumentation: trace counter: output wavelengths ----------------------------------------------------------- |
 
-    const plan_key = wavelengthPlanKey(request.scene, request.prepared);
+    const key_request = WavelengthPlanKeyRequest{
+        .scene = request.scene,
+        .prepared = request.prepared,
+    };
+    const plan_key = wavelengthPlanKey(&key_request);
 
     return .{
         .sample_count = sample_count,
@@ -1558,30 +1585,27 @@ fn processJacobianSamples(
     return null;
 }
 
-fn wavelengthPlanKey(
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-) u64 {
+fn wavelengthPlanKey(request: *const WavelengthPlanKeyRequest) u64 {
     // wavelengthPlanKey -------------------------------------------------------------------------------------------------|
     // Hash every input that changes wavelength sampling or forward-miss structure. A matching key means the              |
     // retained wavelength plan can be reused without rebuilding instrument kernels or miss indexes.                      |
     // -------------------------------------------------------------------------------------------------------------------|
 
     var hash = std.hash.Wyhash.init(0x4f32_4132_7761_7665);
-    updateFloat(&hash, scene.spectral_grid.start_nm);
-    updateFloat(&hash, scene.spectral_grid.end_nm);
-    updateInt(&hash, scene.spectral_grid.sample_count);
-    updateInt(&hash, @intFromEnum(scene.observation_model.sampling));
-    updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
-    updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
-    updateAdaptiveReferenceGrid(&hash, scene.observation_model.adaptive_reference_grid);
-    const spectroscopy_plan_key = if (prepared.spectroscopy_plan_key != 0)
-        prepared.spectroscopy_plan_key
+    updateFloat(&hash, request.scene.spectral_grid.start_nm);
+    updateFloat(&hash, request.scene.spectral_grid.end_nm);
+    updateInt(&hash, request.scene.spectral_grid.sample_count);
+    updateInt(&hash, @intFromEnum(request.scene.observation_model.sampling));
+    updateFloat(&hash, request.scene.observation_model.wavelength_shift_nm);
+    updateFloatSlice(&hash, request.scene.observation_model.measured_wavelengths_nm);
+    updateAdaptiveReferenceGrid(&hash, request.scene.observation_model.adaptive_reference_grid);
+    const spectroscopy_plan_key = if (request.prepared.spectroscopy_plan_key != 0)
+        request.prepared.spectroscopy_plan_key
     else
-        prepared.computeSpectroscopyPlanKey();
+        request.prepared.computeSpectroscopyPlanKey();
     updateInt(&hash, spectroscopy_plan_key);
-    updateChannelControls(&hash, scene, .radiance);
-    updateChannelControls(&hash, scene, .irradiance);
+    updateChannelControls(&hash, request.scene, .radiance);
+    updateChannelControls(&hash, request.scene, .irradiance);
     return hash.final();
 }
 
