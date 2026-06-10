@@ -9,22 +9,30 @@ const PreparedOpticalState = OpticsPreparation.PreparedOpticalState;
 const SolveConfig = common.SolveConfig;
 
 // root.zig --------------------------------------------------------------------------------------------------------------|
-// Public facade for measurement-space spectra. Scene + prepared optics + RTM controls enter here; the dense              |
-// implementation lives under grid_calculation/.                                                                          |
+// Public facade for measurement-space spectra. Scene, PreparedOpticalState, and RTM controls enter here; the             |
+// dense implementation stays under grid_calculation/. This file keeps the external flow small while allowing             |
+// storage-backed callers to reuse expensive wavelength/profile/preflight work.                                           |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   src/root.zig for the public Output path                                                                              |
-//   input/o2a_reference when running bundled O2 A cases                                                                  |
+//   src/root.zig uses simulateProductWithWorkspace for the public Output path. input/o2a_reference uses both             |
+//   one-shot and workspace routes for bundled O2 A cases. optimal_estimation keeps ProductStorage across trial           |
+//   states so repeated forward calls do not rebuild caches unnecessarily.                                                |
 //                                                                                                                        |
-// main paths                                                                                                             |
-//   simulateProduct              -> allocate temporary ProductStorage and return an owned product                        |
-//   simulateProductWithWorkspace -> reuse ProductStorage and return a borrowed view                                      |
-//   simulateSummary              -> run the lightweight summary route                                                    |
-//   warmProductWorkspace         -> prebuild wavelength and profile caches for repeated runs                             |
+// route map                                                                                                              |
+//   simulateProduct              -> allocate temporary ProductStorage, run borrowed route, clone owned product           |
+//   simulateProductWithWorkspace -> reuse ProductStorage and return a view borrowed from workspace buffers               |
+//   simulateSummary              -> run the lightweight summary route without retaining public product arrays            |
+//   simulateSummaryWithWorkspace -> summary mode with retained workspace buffers/profile caches                          |
+//   warmProductWorkspace         -> prebuild buffers, wavelength plans, and profile caches for repeated runs             |
 //                                                                                                                        |
-// boundary                                                                                                               |
-//   This file is only a facade. Spectral sampling, LABOS prefetch, convolution, reflectance assembly, and                |
-//   Jacobian packing stay in grid_calculation/.                                                                          |
+// ownership boundary                                                                                                     |
+//   InstrumentGridProduct owns its arrays. InstrumentGridProductView borrows ProductStorage arrays and is valid          |
+//   only until the next workspace mutation or deinit. This facade preserves that distinction so API callers can          |
+//   choose simple owned output or retrieval-friendly workspace reuse.                                                    |
+//                                                                                                                        |
+// implementation boundary                                                                                                |
+//   Spectral sampling, LABOS prefetch, convolution, reflectance assembly, cache invalidation, and Jacobian packing       |
+//   stay in grid_calculation/. This file re-exports the stable types and forwards into those modules.                    |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 pub const types = @import("grid_calculation/types.zig");

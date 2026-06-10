@@ -17,19 +17,36 @@ const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
 // wavelength_sampling.zig -----------------------------------------------------------------------------------------------|
-// Builds the sampling plan that connects nominal product wavelengths to high-resolution radiance and                     |
-// irradiance samples. The plan is later consumed without recomputing instrument kernels.                                 |
+// Builds the retained sampling plan that maps nominal product wavelengths to high-resolution radiance and                |
+// irradiance samples. This is the bridge between instrument-response kernels and the dense LABOS miss plan: once         |
+// built, simulation can gather offsets/weights by row index without recomputing response models.                         |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   simulate.zig when a ProductStorage wavelength-plan cache is cold or invalid                                          |
+//   simulate.zig when a ProductStorage wavelength-plan cache is cold or invalid. warmProductWorkspace takes the          |
+//   same route to move first-use wavelength planning out of the next product run.                                        |
 //                                                                                                                        |
-// main paths                                                                                                             |
-//   buildWavelengthSampling -> per-output radiance/irradiance integration kernels                                        |
-//   buildForwardMissPlan    -> deduplicated radiance miss list plus direct result indexes                                |
+// route map                                                                                                              |
+//   buildWavelengthSampling -> allocate WavelengthSampling rows, prepare optional adaptive caches, fill rows,            |
+//                              and move side arrays into OwnedWavelengthSampling                                         |
+//   buildWavelengthSamplingPlan -> one nominal row -> radiance kernel + irradiance kernel + channel shifts               |
+//   compactIntegrationKernel -> disabled direct sample, inline five-sample kernel, or side-array kernel ref              |
+//   buildForwardMissPlan    -> deduplicate radiance wavelengths into dense forward misses and row-local indexes          |
 //                                                                                                                        |
 // storage                                                                                                                |
-//   Small kernels are copied into WavelengthSampling rows. Large kernels append offsets and weights into                 |
-//   shared side arrays through KernelStorageBuilder.                                                                     |
+//   WavelengthSampling is the retained row. Small kernels are copied inline; larger kernels append offsets and           |
+//   weights into shared side arrays through KernelStorageBuilder. The side arrays are built under a mutex because        |
+//   row fill can run in worker chunks.                                                                                   |
+//                                                                                                                        |
+// hot path                                                                                                               |
+//   Planning runs once per cache miss, not once per LABOS wavelength. It still sits on the product hot path, so          |
+//   workers reuse one 32 KiB IntegrationKernel scratch per chunk, adaptive interval caches are prepared once per         |
+//   channel, and direct row indexes avoid hash lookups during nominal-row gather.                                        |
+//                                                                                                                        |
+// math names                                                                                                             |
+//   lambda_i        : nominal product wavelength                                                                         |
+//   lambda_channel  : lambda_i plus radiance/irradiance calibration shift                                                |
+//   lambda_ij       : lambda_channel + integration offset_j                                                              |
+//   y_i             : sum_j weight_ij * y(lambda_ij)                                                                     |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 pub const WavelengthSampling = Plan.WavelengthSampling;
