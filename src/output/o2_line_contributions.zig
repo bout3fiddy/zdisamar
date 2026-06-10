@@ -423,6 +423,22 @@ fn weakLineRow(
     };
 }
 
+// StrongAnchorFields -----------------------------------------------------------------------------------------|
+// Compact value copied from the weak-line anchor into a strong-line diagnostic row.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_strength_cm2_per_molecule : f64                                                               |
+// [ 8..11] line_index                     : u32                                                               |
+// [12..15] isotopologue_code              : i32                                                               |
+// [16..17] gas_index                      : u16                                                               |
+// [18..18] isotope_number                 : u8                                                                |
+// [19..23] trailing padding               : 5 B                                                               |
+//                                                                                                             |
+// unused bits: 40 padding + 0 bool-storage slack = 40 bits                                                    |
+// footprint: per instance = 24 B (0.023 KiB); stack value while building one strong-line row                  |
 const StrongAnchorFields = struct {
     line_index: u32,
     gas_index: u16,
@@ -430,6 +446,7 @@ const StrongAnchorFields = struct {
     isotopologue_code: i32,
     line_strength_cm2_per_molecule: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 fn strongLineRow(
     line_list: SpectroscopyLineList,
@@ -493,6 +510,14 @@ fn strongLineRow(
 }
 
 fn resolveStrongAnchorFields(anchor: ?StrongAnchorMatch) StrongAnchorFields {
+    // resolveStrongAnchorFields ------------------------------------------------------------------------------|
+    // Return the weak-line metadata that explains a strong-line sidecar row.                                  |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   anchor present -> copy gas/isotope/index/strength from the matched weak-line row                      |
+    //   no anchor      -> use O2 defaults and missing_index so the exported strong-line row stays complete    |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (anchor) |owned| {
         return .{
             .line_index = owned.line_index,
