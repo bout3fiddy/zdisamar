@@ -34,15 +34,16 @@ const Allocator = std.mem.Allocator;
 //   the requested order exceeds that stack storage.                                                          |
 //                                                                                                            |
 // ownership                                                                                                  |
-//   OwnedVerticalGrid owns all referenced arrays. Context.deinit frees it unless later preparation has moved |
-//   or consumed the arrays. borrow returns only a view; deinit remains the release point.                    |
+//   OwnedVerticalGrid owns one heap block. Its typed columns are views into that block, so Context.deinit    |
+//   frees one allocation unless later preparation has moved or consumed the arrays. borrow returns only a    |
+//   view; deinit remains the release point.                                                                  |
 // -----------------------------------------------------------------------------------------------------------|
 
 // OwnedVerticalGrid -----------------------------------------------------------------------------------------|
 // Owned layer and sublayer grid arrays prepared before optical-property accumulation.                        |
 //                                                                                                            |
 // layout(64-bit)                                                                                             |
-// size: 224 B (0.219 KiB), align: 8 B                                                                        |
+// size: 240 B (0.234 KiB), align: 8 B                                                                        |
 //                                                                                                            |
 // memory                                                                                                     |
 // [  0.. 15] layer_top_altitudes_km               : []f64                                                    |
@@ -59,14 +60,15 @@ const Allocator = std.mem.Allocator;
 // [176..191] sublayer_mid_altitudes_km            : []f64                                                    |
 // [192..207] sublayer_support_weights_km          : []f64                                                    |
 // [208..223] sublayer_interval_indices_1based     : []u32                                                    |
+// [224..239] owned_storage                        : []align(8) u8                                            |
 //                                                                                                            |
 // referenced storage                                                                                         |
-//   Every field is a slice header over heap arrays allocated by allocate(). Array payload bytes are not      |
-//   included in this 224 B owner header.                                                                     |
+//   owned_storage is one heap allocation. Every layer_* and sublayer_* field is a typed slice into that      |
+//   allocation. Array payload bytes are not included in this 240 B owner header.                             |
 //                                                                                                            |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
 // cache span: 4 cache lines at 64 B per line                                                                 |
-// footprint: per instance = 224 B; referenced grid arrays are out of line                                    |
+// footprint: per instance = 240 B; referenced grid columns are out of line in one allocation                 |
 // -----------------------------------------------------------------------------------------------------------|
 pub const OwnedVerticalGrid = struct {
     layer_top_altitudes_km: []f64,
@@ -83,6 +85,7 @@ pub const OwnedVerticalGrid = struct {
     sublayer_mid_altitudes_km: []f64,
     sublayer_support_weights_km: []f64,
     sublayer_interval_indices_1based: []u32,
+    owned_storage: []align(@alignOf(f64)) u8,
 
     pub fn borrow(self: *const OwnedVerticalGrid) ParticleProfiles.PreparedVerticalGrid {
         // OwnedVerticalGrid.borrow ------------------------------------------------------------------------- |
@@ -104,23 +107,11 @@ pub const OwnedVerticalGrid = struct {
 
     pub fn deinit(self: *OwnedVerticalGrid, allocator: Allocator) void {
         // OwnedVerticalGrid.deinit ------------------------------------------------------------------------- |
-        // Release every parallel layer and sublayer column allocated for this preparation context.           |
+        // Release the single backing block. The public columns are borrowed views into this block, so they   |
+        // do not have separate allocator ownership.                                                          |
         // -------------------------------------------------------------------------------------------------- |
 
-        allocator.free(self.layer_top_altitudes_km);
-        allocator.free(self.layer_bottom_altitudes_km);
-        allocator.free(self.layer_top_pressures_hpa);
-        allocator.free(self.layer_bottom_pressures_hpa);
-        allocator.free(self.layer_interval_indices_1based);
-        allocator.free(self.layer_sublayer_starts);
-        allocator.free(self.layer_sublayer_counts);
-        allocator.free(self.sublayer_top_altitudes_km);
-        allocator.free(self.sublayer_bottom_altitudes_km);
-        allocator.free(self.sublayer_top_pressures_hpa);
-        allocator.free(self.sublayer_bottom_pressures_hpa);
-        allocator.free(self.sublayer_mid_altitudes_km);
-        allocator.free(self.sublayer_support_weights_km);
-        allocator.free(self.sublayer_interval_indices_1based);
+        allocator.free(self.owned_storage);
         self.* = undefined;
     }
 };
@@ -535,34 +526,32 @@ fn allocate(
     layer_count: usize,
     total_sublayer_count: usize,
 ) !OwnedVerticalGrid {
-    const layer_top_altitudes_km = try allocator.alloc(f64, layer_count);
-    errdefer allocator.free(layer_top_altitudes_km);
-    const layer_bottom_altitudes_km = try allocator.alloc(f64, layer_count);
-    errdefer allocator.free(layer_bottom_altitudes_km);
-    const layer_top_pressures_hpa = try allocator.alloc(f64, layer_count);
-    errdefer allocator.free(layer_top_pressures_hpa);
-    const layer_bottom_pressures_hpa = try allocator.alloc(f64, layer_count);
-    errdefer allocator.free(layer_bottom_pressures_hpa);
-    const layer_interval_indices_1based = try allocator.alloc(u32, layer_count);
-    errdefer allocator.free(layer_interval_indices_1based);
-    const layer_sublayer_starts = try allocator.alloc(u32, layer_count);
-    errdefer allocator.free(layer_sublayer_starts);
-    const layer_sublayer_counts = try allocator.alloc(u32, layer_count);
-    errdefer allocator.free(layer_sublayer_counts);
-    const sublayer_top_altitudes_km = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_top_altitudes_km);
-    const sublayer_bottom_altitudes_km = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_bottom_altitudes_km);
-    const sublayer_top_pressures_hpa = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_top_pressures_hpa);
-    const sublayer_bottom_pressures_hpa = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_bottom_pressures_hpa);
-    const sublayer_mid_altitudes_km = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_mid_altitudes_km);
-    const sublayer_support_weights_km = try allocator.alloc(f64, total_sublayer_count);
-    errdefer allocator.free(sublayer_support_weights_km);
-    const sublayer_interval_indices_1based = try allocator.alloc(u32, total_sublayer_count);
-    errdefer allocator.free(sublayer_interval_indices_1based);
+    // allocate ----------------------------------------------------------------------------------------------|
+    // Allocate the vertical grid as one aligned byte block, then carve typed columns from it. This keeps     |
+    // allocator ownership at one release point while preserving dense column slices for the accumulation     |
+    // loops that read layer and sublayer data.                                                               |
+    // -------------------------------------------------------------------------------------------------------|
+
+    const storage_byte_count = try verticalGridStorageByteCount(layer_count, total_sublayer_count);
+    const owned_storage = try allocator.alignedAlloc(u8, .of(f64), storage_byte_count);
+    errdefer allocator.free(owned_storage);
+
+    var cursor: usize = 0;
+    const layer_top_altitudes_km = takeColumn(f64, owned_storage, &cursor, layer_count);
+    const layer_bottom_altitudes_km = takeColumn(f64, owned_storage, &cursor, layer_count);
+    const layer_top_pressures_hpa = takeColumn(f64, owned_storage, &cursor, layer_count);
+    const layer_bottom_pressures_hpa = takeColumn(f64, owned_storage, &cursor, layer_count);
+    const sublayer_top_altitudes_km = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const sublayer_bottom_altitudes_km = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const sublayer_top_pressures_hpa = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const sublayer_bottom_pressures_hpa = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const sublayer_mid_altitudes_km = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const sublayer_support_weights_km = takeColumn(f64, owned_storage, &cursor, total_sublayer_count);
+    const layer_interval_indices_1based = takeColumn(u32, owned_storage, &cursor, layer_count);
+    const layer_sublayer_starts = takeColumn(u32, owned_storage, &cursor, layer_count);
+    const layer_sublayer_counts = takeColumn(u32, owned_storage, &cursor, layer_count);
+    const sublayer_interval_indices_1based = takeColumn(u32, owned_storage, &cursor, total_sublayer_count);
+    std.debug.assert(cursor == owned_storage.len);
 
     return .{
         .layer_top_altitudes_km = layer_top_altitudes_km,
@@ -579,7 +568,54 @@ fn allocate(
         .sublayer_mid_altitudes_km = sublayer_mid_altitudes_km,
         .sublayer_support_weights_km = sublayer_support_weights_km,
         .sublayer_interval_indices_1based = sublayer_interval_indices_1based,
+        .owned_storage = owned_storage,
     };
+}
+
+fn verticalGridStorageByteCount(
+    layer_count: usize,
+    total_sublayer_count: usize,
+) Allocator.Error!usize {
+    var cursor: usize = 0;
+    try addColumnByteCount(&cursor, f64, layer_count);
+    try addColumnByteCount(&cursor, f64, layer_count);
+    try addColumnByteCount(&cursor, f64, layer_count);
+    try addColumnByteCount(&cursor, f64, layer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, f64, total_sublayer_count);
+    try addColumnByteCount(&cursor, u32, layer_count);
+    try addColumnByteCount(&cursor, u32, layer_count);
+    try addColumnByteCount(&cursor, u32, layer_count);
+    try addColumnByteCount(&cursor, u32, total_sublayer_count);
+    return cursor;
+}
+
+fn addColumnByteCount(
+    cursor: *usize,
+    comptime T: type,
+    count: usize,
+) Allocator.Error!void {
+    const start = std.mem.alignForward(usize, cursor.*, @alignOf(T));
+    const payload_bytes = std.math.mul(usize, @sizeOf(T), count) catch return error.OutOfMemory;
+    cursor.* = std.math.add(usize, start, payload_bytes) catch return error.OutOfMemory;
+}
+
+fn takeColumn(
+    comptime T: type,
+    storage: []align(@alignOf(f64)) u8,
+    cursor: *usize,
+    count: usize,
+) []T {
+    const start = std.mem.alignForward(usize, cursor.*, @alignOf(T));
+    const end = start + @sizeOf(T) * count;
+    cursor.* = end;
+
+    const bytes: []align(@alignOf(T)) u8 = @alignCast(storage[start..end]);
+    return std.mem.bytesAsSlice(T, bytes);
 }
 
 fn usesDisamarParitySupportGrid(scene: *const Scene) bool {

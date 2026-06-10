@@ -19,7 +19,7 @@ test {
 test "owned vertical grid layout matches documented comments" {
     const VerticalGrid = internal.forward_model.optical_properties.internal.vertical_grid;
 
-    try std.testing.expectEqual(@as(usize, 224), @sizeOf(VerticalGrid.OwnedVerticalGrid));
+    try std.testing.expectEqual(@as(usize, 240), @sizeOf(VerticalGrid.OwnedVerticalGrid));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(VerticalGrid.OwnedVerticalGrid));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(VerticalGrid.OwnedVerticalGrid, "layer_top_altitudes_km"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(VerticalGrid.OwnedVerticalGrid, "layer_bottom_altitudes_km"));
@@ -62,6 +62,7 @@ test "owned vertical grid layout matches documented comments" {
         @as(usize, 208),
         @offsetOf(VerticalGrid.OwnedVerticalGrid, "sublayer_interval_indices_1based"),
     );
+    try std.testing.expectEqual(@as(usize, 224), @offsetOf(VerticalGrid.OwnedVerticalGrid, "owned_storage"));
 }
 
 test "prepared means layout matches documented comments" {
