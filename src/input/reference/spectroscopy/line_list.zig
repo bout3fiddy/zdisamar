@@ -6,27 +6,36 @@ const Types = @import("types.zig");
 const line_list_module = @This();
 
 // line_list.zig --------------------------------------------------------------------------------------------- |
-// Spectroscopy line-list owner, filter, window planner, and evaluation entrypoint.                            |
+// Owns normalized spectroscopy line rows after loading and turns them into wavelength-time sigma evaluation.  |
 //                                                                                                             |
 // called by                                                                                                   |
-//   o2a_reference/run.zig loads and attaches vendor O2 sidecars; absorbers.zig applies runtime controls and   |
-//   prepares profile/support states; carrier_eval.zig and band_means.zig call prepared evaluation paths.      |
+//   bundled/assets.zig and o2a_reference/run.zig load or clone O2 A rows, attach vendor strong-line sidecars, |
+//   and carry this list into optical preparation. optical_properties/absorbers.zig applies gas/isotope,       |
+//   threshold, cutoff, and line-mixing controls before building profile/support line states. carrier_eval.zig |
+//   and band_means.zig reuse prepared routes at wavelength time. instrument/adaptive_plan.zig scans the same  |
+//   rows while building line-aware integration intervals.                                                     |
+//                                                                                                             |
+// row shape                                                                                                   |
+//   layout(64-bit): self.lines is []SpectroscopyLine, and each row is 104 B. Setup loops sometimes read       |
+//   one or two fields by pointer: center_wavelength_nm at [8..15], line_strength_cm2_per_molecule at          |
+//   [24..31], gas_index at [88..89], and vendor strong-line metadata around [91..97]. The row stays whole     |
+//   because wavelength-time weak-line formulas consume the same line's strength, widths, lower-state energy,  |
+//   pressure shifts, and line-mixing coefficient together.                                                    |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   raw lines -> runtime controls -> sorted/filtered lines -> relevant wavelength windows -> weak sigma       |
+//   raw rows -> runtime controls -> sorted/filtered rows -> relevant wavelength windows -> weak sigma         |
 //   raw sidecars -> vendor partition detection -> strong-line match index -> prepared strong-line state       |
 //   prepared weak/strong state -> wavelength window -> total sigma + line-mixing sigma                        |
 //                                                                                                             |
-// setup indexes                                                                                               |
-//   buildStrongLineMatchIndex, validateStrongLinePartition, and detectVendorStrongLinePartition deliberately  |
-//   scan wide SpectroscopyLine rows for one or two fields. They run during setup and produce match/partition  |
-//   state used by repeated wavelength evaluation; splitting a center-wavelength/gas-index column would need   |
-//   benchmark evidence across the prepared evaluation boundary.                                               |
+// setup state                                                                                                 |
+//   applyRuntimeControls mutates the retained row set and clears stale match state. buildStrongLineMatchIndex |
+//   writes a compact ?u16 sidecar pointer per retained row. validateStrongLinePartition rejects a vendor O2 A |
+//   partition that marks candidates but matches none. These passes run before repeated wavelength evaluation. |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Wavelength-time evaluation walks the binary-searched relevant weak-line window and optional strong-line   |
-//   sidecars. Prepared-state routes precompute thermodynamic weak/strong terms so carrier evaluation avoids   |
-//   repartitioning the list and rebuilding line-shape state for every wavelength.                             |
+//   Wavelength-time evaluation binary-searches the relevant weak-line window, computes weak Voigt terms over  |
+//   that window, and optionally adds O2 strong-line plus line-mixing sidecar terms. Prepared-state routes     |
+//   keep pressure/temperature-dependent weak and strong arrays outside the per-wavelength rebuild path.       |
 //                                                                                                             |
 // memory                                                                                                      |
 //   SpectroscopyLineList owns or borrows out-of-line line, sidecar, relaxation, match-index, and runtime      |
@@ -667,7 +676,7 @@ pub fn attachStrongLineSidecars(
 }
 
 pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.Allocator) !void {
-    // buildStrongLineMatchIndex --------------------------------------------------------------------------    |
+    // buildStrongLineMatchIndex ----------------------------------------------------------------------------- |
     // Build the per-line pointer into the O2 strong-line sidecar table.                                       |
     //                                                                                                         |
     // call path                                                                                               |
@@ -675,8 +684,10 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     //   Prepared line-state setup then reuses the match slice instead of searching sidecars per wavelength.   |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm by pointer and writes a   |
-    //   compact ?u16 match row with the same index order as self.lines.                                       |
+    //   SpectroscopyLine is a 104 B row. This setup pass reads center_wavelength_nm at byte [8..15] by        |
+    //   pointer and writes one compact ?u16 match slot with the same index order as self.lines. Vendor        |
+    //   partition mode also reads the retained metadata near [91..97] before deciding whether a row can       |
+    //   match a sidecar. No line row is copied or retained here beyond the match-index side slice.            |
     //                                                                                                         |
     // math                                                                                                    |
     //   match when abs(line center - strong-line center) <= strong_line_tolerance_nm                          |
@@ -1091,15 +1102,17 @@ pub fn shouldExcludeWeakLine(
 }
 
 pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
-    // validateStrongLinePartition ----------------------------------------------------------------------      |
+    // validateStrongLinePartition --------------------------------------------------------------------------- |
     // Reject a vendor O2 strong-line partition that exposes candidates but matches none of them.              |
     //                                                                                                         |
     // call path                                                                                               |
     //   attachStrongLineSidecars and buildStrongLineMatchIndex call this before prepared state is built.      |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   Setup-only scan over SpectroscopyLine rows. It reads vendor metadata and center wavelength by pointer.|
-    //   The result protects later strong-line state reuse; there is no wavelength-time allocation.            |
+    //   This setup-only guard walks 104 B SpectroscopyLine rows by pointer. It reads vendor metadata around   |
+    //   [91..97] to find O2 A strong-line candidates, then reads center_wavelength_nm at [8..15] only for     |
+    //   candidate rows that need sidecar matching. The result protects later strong-line state reuse; there   |
+    //   is no wavelength-time allocation.                                                                     |
     //                                                                                                         |
     // math                                                                                                    |
     //   at least one vendor strong-line candidate must match a sidecar center within tolerance                |
@@ -1139,15 +1152,16 @@ pub fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Types.A
 }
 
 fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
-    // detectVendorStrongLinePartition -----------------------------------------------------------------       |
+    // detectVendorStrongLinePartition ----------------------------------------------------------------------- |
     // Detect whether attached sidecars correspond to the vendor O2 A strong-line partition.                   |
     //                                                                                                         |
     // call path                                                                                               |
     //   attachStrongLineSidecars uses this once to choose vendor partition handling before validation.        |
     //                                                                                                         |
     // memory                                                                                                  |
-    //   Reads gas_index and vendor metadata from wide line rows by pointer during setup only.                 |
-    //   A gas-index side column would not remove wavelength-time work; this decides retained metadata mode.   |
+    //   This setup pass reads gas_index at [88..89] and vendor metadata around [91..97] from 104 B line rows  |
+    //   by pointer. It chooses retained sidecar matching mode before prepared state exists. A gas-index side  |
+    //   column would not remove wavelength-time work because the repeated formulas still consume full lines.  |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (!self.hasStrongLineSidecars()) return false;
