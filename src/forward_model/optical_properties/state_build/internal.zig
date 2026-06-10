@@ -26,6 +26,7 @@ const ClimatologyProfile = @import("../../../input/reference/climatology.zig").C
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const carrier_eval = @import("carrier_eval.zig");
+pub const accumulation = @import("accumulation.zig");
 pub const forward_layers = @import("forward_layers.zig");
 pub const layer_accumulation = @import("layer_accumulation.zig");
 pub const pseudo_spherical = @import("pseudo_spherical.zig");
