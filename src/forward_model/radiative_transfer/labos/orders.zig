@@ -48,6 +48,11 @@ const phase_timing = @import("phase_timing.zig");
 //   stop when max_outgoing_upward < threshold_conv                                                            |
 //   the reference notes a geometric-tail approximation for remaining orders at the order cap                  |
 //   telemetry name: orders_convergence                                                                        |
+//                                                                                                             |
+// memory model                                                                                                |
+//   ordersScatInternal never allocates; public wrappers either borrow OrdersWorkspace buffers and return      |
+//   OrdersResultView or allocate owned OrdersResult slices for one-shot callers. The workspace keeps U/D      |
+//   fields, local-source fields, and the active-layer mask together so Fourier solves reuse the same rows.    |
 // ------------------------------------------------------------------------------------------------------------|
 
 // OrdersResult -----------------------------------------------------------------------------------------------|
