@@ -196,11 +196,8 @@ pub const ObservationModel = struct {
             return errors.Error.InvalidRequest;
         }
 
-        for (self.operational_band_support, 0..) |*support, index| {
+        for (self.operational_band_support) |*support| {
             try support.validate();
-            for (self.operational_band_support[index + 1 ..]) |other| {
-                if (std.mem.eql(u8, support.id, other.id)) return errors.Error.InvalidRequest;
-            }
         }
     }
 
