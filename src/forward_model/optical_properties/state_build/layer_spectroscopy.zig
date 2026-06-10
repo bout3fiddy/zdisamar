@@ -44,8 +44,8 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 //                                                                                                             |
 // memory                                                                                                      |
 //   ProfileSpectroscopyCache is a stack/local value with fixed 64-node columns and borrowed altitude storage. |
-//   Worker rows borrow the cache, context, line list, wavelength window, and queue; this file does not own    |
-//   the final prepared slices moved into PreparedOpticalState.                                                |
+//   Worker rows borrow the cache, profile temperature/pressure slices, line list, wavelength window, and      |
+//   queue; this file does not own the final prepared slices moved into PreparedOpticalState.                  |
 //   LineSpectroscopyRequest borrows only the support-row spectroscopy route needed by the line helpers so     |
 //   broad setup owners do not travel deeper than the public boundary.                                         |
 // ------------------------------------------------------------------------------------------------------------|
@@ -54,25 +54,28 @@ const StrongLineAnchorBuffer = [ReferenceData.max_strong_line_sidecars]Reference
 // Borrowed inputs shared by profile-spectroscopy cache fill workers.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 264 B (0.258 KiB), align: 8 B                                                                         |
+// size: 288 B (0.281 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..207] line_list            : SpectroscopyLineList                                                      |
-// [208..223] prepared_states      : ?[]const StrongLinePreparedState                                          |
-// [224..239] prepared_weak_states : ?[]const WeakLinePreparedState                                            |
-// [240..247] context              : *const PreparationContext                                                 |
-// [248..255] wavelength_nm        : f64                                                                       |
-// [256..263] wavelength_window    : ?*const StrongLineWavelengthWindow                                        |
+// [208..223] temperatures_k       : []const f64                                                               |
+// [224..239] pressures_hpa        : []const f64                                                               |
+// [240..247] wavelength_nm        : f64                                                                       |
+// [248..263] prepared_states      : ?[]const StrongLinePreparedState                                          |
+// [264..279] prepared_weak_states : ?[]const WeakLinePreparedState                                            |
+// [280..287] wavelength_window    : ?*const StrongLineWavelengthWindow                                        |
 //                                                                                                             |
 // out-of-line                                                                                                 |
-//   context, prepared state rows, and wavelength-window storage are borrowed from the cache init call.        |
+//   Profile T/P rows, prepared state rows, and wavelength-window storage are borrowed from the cache init     |
+//   call. The request deliberately omits PreparationContext so workers see only the profile columns they use. |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 5 cache lines at 64 B per line                                                                  |
-// footprint: per cache fill = 264 B plus borrowed context/profile storage                                     |
+// footprint: per cache fill = 288 B plus borrowed profile/state/window storage                                |
 const ProfileCacheValueRequest = struct {
     line_list: ReferenceData.SpectroscopyLineList,
-    context: *const Context,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
     wavelength_nm: f64,
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
@@ -297,15 +300,16 @@ pub const ProfileSpectroscopyCache = struct {
             break :choose_window &wavelength_window_storage;
         };
 
-        fillProfileSpectroscopyCacheValues(
-            &cache,
-            line_list,
-            context,
-            wavelength_nm,
-            prepared_states,
-            prepared_weak_states,
-            wavelength_window,
-        );
+        const request = ProfileCacheValueRequest{
+            .line_list = line_list,
+            .temperatures_k = context.spectroscopy_profile_temperatures_k[0..node_count],
+            .pressures_hpa = context.spectroscopy_profile_pressures_hpa[0..node_count],
+            .wavelength_nm = wavelength_nm,
+            .prepared_states = prepared_states,
+            .prepared_weak_states = prepared_weak_states,
+            .wavelength_window = wavelength_window,
+        };
+        fillProfileSpectroscopyCacheValues(&cache, &request);
 
         const altitudes = cache.altitudes_km[0..node_count];
         spline.endpointSecantSecondDerivatives3(
@@ -384,12 +388,7 @@ pub const ProfileSpectroscopyCache = struct {
 
 fn fillProfileSpectroscopyCacheValues(
     cache: *ProfileSpectroscopyCache,
-    line_list: ReferenceData.SpectroscopyLineList,
-    context: *const Context,
-    wavelength_nm: f64,
-    prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
-    prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
-    wavelength_window: ?*const LineListEval.StrongLineWavelengthWindow,
+    request: *const ProfileCacheValueRequest,
 ) void {
     // fillProfileSpectroscopyCacheValues -------------------------------------------------------------------- |
     // Fill all profile-node spectroscopy values, using worker chunks when the profile is large enough.        |
@@ -401,19 +400,11 @@ fn fillProfileSpectroscopyCacheValues(
     // worker and chunk zones expose parallel cache-fill cost in timeline traces.                              |
     // ------------------------------------------------------------------------------------------------------- |
 
-    const request = ProfileCacheValueRequest{
-        .line_list = line_list,
-        .context = context,
-        .wavelength_nm = wavelength_nm,
-        .prepared_states = prepared_states,
-        .prepared_weak_states = prepared_weak_states,
-        .wavelength_window = wavelength_window,
-    };
     const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
     if (worker_count == 1) {
         fillProfileSpectroscopyCacheValueRange(
             cache,
-            &request,
+            request,
             0,
             cache.node_count,
         );
@@ -430,7 +421,7 @@ fn fillProfileSpectroscopyCacheValues(
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
             .cache = cache,
-            .request = &request,
+            .request = request,
             .queue = &queue,
             .worker_index = worker_index,
         };
@@ -510,8 +501,8 @@ fn fillProfileSpectroscopyCacheValueRange(
                 break :evaluate_profile_node LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                     request.line_list,
                     request.wavelength_nm,
-                    request.context.spectroscopy_profile_temperatures_k[index],
-                    request.context.spectroscopy_profile_pressures_hpa[index],
+                    request.temperatures_k[index],
+                    request.pressures_hpa[index],
                     &states[index],
                     if (request.prepared_weak_states) |weak_states| &weak_states[index] else null,
                     request.wavelength_window.?,
@@ -521,8 +512,8 @@ fn fillProfileSpectroscopyCacheValueRange(
             break :evaluate_profile_node LineListEval.totalSigmaAt(
                 request.line_list,
                 request.wavelength_nm,
-                request.context.spectroscopy_profile_temperatures_k[index],
-                request.context.spectroscopy_profile_pressures_hpa[index],
+                request.temperatures_k[index],
+                request.pressures_hpa[index],
             );
         };
         cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
