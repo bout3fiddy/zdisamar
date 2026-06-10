@@ -511,21 +511,22 @@ const IrradianceSamplingRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------------------|
 
-// IrradianceSampleBuffers -----------------------------------------------------------------------------------------------|
-// Borrowed slices touched while producing calibrated irradiance.                                                         |
+// IrradianceRows --------------------------------------------------------------------------------------------------------|
+// Borrowed scalar rows touched while producing calibrated irradiance. The raw row uses product scratch until             |
+// optional convolution copies into the final irradiance row.                                                             |
 //                                                                                                                        |
 // layout(64-bit)                                                                                                         |
 // size: 32 B (0.031 KiB), align: 8 B                                                                                     |
 //                                                                                                                        |
 // memory                                                                                                                 |
-// [ 0..15] scratch    : []f64                                                                                            |
-// [16..31] irradiance : []f64                                                                                            |
+// [ 0..15] raw_irradiance : []f64                                                                                        |
+// [16..31] irradiance     : []f64                                                                                        |
 //                                                                                                                        |
 // out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
 // footprint: per instance = 32 B (0.031 KiB); total excludes borrowed product buffers                                    |
-const IrradianceSampleBuffers = struct {
-    scratch: []f64,
+const IrradianceRows = struct {
+    raw_irradiance: []f64,
     irradiance: []f64,
 };
 // -----------------------------------------------------------------------------------------------------------------------|
@@ -977,11 +978,11 @@ pub fn simulateInternal(
         .evaluation_cache = evaluation_cache,
         .trace_phase_timing = trace_phase_timing,
     };
-    const irradiance_output = IrradianceSampleBuffers{
-        .scratch = buffers.scratch,
+    const irradiance_rows = IrradianceRows{
+        .raw_irradiance = buffers.scratch,
         .irradiance = buffers.irradiance,
     };
-    try fillIrradianceSamples(irradiance_request, irradiance_output);
+    try fillIrradianceSamples(irradiance_request, irradiance_rows);
     const reflectance_request = ReflectanceAssemblyRequest{
         .sample_count = setup.sample_count,
         .solar_cosine = scene.geometry.solarCosineAtAltitude(0.0),
@@ -1367,7 +1368,7 @@ fn fillRadianceSamples(
 
 fn fillIrradianceSamples(
     request: IrradianceSamplingRequest,
-    output: IrradianceSampleBuffers,
+    rows: IrradianceRows,
 ) Storage.Error!void {
     // fillIrradianceSamples ---------------------------------------------------------------------------------------------|
     // Fill irradiance through the same nominal sampling contract used for radiance. Solar samples come from              |
@@ -1395,7 +1396,7 @@ fn fillIrradianceSamples(
 
         try request.evaluation_cache.reserveIrradiance(irradianceCacheCapacity(request.wavelength_sampling));
         for (request.wavelength_sampling.rows, 0..) |plan, index| {
-            output.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
+            rows.raw_irradiance[index] = try SpectralEval.integrateIrradianceAtNominal(
                 request.scene,
                 request.prepared,
                 plan.irradiance_wavelength_nm,
@@ -1407,7 +1408,7 @@ fn fillIrradianceSamples(
         }
     }
     if (request.setup.uses_integrated_irradiance_sampling) {
-        @memcpy(output.irradiance, output.scratch);
+        @memcpy(rows.irradiance, rows.raw_irradiance);
     } else {
 
         // instrumentation: trace zone: irradiance convolution ---------------------------------------------------------- |
@@ -1419,7 +1420,7 @@ fn fillIrradianceSamples(
         defer zone.end();
         // end instrumentation: trace zone: irradiance convolution ------------------------------------------------------ |
 
-        try convolution.apply(output.scratch, request.setup.irradiance_slit_kernel[0..], output.irradiance);
+        try convolution.apply(rows.raw_irradiance, request.setup.irradiance_slit_kernel[0..], rows.irradiance);
     }
     {
 
@@ -1434,8 +1435,8 @@ fn fillIrradianceSamples(
 
         try calibration.applySignal(
             request.setup.irradiance_calibration,
-            output.irradiance,
-            output.irradiance,
+            rows.irradiance,
+            rows.irradiance,
         );
     }
 }
