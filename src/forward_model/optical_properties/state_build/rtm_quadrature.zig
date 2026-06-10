@@ -10,27 +10,47 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 const PreparedOpticalState = State.PreparedOpticalState;
 
 // rtm_quadrature.zig ----------------------------------------------------------------------------------------|
-// Builds RTM source-function quadrature rows from prepared optical state and per-wavelength carriers.        |
+// Builds RTM source-function quadrature rows for LABOS integrated-source reflectance.                        |
 //                                                                                                            |
-// called by                                                                                                  |
-//   forward_input.configuredForwardInput after forward_layers fills LayerInput for the same wavelength.      |
-//   The RtmQuadratureLevel slice is attached to ForwardInput, then read by LABOS reflectance code.           |
+// caller route                                                                                               |
+//   spectral_forward.zig asks forward_input.configuredForwardInput for one high-resolution forward sample.   |
+//   forward_input calls forward_layers first, so layer_inputs already contains wavelength-specific optical   |
+//   depth, phase, and Jacobian rows. When rtm_config.integrate_source_function needs native RTM quadrature,  |
+//   this file refreshes the caller-owned RtmQuadratureLevel slice and attaches it to ForwardInput. LABOS     |
+//   reflectance then reads those rows while integrating source terms over levels.                            |
 //                                                                                                            |
-// main paths                                                                                                 |
-//   shared grid route : use cached SharedRtmGeometry level rows and carrier caches for explicit intervals.   |
-//   fallback route    : place Gauss nodes inside each PreparedLayer support span and sample carriers there.  |
-//   Jacobian route    : spread aerosol source derivatives over active quadrature levels.                     |
+// two geometry routes                                                                                        |
+//   shared grid : explicit-interval prepared states carry SharedRtmGeometry. Carrier evaluators fill one     |
+//                 RtmQuadratureLevel per cached level, matching the same geometry used by forward layers,    |
+//                 source interfaces, and pseudo-spherical attenuation.                                       |
+//   fallback    : regular sublayer grids place Gauss nodes inside each PreparedLayer support span, sample    |
+//                 carriers at those altitudes, then rescale the weighted k_sca sum to the layer scattering   |
+//                 optical depth that forward_layers already wrote.                                           |
 //                                                                                                            |
-// row handoff                                                                                                |
-//   LayerInput rows come from forward_layers and stay in the same order as transport layers.                 |
-//   PreparedLayer supplies support-row spans; the same wide row also carries altitude/aerosol fields nearby. |
-//   RtmQuadratureLevel is a one-cache-line transport row consumed later by source-integration loops.         |
+// row contracts                                                                                              |
+//   layer_inputs  : []LayerInput in transport-layer order, produced by forward_layers for this wavelength.   |
+//   self.layers   : []PreparedLayer in the same transport-layer order; only the support-span tail is needed  |
+//                   by the fallback, but nearby prepared-state users consume the full row.                   |
+//   rtm_levels    : []RtmQuadratureLevel with layer_inputs.len + 1 rows. Each 64 B row stores altitude,      |
+//                   RTM weight, scattering carrier, aerosol Jacobian scale, and phase-mixture weights.       |
+//                                                                                                            |
+// layout reads                                                                                               |
+//   LayerInput is 176 B. Shared-grid aerosol Jacobian setup reads scattering_optical_depth_jacobian at       |
+//   [88..111]. PreparedLayer is 208 B. Fallback geometry reads sublayer_start_index and sublayer_count from  |
+//   the support tail at [192..207]. RtmQuadratureLevel is 64 B, so source-integration rows stay one cache    |
+//   line while helpers read weight at [8..15] and aerosol k_sca/Jacobian slots at [24..47].                  |
 //                                                                                                            |
 // hot path                                                                                                   |
-//   Runs per high-resolution wavelength. The caller owns rtm_levels; this refreshes rows without allocating. |
-//   Narrow scans use pointer capture, so they stride 176 B LayerInput and 208 B PreparedLayer rows without   |
-//   copying them by value. The narrow reads are support-span fields at PreparedLayer [192..207], Jacobian    |
-//   vectors at LayerInput [88..111], and aerosol k_sca slots in the 64 B RtmQuadratureLevel rows.            |
+//   Runs per high-resolution wavelength only for integrated-source solves. The storage comes from product    |
+//   workspace or per-worker scratch and is refreshed in place without allocation. The DOD-warning narrow     |
+//   scans use pointer capture and deliberately keep the row contract intact; splitting side columns would    |
+//   add synchronization with forward_layers/source_interfaces/pseudo_spherical unless a retained workload    |
+//   benchmark proves this boundary dominates.                                                                |
+//                                                                                                            |
+// jacobian path                                                                                              |
+//   fillAerosolSourceJacobian writes per-level aerosol source scale after carrier evaluation. Shared-grid    |
+//   Jacobians also spread active layer scattering derivatives over adjacent weighted RTM levels so LABOS     |
+//   integrated-source aerosol weighting sees the same level contract as the source term.                     |
 //                                                                                                            |
 // math                                                                                                       |
 //   weighted source = RTM weight * k_sca.                                                                    |

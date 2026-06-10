@@ -1,24 +1,51 @@
 const std = @import("std");
 
 // reference_assets_formats.zig -------------------------------------------------------------------------------|
-// In-memory parsers for numeric reference-data asset formats.                                                 |
+// Format adapters that turn reference-asset bytes into one generic numeric table.                             |
 //                                                                                                             |
-// called by                                                                                                   |
-//   reference asset loading after a manifest row has selected the expected format and columns.                |
+// caller route                                                                                                |
+//   reference_assets.zig owns file I/O, embedded-asset lookup, manifest parsing, and hash validation. After   |
+//   it knows the asset format and expected columns, it calls parseAssetTable here. The returned ParsedTable   |
+//   is copied into LoadedAsset, then reference_assets_loaded_asset.zig converts the rows into typed           |
+//   ReferenceData owners used by the forward model.                                                           |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   csv            : parse a comma header and numeric rows.                                                   |
-//   hitran_160     : parse fixed-width HITRAN lines and optional O2 A branch metadata.                        |
-//   bira_cia_poly  : parse BIRA CIA polynomial rows with a file-scoped scale factor.                          |
-//   lisa_sdf/rmf   : parse LISA strong-line and relaxation-matrix support files.                              |
+// external route                                                                                              |
+//   o2a_reference/run.zig can pass caller-provided vendor files through loadExternalAsset. That path maps     |
+//   asset_format/kind to the same AssetSpec schemas, so external HITRAN, BIRA CIA, LISA SDF/RMF, profiles,    |
+//   cross sections, and airmass LUTs share the bundled conversion checks.                                     |
 //                                                                                                             |
-// ownership                                                                                                   |
-//   ParsedTable owns duplicated column names and the flat f64 value buffer. Callers release both through      |
-//   LoadedAsset.deinit after converting the table into typed reference-data storage.                          |
+// parser responsibilities                                                                                     |
+//   csv           : borrow the file header as column order and parse every row as dense f64 cells.            |
+//   hitran_160    : read fixed-width HITRAN fields, derive isotope abundance and line-mixing coefficients,    |
+//                   convert cm^-1 centers/widths/shifts into nm fields, and attach optional O2 A branch       |
+//                   metadata from inline vendor columns or the O2 A branch-token fallback.                    |
+//   bira_cia_poly : read the three numeric BIRA header rows, keep the file-scale factor, and repeat that      |
+//                   scale with each polynomial row so the later typed converter can recover one table owner.  |
+//   lisa_sdf      : parse strong-line sidecar rows, validate the vendor HWT0 field, reconstruct the vendor    |
+//                   reference half width from branch/Nf, and emit both cm^-1 source values and nm values.     |
+//   lisa_rmf      : parse the relaxation-matrix sidecar as a flat row list; the typed converter later checks  |
+//                   that the row count forms a square matrix.                                                 |
 //                                                                                                             |
-// layout                                                                                                      |
-//   Parser outputs are compact headers over out-of-line buffers. The value buffer is row-major by the         |
-//   manifest column order, so conversion code can use column indexes without carrying per-cell metadata.      |
+// boundary                                                                                                    |
+//   This file knows byte layouts, vendor columns, and unit normalization. It does not know JSON manifests,    |
+//   paths, hashes, final ReferenceData allocation, or forward-model physics. Bad rows fail here as syntax or  |
+//   asset-format errors before any typed physics table is materialized.                                       |
+//                                                                                                             |
+// table layout                                                                                                |
+//   ParsedTable.values is row-major: values[row * column_count + column]. CSV column names come from the      |
+//   asset header; fixed-format column names are duplicated from the AssetSpec selected by the manifest or     |
+//   external asset kind. Column indexes are therefore the contract between this parser layer and              |
+//   LoadedAsset.to* conversion methods.                                                                       |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   These parsers run during input/reference-data preparation, not inside RTM evaluation. The important cost  |
+//   is avoiding ownership ambiguity and per-row object churn while loading large line lists, so rows are      |
+//   appended into one flat f64 buffer and column-name storage is duplicated exactly once.                     |
+//                                                                                                             |
+// verification                                                                                                |
+//   tests/unit/input/reference_data/ingest/reference_assets_test.zig exercises bundled HITRAN O2 A vendor     |
+//   metadata fallback, LISA SDF/RMF sidecars, and BIRA CIA scaling. LoadedAsset conversion tests cover the    |
+//   downstream column-index contract.                                                                         |
 // ------------------------------------------------------------------------------------------------------------|
 
 const helpers = struct {
