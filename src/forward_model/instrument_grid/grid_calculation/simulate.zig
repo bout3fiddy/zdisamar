@@ -441,6 +441,31 @@ const RadianceSamplingRequest = struct {
 };
 // -----------------------------------------------------------------------------------------------------------------------|
 
+// TransportRows ---------------------------------------------------------------------------------------------------------|
+// Borrowed transport-side rows checked against prepared geometry before wavelength sampling writes product output.       |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 80 B (0.078 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] layer_inputs                  : []common.LayerInput                                                           |
+// [16..31] source_interfaces             : []common.SourceInterfaceInput                                                 |
+// [32..47] rtm_quadrature_levels         : []common.RtmQuadratureLevel                                                   |
+// [48..63] pseudo_spherical_samples      : []common.PseudoSphericalSample                                                |
+// [64..79] pseudo_spherical_level_starts : []usize                                                                       |
+//                                                                                                                        |
+// out-of-line storage: slices borrow ProductStorage backing arrays.                                                      |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 80 B (0.078 KiB); total excludes borrowed transport rows                                     |
+const TransportRows = struct {
+    layer_inputs: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
+
 // RadianceRows ----------------------------------------------------------------------------------------------------------|
 // Borrowed scalar rows touched while producing calibrated radiance. The raw row uses product scratch until               |
 // optional convolution copies into the final radiance row.                                                               |
@@ -950,7 +975,14 @@ pub fn simulateInternal(
         .sample_count = setup.sample_count,
     };
     const transport_requirements = Storage.BufferRequirements.fromPrepared(&transport_requirements_request);
-    _ = try validateTransportBuffers(transport_requirements, buffers);
+    const transport_rows = TransportRows{
+        .layer_inputs = buffers.layer_inputs,
+        .source_interfaces = buffers.source_interfaces,
+        .rtm_quadrature_levels = buffers.rtm_quadrature_levels,
+        .pseudo_spherical_samples = buffers.pseudo_spherical_samples,
+        .pseudo_spherical_level_starts = buffers.pseudo_spherical_level_starts,
+    };
+    _ = try validateTransportBuffers(transport_requirements, transport_rows);
     const radiance_request = RadianceSamplingRequest{
         .rtm_config = rtm_config,
         .setup = setup,
@@ -1235,7 +1267,7 @@ fn prefetchSimulationPlan(
 
 fn validateTransportBuffers(
     requirements: Storage.BufferRequirements,
-    buffers: Storage.Buffers,
+    rows: TransportRows,
 ) Storage.Error!usize {
     // validateTransportBuffers ------------------------------------------------------------------------------------------|
     // Check transport-side buffer capacity against the exact prepared state before wavelength writes begin.              |
@@ -1243,25 +1275,25 @@ fn validateTransportBuffers(
     // explicit interval or shared RTM geometry details.                                                                  |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    if (buffers.layer_inputs.len < requirements.layer_count) {
+    if (rows.layer_inputs.len < requirements.layer_count) {
         return error.ShapeMismatch;
     }
 
     if (requirements.source_interface_count != 0 and
-        buffers.source_interfaces.len < requirements.source_interface_count)
+        rows.source_interfaces.len < requirements.source_interface_count)
     {
         return error.ShapeMismatch;
     }
 
     if (requirements.rtm_quadrature_level_count != 0 and
-        buffers.rtm_quadrature_levels.len < requirements.rtm_quadrature_level_count)
+        rows.rtm_quadrature_levels.len < requirements.rtm_quadrature_level_count)
     {
         return error.ShapeMismatch;
     }
 
     if (requirements.pseudo_spherical_level_count != 0 and
-        (buffers.pseudo_spherical_samples.len < requirements.pseudo_spherical_sample_count or
-            buffers.pseudo_spherical_level_starts.len < requirements.pseudo_spherical_level_count))
+        (rows.pseudo_spherical_samples.len < requirements.pseudo_spherical_sample_count or
+            rows.pseudo_spherical_level_starts.len < requirements.pseudo_spherical_level_count))
     {
         return error.ShapeMismatch;
     }
