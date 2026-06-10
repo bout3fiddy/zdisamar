@@ -29,9 +29,6 @@ const phase_timing = @import("phase_timing.zig");
 //   ordersScatIntoWithLocalSum / ordersScatIntoWithActiveLocalSum                                             |
 //     -> same core path, also fills ud_sum_local for integrated-source Jacobians                              |
 //                                                                                                             |
-//   ordersScatTransportInto                                                                                   |
-//     -> same core path, returns only the transported order field                                             |
-//                                                                                                             |
 //   ordersScatTangent                                                                                         |
 //     -> non-integrated Jacobian path with base and derivative U/D fields                                     |
 //                                                                                                             |
@@ -1401,8 +1398,7 @@ pub fn ordersScatInto(
     // Workspace-backed orders solve without returning local-source sums.                                      |
     //                                                                                                         |
     // used by                                                                                                 |
-    //   Integrated-source forward routes that only need UD_fc-style transported                               |
-    //   order fields.                                                                                         |
+    //   Forward routes that only need UD_fc-style transported order fields.                                   |
     // --------------------------------------------------------------------------------------------------------|
 
     const result = ordersScatInternal(
@@ -1554,47 +1550,6 @@ pub fn ordersScatIntoWithActiveLocalSum(
     return .{
         .ud = result.ud,
         .ud_sum_local = result.ud_sum_local,
-    };
-}
-
-pub fn ordersScatTransportInto(
-    storage: *OrdersWorkspace,
-    start_level: usize,
-    end_level: usize,
-    geo: *const basis.Geometry,
-    atten: anytype,
-    rt: []const basis.LayerRT,
-    controls: common.RadiativeTransferControls,
-    num_orders_max: usize,
-) OrdersResultView {
-    // ordersScatTransportInto --------------------------------------------------------------------------------|
-    // Workspace-backed orders solve for routes that only need the transported                                 |
-    // UD_fc-style field.                                                                                      |
-    //                                                                                                         |
-    // used by                                                                                                 |
-    //   Non-integrated reflectance and the single-layer LABOS rtm_config in execute.zig.                      |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const result = ordersScatInternal(
-        false,
-        false,
-        storage.ud,
-        storage.ud_sum_local,
-        storage.ud_orde,
-        storage.ud_local,
-        storage.rt_active,
-        start_level,
-        end_level,
-        geo,
-        atten,
-        rt,
-        controls,
-        num_orders_max,
-        storage.activeTracePhaseTiming(),
-    );
-    return .{
-        .ud = result.ud,
-        .ud_sum_local = &.{},
     };
 }
 

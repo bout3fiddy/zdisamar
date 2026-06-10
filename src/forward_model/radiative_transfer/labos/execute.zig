@@ -660,7 +660,7 @@ fn layerResolvedLabosWithWorkspace(
                     // Non-integrated reflectance takes the transported UD_fc
                     // field directly from the scattering-order solve.
                     if (dynamic_atten) |*atten| {
-                        break :choose_non_integrated_orders orders_mod.ordersScatTransportInto(
+                        break :choose_non_integrated_orders orders_mod.ordersScatInto(
                             orders_workspace,
                             0,
                             nlayer,
@@ -1143,7 +1143,7 @@ fn singleLayerLabos(
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);
         rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
 
-        const orders_result = orders_mod.ordersScatTransportInto(
+        const orders_result = orders_mod.ordersScatInto(
             &orders_workspace,
             0,
             1,
