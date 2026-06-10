@@ -39,8 +39,9 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //   normal grid           : populate each sublayer, accumulate its parent layer, and write PreparedLayer rows.   |
 //   DISAMAR parity grid   : populate all shared support rows first, then reduce those rows into transport        |
 //                           layers with the DISAMAR support-row placement kept intact.                           |
-//   aerosol input         : scalar aerosol controls build a distribution; profile aerosol layers build explicit  |
-//                           per-sublayer particle properties and an equivalent HG phase row.                     |
+//   aerosol input         : scalar controls build a distribution; profile layers are pressure-overlap            |
+//                           reduced into 48 B support-row properties, then collapsed to one equivalent HG phase  |
+//                           row for the prepared state.                                                          |
 //   spectroscopy/CIA      : midpoint profile spectroscopy and collision-complex caches avoid repeated setup      |
 //                           while each support row is filled.                                                    |
 //                                                                                                                |
@@ -50,7 +51,8 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //                                                                                                                |
 // hot path                                                                                                       |
 //   Runs once per optical-state refresh before repeated wavelength solves. DISAMAR-parity support-row fill can   |
-//   split independent support rows across worker chunks. LayerAccumulation is a compact f64 total row, and       |
+//   split independent support rows across worker chunks. Profile aerosol helpers reuse the same compact property |
+//   rows for phase collapse and support-row fill. LayerAccumulation is a compact f64 total row, and              |
 //   CollisionComplexProfileCache keeps the 64-node spline second-derivative table inline so per-row CIA sampling |
 //   does not rebuild spline scratch.                                                                             |
 //                                                                                                                |
@@ -58,7 +60,8 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //   column = number_density * path_cm                                                                            |
 //   tau_gas = sigma_cont*N_cont + sigma_line*N_line + sigma_xs*N_xs + tau_rayleigh                               |
 //   tau_cia = sigma_cia * collision_pair_density * path_cm                                                       |
-//   tau_aerosol uses scalar/profile placement at the reference wavelength; wavelength scaling happens later in   |
+//   tau_aerosol uses scalar/profile placement at the reference wavelength; midpoint scaling is used only to      |
+//   choose the equivalent phase row here. Wavelength scaling for RTM support rows happens later in               |
 //   carrier_eval.zig.                                                                                            |
 //                                                                                                                |
 // memory                                                                                                         |
@@ -86,7 +89,9 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //                                                                                                                |
 // hot path                                                                                                       |
 //   Profile-aerosol preparation writes this compact row once, then later rows read it by pointer while filling   |
-//   support rows and building the equivalent phase row.                                                          |
+//   support rows and building the equivalent phase row. The phase collapse reads optical-depth scaling fields    |
+//   through profileScatteringAtMidpoint, then reads asymmetry_factor at [40..47]; keeping one row avoids a       |
+//   separate phase-only column that would duplicate the ownership path used by support-row fill.                 |
 const AerosolSublayerProperties = struct {
     optical_depth: f64 = 0.0,
     base_optical_depth: f64 = 0.0,
@@ -779,6 +784,18 @@ fn profileSpectralScalingMatches(
 }
 
 fn profileScatteringAtMidpoint(context: *const Context, property: *const AerosolSublayerProperties) f64 {
+    // profileScatteringAtMidpoint -----------------------------------------------------------------------------  |
+    // Compute profile-aerosol scattering optical depth at the preparation midpoint wavelength.                   |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   Reads optical_depth at [0..7], reference_wavelength_nm at [24..31], angstrom_exponent at [32..39],       |
+    //   and single_scatter_albedo at [16..23]. The caller passes a pointer so                                    |
+    //   the 48 B support-row property is not copied.                                                             |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   scattering_i = scaled_tau_i(midpoint_nm) * single_scatter_albedo_i                                       |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     if (property.optical_depth <= 0.0 or property.single_scatter_albedo <= 0.0) return 0.0;
     const optical_depth = ParticleProfiles.scaleOpticalDepth(
         property.optical_depth,
@@ -793,6 +810,17 @@ fn profileMeanSingleScatterAlbedo(
     context: *const Context,
     aerosol_sublayers: []const AerosolSublayerProperties,
 ) f64 {
+    // profileMeanSingleScatterAlbedo ----------------------------------------------------------------------------|
+    // Collapse profile-aerosol support rows into the scalar aerosol single-scatter albedo kept in totals.        |
+    //                                                                                                            |
+    // memory                                                                                                     |
+    //   Walks the 48 B profile rows by pointer. Each active row reads optical_depth [0..7],                      |
+    //   single_scatter_albedo [16..23], reference_wavelength_nm [24..31], and angstrom_exponent [32..39].        |
+    //                                                                                                            |
+    // math                                                                                                       |
+    //   ssa_mean = sum(scaled_tau_i * single_scatter_albedo_i) / sum(scaled_tau_i)                               |
+    // ---------------------------------------------------------------------------------------------------------  |
+
     var optical_depth: f64 = 0.0;
     var scattering: f64 = 0.0;
 
@@ -825,9 +853,10 @@ fn profileEquivalentPhaseCoefficients(
     //   AerosolSublayers.phaseCoefficients calls this once during preparation for profile aerosol input.         |
     //                                                                                                            |
     // memory                                                                                                     |
-    //   AerosolSublayerProperties is a 48 B support-row property record. The loop reads the optical-depth,       |
-    //   reference-wavelength, Angstrom, single-scatter-albedo, and asymmetry fields by pointer. It writes only   |
-    //   the final phase coefficient row into context.aerosol_phase_coefficients.                                 |
+    //   AerosolSublayerProperties is a 48 B support-row property record. The local loop reads                    |
+    //   asymmetry_factor at [40..47]; profileScatteringAtMidpoint performs the optical-depth,                    |
+    //   reference-wavelength, Angstrom, and single-scatter-albedo reads.                                         |
+    //   This writes one final phase coefficient row into context.aerosol_phase_coefficients.                     |
     //                                                                                                            |
     // math                                                                                                       |
     //   g_equiv = sum(scattering_i * asymmetry_i) / sum(scattering_i)                                            |
