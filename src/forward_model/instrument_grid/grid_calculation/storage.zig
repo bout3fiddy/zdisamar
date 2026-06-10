@@ -16,18 +16,32 @@ const Types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 
 // storage.zig -----------------------------------------------------------------------------------------------------------|
-// Reusable memory owner for instrument-grid simulations. This file decides which buffers exist for an RTM                |
-// config, when cached wavelength/profile plans are invalid, and how borrowed product views stay shaped.                  |
+// Reusable memory owner for instrument-grid simulations. ProductStorage is the retained workspace behind repeated        |
+// measurement runs: it owns output arrays, transport scratch, wavelength plans, forward miss plans, profile caches,      |
+// optional worker pools, and the borrowed views returned by instrument_grid/root.zig.                                    |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   root.zig and simulate.zig for product workspace setup                                                                |
-//   spectral_forward.zig for per-worker scratch sizing                                                                   |
+//   instrument_grid/root.zig exposes ProductStorage as the public workspace handle. simulate.zig asks for trimmed        |
+//   Buffers views at the start of each product run. spectral_forward.zig uses resolved sizing helpers for worker         |
+//   scratch. optimal_estimation keeps ProductStorage warm across retrieval iterations.                                   |
 //                                                                                                                        |
-// main paths                                                                                                             |
-//   ProductStorage.buffers           -> reusable output and transport buffers                                            |
-//   ProductStorage.spectralCache     -> one irradiance cache per product run                                             |
-//   ProductStorage.invalidateWavelengthPlan -> clear derived sampling/profile caches                                     |
-//   validateBuffers                  -> assert a coherent one-sweep buffer contract                                      |
+// route map                                                                                                              |
+//   ProductStorage.buffers                  -> grow/reuse output, transport, pseudo-spherical, and Jacobian buffers      |
+//   ProductStorage.spectralCache            -> reset the reusable irradiance cache for this product run                  |
+//   ProductStorage.forwardResultBuffer      -> dense LABOS miss result staging for spectral_forward.zig                  |
+//   ProductStorage.forwardPrefetchPool      -> reusable helper threads for repeated prefetch work                        |
+//   ProductStorage.invalidateWavelengthPlan -> clear wavelength sampling, forward misses, and profile caches together    |
+//   validateBuffers                         -> assert a coherent one-sweep borrowed Buffers view                         |
+//                                                                                                                        |
+// cache boundaries                                                                                                       |
+//   wavelength_plan_key guards sampling and forward-miss plans. profile_spectroscopy_cache_key guards profile-node       |
+//   spectroscopy state. invalidateWavelengthPlan drops both families because they are derived from the same scene,       |
+//   prepared optical state, and instrument controls and must not drift independently.                                    |
+//                                                                                                                        |
+// ownership                                                                                                              |
+//   ProductStorage owns backing slices and retained plans. Buffers is only a trimmed borrowed view for one run.          |
+//   Feature-specific buffers are freed when disabled so stale source-interface, RTM-quadrature, pseudo-spherical,        |
+//   or Jacobian data cannot survive into a route that should not read them.                                              |
 // -----------------------------------------------------------------------------------------------------------------------|
 
 // migration note: Zig 0.15.2 runtime boundary ---------------------------------------------------------------------------|
