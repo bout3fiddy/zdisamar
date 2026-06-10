@@ -14,7 +14,7 @@ const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
-// spectral_eval.zig -----------------------------------------------------------------------------------------------------|
+// spectral_eval.zig ---------------------------------------------------------------------------------------------------- |
 // Consumes compact wavelength plans and gathers them into nominal radiance and irradiance rows.                          |
 //                                                                                                                        |
 // called by                                                                                                              |
@@ -37,7 +37,7 @@ const Error = Storage.Error;
 // memory                                                                                                                 |
 //   Forward results and kernel side arrays are borrowed from the simulation plan. SpectralEvaluationCache owns           |
 //   only the per-run exact-wavelength irradiance cache used to avoid repeated solar interpolation.                       |
-// -----------------------------------------------------------------------------------------------------------------------|
+// ---------------------------------------------------------------------------------------------------------------------- |
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
 pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
@@ -91,7 +91,7 @@ pub fn integratePrefetchedForwardAtNominal(
     integration: *const Plan.IntegrationKernelRef,
     kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!ForwardIntegratedSample {
-    // integratePrefetchedForwardAtNominal -------------------------------------------------------------------------------|
+    // integratePrefetchedForwardAtNominal ------------------------------------------------------------------------------ |
     // Accumulate one nominal radiance row from already-prefetched high-resolution forward results.                       |
     //                                                                                                                    |
     // data flow                                                                                                          |
@@ -110,7 +110,7 @@ pub fn integratePrefetchedForwardAtNominal(
     //                                                                                                                    |
     // why                                                                                                                |
     //   Wavelength planning has already deduplicated misses, so this hot loop avoids hash lookups.                       |
-    // -------------------------------------------------------------------------------------------------------------------|
+    // ------------------------------------------------------------------------------------------------------------------ |
 
     const start: usize = @intCast(row_ref.start);
     const count = integration.activeSampleCount();
@@ -157,7 +157,7 @@ pub fn integrateIrradianceAtNominal(
     integration: *const Plan.IntegrationKernelRef,
     kernel_storage: Plan.IntegrationKernelStorage,
 ) Error!f64 {
-    // integrateIrradianceAtNominal --------------------------------------------------------------------------------------|
+    // integrateIrradianceAtNominal ------------------------------------------------------------------------------------- |
     // Accumulate one nominal irradiance row from solar irradiance samples. This mirrors the radiance                     |
     // integration route so the two channels use the same instrument-response offsets and weights.                        |
     //                                                                                                                    |
@@ -169,7 +169,7 @@ pub fn integrateIrradianceAtNominal(
     //   Irradiance uses the same integration offsets and weights as the radiance channel selected for                    |
     //   irradiance. The difference is only the source of each high-resolution sample: solar support data                 |
     //   instead of LABOS transport.                                                                                      |
-    // -------------------------------------------------------------------------------------------------------------------|
+    // ------------------------------------------------------------------------------------------------------------------ |
 
     const lookup_request = IrradianceLookupRequest{
         .scene = scene,
@@ -203,14 +203,14 @@ pub fn prefetchForwardSamples(
     thread_pool: ?*std.Thread.Pool,
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 ) Error!void {
-    // prefetchForwardSamples --------------------------------------------------------------------------------------------|
+    // prefetchForwardSamples ------------------------------------------------------------------------------------------- |
     // Compute every unique high-resolution forward miss into a dense result array before nominal-row                     |
     // integration starts.                                                                                                |
     //                                                                                                                    |
     // output contract                                                                                                    |
     //   results[index] corresponds to misses[index]. buildForwardMissPlan stores only these dense indexes in             |
     //   each nominal row, so later integration does not touch the miss hash map.                                         |
-    // -------------------------------------------------------------------------------------------------------------------|
+    // ------------------------------------------------------------------------------------------------------------------ |
 
     if (misses.len == 0) return;
     if (results.len != misses.len) return error.ShapeMismatch;
@@ -232,10 +232,13 @@ fn cachedIrradianceAtWavelength(
     request: *const IrradianceLookupRequest,
     wavelength_nm: f64,
 ) Error!f64 {
-    // cachedIrradianceAtWavelength --------------------------------------------------------------------------------------|
-    // Return solar irradiance at one exact wavelength, caching by the f64 bit pattern. Operational DISAMAR               |
-    // high-resolution grids prefer their supplied solar spectrum when it covers the requested wavelength.                |
-    // -------------------------------------------------------------------------------------------------------------------|
+    // cachedIrradianceAtWavelength ------------------------------------------------------------------------------------- |
+    // Return solar irradiance at one exact wavelength, caching by the f64 bit pattern.                                   |
+    //                                                                                                                    |
+    // route                                                                                                              |
+    //   DISAMAR high-resolution grid with covering operational solar table -> in-bounds operational interpolation        |
+    //   otherwise                                           -> solar_irradiance.zig compatibility source order           |
+    // ------------------------------------------------------------------------------------------------------------------ |
 
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
     if (request.cache.irradiance.get(key)) |cached| return cached;

@@ -1,24 +1,31 @@
 const std = @import("std");
 const Scene = @import("../Scene.zig").Scene;
 
-// solar_irradiance.zig ---------------------------------------------------------------------------------------|
-// Solar irradiance compatibility layer for nominal channels and instrument-integration samples.               |
+// solar_irradiance.zig -------------------------------------------------------------------------------------- |
+// Solar irradiance source-order helper for nominal channels and instrument-integration samples.               |
 //                                                                                                             |
 // used by                                                                                                     |
 //   spectral_forward.zig converts LABOS reflectance into radiance                                             |
 //   spectral_eval.zig evaluates irradiance samples and prefilled irradiance cache rows                        |
 //                                                                                                             |
-// main path                                                                                                   |
-//   scene operational solar spectrum -> bundled O2 A support -> Planck-shaped continuum fallback              |
+// source order                                                                                                |
+//   1. operational solar table retained on primary band support, when present                                 |
+//   2. tiny bundled O2 A support table, only when the scene requested bundled defaults                        |
+//   3. Planck-shaped continuum fallback scaled to the O2 A magnitude near 760 nm                              |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Called for irradiance cache misses, not every final product row once the cache is warm. The function      |
-//   allocates nothing and walks the tiny bundled O2 A table only when the scene requests bundled defaults.    |
+//   Called for radiance scaling and irradiance-cache misses. The instrument-grid cache keys exact f64         |
+//   wavelengths, so repeated integration offsets reuse the resolved value. This function allocates nothing    |
+//   and walks the tiny bundled O2 A table only when the scene requests bundled defaults.                      |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   The helper always returns a positive finite floor for downstream radiance/reflectance scaling. It does    |
+//   not own solar tables or prepare spline state; operational solar ownership lives in input/instrument.      |
 //                                                                                                             |
 // numbers                                                                                                     |
 //   Bundled values are retained O2 A support samples near 760 nm. The continuum is scaled to the same         |
 //   magnitude at 760 nm using a 5778 K black-body shape so out-of-band fallback stays smooth and positive.    |
-// ------------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
 const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };
 const bundled_o2a_solar_irradiance = [_]f64{
@@ -32,14 +39,19 @@ const bundled_o2a_solar_irradiance = [_]f64{
 };
 
 pub fn irradianceAtWavelength(scene: *const Scene, wavelength_nm: f64) f64 {
-    // irradianceAtWavelength ---------------------------------------------------------------------------------|
-    // Resolve one irradiance sample from scene support, bundled O2 A support, or continuum fallback.          |
+    // irradianceAtWavelength -------------------------------------------------------------------------------- |
+    // Resolve one positive irradiance sample from the current scene's solar source order.                     |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : irradiance-cache misses for nominal channels and integration samples                       |
+    //   repeated : radiance scaling and irradiance-cache misses for nominal/integration samples               |
     //   reads    : observation-model solar support, target wavelength, bundled support arrays                 |
     //   calls    : OperationalSolarSpectrum interpolation, bundledSolarIrradiance                             |
-    // --------------------------------------------------------------------------------------------------------|
+    //                                                                                                         |
+    // fallback                                                                                                |
+    //   Operational support clamps outside its table. Bundled support falls back to the Planck continuum      |
+    //   outside the retained O2 A support range. The final floor keeps zero or negative source data from      |
+    //   reaching reflectance/radiance scaling.                                                                |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const source_irradiance = choose_source_irradiance: {
