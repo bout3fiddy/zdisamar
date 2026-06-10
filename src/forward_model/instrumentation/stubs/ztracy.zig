@@ -29,6 +29,17 @@ const Src = std.builtin.SourceLocation;
 // ------------------------------------------------------------------------------------------------------------|
 pub const enabled = false;
 
+// ZoneCtx ----------------------------------------------------------------------------------------------------|
+// Empty zone context returned by the disabled Tracy shim.                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 0 B; Trace.DisabledZone and direct shim users keep no zone storage                |
 pub const ZoneCtx = struct {
     pub inline fn Text(self: ZoneCtx, text: []const u8) void {
         _ = self;
@@ -49,6 +60,7 @@ pub const ZoneCtx = struct {
         _ = self;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
 
 pub inline fn SetThreadName(name: [*:0]const u8) void {
     _ = name;
@@ -81,6 +93,20 @@ pub inline fn PlotF(name: [*:0]const u8, value: f64) void {
     _ = value;
 }
 
+// TracyAllocator ---------------------------------------------------------------------------------------------|
+// Pass-through allocator shim for code that expects the real TracyAllocator type.                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] child_allocator : std.mem.Allocator                                                                |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   child_allocator is borrowed; this shim does not own allocator state or tracing buffers.                   |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); total = one borrowed allocator handle if a caller stores it     |
 pub const TracyAllocator = struct {
     child_allocator: std.mem.Allocator,
 
@@ -92,3 +118,4 @@ pub const TracyAllocator = struct {
         return self.child_allocator;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|

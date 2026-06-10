@@ -28,6 +28,17 @@ const SourceLocation = std.builtin.SourceLocation;
 // runtime shape                                                                                                 |
 //   This facade owns no files, buffers, or capture lifecycle. Trace CLIs and retained trace outputs live under  |
 //   scaffolding/instrumentation; product code only sees these inline wrappers.                                  |
+//                                                                                                               |
+// hot path                                                                                                      |
+//   Trace calls sit inside optical preparation chunks, wavelength-plan workers, LABOS Fourier/order loops,      |
+//   product simulation phases, and OE iterations. In normal builds, comptime enabled=false selects DisabledZone |
+//   and every inline wrapper returns before touching Tracy state. Trace harness builds keep the same call sites |
+//   but store the ztracy zone context in EnabledZone until end() is called.                                     |
+//                                                                                                               |
+// memory                                                                                                        |
+//   The product/test Zone is zero-size because DisabledZone stores no fields. Enabled trace harnesses carry     |
+//   only the optional ztracy context returned by the selected dependency; capture buffers and timeline output   |
+//   stay in Tracy/scaffolding code, not in this facade.                                                         |
 // --------------------------------------------------------------------------------------------------------------|
 pub const enabled: bool = enabled_by_build: {
     if (!@hasDecl(build_options, "enable_ztracy")) break :enabled_by_build false;
@@ -46,6 +57,17 @@ const EnabledZone = struct {
     }
 };
 
+// DisabledZone -------------------------------------------------------------------------------------------------|
+// Zero-state zone handle used by normal product and test builds.                                                |
+//                                                                                                               |
+// layout(64-bit)                                                                                                |
+// size: 0 B (0.000 KiB), align: 1 B                                                                             |
+//                                                                                                               |
+// memory                                                                                                        |
+//   no stored fields                                                                                            |
+//                                                                                                               |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                        |
+// footprint: per instance = 0 B; Trace.* call sites keep no zone storage when ztracy is disabled                |
 const DisabledZone = struct {
     pub inline fn end(self: @This()) void {
         _ = self;
@@ -56,6 +78,7 @@ const DisabledZone = struct {
         _ = val;
     }
 };
+// --------------------------------------------------------------------------------------------------------------|
 
 pub const Zone = zone_type: {
     if (enabled) break :zone_type EnabledZone;
