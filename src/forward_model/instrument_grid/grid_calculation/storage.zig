@@ -686,14 +686,6 @@ pub fn validateBuffers(
     }
 }
 
-pub fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) Error!void {
-    // ensureBufferCapacity ----------------------------------------------------------------------------------------------|
-    // Public f64 helper retained for tests and callers that only own scalar scratch.                                     |
-    // -------------------------------------------------------------------------------------------------------------------|
-
-    try ensureTypedBufferCapacity(f64, allocator, buffer, capacity);
-}
-
 fn ensureTypedBufferCapacity(comptime T: type, allocator: Allocator, buffer: *[]T, capacity: usize) Error!void {
     // ensureTypedBufferCapacity -----------------------------------------------------------------------------------------|
     // Grow ProductStorage-owned buffers without preserving old values. Empty sentinels are not allocator-owned,          |
