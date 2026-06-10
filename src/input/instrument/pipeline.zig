@@ -43,11 +43,7 @@ pub const SamplingMode = enum {
     synthetic,
 
     pub fn parse(value: []const u8) errors.Error!SamplingMode {
-        if (std.mem.eql(u8, value, "native")) return .native;
-        if (std.mem.eql(u8, value, "operational")) return .operational;
-        if (std.mem.eql(u8, value, "measured_channels")) return .measured_channels;
-        if (std.mem.eql(u8, value, "synthetic")) return .synthetic;
-        return errors.Error.InvalidRequest;
+        return std.meta.stringToEnum(SamplingMode, value) orelse errors.Error.InvalidRequest;
     }
 
     pub fn label(self: SamplingMode) []const u8 {

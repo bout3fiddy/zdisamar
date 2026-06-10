@@ -117,11 +117,7 @@ pub const Quantity = enum {
     slant_column,
 
     pub fn parse(value: []const u8) errors.Error!Quantity {
-        if (std.mem.eql(u8, value, "radiance")) return .radiance;
-        if (std.mem.eql(u8, value, "irradiance")) return .irradiance;
-        if (std.mem.eql(u8, value, "reflectance")) return .reflectance;
-        if (std.mem.eql(u8, value, "slant_column")) return .slant_column;
-        return errors.Error.InvalidRequest;
+        return std.meta.stringToEnum(Quantity, value) orelse errors.Error.InvalidRequest;
     }
 
     pub fn label(self: Quantity) []const u8 {
