@@ -134,106 +134,16 @@ pub fn run(
     return view.toOwned(allocator);
 }
 
-pub fn defaultO2AInput() O2AInput {
-    return o2a_reference.defaultInput();
-}
-
-pub fn parseO2AInputJson(
-    allocator: std.mem.Allocator,
-    json: []const u8,
-) !std.json.Parsed(O2AInput) {
-    return o2a_reference.parseInputJson(allocator, json);
-}
-
-pub fn renderDefaultO2AInputJson(allocator: std.mem.Allocator) ![]u8 {
-    return o2a_reference.renderDefaultInputJson(allocator);
-}
-
-pub fn prepareO2A(
-    allocator: std.mem.Allocator,
-    input: *const O2AInput,
-) !PreparedO2A {
-    return o2a_reference.prepareO2A(allocator, input);
-}
-
-pub fn runO2A(
-    allocator: std.mem.Allocator,
-    prepared: *const PreparedO2A,
-) !Output {
-    return o2a_reference.runO2A(allocator, prepared);
-}
-
-pub fn runO2AWithSessionStorage(
-    allocator: std.mem.Allocator,
-    storage: *O2ASessionStorage,
-    prepared: *const PreparedO2A,
-) !Output {
-    return o2a_reference.runO2AWithSessionStorage(allocator, storage, prepared);
-}
-
-pub fn warmO2ASessionStorage(
-    allocator: std.mem.Allocator,
-    storage: *O2ASessionStorage,
-    prepared: *const PreparedO2A,
-) !void {
-    return o2a_reference.warmO2ASessionStorage(allocator, storage, prepared);
-}
-
-pub fn buildAtmosphericBudget(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-) ![]AtmosphericBudgetRow {
-    return atmospheric_budget.build(allocator, input, optical_properties, wavelengths_nm);
-}
-
-pub fn buildO2LineContributions(
-    allocator: std.mem.Allocator,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-    max_rows: usize,
-) !O2LineContributionTable {
-    return o2_line_contributions.build(allocator, optical_properties, wavelengths_nm, max_rows);
-}
-
-pub fn buildInstrumentResponse(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-    channel_mask: u32,
-) ![]InstrumentResponseRow {
-    return instrument_response.build(allocator, input, optical_properties, wavelengths_nm, channel_mask);
-}
-
-pub fn buildO2O2CIADiagnostics(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    wavelengths_nm: []const f64,
-) ![]O2O2CIARow {
-    return o2_o2_cia.build(allocator, input, optical_properties, wavelengths_nm);
-}
-
-pub fn buildRadiativeTransferDiagnostics(
-    allocator: std.mem.Allocator,
-    input: *const Input,
-    optical_properties: *const OpticalProperties,
-    rtm_config: radiative_transfer.SolveConfig,
-    wavelengths_nm: []const f64,
-    spectrum_view: ?RadiativeTransferSpectrumView,
-) ![]RadiativeTransferDiagnosticRow {
-    return radiative_transfer_diagnostics.build(
-        allocator,
-        input,
-        optical_properties,
-        rtm_config,
-        wavelengths_nm,
-        spectrum_view,
-    );
-}
-
-pub fn writeReport(summary_path: []const u8, summary: DiagnosticReport) !void {
-    return report_json.writeSummaryReport(summary_path, summary);
-}
+pub const defaultO2AInput = o2a_reference.defaultInput;
+pub const parseO2AInputJson = o2a_reference.parseInputJson;
+pub const renderDefaultO2AInputJson = o2a_reference.renderDefaultInputJson;
+pub const prepareO2A = o2a_reference.prepareO2A;
+pub const runO2A = o2a_reference.runO2A;
+pub const runO2AWithSessionStorage = o2a_reference.runO2AWithSessionStorage;
+pub const warmO2ASessionStorage = o2a_reference.warmO2ASessionStorage;
+pub const buildAtmosphericBudget = atmospheric_budget.build;
+pub const buildO2LineContributions = o2_line_contributions.build;
+pub const buildInstrumentResponse = instrument_response.build;
+pub const buildO2O2CIADiagnostics = o2_o2_cia.build;
+pub const buildRadiativeTransferDiagnostics = radiative_transfer_diagnostics.build;
+pub const writeReport = report_json.writeSummaryReport;
