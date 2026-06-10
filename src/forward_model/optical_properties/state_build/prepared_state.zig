@@ -12,17 +12,23 @@ const Types = @import("state.zig");
 const Allocator = std.mem.Allocator;
 
 // prepared_state.zig -----------------------------------------------------------------------------------------|
-// Public owner/view boundary for optical properties after a Scene has been reduced into prepared rows.        |
-// This is the object the rest of the forward model carries: RTM builders, instrument-grid workers, output     |
-// diagnostics, and retrieval setup all read through PreparedOpticalState instead of touching setup internals. |
+// Public owner/view boundary for optical properties after a Scene has been reduced into prepared rows. This   |
+// file owns the stable PreparedOpticalState header, the deinit contract for moved preparation storage, and    |
+// the small method facade that downstream code reads instead of reaching back into setup internals.           |
 //                                                                                                             |
 // build route                                                                                                 |
-//   root.prepare                                                                                              |
+//   optical_properties/root.prepare                                                                           |
 //     -> Context.init                  builds the vertical grid, borrowed profiles, LUT handles, and controls |
 //     -> Absorbers.build               prepares active line and cross-section absorbers                       |
 //     -> Accumulation.accumulate       fills PreparedLayer and optional PreparedSublayer rows                 |
 //     -> Finalize.assemble             moves owned buffers into PreparedOpticalState                          |
 //     -> ensureSharedRtmGeometryCache  builds retained shared-RTM geometry when interval semantics allow      |
+//                                                                                                             |
+// wavelength route                                                                                            |
+//   instrument_grid/spectral_forward keeps one PreparedOpticalState for a product run. Each high-resolution   |
+//   forward miss calls forward_input.configuredForwardInput, which then asks forward_layers, rtm_quadrature,  |
+//   source_interfaces, pseudo_spherical, shared_carrier, and state_spectroscopy to read the same retained     |
+//   header and row slices at the current wavelength. LABOS receives only the wavelength-specific ForwardInput.|
 //                                                                                                             |
 // public surface                                                                                              |
 //   PreparedOpticalState : wide header over owned or borrowed out-of-line preparation storage                 |
@@ -36,39 +42,41 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // caller map                                                                                                  |
 //   instrument_grid/grid_calculation reads this for wavelength plans, forward inputs, spectral eval, storage, |
-//   and simulation setup. state_build/forward_layers, rtm_quadrature, shared_carrier, pseudo_spherical, and   |
-//   source_interfaces turn it into RTM input rows. output/* modules use it for atmospheric budget, O2 line,   |
-//   O2-O2 CIA, radiative-transfer diagnostics, and instrument-response reports.                               |
+//   and simulation setup. state_build/forward_layers, rtm_quadrature, source_interfaces, pseudo_spherical,    |
+//   shared_geometry, shared_carrier, state_spectroscopy, state_optical_depth, and state_scalar read it for    |
+//   RTM inputs and diagnostics. output/* modules use the same header for atmospheric budget, O2 line, O2-O2   |
+//   CIA, radiative-transfer diagnostics, and instrument-response reports.                                     |
 //                                                                                                             |
 // module split                                                                                                |
 //   state.zig defines the compiler-measured row payloads. finalize.zig writes this header once by moving      |
 //   Context and AbsorberBuildState storage into it. state_spectroscopy.zig, state_optical_depth.zig, and      |
 //   state_scalar.zig do the wavelength/altitude math behind the public methods below.                         |
 //                                                                                                             |
-// row model                                                                                                   |
-//   layers    : transport-grid rows. Each row stores physical layer values and the support-row span           |
-//               {sublayer_start_index, sublayer_count}. The PreparedLayer layout lives in state.zig; this     |
-//               file owns the slice header and the methods that walk it.                                      |
-//   sublayers : optional fine support rows. DISAMAR-parity interval grids can share boundary rows between     |
-//               adjacent transport layers, so summing every layer's sublayer_count may exceed sublayers.len.  |
-//               The PreparedSublayer layout also lives in state.zig because layer accumulation writes it.     |
-//   absorber rows keep line/cross-section data beside density columns; wavelength-specific spectroscopy work  |
-//   lives in state_spectroscopy.zig and carrier_eval.zig.                                                     |
+// data shape                                                                                                  |
+//   layers    : 208 B PreparedLayer rows. Each row stores representative layer physics plus the support-row   |
+//               span tail {sublayer_start_index, layer_index, interval_index_1based, sublayer_count} at       |
+//               [192..207]. This file owns the slice header; state.zig owns the row byte map.                 |
+//   sublayers : optional 256 B PreparedSublayer support rows. DISAMAR-parity interval grids can share         |
+//               boundary rows between adjacent transport layers, so sum(layer.sublayer_count) can be larger   |
+//               than sublayers.len. Reduced shared-RTM routes keep the coarser PreparedLayer transport shape. |
+//   absorbers : line/cross-section rows keep retained reference handles beside density columns. The           |
+//               wavelength-specific spectroscopy work lives in state_spectroscopy.zig and carrier_eval.zig.   |
+//   geometry  : shared_rtm_geometry is a retained cache built from PreparedLayer support spans when explicit  |
+//               interval semantics allow one shared RTM geometry to feed multiple wavelength builders.        |
 //                                                                                                             |
-// layout map                                                                                                  |
-//   PreparedOpticalState is mapped below because this file owns the header and deinit contract. The repeated  |
-//   row payload maps live in state.zig beside their writers/readers. PreparedLayer is 208 B, PreparedSublayer |
-//   is 256 B, SharedRtmGeometry is a 32 B slice header, and GeneratedLutAsset is 216 B. Keeping those layout  |
-//   boxes beside the row definitions prevents this owner/view file from becoming a stale duplicate.           |
-//   tests/unit/forward_model/optical_properties/state_build/root_test.zig guards this header's size,          |
-//   alignment, and offsets with @sizeOf/@alignOf/@offsetOf.                                                   |
+// layout ownership                                                                                            |
+//   PreparedOpticalState is mapped below because this file owns the header and release order. Repeated row    |
+//   payload maps live in state.zig beside layer_accumulation and wavelength readers. PreparedLayer is 208 B,  |
+//   PreparedSublayer is 256 B, SharedRtmGeometry is a 32 B owner header over cached layer/level arrays, and   |
+//   GeneratedLutAsset is 216 B. root_test.zig guards the header and row sizes with @sizeOf/@alignOf/@offsetOf.|
 //                                                                                                             |
 // hot reads                                                                                                   |
 //   Repeated wavelength paths read this header for layer/support rows, aerosol phase coefficients,            |
 //   spectroscopy handles, LUT headers, scalar optical-depth summaries, and cache keys. Index-only loops over  |
-//   PreparedLayer use pointer capture so no 208 B row is copied. The shared-RTM shape check reads only        |
-//   sublayer_count at [204..207] from each PreparedLayer, but the row is intentionally not split because      |
-//   nearby transport builders read the same array's altitude, pressure, aerosol, and optical-depth fields.    |
+//   PreparedLayer use pointer capture so no 208 B row is copied. The shared-RTM shape check reads             |
+//   sublayer_count at [204..207] only, while forward_layers, rtm_quadrature, pseudo_spherical, and            |
+//   shared_geometry read the same row's support tail plus altitude, pressure, aerosol, and optical-depth      |
+//   fields nearby. A side span column should be added only with benchmark evidence and a simpler owner model. |
 //                                                                                                             |
 // header layout                                                                                               |
 //   The inline [151]f64 aerosol phase array takes 1208 B and dominates this 2136 B header. Slice and optional |
@@ -90,20 +98,27 @@ const Allocator = std.mem.Allocator;
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedOpticalState ---------------------------------------------------------------------------------------|
-// Final optical-property state returned to transport and diagnostics.                                         |
+// Final optical-property state returned to transport, instrument-grid workers, diagnostics, and retrieval.    |
 //                                                                                                             |
-// This is a wide owner/view header over prepared optical-property rows. Zig reorders regular struct fields,   |
-// so the memory map below is compiler-measured storage order, not source order.                               |
+// This is a wide owner/view header over prepared optical-property rows. It keeps cheap scalar summaries       |
+// inline, keeps large repeated row payloads out of line behind slice headers, and records which moved         |
+// preparation buffers this header must release. Zig reorders regular struct fields, so the memory map below   |
+// is compiler-measured storage order, not source order.                                                       |
 //                                                                                                             |
 // measured with                                                                                               |
 //   @sizeOf, @alignOf, and @offsetOf for the current 64-bit Zig target.                                       |
 //                                                                                                             |
 // storage groups                                                                                              |
-//   row headers      : layers, optional sublayers, absorber rows, spectroscopy profile arrays                 |
-//   retained payload : operational LUT headers, generated LUT metadata, cached shared RTM geometry            |
-//   scalar summaries : optical depths, effective thermodynamics, column factors, aerosol parameters           |
-//   cache identity   : spectroscopy_plan_key and spectroscopy_profile_cache_inputs_key                        |
-//   ownership flags  : bottom of the row, close to the enum/small-tag storage that Zig also packs there       |
+//   row headers       : layers, optional sublayers, absorber rows, spectroscopy profile arrays                |
+//   retained payload  : operational LUT headers, generated LUT metadata, cached shared RTM geometry           |
+//   scalar summaries  : optical depths, effective thermodynamics, column factors, aerosol parameters          |
+//   phase coefficients: inline [151]f64 used by RTM phase support and diagnostics                             |
+//   cache identity    : spectroscopy_plan_key and spectroscopy_profile_cache_inputs_key                       |
+//   ownership flags   : bottom of the row, close to the enum/small-tag storage that Zig also packs there      |
+//                                                                                                             |
+// lifetime                                                                                                    |
+//   Finalize.assemble writes this once by moving Context and AbsorberBuildState owner/view headers into it.   |
+//   Wavelength-time callers borrow through const pointers. deinit is the only release path for moved storage. |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2136 B (2.086 KiB), align: 8 B                                                                        |
