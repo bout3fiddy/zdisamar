@@ -67,6 +67,26 @@ const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynam
 //   final merge.                                                                                                 |
 // ------------------------------------------------------------------------------------------------------------   |
 
+// AerosolSublayerProperties ---------------------------------------------------------------------------------    |
+// Profile aerosol values prepared for one support row before they are copied into PreparedSublayer storage.      |
+//                                                                                                                |
+// layout(64-bit)                                                                                                 |
+// size: 48 B (0.047 KiB), align: 8 B                                                                             |
+//                                                                                                                |
+// memory                                                                                                         |
+// [ 0.. 7] optical_depth          : f64                                                                          |
+// [ 8..15] base_optical_depth     : f64                                                                          |
+// [16..23] single_scatter_albedo  : f64                                                                          |
+// [24..31] reference_wavelength_nm: f64                                                                          |
+// [32..39] angstrom_exponent      : f64                                                                          |
+// [40..47] asymmetry_factor       : f64                                                                          |
+//                                                                                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                         |
+// footprint: per instance = 48 B; total = per support row when profile aerosol input is active                   |
+//                                                                                                                |
+// hot path                                                                                                       |
+//   Profile-aerosol preparation writes this compact row once, then later rows read it by pointer while filling   |
+//   support rows and building the equivalent phase row.                                                          |
 const AerosolSublayerProperties = struct {
     optical_depth: f64 = 0.0,
     base_optical_depth: f64 = 0.0,
@@ -75,6 +95,7 @@ const AerosolSublayerProperties = struct {
     angstrom_exponent: f64 = 0.0,
     asymmetry_factor: f64 = 0.0,
 };
+// ------------------------------------------------------------------------------------------------------------   |
 
 const ScalarAerosolSublayers = struct {
     distribution: []const f64,
@@ -804,8 +825,9 @@ fn profileEquivalentPhaseCoefficients(
     //   AerosolSublayers.phaseCoefficients calls this once during preparation for profile aerosol input.         |
     //                                                                                                            |
     // memory                                                                                                     |
-    //   AerosolSublayerProperties is 48 B. The loop reads scattering inputs plus asymmetry by pointer.           |
-    //   It writes only the final phase coefficient row into context.aerosol_phase_coefficients.                  |
+    //   AerosolSublayerProperties is a 48 B support-row property record. The loop reads the optical-depth,       |
+    //   reference-wavelength, Angstrom, single-scatter-albedo, and asymmetry fields by pointer. It writes only   |
+    //   the final phase coefficient row into context.aerosol_phase_coefficients.                                 |
     //                                                                                                            |
     // math                                                                                                       |
     //   g_equiv = sum(scattering_i * asymmetry_i) / sum(scattering_i)                                            |
