@@ -15,28 +15,47 @@ const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
 
 // spectral_eval.zig ---------------------------------------------------------------------------------------------------- |
-// Consumes compact wavelength plans and gathers them into nominal radiance and irradiance rows.                          |
+// Consumes the retained wavelength plan for one product run. wavelength_sampling.zig has already turned                  |
+// scene/instrument controls into compact row references; this file uses those references to prefetch the                 |
+// high-resolution radiance misses once and gather nominal radiance, Jacobian, and irradiance rows without                |
+// re-entering instrument-kernel planning.                                                                                |
 //                                                                                                                        |
 // called by                                                                                                              |
-//   simulate.zig after wavelength_sampling.zig has built sampling rows and the forward miss plan                         |
+//   simulate.zig uses this in three phases:                                                                              |
+//     1. resolveSimulationPlan asks prefetchForwardSamples to fill one dense result row per unique radiance              |
+//        miss before nominal output rows are assembled                                                                   |
+//     2. fillRadianceSamples calls integratePrefetchedForwardAtNominal for each nominal wavelength                       |
+//     3. fillIrradianceSamples calls integrateIrradianceAtNominal for each nominal wavelength                            |
+//                                                                                                                        |
+// retained plan shape                                                                                                    |
+//   WavelengthSampling.rows[i] carries the nominal wavelength, the shifted radiance and irradiance wavelengths,          |
+//   and two IntegrationKernelRef values. ForwardMissPlan.rows[i].start points into sample_indices; the row's             |
+//   radiance_integration.activeSampleCount() gives the length. sample_indices stores dense indexes into                  |
+//   forward_results, so the gather loop never consults the deduplication hash map.                                       |
 //                                                                                                                        |
 // main paths                                                                                                             |
-//   prefetchForwardSamples              -> delegate high-resolution LABOS misses to spectral_forward.zig                 |
-//   integratePrefetchedForwardAtNominal -> gather weighted radiance/Jacobian rows by dense result index                  |
-//   integrateIrradianceAtNominal        -> gather weighted solar irradiance rows through a small cache                   |
+//   prefetchForwardSamples              -> spectral_forward.zig -> LABOS for each unique radiance miss                   |
+//   integratePrefetchedForwardAtNominal -> sample_indices -> forward_results -> weighted radiance/Jacobian row           |
+//   integrateIrradianceAtNominal        -> integration offsets -> exact-wavelength solar cache -> weighted E0 row        |
+//   cachedIrradianceAtWavelength        -> operational solar table when DISAMAR HR support covers the wavelength,        |
+//                                          otherwise the shared solar compatibility source order                         |
 //                                                                                                                        |
 // hot path                                                                                                               |
-//   Wavelength planning already resolved hashes, side arrays, and inline kernels. The radiance gather walks              |
-//   sample_indices plus normalized weights; disabled kernels return the single prefetched result directly.               |
-//   Irradiance uses the same integration offsets but reads solar support instead of LABOS results.                       |
+//   Nominal-row gather walks only slices already owned by the simulation plan: row refs, sample_indices, compact         |
+//   integration weights, and dense ForwardIntegratedSample rows. Disabled kernels return the single prefetched           |
+//   result directly. Integrated rows stream weights once; active Jacobian columns are accumulated only when the          |
+//   solve config asks for derivatives. Irradiance mirrors the same offset/weight contract but reads solar support        |
+//   instead of LABOS results.                                                                                            |
 //                                                                                                                        |
-// contract                                                                                                               |
-//   Integration weights are produced and normalized by the instrument kernel builder. These loops apply the              |
-//   weights exactly once and do not renormalize. Shape checks guard row_ref/count/index mismatches.                      |
+// weight contract                                                                                                        |
+//   Integration weights are produced and normalized by implementations/instrument/integration.zig. These loops           |
+//   apply the weights exactly once and do not renormalize. Shape checks guard row_ref/count/index mismatches so          |
+//   a corrupted retained plan fails here instead of reading past the borrowed arrays.                                    |
 //                                                                                                                        |
 // memory                                                                                                                 |
-//   Forward results and kernel side arrays are borrowed from the simulation plan. SpectralEvaluationCache owns           |
-//   only the per-run exact-wavelength irradiance cache used to avoid repeated solar interpolation.                       |
+//   Forward results, row refs, sample indexes, and kernel side arrays are borrowed from ResolvedSimulationPlan.          |
+//   SpectralEvaluationCache owns only the per-run exact-wavelength irradiance hash map keyed by f64 bits; it is          |
+//   used to avoid repeated solar interpolation when radiance and irradiance kernels revisit the same support.            |
 // ---------------------------------------------------------------------------------------------------------------------- |
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
