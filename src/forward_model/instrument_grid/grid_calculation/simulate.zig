@@ -241,6 +241,27 @@ const WavelengthPlanKeyRequest = struct {
     prepared: *const OpticsPreparation.PreparedOpticalState,
 };
 
+// ProfileSpectroscopyCacheRequest ---------------------------------------------------------------------------------------|
+// Borrowed inputs used to reuse or rebuild retained profile spectroscopy cache rows for one forward-miss plan.           |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 32 B (0.031 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] storage        : *Storage.ProductStorage                                                                      |
+// [ 8..15] prepared       : *const OpticsPreparation.PreparedOpticalState                                                |
+// [16..31] forward_misses : []const SpectralEval.ForwardCacheMiss                                                        |
+//                                                                                                                        |
+// referenced storage: ProductStorage owns retained cache storage; prepared and forward_misses are borrowed.              |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 32 B (0.031 KiB); total excludes borrowed miss rows and retained cache storage               |
+const ProfileSpectroscopyCacheRequest = struct {
+    storage: *Storage.ProductStorage,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+};
+
 inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
 
     // instrumentation: trace phase clock --------------------------------------------------------------------------------|
@@ -697,12 +718,12 @@ fn warmWavelengthPlanFromRequest(
     };
     const plan_key = wavelengthPlanKey(&key_request);
     if (request.storage.wavelength_plan_valid and request.storage.wavelength_plan_key == plan_key) {
-        _ = try ensureProfileSpectroscopyCaches(
-            allocator,
-            request.storage,
-            request.prepared,
-            request.storage.forward_miss_plan.misses,
-        );
+        const profile_cache_request = ProfileSpectroscopyCacheRequest{
+            .storage = request.storage,
+            .prepared = request.prepared,
+            .forward_misses = request.storage.forward_miss_plan.misses,
+        };
+        _ = try ensureProfileSpectroscopyCaches(allocator, &profile_cache_request);
         return;
     }
 
@@ -722,21 +743,19 @@ fn warmWavelengthPlanFromRequest(
         request.storage.wavelength_sampling.view(),
     );
     request.storage.forward_miss_plan_valid = true;
-    _ = try ensureProfileSpectroscopyCaches(
-        allocator,
-        request.storage,
-        request.prepared,
-        request.storage.forward_miss_plan.misses,
-    );
+    const profile_cache_request = ProfileSpectroscopyCacheRequest{
+        .storage = request.storage,
+        .prepared = request.prepared,
+        .forward_misses = request.storage.forward_miss_plan.misses,
+    };
+    _ = try ensureProfileSpectroscopyCaches(allocator, &profile_cache_request);
     request.storage.wavelength_plan_key = plan_key;
     request.storage.wavelength_plan_valid = true;
 }
 
 fn ensureProfileSpectroscopyCaches(
     allocator: Allocator,
-    storage: *Storage.ProductStorage,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    forward_misses: []const SpectralEval.ForwardCacheMiss,
+    request: *const ProfileSpectroscopyCacheRequest,
 ) ![]const SpectroscopyState.ProfileNodeSpectroscopyCache {
     // ensureProfileSpectroscopyCaches -----------------------------------------------------------------------------------|
     // Return profile-node spectroscopy caches matching the current prepared state and forward-miss list.                 |
@@ -744,30 +763,30 @@ fn ensureProfileSpectroscopyCaches(
     // decide the carrier rows used by forward_input.zig.                                                                 |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    const cache_key = profileSpectroscopyCacheKey(prepared, forward_misses);
-    if (storage.profile_spectroscopy_cache_valid and
-        storage.profile_spectroscopy_cache_key == cache_key and
-        storage.profile_spectroscopy_caches.len == forward_misses.len)
+    const cache_key = profileSpectroscopyCacheKey(request.prepared, request.forward_misses);
+    if (request.storage.profile_spectroscopy_cache_valid and
+        request.storage.profile_spectroscopy_cache_key == cache_key and
+        request.storage.profile_spectroscopy_caches.len == request.forward_misses.len)
     {
-        return storage.profile_spectroscopy_caches;
+        return request.storage.profile_spectroscopy_caches;
     }
 
-    allocator.free(storage.profile_spectroscopy_caches);
-    storage.profile_spectroscopy_caches = &.{};
-    storage.profile_spectroscopy_cache_key = 0;
-    storage.profile_spectroscopy_cache_valid = false;
+    allocator.free(request.storage.profile_spectroscopy_caches);
+    request.storage.profile_spectroscopy_caches = &.{};
+    request.storage.profile_spectroscopy_cache_key = 0;
+    request.storage.profile_spectroscopy_cache_valid = false;
 
-    const worker_count = SpectralEval.preferredForwardWorkerCount(forward_misses.len);
-    const thread_pool = storage.forwardPrefetchPool(allocator, worker_count);
-    storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
+    const worker_count = SpectralEval.preferredForwardWorkerCount(request.forward_misses.len);
+    const thread_pool = request.storage.forwardPrefetchPool(allocator, worker_count);
+    request.storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
         allocator,
-        prepared,
-        forward_misses,
+        request.prepared,
+        request.forward_misses,
         thread_pool,
     );
-    storage.profile_spectroscopy_cache_key = cache_key;
-    storage.profile_spectroscopy_cache_valid = true;
-    return storage.profile_spectroscopy_caches;
+    request.storage.profile_spectroscopy_cache_key = cache_key;
+    request.storage.profile_spectroscopy_cache_valid = true;
+    return request.storage.profile_spectroscopy_caches;
 }
 
 fn buildProfileSpectroscopyCaches(
@@ -1124,11 +1143,14 @@ fn resolveSimulationPlan(
         // end instrumentation: trace zone: profile spectroscopy cache -------------------------------------------------- |
 
         if (request.wavelength_plan_storage) |storage| {
+            const profile_cache_request = ProfileSpectroscopyCacheRequest{
+                .storage = storage,
+                .prepared = request.prepared,
+                .forward_misses = plan.forward_miss_plan.misses,
+            };
             break :resolve_profile_spectroscopy_caches try ensureProfileSpectroscopyCaches(
                 allocator,
-                storage,
-                request.prepared,
-                plan.forward_miss_plan.misses,
+                &profile_cache_request,
             );
         }
         break :resolve_profile_spectroscopy_caches &.{};
