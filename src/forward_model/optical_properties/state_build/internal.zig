@@ -34,6 +34,7 @@ pub const source_interfaces = @import("source_interfaces.zig");
 pub const shared_geometry = @import("shared_geometry.zig");
 pub const shared_carrier = @import("shared_carrier.zig");
 pub const state_spectroscopy = @import("state_spectroscopy.zig");
+pub const vertical_grid = @import("vertical_grid.zig");
 
 pub const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 
