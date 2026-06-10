@@ -52,6 +52,8 @@ pub const ClimatologyPoint = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+const ClimatologyField = std.meta.FieldEnum(ClimatologyPoint);
+
 // ClimatologyProfile -----------------------------------------------------------------------------------------|
 // Owner header for vertical climatology rows.                                                                 |
 //                                                                                                             |
@@ -242,21 +244,7 @@ pub const ClimatologyProfile = struct {
         // endpoint because callers use this as reference support, not as a request validator.                 |
         // ----------------------------------------------------------------------------------------------------|
 
-        if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].air_number_density_cm3;
-
-        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
-            if (altitude_km <= right.altitude_km) {
-                const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.air_number_density_cm3;
-
-                const weight = (altitude_km - left.altitude_km) / span;
-                return left.air_number_density_cm3 +
-                    weight * (right.air_number_density_cm3 - left.air_number_density_cm3);
-            }
-        }
-
-        return self.rows[self.rows.len - 1].air_number_density_cm3;
+        return self.interpolateAltitudeField(altitude_km, .air_number_density_cm3);
     }
 
     pub fn interpolateTemperature(self: ClimatologyProfile, altitude_km: f64) f64 {
@@ -265,20 +253,7 @@ pub const ClimatologyProfile = struct {
         // small-row-count and failure fallback.                                                               |
         // ----------------------------------------------------------------------------------------------------|
 
-        if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].temperature_k;
-
-        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
-            if (altitude_km <= right.altitude_km) {
-                const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.temperature_k;
-
-                const weight = (altitude_km - left.altitude_km) / span;
-                return left.temperature_k + weight * (right.temperature_k - left.temperature_k);
-            }
-        }
-
-        return self.rows[self.rows.len - 1].temperature_k;
+        return self.interpolateAltitudeField(altitude_km, .temperature_k);
     }
 
     pub fn interpolateTemperatureSpline(self: ClimatologyProfile, altitude_km: f64) f64 {
@@ -409,20 +384,30 @@ pub const ClimatologyProfile = struct {
         // but this path is useful for direct scalar summaries and simple tests.                               |
         // ----------------------------------------------------------------------------------------------------|
 
+        return self.interpolateAltitudeField(altitude_km, .pressure_hpa);
+    }
+
+    fn interpolateAltitudeField(
+        self: ClimatologyProfile,
+        altitude_km: f64,
+        comptime field: ClimatologyField,
+    ) f64 {
         if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
+        if (altitude_km <= self.rows[0].altitude_km) return @field(self.rows[0], @tagName(field));
 
         for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
             if (altitude_km <= right.altitude_km) {
                 const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.pressure_hpa;
+                if (span == 0.0) return @field(right, @tagName(field));
 
+                const left_value = @field(left, @tagName(field));
+                const right_value = @field(right, @tagName(field));
                 const weight = (altitude_km - left.altitude_km) / span;
-                return left.pressure_hpa + weight * (right.pressure_hpa - left.pressure_hpa);
+                return left_value + weight * (right_value - left_value);
             }
         }
 
-        return self.rows[self.rows.len - 1].pressure_hpa;
+        return @field(self.rows[self.rows.len - 1], @tagName(field));
     }
 
     pub fn interpolatePressureLogLinear(self: ClimatologyProfile, altitude_km: f64) f64 {
