@@ -3,6 +3,10 @@ const BandMeans = @import("../shared/band_means.zig");
 const LayerAccumulation = @import("layer_accumulation.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
+const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
+const ReferenceData = @import("../../../input/ReferenceData.zig");
+const Scene = @import("../../../input/Scene.zig").Scene;
+const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -23,6 +27,47 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // ownership                                                                                                   |
 //   Reads Context and AbsorberBuildState; returns PreparedMeans by value and does not retain borrowed rows.   |
+// ------------------------------------------------------------------------------------------------------------|
+
+// PreparedMeansRequest ---------------------------------------------------------------------------------------|
+// Borrowed setup data needed to reduce accumulated layer totals into scalar prepared means.                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 112 B (0.109 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0.. 15] allocator                     : Allocator                                                        |
+// [ 16.. 23] scene                         : *const Scene                                                     |
+// [ 24.. 31] operational_o2_lut            : *const OperationalCrossSectionLut                                |
+// [ 32.. 39] operational_o2o2_lut          : *const OperationalCrossSectionLut                                |
+// [ 40.. 47] collision_induced_absorption  : ?*const CollisionInducedAbsorptionTable                          |
+// [ 48.. 63] owned_cross_section_absorbers : []const PreparedCrossSectionAbsorber                             |
+// [ 64.. 79] owned_line_absorbers          : []const PreparedLineAbsorber                                     |
+// [ 80.. 87] owned_lines                   : ?*const SpectroscopyLineList                                     |
+// [ 88.. 95] mean_sigma                    : f64                                                              |
+// [ 96..103] air_mass_factor               : f64                                                              |
+// [104..111] layer_totals                  : *const LayerAccumulation                                         |
+//                                                                                                             |
+// out-of-line                                                                                                 |
+//   All input rows and optional tables are borrowed from setup owners. The reducer returns a value and keeps  |
+//   no pointer from this request.                                                                             |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// cache span: 2 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 112 B plus borrowed setup rows and reference tables                               |
+const PreparedMeansRequest = struct {
+    allocator: Allocator,
+    scene: *const Scene,
+    operational_o2_lut: *const OperationalCrossSectionLut,
+    operational_o2o2_lut: *const OperationalCrossSectionLut,
+    collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable,
+    owned_cross_section_absorbers: []const State.PreparedCrossSectionAbsorber,
+    owned_line_absorbers: []const State.PreparedLineAbsorber,
+    owned_lines: ?*const ReferenceData.SpectroscopyLineList,
+    mean_sigma: f64,
+    air_mass_factor: f64,
+    layer_totals: *const LayerAccumulation.LayerAccumulation,
+};
 // ------------------------------------------------------------------------------------------------------------|
 
 // PreparedMeans ----------------------------------------------------------------------------------------------|
@@ -80,20 +125,27 @@ pub fn accumulate(
     // --------------------------------------------------------------------------------------------------------|
 
     const layer_totals = try LayerAccumulation.populate(allocator, context, absorbers);
-    return computePreparedMeans(
-        allocator,
-        context,
-        absorbers,
-        layer_totals,
-    );
+
+    const collision_induced_absorption = if (context.collision_induced_absorption) |*table| table else null;
+    const owned_lines = if (absorbers.owned_lines) |*line_list| line_list else null;
+
+    const request = PreparedMeansRequest{
+        .allocator = allocator,
+        .scene = context.scene,
+        .operational_o2_lut = &context.operational_o2_lut,
+        .operational_o2o2_lut = &context.operational_o2o2_lut,
+        .collision_induced_absorption = collision_induced_absorption,
+        .owned_cross_section_absorbers = absorbers.owned_cross_section_absorbers,
+        .owned_line_absorbers = absorbers.owned_line_absorbers,
+        .owned_lines = owned_lines,
+        .mean_sigma = absorbers.mean_sigma,
+        .air_mass_factor = absorbers.air_mass_factor,
+        .layer_totals = &layer_totals,
+    };
+    return computePreparedMeans(&request);
 }
 
-fn computePreparedMeans(
-    allocator: Allocator,
-    context: *Context,
-    absorbers: *Absorbers.AbsorberBuildState,
-    layer_totals: LayerAccumulation.LayerAccumulation,
-) !PreparedMeans {
+fn computePreparedMeans(request: *const PreparedMeansRequest) !PreparedMeans {
     // computePreparedMeans -----------------------------------------------------------------------------------|
     // Reduce layer/sublayer sums into effective T, p, column factors, band means, and optical-depth totals.   |
     //                                                                                                         |
@@ -114,9 +166,11 @@ fn computePreparedMeans(
         depolarization_factor: f64,
     };
 
-    const scene = context.scene;
-    const operational_o2_lut = context.operational_o2_lut;
-    const operational_o2o2_lut = context.operational_o2o2_lut;
+    const allocator = request.allocator;
+    const scene = request.scene;
+    const operational_o2_lut = request.operational_o2_lut;
+    const operational_o2o2_lut = request.operational_o2o2_lut;
+    const layer_totals = request.layer_totals;
 
     const effective: EffectiveThermodynamics = choose_effective_thermodynamics: {
         if (layer_totals.total_weight == 0.0) {
@@ -133,13 +187,13 @@ fn computePreparedMeans(
     };
 
     const cross_section_mean = choose_cross_section_mean: {
-        if (absorbers.owned_cross_section_absorbers.len == 0) {
-            break :choose_cross_section_mean absorbers.mean_sigma;
+        if (request.owned_cross_section_absorbers.len == 0) {
+            break :choose_cross_section_mean request.mean_sigma;
         }
 
         var cross_section_total_weight: f64 = 0.0;
         var weighted_mean: f64 = 0.0;
-        for (absorbers.owned_cross_section_absorbers) |*cross_section_absorber| {
+        for (request.owned_cross_section_absorbers) |*cross_section_absorber| {
             const weight = cross_section_absorber.column_density_factor;
             if (weight <= 0.0) continue;
 
@@ -157,8 +211,8 @@ fn computePreparedMeans(
     };
 
     const line_means = choose_line_means: {
-        if (absorbers.owned_line_absorbers.len == 0 and !operational_o2_lut.enabled()) {
-            if (absorbers.owned_lines) |*line_list| {
+        if (request.owned_line_absorbers.len == 0 and !operational_o2_lut.enabled()) {
+            if (request.owned_lines) |line_list| {
                 break :choose_line_means try BandMeans.computeBandLineMeans(
                     allocator,
                     scene,
@@ -176,7 +230,7 @@ fn computePreparedMeans(
         if (operational_o2_lut.enabled() and layer_totals.oxygen_column_density_factor > 0.0) {
             const operational_mean = BandMeans.computeOperationalBandMean(
                 scene,
-                operational_o2_lut,
+                operational_o2_lut.*,
                 effective.temperature_k,
                 effective.pressure_hpa,
             );
@@ -185,7 +239,7 @@ fn computePreparedMeans(
                 operational_mean * layer_totals.oxygen_column_density_factor;
         }
 
-        for (absorbers.owned_line_absorbers) |*line_absorber| {
+        for (request.owned_line_absorbers) |*line_absorber| {
             if (operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
 
             const weight = line_absorber.column_density_factor;
@@ -216,13 +270,13 @@ fn computePreparedMeans(
         if (operational_o2o2_lut.enabled()) {
             break :choose_cia_mean_sigma BandMeans.computeOperationalBandMean(
                 scene,
-                operational_o2o2_lut,
+                operational_o2o2_lut.*,
                 @max(effective.temperature_k, 150.0),
                 effective.pressure_hpa,
             );
         }
 
-        if (context.collision_induced_absorption) |cia_table| {
+        if (request.collision_induced_absorption) |cia_table| {
             break :choose_cia_mean_sigma cia_table.meanSigmaInRange(
                 scene.spectral_grid.start_nm,
                 scene.spectral_grid.end_nm,
@@ -251,7 +305,7 @@ fn computePreparedMeans(
         .cross_section_mean_cm2_per_molecule = cross_section_mean,
         .line_means = line_means,
         .cia_mean_cross_section_cm5_per_molecule2 = cia_mean_sigma,
-        .effective_air_mass_factor = absorbers.air_mass_factor,
+        .effective_air_mass_factor = request.air_mass_factor,
         .effective_single_scatter_albedo = optical_depth_weighted_means.single_scatter_albedo,
         .effective_temperature_k = effective.temperature_k,
         .effective_pressure_hpa = effective.pressure_hpa,
