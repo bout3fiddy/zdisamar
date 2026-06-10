@@ -44,6 +44,18 @@ pub const ObservationRegime = enum {
     nadir,
 };
 
+// ResolvedHighResolutionGrid --------------------------------------------------------------------------------|
+// Effective high-resolution grid controls after scene-level defaults and operational support are resolved.   |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 16 B (0.016 KiB), align: 8 B                                                                         |
+//                                                                                                            |
+// memory                                                                                                     |
+// [ 0.. 7] step_nm      : f64                                                                                |
+// [ 8..15] half_span_nm : f64                                                                                |
+//                                                                                                            |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                     |
+// footprint: per instance = 16 B (0.016 KiB); stack value while resolving SpectralResponse                   |
 const ResolvedHighResolutionGrid = struct {
     step_nm: f64,
     half_span_nm: f64,
@@ -52,7 +64,41 @@ const ResolvedHighResolutionGrid = struct {
         return self.step_nm > 0.0 and self.half_span_nm > 0.0;
     }
 };
+// -----------------------------------------------------------------------------------------------------------|
 
+// ObservationModel ------------------------------------------------------------------------------------------|
+// Public instrument and measurement-control row nested in Scene.                                             |
+//                                                                                                            |
+// layout(64-bit)                                                                                             |
+// size: 216 B (0.211 KiB), align: 8 B                                                                        |
+//                                                                                                            |
+// memory                                                                                                     |
+// [  0.. 23] instrument                     : InstrumentId                                                   |
+// [ 24.. 31] wavelength_shift_nm            : f64                                                            |
+// [ 32.. 39] multiplicative_offset          : f64                                                            |
+// [ 40.. 47] stray_light                    : f64                                                            |
+// [ 48.. 55] instrument_line_fwhm_nm        : f64                                                            |
+// [ 56..111] solar_spectrum_source          : Binding                                                        |
+// [112..167] weighted_reference_grid_source : Binding                                                        |
+// [168..183] operational_band_support       : []const OperationalBandSupport                                 |
+// [184..199] measured_wavelengths_nm        : []const f64                                                    |
+// [200..205] adaptive_reference_grid        : AdaptiveReferenceGrid                                          |
+// [206..206] sampling                       : SamplingMode                                                   |
+// [207..207] builtin_line_shape             : BuiltinLineShapeKind                                           |
+// [208..208] integration_mode               : RequestedIntegrationMode                                       |
+// [209..209] owns_operational_band_support  : bool                                                           |
+// [210..210] owns_measured_wavelengths      : bool                                                           |
+// [211..215] trailing padding               : 5 B                                                            |
+//                                                                                                            |
+// zero-size fields                                                                                           |
+//   regime has one value today, so it has no stored bytes.                                                   |
+//                                                                                                            |
+// referenced storage                                                                                         |
+//   operational_band_support and measured_wavelengths_nm are borrowed unless the owns_* flags are set.       |
+//                                                                                                            |
+// unused bits: 40 padding + 14 bool-storage slack = 54 bits                                                  |
+// cache span: 4 cache lines at 64 B per line                                                                 |
+// footprint: per instance = 216 B (0.211 KiB); total also includes referenced support/wavelength storage     |
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
@@ -72,6 +118,21 @@ pub const ObservationModel = struct {
     owns_measured_wavelengths: bool = false,
 
     pub fn validate(self: *const ObservationModel) errors.Error!void {
+        // ObservationModel.validate -------------------------------------------------------------------------|
+        // Reject instrument controls that later product paths would otherwise have to guess about.           |
+        //                                                                                                    |
+        // checks                                                                                             |
+        //   bindings and instrument identity                                                                 |
+        //   radiance calibration scalars                                                                     |
+        //   measured wavelengths are finite and strictly increasing                                          |
+        //   requested integration modes have the FWHM/grid/adaptive controls they require                    |
+        //   one operational-band support row only, until the runtime is truly band-indexed                   |
+        //                                                                                                    |
+        // contract                                                                                           |
+        //   Missing requested physics fails here. integration.zig can then choose routes without silently    |
+        //   falling back from an explicitly requested high-resolution or adaptive mode.                      |
+        // ---------------------------------------------------------------------------------------------------|
+
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
         try self.instrument.validate();
@@ -147,6 +208,15 @@ pub const ObservationModel = struct {
         self: *const ObservationModel,
         channel: SpectralChannel,
     ) Instrument.SpectralChannelControls {
+        // ObservationModel.resolvedChannelControls ----------------------------------------------------------|
+        // Return the per-channel controls consumed by instrument integration and calibration.                |
+        //                                                                                                    |
+        // route                                                                                              |
+        //   both channels share the resolved SpectralResponse                                                |
+        //   radiance keeps gain/stray-light post-calibration                                                 |
+        //   irradiance keeps neutral post-calibration                                                        |
+        // ---------------------------------------------------------------------------------------------------|
+
         return channelControls(self, channel);
     }
 
@@ -270,6 +340,19 @@ fn channelControls(model: *const ObservationModel, channel: SpectralChannel) Ins
 }
 
 fn spectralResponse(model: *const ObservationModel) Instrument.SpectralResponse {
+    // spectralResponse --------------------------------------------------------------------------------------|
+    // Resolve the instrument-response row used by integration.zig and diagnostic output.                     |
+    //                                                                                                        |
+    // route                                                                                                  |
+    //   1. choose primary operational support                                                                |
+    //   2. borrow explicit line-shape kernel/table storage when present                                      |
+    //   3. choose the built-in slit index                                                                    |
+    //   4. resolve integration mode from requested mode, adaptive grid, and explicit HR grid                 |
+    //                                                                                                        |
+    // ownership                                                                                              |
+    //   Returned line-shape rows borrow storage from ObservationModel. They must not free those slices.      |
+    // -------------------------------------------------------------------------------------------------------|
+
     const support = model.primaryOperationalBandSupport();
     const high_resolution_grid = resolvedHighResolutionGrid(model);
     const has_line_shape_table = support.instrument_line_shape_table.nominal_count > 0;
@@ -306,6 +389,14 @@ fn resolvedIntegrationMode(
     model: *const ObservationModel,
     high_resolution_grid: ResolvedHighResolutionGrid,
 ) Instrument.SpectralResponse.IntegrationMode {
+    // resolvedIntegrationMode -------------------------------------------------------------------------------|
+    // Turn the requested integration mode into the concrete response route.                                  |
+    //                                                                                                        |
+    // order                                                                                                  |
+    //   explicit requested mode wins after validate has checked prerequisites                                |
+    //   auto chooses adaptive first, then explicit high-resolution grid, then the default kernel             |
+    // -------------------------------------------------------------------------------------------------------|
+
     switch (model.integration_mode) {
         .auto => {},
         .default_kernel => return .default_kernel,
@@ -320,6 +411,14 @@ fn resolvedIntegrationMode(
 }
 
 fn resolvedHighResolutionGrid(model: *const ObservationModel) ResolvedHighResolutionGrid {
+    // resolvedHighResolutionGrid ----------------------------------------------------------------------------|
+    // Copy high-resolution grid controls from the primary operational-band support row.                      |
+    //                                                                                                        |
+    // why                                                                                                    |
+    //   The active product path still resolves one support row per scene. Keeping this as a tiny value       |
+    //   makes the single-band boundary explicit at the response-resolution point.                            |
+    // -------------------------------------------------------------------------------------------------------|
+
     const support = model.primaryOperationalBandSupport();
     return .{
         .step_nm = support.high_resolution_step_nm,
