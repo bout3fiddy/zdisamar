@@ -12,28 +12,40 @@ const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 const max_dynamic_gauss_order: usize = 128;
 pub const invalid_support_row_index: u32 = std.math.maxInt(u32);
 
-// shared_geometry.zig ----------------------------------------------------------------------------------------|
-// Builds and reads cached geometry for the shared RTM support grid.                                           |
+// shared_geometry.zig --------------------------------------------------------------------------------------- |
+// Builds and reads cached geometry for reduced shared-RTM interval grids.                                     |
+// PreparedOpticalState owns the resulting SharedRtmGeometry; wavelength-time builders borrow it so they can   |
+// turn shared support rows into LABOS layer, level, source-interface, and pseudo-spherical rows without       |
+// recomputing interval boundaries.                                                                            |
 //                                                                                                             |
-// called by                                                                                                   |
-//   preparation when reduced shared-RTM layers are enabled, and by wavelength builders that reuse the cache.  |
+// build route                                                                                                 |
+//   PreparedOpticalState.ensureSharedRtmGeometryCache                                                         |
+//     -> buildSharedRtmGeometry                                                                               |
+//        -> copy PreparedLayer altitude/support spans into SharedRtmLayerGeometry rows                        |
+//        -> create SharedRtmLevelGeometry boundary rows from shared support-row indexes                       |
+//        -> assign interior level weights with Gauss-Legendre rules grouped by interval_index_1based          |
 //                                                                                                             |
-// main path                                                                                                   |
-//   resolve Gauss-Legendre rule                                                                               |
-//   map nodes and weights onto altitude intervals                                                             |
-//   store layer and level geometry rows                                                                       |
-//   keep support-row indexes back to prepared sublayers                                                       |
+// read route                                                                                                  |
+//   forward_layers.zig      uses layer rows and support slices to fill LayerInput rows.                       |
+//   rtm_quadrature.zig      uses level rows for integrated-source carrier sampling.                           |
+//   source_interfaces.zig   uses level rows for source-interface inputs.                                      |
+//   pseudo_spherical.zig    uses layer/level rows for direct-beam attenuation grids.                          |
+//                                                                                                             |
+// support model                                                                                               |
+//   PreparedLayer stores {sublayer_start_index, sublayer_count}. Adjacent explicit intervals can share        |
+//   boundary support rows, so active carrier integration often skips the first and last support rows.         |
+//   invalid_support_row_index marks a missing particle row above/below a boundary level.                      |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Geometry is built once per prepared state and read many times while filling per-wavelength carriers.      |
 //   The cached rows trade a small retained allocation for avoiding repeated interval and quadrature work.     |
 //                                                                                                             |
 // memory                                                                                                      |
-//   SharedRtmGeometry owns its cached arrays through PreparedOpticalState; interval and support-slice helper  |
-//   structs borrow those rows or prepared sublayer storage.                                                   |
-// ------------------------------------------------------------------------------------------------------------|
+//   SharedRtmGeometry owns its layer/level arrays through PreparedOpticalState. Interval and support-slice    |
+//   helper structs borrow cached rows or PreparedOpticalState sublayer/strong-line storage.                   |
+// ----------------------------------------------------------------------------------------------------------- |
 
-// ResolvedGaussRule ------------------------------------------------------------------------------------------|
+// ResolvedGaussRule ----------------------------------------------------------------------------------------- |
 // Borrowed Gauss-Legendre nodes and weights for one quadrature order.                                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -44,13 +56,13 @@ pub const invalid_support_row_index: u32 = std.math.maxInt(u32);
 // [16..31] weights : []const f64                                                                              |
 //                                                                                                             |
 // footprint: per instance = 32 B; referenced node/weight storage is out of line                               |
-// ------------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 pub const ResolvedGaussRule = struct {
     nodes: []const f64,
     weights: []const f64,
 };
 
-// GaussRuleScratch -------------------------------------------------------------------------------------------|
+// GaussRuleScratch ------------------------------------------------------------------------------------------ |
 // Stack scratch for dynamic Gauss-Legendre rules above the small retained table range.                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -62,13 +74,13 @@ pub const ResolvedGaussRule = struct {
 //                                                                                                             |
 // cache span: 32 cache lines at 64 B per line                                                                 |
 // footprint: per instance = 2048 B; one stack value is used while building shared RTM geometry                |
-// ------------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 pub const GaussRuleScratch = struct {
     nodes: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
     weights: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
 };
 
-// SharedRtmInterval ------------------------------------------------------------------------------------------|
+// SharedRtmInterval ----------------------------------------------------------------------------------------- |
 // Borrowed support rows and altitude bounds for one shared RTM interval.                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -81,7 +93,7 @@ pub const GaussRuleScratch = struct {
 // [32..47] strong_line_states: ?[]const StrongLinePreparedState                                               |
 //                                                                                                             |
 // footprint: per instance = 48 B; support row and strong-line storage are borrowed                            |
-// ------------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 pub const SharedRtmInterval = struct {
     lower_altitude_km: f64,
     upper_altitude_km: f64,
@@ -89,7 +101,7 @@ pub const SharedRtmInterval = struct {
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,
 };
 
-// SharedSupportSlices ----------------------------------------------------------------------------------------|
+// SharedSupportSlices --------------------------------------------------------------------------------------- |
 // Borrowed sublayer and strong-line slices for one shared geometry support span.                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -100,13 +112,17 @@ pub const SharedRtmInterval = struct {
 // [16..31] strong_line_states : ?[]const StrongLinePreparedState                                              |
 //                                                                                                             |
 // footprint: per instance = 32 B; referenced support storage is out of line                                   |
-// ------------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 pub const SharedSupportSlices = struct {
     sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
 };
 
 pub fn usesSharedRtmGrid(self: *const PreparedOpticalState, transport_layer_count: usize) bool {
+    // usesSharedRtmGrid ------------------------------------------------------------------------------------- |
+    // Return whether the caller's transport layer shape matches the reduced shared-RTM geometry route.        |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!self.intervalSemanticsUseReducedSharedRtmLayers()) return false;
     return transport_layer_count == self.layers.len;
 }
@@ -115,11 +131,23 @@ pub fn cachedSharedRtmGeometry(
     self: *const PreparedOpticalState,
     transport_layer_count: usize,
 ) ?*const SharedRtmGeometry {
+    // cachedSharedRtmGeometry ------------------------------------------------------------------------------- |
+    // Borrow the retained shared-RTM geometry when its level/layer arrays match the current transport shape.  |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (!self.shared_rtm_geometry.isValidFor(transport_layer_count)) return null;
     return &self.shared_rtm_geometry;
 }
 
 pub fn resolveGaussRule(order: usize, scratch: *GaussRuleScratch) ResolvedGaussRule {
+    // resolveGaussRule -------------------------------------------------------------------------------------- |
+    // Resolve one Gauss-Legendre rule into scratch-backed node/weight slices.                                 |
+    //                                                                                                         |
+    // route                                                                                                   |
+    //   order <= 10 : copy the retained small-rule table into caller scratch                                  |
+    //   order > 10  : fill dynamic nodes/weights up to max_dynamic_gauss_order                                |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (order == 0) unreachable;
     if (order > max_dynamic_gauss_order) {
         @panic("gauss-legendre order exceeds shared RTM scratch capacity");
@@ -170,6 +198,10 @@ pub fn sharedRtmInterval(
     sublayers: []const PreparedSublayer,
     layer: State.PreparedLayer,
 ) SharedRtmInterval {
+    // sharedRtmInterval ------------------------------------------------------------------------------------- |
+    // Borrow the prepared support-row span and matching strong-line span for one transport layer.             |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const start_index: usize = @intCast(layer.sublayer_start_index);
     const count: usize = @intCast(layer.sublayer_count);
     const stop_index = start_index + count;
@@ -192,6 +224,10 @@ pub fn sharedSupportSlices(
     support_start_index: usize,
     support_count: usize,
 ) SharedSupportSlices {
+    // sharedSupportSlices ----------------------------------------------------------------------------------- |
+    // Borrow a support-row slice and the aligned strong-line prepared-state slice when it exists.             |
+    // ------------------------------------------------------------------------------------------------------- |
+
     const support_stop_index = support_start_index + support_count;
     const strong_line_states = if (self.strong_line_states) |states|
         states[support_start_index..support_stop_index]
@@ -208,17 +244,24 @@ pub fn buildSharedRtmGeometry(
     allocator: std.mem.Allocator,
     self: *const PreparedOpticalState,
 ) !SharedRtmGeometry {
-    // buildSharedRtmGeometry ---------------------------------------------------------------------------------|
+    // buildSharedRtmGeometry -------------------------------------------------------------------------------- |
     // Build reusable level/layer geometry for reduced shared-RTM routes.                                      |
     //                                                                                                         |
+    // steps                                                                                                   |
+    //   1. reject non-shared routes with an empty geometry                                                    |
+    //   2. allocate one layer row and one more level row than layer count                                     |
+    //   3. copy each PreparedLayer support span into SharedRtmLayerGeometry                                   |
+    //   4. mark boundary particle rows above/below each RTM level                                             |
+    //   5. group layers by interval_index_1based and assign interior level weights                            |
+    //                                                                                                         |
     // hot path                                                                                                |
-    // runs once per prepared scene/session when interval semantics allow shared RTM layers.                   |
-    // data: layer/sublayer geometry, Gauss rules, and shared RTM support storage.                             |
+    //   Runs once per prepared scene/session when interval semantics allow shared RTM layers. The result is   |
+    //   reused for forward layers, RTM quadrature, source interfaces, and pseudo-spherical attenuation.       |
     //                                                                                                         |
     // math                                                                                                    |
-    // layer midpoint = 0.5 * (z_bottom + z_top); thickness = max(z_top - z_bottom, 0).                        |
-    // Interior level weights reuse intervalWeightKm over each fitted interval span.                           |
-    // --------------------------------------------------------------------------------------------------------|
+    //   layer midpoint = 0.5 * (z_bottom + z_top); thickness = max(z_top - z_bottom, 0).                      |
+    //   Interior level weights reuse intervalWeightKm over each fitted interval span.                         |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const transport_layer_count = self.transportLayerCount();
     if (!usesSharedRtmGrid(self, transport_layer_count)) return .{};
@@ -345,6 +388,13 @@ pub fn levelAltitudeFromSublayers(
     sublayers: []const PreparedSublayer,
     level: usize,
 ) f64 {
+    // levelAltitudeFromSublayers ---------------------------------------------------------------------------- |
+    // Recover an approximate level altitude from midpoint-style prepared sublayer rows.                       |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Used by non-cached fallback paths where SharedRtmGeometry was not retained.                           |
+    // ------------------------------------------------------------------------------------------------------- |
+
     if (sublayers.len == 0) return 0.0;
 
     if (level == 0) {
