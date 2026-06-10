@@ -226,6 +226,15 @@ pub fn build(
     // ---------------------------------------------------------------------------------------------------------  |
 
     const scene = context.scene;
+    const cross_sections = context.cross_sections;
+    const sublayer_count = context.vertical_grid.sublayer_mid_altitudes_km.len;
+    const profile_altitudes_km = context.spectroscopy_profile_altitudes_km;
+    const profile_temperatures_k = context.spectroscopy_profile_temperatures_k;
+    const profile_pressures_hpa = context.spectroscopy_profile_pressures_hpa;
+    const borrowed_profile_strong_line_states = context.borrowed_profile_strong_line_states;
+    const borrowed_profile_weak_line_states = context.borrowed_profile_weak_line_states;
+    const midpoint_nm = context.midpoint_nm;
+    const air_mass_lut = context.lut;
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = operational_band_support.o2_operational_lut;
 
@@ -233,7 +242,7 @@ pub fn build(
     const active_cross_section_absorbers = try collectActiveCrossSectionAbsorbers(
         allocator,
         scene,
-        context.cross_sections,
+        cross_sections,
     );
     const single_active_line_absorber = if (active_line_absorbers.len == 1)
         active_line_absorbers[0]
@@ -254,12 +263,12 @@ pub fn build(
     };
     errdefer state.deinit(allocator);
 
-    try buildCrossSectionAbsorbers(allocator, context, &state);
-    try buildLineAbsorbers(allocator, context, &state, &owned_lines, operational_o2_lut);
+    try buildCrossSectionAbsorbers(allocator, sublayer_count, &state);
+    try buildLineAbsorbers(allocator, sublayer_count, &state, &owned_lines, operational_o2_lut);
     if (state.owned_line_absorbers.len == 0 and
         state.owned_lines != null and
         !operational_o2_lut.enabled() and
-        context.spectroscopy_profile_altitudes_km.len > max_profile_spectroscopy_cache_nodes)
+        profile_altitudes_km.len > max_profile_spectroscopy_cache_nodes)
     {
         return error.InvalidRequest;
     }
@@ -268,10 +277,10 @@ pub fn build(
         state.owned_line_absorbers.len == 0 and !operational_o2_lut.enabled();
     if (can_prepare_single_line_profile) {
         if (state.owned_lines) |line_list| {
-            if (line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len == 0) {
+            if (line_list.hasStrongLineSidecars() and profile_temperatures_k.len == 0) {
                 state.strong_line_states = try allocator.alloc(
                     ReferenceData.StrongLinePreparedState,
-                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                    sublayer_count,
                 );
             }
         }
@@ -281,14 +290,14 @@ pub fn build(
         state.owned_lines != null and
         !operational_o2_lut.enabled() and
         state.owned_lines.?.hasStrongLineSidecars() and
-        context.spectroscopy_profile_temperatures_k.len != 0;
+        profile_temperatures_k.len != 0;
     var loaded_profile_states = false;
 
     if (should_prepare_profile_line_states) {
-        if (context.borrowed_profile_strong_line_states) |strong_states| {
-            const weak_states = context.borrowed_profile_weak_line_states orelse return error.InvalidRequest;
-            if (strong_states.len != context.spectroscopy_profile_temperatures_k.len or
-                weak_states.len != context.spectroscopy_profile_temperatures_k.len)
+        if (borrowed_profile_strong_line_states) |strong_states| {
+            const weak_states = borrowed_profile_weak_line_states orelse return error.InvalidRequest;
+            if (strong_states.len != profile_temperatures_k.len or
+                weak_states.len != profile_temperatures_k.len)
             {
                 return error.InvalidRequest;
             }
@@ -301,15 +310,15 @@ pub fn build(
             state.owns_profile_weak_line_states = false;
             loaded_profile_states = true;
         } else {
-            if (context.borrowed_profile_weak_line_states != null) return error.InvalidRequest;
+            if (borrowed_profile_weak_line_states != null) return error.InvalidRequest;
             state.profile_strong_line_states = try allocator.alloc(
                 ReferenceData.StrongLinePreparedState,
-                context.spectroscopy_profile_temperatures_k.len,
+                profile_temperatures_k.len,
             );
 
             state.profile_weak_line_states = try allocator.alloc(
                 ReferenceData.WeakLinePreparedState,
-                context.spectroscopy_profile_temperatures_k.len,
+                profile_temperatures_k.len,
             );
         }
     }
@@ -321,8 +330,8 @@ pub fn build(
                 loaded_profile_states = try ProfileStateCache.load(
                     allocator,
                     line_list,
-                    context.spectroscopy_profile_temperatures_k,
-                    context.spectroscopy_profile_pressures_hpa,
+                    profile_temperatures_k,
+                    profile_pressures_hpa,
                     weak_states,
                     strong_states,
                 );
@@ -346,8 +355,8 @@ pub fn build(
         try prepareProfileLineStates(
             allocator,
             state.owned_lines.?,
-            context.spectroscopy_profile_temperatures_k,
-            context.spectroscopy_profile_pressures_hpa,
+            profile_temperatures_k,
+            profile_pressures_hpa,
             state.profile_weak_line_states,
             state.profile_strong_line_states,
         );
@@ -360,8 +369,8 @@ pub fn build(
             if (state.profile_strong_line_states) |strong_states| {
                 try ProfileStateCache.store(
                     state.owned_lines.?,
-                    context.spectroscopy_profile_temperatures_k,
-                    context.spectroscopy_profile_pressures_hpa,
+                    profile_temperatures_k,
+                    profile_pressures_hpa,
                     weak_states,
                     strong_states,
                 );
@@ -382,19 +391,19 @@ pub fn build(
     state.has_line_absorbers = single_active_line_absorber != null or state.owned_line_absorbers.len != 0;
     state.mean_sigma = choose_value: {
         break :choose_value if (state.owned_cross_section_absorbers.len == 0)
-            context.cross_sections.meanSigmaInRange(
-                context.scene.spectral_grid.start_nm,
-                context.scene.spectral_grid.end_nm,
+            cross_sections.meanSigmaInRange(
+                scene.spectral_grid.start_nm,
+                scene.spectral_grid.end_nm,
             )
         else
             0.0;
     };
 
     state.midpoint_continuum_sigma = if (state.owned_cross_section_absorbers.len == 0)
-        context.cross_sections.interpolateSigma(context.midpoint_nm)
+        cross_sections.interpolateSigma(midpoint_nm)
     else
         0.0;
-    state.air_mass_factor = context.lut.nearest(
+    state.air_mass_factor = air_mass_lut.nearest(
         scene.geometry.solar_zenith_deg,
         scene.geometry.viewing_zenith_deg,
         scene.geometry.relative_azimuth_deg,
@@ -630,7 +639,7 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
 
 fn buildCrossSectionAbsorbers(
     allocator: Allocator,
-    context: *Context,
+    sublayer_count: usize,
     state: *AbsorberBuildState,
 ) !void {
     // buildCrossSectionAbsorbers ------------------------------------------------------------------------------  |
@@ -671,7 +680,7 @@ fn buildCrossSectionAbsorbers(
                 owned.deinitOwned(allocator);
             },
         };
-        const number_densities_cm3 = try allocator.alloc(f64, context.vertical_grid.sublayer_mid_altitudes_km.len);
+        const number_densities_cm3 = try allocator.alloc(f64, sublayer_count);
         errdefer if (number_densities_cm3.len != 0) allocator.free(number_densities_cm3);
 
         state.owned_cross_section_absorbers[index] = .{
@@ -686,7 +695,7 @@ fn buildCrossSectionAbsorbers(
 
 fn buildLineAbsorbers(
     allocator: Allocator,
-    context: *Context,
+    sublayer_count: usize,
     state: *AbsorberBuildState,
     owned_lines: *?ReferenceData.SpectroscopyLineList,
     operational_o2_lut: OperationalCrossSectionLut,
@@ -733,12 +742,12 @@ fn buildLineAbsorbers(
             if (has_strong_line_states) {
                 strong_line_states = try allocator.alloc(
                     ReferenceData.StrongLinePreparedState,
-                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                    sublayer_count,
                 );
                 errdefer if (strong_line_states) |states| allocator.free(states);
                 strong_line_state_initialized = try allocator.alloc(
                     bool,
-                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                    sublayer_count,
                 );
             }
 
@@ -749,7 +758,7 @@ fn buildLineAbsorbers(
                 .line_list = filtered,
                 .number_densities_cm3 = try allocator.alloc(
                     f64,
-                    context.vertical_grid.sublayer_mid_altitudes_km.len,
+                    sublayer_count,
                 ),
                 .strong_line_states = strong_line_states,
                 .strong_line_state_initialized = strong_line_state_initialized,
