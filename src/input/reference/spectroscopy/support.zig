@@ -29,25 +29,16 @@ const Types = @import("types.zig");
 //   to SpectroscopyLine because the row is wide and most callers need only one or two metadata fields.       |
 // -----------------------------------------------------------------------------------------------------------|
 
-pub fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {
-    return if (std.math.isFinite(line.center_wavenumber_cm1))
-        line.center_wavenumber_cm1
-    else
-        PhysicsCore.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+pub inline fn lineCenterWavenumberCm1(line: *const Types.SpectroscopyLine) f64 {
+    return PhysicsCore.lineCenterWavenumberCm1(line);
 }
 
-pub fn lineAirHalfWidthCm1(line: *const Types.SpectroscopyLine) f64 {
-    return if (std.math.isFinite(line.air_half_width_cm1))
-        line.air_half_width_cm1
-    else
-        PhysicsCore.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+pub inline fn lineAirHalfWidthCm1(line: *const Types.SpectroscopyLine) f64 {
+    return PhysicsCore.lineAirHalfWidthCm1(line);
 }
 
-pub fn linePressureShiftCm1(line: *const Types.SpectroscopyLine) f64 {
-    return if (std.math.isFinite(line.pressure_shift_cm1))
-        line.pressure_shift_cm1
-    else
-        -PhysicsCore.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
+pub inline fn linePressureShiftCm1(line: *const Types.SpectroscopyLine) f64 {
+    return PhysicsCore.linePressureShiftCm1(line);
 }
 
 pub inline fn zeroEvaluation() Types.SpectroscopyEvaluation {
