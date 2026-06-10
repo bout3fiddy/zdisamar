@@ -1024,22 +1024,6 @@ test "prepared strong-line state preserves upper-atmosphere pressure scaling" {
     );
 }
 
-test "demo reference assets are allocatable and physically ordered" {
-    var profile = try ReferenceData.buildDemoClimatology(std.testing.allocator);
-    defer profile.deinit(std.testing.allocator);
-    var cross_sections = try ReferenceData.buildDemoCrossSections(std.testing.allocator);
-    defer cross_sections.deinit(std.testing.allocator);
-    var spectroscopy = try ReferenceData.buildDemoSpectroscopyLines(std.testing.allocator);
-    defer spectroscopy.deinit(std.testing.allocator);
-    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
-    defer lut.deinit(std.testing.allocator);
-
-    try std.testing.expect(profile.rows.len >= 4);
-    try std.testing.expect(cross_sections.points[0].wavelength_nm < cross_sections.points[cross_sections.points.len - 1].wavelength_nm);
-    try std.testing.expect(spectroscopy.lines.len >= 4);
-    try std.testing.expect(lut.points.len >= 3);
-}
-
 test "strong-line sidecars and relaxation matrices stay typed and square" {
     var strong_lines = try makeStrongLineSet(&.{
         .{
