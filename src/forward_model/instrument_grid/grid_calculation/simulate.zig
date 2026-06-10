@@ -201,6 +201,27 @@ const ForwardPrefetchRequest = struct {
     trace_phase_timing: ?*Storage.TracePhaseTiming,
 };
 
+// WarmWavelengthPlanRequest ---------------------------------------------------------------------------------------------|
+// Borrowed inputs used to prebuild retained wavelength sampling and spectroscopy caches.                                 |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 24 B (0.023 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0.. 7] storage  : *Storage.ProductStorage                                                                            |
+// [ 8..15] scene    : *const Scene                                                                                       |
+// [16..23] prepared : *const OpticsPreparation.PreparedOpticalState                                                      |
+//                                                                                                                        |
+// referenced storage: ProductStorage owns plans/caches; scene and prepared are read-only borrowed inputs.                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// cache span: 1 cache line at 64 B per line                                                                              |
+// footprint: per instance = 24 B (0.023 KiB); no out-of-line storage                                                     |
+const WarmWavelengthPlanRequest = struct {
+    storage: *Storage.ProductStorage,
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+};
+
 inline fn tracePhaseStart(phase_timing: ?*Storage.TracePhaseTiming) ?i128 {
 
     // instrumentation: trace phase clock --------------------------------------------------------------------------------|
@@ -622,43 +643,70 @@ pub fn warmWavelengthPlan(
     // matches.                                                                                                           |
     // -------------------------------------------------------------------------------------------------------------------|
 
-    try scene.validate();
+    const request = WarmWavelengthPlanRequest{
+        .storage = storage,
+        .scene = scene,
+        .prepared = prepared,
+    };
+    try warmWavelengthPlanFromRequest(allocator, &request);
+}
+
+fn warmWavelengthPlanFromRequest(
+    allocator: Allocator,
+    request: *const WarmWavelengthPlanRequest,
+) Storage.Error!void {
+    // warmWavelengthPlanFromRequest -------------------------------------------------------------------------------------|
+    // Build or reuse the retained wavelength plan. The request is a borrowed row, so the warmup path                     |
+    // exposes the workspace owner and the read-only inputs that decide cache keys and sampling rows.                     |
+    // -------------------------------------------------------------------------------------------------------------------|
+
+    try request.scene.validate();
     const spectral_grid: grid.SpectralGrid = .{
-        .start_nm = scene.spectral_grid.start_nm,
-        .end_nm = scene.spectral_grid.end_nm,
-        .sample_count = scene.spectral_grid.sample_count,
+        .start_nm = request.scene.spectral_grid.start_nm,
+        .end_nm = request.scene.spectral_grid.end_nm,
+        .sample_count = request.scene.spectral_grid.sample_count,
     };
     const resolved_axis: grid.ResolvedAxis = .{
         .base = spectral_grid,
-        .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+        .explicit_wavelengths_nm = request.scene.observation_model.measured_wavelengths_nm,
     };
     try resolved_axis.validate();
 
-    const plan_key = wavelengthPlanKey(scene, prepared);
-    if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
-        _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_miss_plan.misses);
+    const plan_key = wavelengthPlanKey(request.scene, request.prepared);
+    if (request.storage.wavelength_plan_valid and request.storage.wavelength_plan_key == plan_key) {
+        _ = try ensureProfileSpectroscopyCaches(
+            allocator,
+            request.storage,
+            request.prepared,
+            request.storage.forward_miss_plan.misses,
+        );
         return;
     }
 
-    storage.invalidateWavelengthPlan(allocator);
-    errdefer storage.invalidateWavelengthPlan(allocator);
+    request.storage.invalidateWavelengthPlan(allocator);
+    errdefer request.storage.invalidateWavelengthPlan(allocator);
 
-    storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+    request.storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
         allocator,
-        scene,
-        prepared,
+        request.scene,
+        request.prepared,
         &resolved_axis,
-        instrument_calibration.calibrationForScene(scene, .radiance),
-        instrument_calibration.calibrationForScene(scene, .irradiance),
+        instrument_calibration.calibrationForScene(request.scene, .radiance),
+        instrument_calibration.calibrationForScene(request.scene, .irradiance),
     );
-    storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
+    request.storage.forward_miss_plan = try WavelengthSampling.buildForwardMissPlan(
         allocator,
-        storage.wavelength_sampling.view(),
+        request.storage.wavelength_sampling.view(),
     );
-    storage.forward_miss_plan_valid = true;
-    _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_miss_plan.misses);
-    storage.wavelength_plan_key = plan_key;
-    storage.wavelength_plan_valid = true;
+    request.storage.forward_miss_plan_valid = true;
+    _ = try ensureProfileSpectroscopyCaches(
+        allocator,
+        request.storage,
+        request.prepared,
+        request.storage.forward_miss_plan.misses,
+    );
+    request.storage.wavelength_plan_key = plan_key;
+    request.storage.wavelength_plan_valid = true;
 }
 
 fn ensureProfileSpectroscopyCaches(
