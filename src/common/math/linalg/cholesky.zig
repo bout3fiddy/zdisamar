@@ -2,7 +2,14 @@ const std = @import("std");
 const dense = @import("small_dense.zig");
 
 // cholesky.zig -----------------------------------------------------------------------------------------------|
-// Cholesky helpers for small row-major dense matrices used by local polynomial and covariance-style solves.   |
+// Cholesky factor/solve helpers for small symmetric positive-definite systems stored as flat row-major        |
+// slices. The main production caller is the cross-section polynomial baseline fit: it builds normal           |
+// equations, factors a copy in place, and solves for coefficients without introducing a heap-backed matrix    |
+// abstraction inside the preparation path.                                                                    |
+//                                                                                                             |
+// called by                                                                                                   |
+//   input/reference/cross_sections.zig solves weighted polynomial normal equations                            |
+//   unit tests cover factorization, solve reuse, and inverse reconstruction                                   |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   factor2x2        adapts a fixed 2x2 matrix through the in-place factorizer                                |
@@ -11,7 +18,12 @@ const dense = @import("small_dense.zig");
 //   invertFromFactor builds an inverse by solving one basis vector at a time                                  |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Callers own matrix, rhs, output, and scratch slices. This file does not allocate.                         |
+//   Callers own matrix, rhs, output, and scratch slices. factorInPlace mutates the factor slice; callers      |
+//   that still need the original normal matrix must copy it first. This file does not allocate.               |
+//                                                                                                             |
+// failure model                                                                                               |
+//   ShapeMismatch means the caller supplied inconsistent slice lengths. NotPositiveDefinite means the         |
+//   normal-equation system is singular or numerically unsafe for this SPD route.                              |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{
@@ -120,6 +132,18 @@ pub fn invertFromFactor(
     out: []f64,
     storage: []f64,
 ) Error!void {
+    // invertFromFactor ---------------------------------------------------------------------------------------|
+    // Builds a dense inverse from an existing Cholesky factor by solving each basis vector.                   |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : full-inverse callers; current checked use is inverse reconstruction coverage               |
+    //   costly   : dimension solves, each using forward and back substitution                                 |
+    //   memory   : out is row-major inverse storage; storage is split into basis and solution work slices     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   inverse[:, column] = solve(L * L^T, e_column)                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (out.len != dimension * dimension or storage.len != 2 * dimension) return Error.ShapeMismatch;
 
     const basis = storage[0..dimension];

@@ -2,7 +2,15 @@ const std = @import("std");
 const max_spline_point_count = 256;
 
 // spline.zig -------------------------------------------------------------------------------------------------|
-// Cubic-spline helpers for spectral/profile interpolation paths.                                              |
+// Cubic-spline helpers for profile, spectroscopy, CIA, HITRAN partition, and reference-atmosphere sampling.   |
+// The important route is DISAMAR-compatible endpoint-secant interpolation: callers either sample once with    |
+// temporary stack storage or prepare second derivatives once and reuse them for repeated altitude/wavelength  |
+// reads.                                                                                                      |
+//                                                                                                             |
+// called by                                                                                                   |
+//   climatology.zig samples altitude, pressure, and temperature profiles while building vertical grids        |
+//   state_spectroscopy.zig, layer_spectroscopy.zig, and layer_accumulation.zig prepare profile caches         |
+//   cia.zig and hitran_partition_tables.zig sample bounded reference-data windows                             |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   sampleNatural                    builds a natural spline on a bounded stack workspace and samples once    |
@@ -12,8 +20,18 @@ const max_spline_point_count = 256;
 //   endpointSecantSecondDerivatives5 writes second derivatives for five colocated series                      |
 //   sampleWithSecondDerivatives      samples a precomputed second-derivative spline                           |
 //                                                                                                             |
+// route choice                                                                                                |
+//   sampleEndpointSecant is the one-shot path for small reference windows. endpointSecantSecondDerivatives*   |
+//   prepares reusable curvature for profile caches. The 3-series and 5-series variants share interval and     |
+//   diagonal work across colocated series so cache preparation does one tridiagonal setup per altitude grid.  |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Sampling is repeated by profile caches after forward misses and by reference interpolation. Preparation   |
+//   is capped at max_spline_point_count to keep these helpers allocation-free inside source-tree compute.     |
+//                                                                                                             |
 // memory                                                                                                      |
-//   Preparation uses bounded stack arrays capped by max_spline_point_count. Sampling reuses caller storage.   |
+//   Preparation uses bounded stack arrays capped by max_spline_point_count. Reusable callers pass their own   |
+//   second-derivative output slices and later sample those slices with sampleWithSecondDerivatives.           |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{
@@ -69,6 +87,19 @@ pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
 }
 
 pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
+    // sampleEndpointSecant -----------------------------------------------------------------------------------|
+    // Builds DISAMAR-compatible endpoint-secant second derivatives and samples one target value.              |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : small climatology, CIA, and partition-table reference windows                              |
+    //   costly   : full second-derivative preparation for one sample                                          |
+    //   memory   : one stack second-derivative array capped at max_spline_point_count                         |
+    //                                                                                                         |
+    // calls                                                                                                   |
+    //   endpointSecantSecondDerivatives                                                                       |
+    //   sampleWithSecondDerivatives                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (x.len != y.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
@@ -85,6 +116,19 @@ pub fn endpointSecantSecondDerivatives(
     y: []const f64,
     second: []f64,
 ) Error!void {
+    // endpointSecantSecondDerivatives ------------------------------------------------------------------------|
+    // Writes DISAMAR-compatible endpoint-secant second derivatives for one sampled series.                    |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : profile-cache preparation and one-shot endpoint-secant sampling                            |
+    //   costly   : tridiagonal setup, back substitution, and conversion to splint-style second derivatives    |
+    //   memory   : four stack work arrays plus caller-owned second output                                     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   Endpoint slopes are adjacent secants. This mirrors DISAMAR mathTools::spline wrapping de Boor         |
+    //   cubspl before exposing second derivatives to splint-style sampling.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
     if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;
     if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
@@ -94,9 +138,6 @@ pub fn endpointSecantSecondDerivatives(
     var c3: [max_spline_point_count]f64 = undefined;
     var c4: [max_spline_point_count]f64 = undefined;
 
-    // DISAMAR `mathTools::spline` wraps de Boor `cubspl` with endpoint slopes set to the adjacent secants,
-    // then exposes a derived second-derivative array to `splint`. This mirrors that wrapper instead of a
-    // textbook clamped-spline tridiagonal system.
     for (0..x.len) |index| {
         c1[index] = y[index];
         c2[index] = 0.0;

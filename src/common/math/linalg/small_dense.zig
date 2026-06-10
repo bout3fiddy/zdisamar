@@ -4,7 +4,14 @@ pub const Error = error{
 };
 
 // small_dense.zig --------------------------------------------------------------------------------------------|
-// Small row-major dense-matrix helpers used where fixed scientific fits are cheaper than heap-backed solvers. |
+// Tiny dense-matrix helpers for places where the caller already owns a short row-major matrix or fixed        |
+// stack value. This is not a general linear-algebra layer; it supplies indexing and direct solves used by     |
+// preparation code that would be louder and slower if it routed through heap-backed matrix objects.           |
+//                                                                                                             |
+// called by                                                                                                   |
+//   cross_sections.zig assembles polynomial normal-equation matrices with index(row, column, n)               |
+//   cholesky.zig shares the same row-major indexing while factoring and solving those normal equations        |
+//   unit tests cover the direct 2x2/3x3 helpers and shape checks                                              |
 //                                                                                                             |
 // main paths                                                                                                  |
 //   index       maps a row and column into a row-major flat slice                                             |
@@ -13,8 +20,13 @@ pub const Error = error{
 //   solve2x2    solves one tiny system directly                                                               |
 //   solve3x3    solves one tiny system with pivoted Gaussian elimination                                      |
 //                                                                                                             |
+// hot path                                                                                                    |
+//   index is intentionally just row * column_count + column. Callers keep flat slices so the polynomial-fit   |
+//   setup and Cholesky routines can reuse allocator-owned or stack-owned storage without wrapping each cell.  |
+//                                                                                                             |
 // memory                                                                                                      |
-//   Fixed-size solves keep matrix and rhs copies on the stack. Slice helpers mutate caller-owned storage.     |
+//   Fixed-size solves copy matrix/rhs values onto the stack. Slice helpers mutate caller-owned storage and    |
+//   never allocate.                                                                                           |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn index(row: usize, column: usize, column_count: usize) usize {
