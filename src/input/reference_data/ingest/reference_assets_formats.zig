@@ -467,9 +467,8 @@ fn parseHitran160(
         const pressure_shift_cm1 = try helpers.parseFixedFloat(line[59..67]);
         const has_inline_vendor_fields = has_vendor_o2a_fields and line.len >= 85;
 
-        // UNITS:
-        //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
-        //   spectroscopy loader.
+        // The fixed-width cm^-1 fields are converted to the nm values expected by the typed
+        // spectroscopy loader.
         const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
@@ -598,8 +597,7 @@ fn parseBiraCiaPolynomial(
         const a1 = std.fmt.parseFloat(f64, a1_token) catch return error.InvalidNumber;
         const a2 = std.fmt.parseFloat(f64, a2_token) catch return error.InvalidNumber;
 
-        // DECISION:
-        //   Preserve the vendor row layout exactly so the scale factor stays table-scoped.
+        // Preserve the vendor row layout exactly by carrying the file-scoped scale factor with each row.
         try values.appendSlice(allocator, &.{
             wavelength_nm,
             a0,
@@ -655,19 +653,16 @@ fn parseLisaSdf(
             nf_token,
         ) catch return error.InvalidAssetFormat;
 
-        // PARITY:
-        //   `HITRANModule::readSDF` does not trust the tabulated `HWT0` field. It reconstructs
-        //   the reference half-width from the LISA branch/Nf quantum numbers using the
-        //   Tran/Hartmann-Yang parameterization before any temperature scaling happens.
+        // Parse HWT0 only to reject malformed rows. HITRANModule::readSDF reconstructs the reference
+        // half-width from the LISA branch/Nf numbers before any temperature scaling happens.
         _ = try helpers.parseFixedFloat(line[58..63]);
         const air_half_width_cm1 = helpers.vendorLisaReferenceHalfWidthCm1(
             branch_token,
             nf_token,
         ) catch return error.InvalidAssetFormat;
 
-        // UNITS:
-        //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
-        //   expects wavelength-like values.
+        // Strong-line fields are stored in cm^-1 and converted to nm where the typed loader expects
+        // wavelength-like values.
         const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
