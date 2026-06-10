@@ -238,51 +238,6 @@ fn fillLayerInputFromSharedCarrier(
     );
 }
 
-pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
-    self: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    support_sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    layer_geometry: SharedRtmLayerGeometry,
-    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
-) EvaluatedLayer {
-    var breakdown: OpticalDepthBreakdown = .{};
-    if (support_sublayers.len < 2) {
-        return evaluatedLayerFromSharedCarrier(
-            scene,
-            wavelength_nm,
-            layer_geometry.midpoint_altitude_km,
-            breakdown,
-            &self.aerosol_phase_coefficients,
-        );
-    }
-
-    for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
-        const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
-        if (weight_km <= 0.0) continue;
-
-        const strong_line_state = strongLineStateAt(strong_line_states, local_index);
-        const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
-            self,
-            wavelength_nm,
-            support_sublayer,
-            @intCast(support_sublayer.global_sublayer_index),
-            strong_line_state,
-            profile_cache,
-        );
-        accumulateSharedCarrier(&breakdown, &carrier, weight_km);
-    }
-
-    return evaluatedLayerFromSharedCarrier(
-        scene,
-        wavelength_nm,
-        layer_geometry.midpoint_altitude_km,
-        breakdown,
-        &self.aerosol_phase_coefficients,
-    );
-}
-
 pub fn fillReducedLayerInputFromSupportRowsWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: *const Scene,
