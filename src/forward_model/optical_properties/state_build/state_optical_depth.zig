@@ -150,32 +150,6 @@ pub fn opticalDepthBreakdownAtWavelength(
     };
 }
 
-pub fn evaluateLayerAtWavelength(
-    self: *const PreparedOpticalState,
-    scene: ?*const Scene,
-    altitude_km: f64,
-    wavelength_nm: f64,
-    sublayer_start_index: usize,
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-) EvaluatedLayer {
-    // evaluateLayerAtWavelength ---------------------------------------------------------------------------- |
-    // Evaluate one layer/support span without a caller-owned profile cache. This is the simple public helper;|
-    // repeated wavelength routes should pass the cache to the implementation below.                          |
-    // -------------------------------------------------------------------------------------------------------|
-
-    return evaluateLayerAtWavelengthWithSpectroscopyCache(
-        self,
-        scene,
-        altitude_km,
-        wavelength_nm,
-        sublayer_start_index,
-        sublayers,
-        strong_line_states,
-        null,
-    );
-}
-
 pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
     self: *const PreparedOpticalState,
     scene: ?*const Scene,

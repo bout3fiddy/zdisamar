@@ -562,26 +562,6 @@ pub const PreparedOpticalState = struct {
         return @import("state_optical_depth.zig").opticalDepthBreakdownAtWavelength(self, wavelength_nm);
     }
 
-    pub fn evaluateLayerAtWavelength(
-        self: *const PreparedOpticalState,
-        scene: ?*const Scene,
-        altitude_km: f64,
-        wavelength_nm: f64,
-        sublayer_start_index: usize,
-        sublayers: []const Types.PreparedSublayer,
-        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    ) Types.EvaluatedLayer {
-        return @import("state_optical_depth.zig").evaluateLayerAtWavelength(
-            self,
-            scene,
-            altitude_km,
-            wavelength_nm,
-            sublayer_start_index,
-            sublayers,
-            strong_line_states,
-        );
-    }
-
     pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
         self: *const PreparedOpticalState,
         scene: ?*const Scene,
