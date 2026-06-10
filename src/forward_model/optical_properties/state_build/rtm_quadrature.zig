@@ -28,7 +28,9 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per high-resolution wavelength. The caller owns rtm_levels; this refreshes rows without allocating. |
-//   Narrow scans use pointer capture, so they stride wide rows but do not copy 176 B/208 B records by value. |
+//   Narrow scans use pointer capture, so they stride 176 B LayerInput and 208 B PreparedLayer rows without   |
+//   copying them by value. The narrow reads are support-span fields at PreparedLayer [192..207], Jacobian    |
+//   vectors at LayerInput [88..111], and aerosol k_sca slots in the 64 B RtmQuadratureLevel rows.            |
 //                                                                                                            |
 // math                                                                                                       |
 //   weighted source = RTM weight * k_sca.                                                                    |
@@ -75,8 +77,10 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     //     3. write one derivative-per-km value into active RtmQuadratureLevel rows                           |
     //                                                                                                        |
     // memory                                                                                                 |
-    //   LayerInput is 176 B and RtmQuadratureLevel is 64 B. Pointer captures avoid row copies.               |
-    //   A side column would have to stay synchronized with both layer order and RTM level order.             |
+    //   LayerInput is 176 B. This reads scattering_optical_depth_jacobian at [88..111] by pointer.           |
+    //   RtmQuadratureLevel is 64 B. This reads weight at [8..15] and writes aerosol_ksca_jacobian at         |
+    //   [40..47] by pointer. A side column would have to stay synchronized with both layer order and RTM     |
+    //   level order, so it needs retained benchmark proof before it is simpler than the row walk.            |
     //                                                                                                        |
     // math                                                                                                   |
     //   derivative per km = total aerosol scattering derivative / active quadrature weight                   |
@@ -189,7 +193,9 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     //                                                                                                        |
     // memory                                                                                                 |
     //   No allocation here. The caller owns rtm_levels, LayerInput rows, and the optional profile cache.     |
-    //   A separate support-index column needs a retained benchmark showing this fallback dominates.          |
+    //   The fallback reads PreparedLayer.sublayer_start_index at [192..195] and sublayer_count at            |
+    //   [204..207] from each 208 B row. A separate support-index column needs a retained benchmark showing   |
+    //   this fallback dominates before it is worth another synchronized shape.                               |
     //                                                                                                        |
     // math                                                                                                   |
     //   non-shared fallback samples k_sca(lambda, z_i) at Gauss nodes and weights by dz_i.                   |
@@ -257,9 +263,10 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     var has_active_quadrature = false;
     for (self.layers) |*layer| {
 
-        // The fallback only reads the support span from PreparedLayer here, but that span is the same layer
-        // identity used by nearby forward-layer and pseudo-spherical builders. Keep this as a pointer walk
-        // over the retained row until a benchmark proves a side span column improves this boundary.
+        // The fallback reads the PreparedLayer support tail only: sublayer_start_index at [192..195] and
+        // sublayer_count at [204..207]. That span is the same layer identity used by forward-layer and
+        // pseudo-spherical builders, so keep this as a pointer walk until a retained benchmark proves a side
+        // span column improves this boundary.
         const start: usize = @intCast(layer.sublayer_start_index);
         const count: usize = @intCast(layer.sublayer_count);
         if (count == 0) continue;
@@ -357,8 +364,9 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     // work: read cached boundary carriers and write the same RTM level row layout as the uncached path.      |
     //                                                                                                        |
     // memory                                                                                                 |
-    // The loop reads aerosol k_sca from each RtmQuadratureLevel just written by carrier_eval. Keeping the    |
-    // full row avoids a side column that would have to be kept synchronized with RTM level phase weights.    |
+    // The shared-grid loop reads aerosol_ksca_above_per_km at [24..31] from each RtmQuadratureLevel after    |
+    // carrier_eval has filled the same 64 B row. Keeping the full row avoids a side column that would have   |
+    // to be synchronized with RTM level altitude, weight, k_sca, and phase weights.                          |
     //                                                                                                        |
     // calls                                                                                                  |
     // carrier_eval.fillRtmQuadratureLevelAtLevelWithCarrierCache                                             |

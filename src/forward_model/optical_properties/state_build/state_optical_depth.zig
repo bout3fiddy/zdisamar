@@ -31,15 +31,16 @@ const EvaluatedLayer = Types.EvaluatedLayer;
 //                                                                                                            |
 // row handoff                                                                                                |
 //   PreparedLayer is a 208 B transport-grid row; this file reads its support-span tail and representative    |
-//   altitude when it needs to slice PreparedSublayer rows. PreparedSublayer rows carry temperature, pressure,|
-//   density, path length, aerosol, and support metadata. OpticalDepthBreakdown is a 40 B value row;          |
+//   altitude when it needs to slice PreparedSublayer rows: sublayer_start_index [192..195], sublayer_count   |
+//   [204..207], and altitude_km [24..31]. PreparedSublayer rows carry temperature, pressure, density, path   |
+//   length, aerosol, and support metadata. OpticalDepthBreakdown is a 40 B value row;                        |
 //   EvaluatedLayer is an 80 B value row with the breakdown plus phase and direction cosines.                 |
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per high-resolution wavelength. Profile caches prevent repeating spectroscopy over pressure nodes.  |
 //   The PreparedLayer loop reads span and altitude fields by pointer and does not copy the 208 B row. The    |
-//   layer row stays whole because forward-layer, RTM quadrature, and diagnostics read the same prepared row  |
-//   family nearby.                                                                                           |
+//   row stays whole because forward-layer, RTM quadrature, and diagnostics read the same prepared row family |
+//   nearby.                                                                                                  |
 //                                                                                                            |
 // memory                                                                                                     |
 //   These helpers borrow PreparedOpticalState storage and return value rows. The profile spectroscopy cache  |
@@ -69,8 +70,9 @@ pub fn opticalDepthBreakdownAtWavelength(
     //   The result is only a scalar total; callers that need transport rows use forward_layers instead.      |
     //                                                                                                        |
     // memory                                                                                                 |
-    //   The PreparedLayer loop uses pointer capture; no 208 B row is copied while reading the support span.  |
-    //   A standalone span column would duplicate the slicing contract already carried by PreparedLayer.      |
+    //   The PreparedLayer loop uses pointer capture; no 208 B row is copied while reading                    |
+    //   sublayer_start_index [192..195], sublayer_count [204..207], and altitude_km [24..31]. A standalone   |
+    //   span column would duplicate the slicing contract already carried by PreparedLayer.                   |
     //                                                                                                        |
     // math                                                                                                   |
     //   tau_total(lambda) = tau_abs_gas + tau_rayleigh + tau_cia + tau_aerosol(lambda)                       |

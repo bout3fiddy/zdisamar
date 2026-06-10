@@ -36,7 +36,9 @@ const centimeters_per_kilometer = 1.0e5;
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per high-resolution wavelength. Caller-owned layer_inputs are refreshed without allocation.         |
-//   Index-only PreparedLayer loops use pointer capture and keep spans beside physical layer fields.          |
+//   Index-only PreparedLayer loops use pointer capture and read support spans at [192..207] without copying  |
+//   the 208 B row. The span stays beside physical fields because direct paths also read altitude and aerosol |
+//   fields from the same row.                                                                                |
 //                                                                                                            |
 // math                                                                                                       |
 //   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda).                                    |
@@ -215,9 +217,10 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
     //   PreparedSublayer rows carry the fine thermodynamic/support data used for spectroscopy and CIA.       |
     //                                                                                                        |
     // memory                                                                                                 |
-    //   The support-span loops read only a few fields from 208 B PreparedLayer rows, but by pointer.         |
-    //   Keeping span indexes beside physical layer fields avoids synchronizing a second layer-shape array.   |
-    //   A column split would need retained benchmark proof at the forward-input boundary before it is safer. |
+    //   The support-span loops read sublayer_start_index at [192..195], sublayer_count at [204..207], and    |
+    //   sometimes altitude_km at [24..31] from 208 B PreparedLayer rows, all by pointer. Keeping span        |
+    //   indexes beside physical layer fields avoids synchronizing a second layer-shape array. A column split |
+    //   needs retained benchmark proof at the forward-input boundary before it is safer.                     |
     //                                                                                                        |
     // math                                                                                                   |
     //   tau_ext = tau_gas_abs + tau_rayleigh + tau_cia + tau_aerosol(lambda)                                 |
@@ -263,9 +266,11 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             var totals: OpticalDepthBreakdown = .{};
             for (self.layers, layer_inputs) |*layer, *layer_input| {
 
-                // This fallback uses only span and altitude fields from PreparedLayer, but those fields stay
-                // with the physical layer row so shared geometry, forward layers, and diagnostics slice the
-                // same support rows. A side span table needs workload proof before it becomes simpler.
+                // This fallback reads the support tail plus altitude fields from PreparedLayer:
+                // sublayer_start_index [192..195], sublayer_count [204..207], altitude_km [24..31],
+                // bottom_altitude_km [8..15], and top_altitude_km [176..183]. These fields stay with the
+                // physical row so shared geometry, forward layers, and diagnostics slice the same support
+                // rows. A side span table needs workload proof before it becomes simpler.
                 const start_index: usize = @intCast(layer.sublayer_start_index);
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
@@ -321,9 +326,10 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         var totals: OpticalDepthBreakdown = .{};
         for (self.layers, layer_inputs) |*layer, *layer_input| {
 
-            // Non-shared layer mode consumes more of PreparedLayer than just the support span: altitude,
-            // CIA totals, aerosol profile fields, gas/scattering totals, and phase support all come from
-            // this row. Pointer capture keeps the 208 B row from being copied while preserving locality.
+            // Non-shared layer mode consumes more of PreparedLayer than just the support span:
+            // sublayer_start_index [192..195], sublayer_count [204..207], altitude_km [24..31], CIA totals,
+            // aerosol profile fields, gas/scattering totals, and phase support all come from this row.
+            // Pointer capture keeps the 208 B row from being copied while preserving locality.
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
             const strong_line_state = if (self.strong_line_states) |states|
