@@ -393,7 +393,7 @@ const RunningSummary = struct {
     fn toInstrumentGridSummary(
         self: RunningSummary,
         sample_count: usize,
-        wavelengths: []const f64,
+        rows: SummaryRows,
         mean_jacobian: ?jacobian.Vector,
     ) Types.InstrumentGridSummary {
         // RunningSummary.toInstrumentGridSummary ------------------------------------------------------------------------|
@@ -403,8 +403,8 @@ const RunningSummary = struct {
         const denominator = @as(f64, @floatFromInt(sample_count));
         return .{
             .sample_count = @intCast(sample_count),
-            .wavelength_start_nm = wavelengths[0],
-            .wavelength_end_nm = wavelengths[sample_count - 1],
+            .wavelength_start_nm = rows.wavelengths[0],
+            .wavelength_end_nm = rows.wavelengths[sample_count - 1],
             .mean_radiance = self.radiance_sum / denominator,
             .mean_irradiance = self.irradiance_sum / denominator,
             .mean_reflectance = self.reflectance_sum / denominator,
@@ -412,6 +412,23 @@ const RunningSummary = struct {
         };
     }
 };
+
+// SummaryRows -----------------------------------------------------------------------------------------------------------|
+// Borrowed output rows needed to attach range metadata to the product summary.                                           |
+//                                                                                                                        |
+// layout(64-bit)                                                                                                         |
+// size: 16 B (0.016 KiB), align: 8 B                                                                                     |
+//                                                                                                                        |
+// memory                                                                                                                 |
+// [ 0..15] wavelengths : []const f64                                                                                     |
+//                                                                                                                        |
+// out-of-line storage: wavelengths borrows the ProductStorage output row.                                                |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                                 |
+// footprint: per instance = 16 B (0.016 KiB); total excludes borrowed wavelengths                                        |
+const SummaryRows = struct {
+    wavelengths: []const f64,
+};
+// -----------------------------------------------------------------------------------------------------------------------|
 
 // RadianceSamplingRequest -----------------------------------------------------------------------------------------------|
 // Read-only data needed to gather prefetched LABOS misses into nominal radiance rows.                                    |
@@ -1037,9 +1054,12 @@ pub fn simulateInternal(
         .scratch_aux = buffers.scratch_aux,
     };
     const mean_jacobian = try processJacobianSamples(jacobian_request, jacobian_rows, &summary);
+    const summary_rows = SummaryRows{
+        .wavelengths = buffers.wavelengths,
+    };
     return summary.toInstrumentGridSummary(
         setup.sample_count,
-        buffers.wavelengths,
+        summary_rows,
         mean_jacobian,
     );
 }
