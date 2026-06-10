@@ -29,13 +29,12 @@ const Allocator = std.mem.Allocator;
 //   spectroscopy/line_list.zig -> SpectroscopyLineList owner and evaluation entrypoint                       |
 //                                                                                                            |
 // boundary and ownership                                                                                     |
-//   This file is a facade, not an asset loader and not a math implementation. Owner/deinit behavior lives    |
-//   in the imported modules; this file only re-exports the names so public callers do not depend on the      |
-//   internal directory split under src/input/reference/.                                                     |
+//   This file is the public facade for the imported reference modules. Owner/deinit behavior and math        |
+//   routines live there; callers use these re-exported names as the stable row vocabulary.                   |
 //                                                                                                            |
 // demo data                                                                                                  |
-//   The buildDemo* helpers allocate deterministic fixture rows for examples and smoke tests. They are        |
-//   deliberately separate from data/reference_data and should not be treated as scientific reference truth.  |
+//   The buildDemo* helpers allocate deterministic fixture rows for examples and smoke tests. Scientific      |
+//   reference assets are loaded from data/reference_data through input/reference_data loaders.               |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;

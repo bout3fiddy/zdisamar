@@ -2,8 +2,8 @@ const std = @import("std");
 
 // rayleigh.zig -----------------------------------------------------------------------------------------------|
 // Dry-air Rayleigh scattering helpers used by gas-scattering optical-depth and Rayleigh phase-coefficient     |
-// paths. This is reference math, not retained reference data: callers pass one wavelength or air column and   |
-// receive scalar values with no allocation, file I/O, or hidden cache state.                                  |
+// paths. Callers pass one wavelength or air column and receive scalar values with no allocation, file I/O,    |
+// or hidden cache state.                                                                                      |
 //                                                                                                             |
 // call routes                                                                                                 |
 //   layer_accumulation.zig uses scatteringOpticalDepthForColumn at the scene midpoint while reducing support  |
@@ -21,8 +21,8 @@ const std = @import("std");
 //                                                                                                             |
 // hot path                                                                                                    |
 //   crossSectionCm2 is scalar work but can sit on wavelength/support-row routes. The repeated wavelength path |
-//   precomputes it in WavelengthCarrierCache so support-row loops reuse one f64 instead of repeating the      |
-//   refractive-index, King-factor, and wavelength^-4 calculation.                                             |
+//   precomputes it in WavelengthCarrierCache; support-row loops then reuse one f64 for the refractive-index,  |
+//   King-factor, and wavelength^-4 result.                                                                    |
 //                                                                                                             |
 // math                                                                                                        |
 //   sigma_um_inv = 1000 / max(wavelength_nm, 1)                                                               |
@@ -116,8 +116,8 @@ pub fn scatteringOpticalDepthForColumn(
     air_column_density_cm2: f64,
 ) f64 {
     // scatteringOpticalDepthForColumn ------------------------------------------------------------------------|
-    // Convert an air column density into Rayleigh scattering optical depth at one wavelength. Negative        |
-    // columns are clamped away because callers use this during setup reductions, not as an input validator.   |
+    // Convert an air column density into Rayleigh scattering optical depth at one wavelength. Setup reduction |
+    // callers pass signed intermediate columns, so negative values clamp to zero before cross-section scaling.|
     // --------------------------------------------------------------------------------------------------------|
 
     return crossSectionCm2(wavelength_nm) * @max(air_column_density_cm2, 0.0);

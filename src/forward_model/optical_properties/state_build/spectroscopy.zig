@@ -11,8 +11,8 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 // Resolves absorber spectroscopy metadata while Context is still turning a Scene into prepared optical rows.  |
 // This is the species/ownership front door: it normalizes absorber species names, decides which line species  |
 // is being prepared, which species owns continuum density, and what volume-mixing-ratio fraction applies at   |
-// a pressure. Wavelength-dependent line-shape math lives in layer_spectroscopy.zig, state_spectroscopy.zig,   |
-// and carrier_eval.zig, not here.                                                                             |
+// a pressure. Wavelength-dependent line-shape math is owned by layer_spectroscopy.zig, state_spectroscopy.zig,|
+// and carrier_eval.zig.                                                                                       |
 //                                                                                                             |
 // build route                                                                                                 |
 //   absorbers.zig owns active absorber collection and prepared row allocation. After prepared line rows or    |
@@ -27,9 +27,8 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //   speciesMixingRatioAtPressure       : explicit or scene-level VMR profile interpolation at pressure        |
 //                                                                                                             |
 // boundary shape                                                                                              |
-//   This file interprets scene/reference metadata and returns setup decisions. It does not prepare HITRAN     |
-//   sidecars, evaluate line shapes, fill RTM layers, or silently invent unsupported species. Unknown HITRAN   |
-//   gases become typed errors at the points where a concrete species is required.                             |
+//   This file interprets scene/reference metadata and returns setup decisions. Unknown concrete HITRAN gases  |
+//   become typed errors at the points where a species-specific preparation route is required.                 |
 //                                                                                                             |
 // row handoff                                                                                                 |
 //   Active* rows are short-lived setup descriptors. PreparedLineAbsorber rows are built in absorbers.zig and  |
@@ -42,9 +41,8 @@ pub const default_o2_volume_mixing_ratio = 0.20946;
 //                                                                                                             |
 // hot path                                                                                                    |
 //   These helpers run during setup, not inside per-wavelength RTM kernels. The only wide-row scan reads       |
-//   PreparedLineAbsorber.species at [272..272] from 280 B rows while choosing the continuum owner; keeping    |
-//   species beside the prepared line payload avoids a parallel column that every owner/deinit path would need |
-//   to maintain.                                                                                              |
+//   PreparedLineAbsorber.species at [272..272] from 280 B rows while choosing the continuum owner; the species|
+//   tag stays beside the prepared line payload used by later evaluation modules.                              |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
@@ -66,9 +64,8 @@ pub fn resolveActiveLineSpecies(
     //   otherwise infer from uniform non-zero line.gas_index values                                           |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Unsupported concrete HITRAN gases return UnsupportedSpectroscopyConfiguration instead of silently     |
-    //   becoming O2 or an inert line list. Mixed or empty lists return null because no single species owns    |
-    //   the line-list density.                                                                                |
+    //   Unsupported concrete HITRAN gases return UnsupportedSpectroscopyConfiguration at this boundary.       |
+    //   Mixed or empty lists return null because no single species owns the line-list density.                |
     // --------------------------------------------------------------------------------------------------------|
 
     if (active_line_absorber) |line_absorber| return line_absorber.species;
@@ -103,8 +100,8 @@ pub fn resolveContinuumOwnerSpecies(
     //                                                                                                         |
     // memory                                                                                                  |
     //   The fallback scan reads only PreparedLineAbsorber.species at [272..272] of each 280 B row. Pointer    |
-    //   capture avoids copying the row, and this setup-time choice is not repeated per wavelength. A side     |
-    //   species column would add ownership/deinit surface for one rare ambiguous-continuum decision.          |
+    //   capture avoids copying the row, and this setup-time choice is kept with the prepared line payload     |
+    //   that owns later density weighting.                                                                    |
     // --------------------------------------------------------------------------------------------------------|
 
     if (operational_o2_lut.enabled()) return .o2;

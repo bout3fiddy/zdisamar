@@ -42,10 +42,9 @@ const PreparedOpticalState = State.PreparedOpticalState;
 //                                                                                                            |
 // hot path                                                                                                   |
 //   Runs per high-resolution wavelength only for integrated-source solves. The storage comes from product    |
-//   workspace or per-worker scratch and is refreshed in place without allocation. The DOD-warning narrow     |
-//   scans use pointer capture and deliberately keep the row contract intact; splitting side columns would    |
-//   add synchronization with forward_layers/source_interfaces/pseudo_spherical unless a retained workload    |
-//   benchmark proves this boundary dominates.                                                                |
+//   workspace or per-worker scratch and is refreshed in place without allocation. Narrow scans use pointer   |
+//   capture over the same row contracts handed to forward_layers, source_interfaces, pseudo_spherical, and   |
+//   LABOS reflectance.                                                                                       |
 //                                                                                                            |
 // jacobian path                                                                                              |
 //   fillAerosolSourceJacobian writes per-level aerosol source scale after carrier evaluation. Shared-grid    |
@@ -66,8 +65,8 @@ fn fillAerosolSourceJacobian(
     // Write the aerosol source Jacobian scale for one RTM quadrature level.                                  |
     //                                                                                                        |
     // boundary                                                                                               |
-    //   This is source-function Jacobian weighting, not the layer optical-depth Jacobian itself. The caller  |
-    //   has already evaluated the local aerosol scattering carrier for this level.                           |
+    //   The caller has already evaluated the local aerosol scattering carrier for this level; this step      |
+    //   writes the source-function Jacobian scale used by integrated-source weighting.                       |
     //                                                                                                        |
     // math                                                                                                   |
     //   aerosol_ksca_jacobian                                                                                |
@@ -113,8 +112,7 @@ fn fillSharedAerosolSourceJacobianFromLayers(
     // memory                                                                                                 |
     //   LayerInput is 176 B. This reads scattering_optical_depth_jacobian at [88..111] by pointer.           |
     //   RtmQuadratureLevel is 64 B. This reads weight at [8..15] and writes aerosol_ksca_jacobian at         |
-    //   [40..47] by pointer. A side column would have to stay synchronized with both layer order and RTM     |
-    //   level order, so it needs retained benchmark proof before it is simpler than the row walk.            |
+    //   [40..47] by pointer while preserving the layer-order and RTM-level-order handoff.                    |
     //                                                                                                        |
     // math                                                                                                   |
     //   derivative per km = total aerosol scattering derivative / active quadrature weight                   |
@@ -411,8 +409,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
     //                                                                                                        |
     // memory                                                                                                 |
     //   The shared-grid loop reads aerosol_ksca_above_per_km at [24..31] from each RtmQuadratureLevel after  |
-    //   carrier_eval has filled the same 64 B row. Keeping the full row avoids a side column that would have |
-    //   to be synchronized with level altitude, quadrature weight, k_sca, phase weights, and LABOS handoff.  |
+    //   carrier_eval has filled the same 64 B row. Level altitude, quadrature weight, k_sca, phase weights,  |
+    //   and the LABOS source handoff stay in that row.                                                       |
     //                                                                                                        |
     // math                                                                                                   |
     //   source contribution = level.weight * level.ksca. Aerosol Jacobian scaling uses the same per-level    |

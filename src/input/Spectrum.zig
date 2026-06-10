@@ -4,7 +4,7 @@ const units = @import("../common/units.zig");
 // Spectrum.zig -----------------------------------------------------------------------------------------------|
 // Public nominal wavelength-grid row carried by Scene. It is the small input-side description of how many     |
 // product samples the caller wants and, when no measured wavelength vector is present, where those nominal    |
-// samples are placed. It is not the dense forward-sample plan used by the RTM.                                |
+// samples are placed. Setup later expands this row into retained wavelength-sampling and forward-miss plans.  |
 //                                                                                                             |
 // route                                                                                                       |
 //   Scene.spectral_grid                                                                                       |
@@ -31,7 +31,7 @@ const units = @import("../common/units.zig");
 //                                                                                                             |
 // memory                                                                                                      |
 //   This is a 24 B value row with no referenced storage or deinit path. It can be copied freely in setup code;|
-//   repeated wavelength loops use prepared sampling rows instead of rereading this public input shape.        |
+//   repeated wavelength loops read the prepared sampling rows derived from this public input shape.           |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectralGrid -----------------------------------------------------------------------------------------------|

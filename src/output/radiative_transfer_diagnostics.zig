@@ -9,8 +9,8 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 
 // radiative_transfer_diagnostics.zig -------------------------------------------------------------------------|
 // Radiative-transfer diagnostic table built from atmospheric-budget rows plus optional final spectrum columns.|
-// It explains the vertical RTM state used for a spectrum without running LABOS again, and deliberately keeps  |
-// proxy columns separate from transport outputs.                                                              |
+// It explains the vertical RTM state used for a spectrum from already-prepared atmospheric-budget rows and    |
+// optional borrowed final spectrum columns.                                                                   |
 //                                                                                                             |
 // called by                                                                                                   |
 //   root.zig exposes buildRadiativeTransferDiagnostics for Zig callers. api/c.zig accepts an optional         |
@@ -25,7 +25,7 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 // diagnostic columns                                                                                          |
 //   The table records optical-depth totals, single-scatter albedo, simple transmission/source proxies,        |
 //   pseudo-spherical airmass, RTM stream count, integrated-source flag, and optional final spectrum values.   |
-//   These proxy columns are for inspection and regression triage; they are not alternate transport outputs.   |
+//   The proxy columns give inspection and regression-triage scalars beside the final spectrum values.         |
 //                                                                                                             |
 // math                                                                                                        |
 //   For each wavelength group, fillWavelengthRows walks the vertical budget top-down:                         |
@@ -35,8 +35,7 @@ const PreparedOpticalState = Optics.PreparedOpticalState;
 //                                                                                                             |
 // memory                                                                                                      |
 //   SpectrumView borrows caller-owned product slices. atmospheric_budget.build returns a temporary owned      |
-//   slice that is freed before return. The returned diagnostic row slice is owned by the caller. This is      |
-//   output/reporting work, not a forward-model hot path.                                                      |
+//   slice that is freed before return. The returned diagnostic row slice is owned by the caller.              |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectrumView -----------------------------------------------------------------------------------------------|

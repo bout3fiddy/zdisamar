@@ -4,7 +4,7 @@
 // used by                                                                                                    |
 //   input structs when a Scene or nested control row is incomplete, inconsistent, or outside bounds          |
 //   instrument/grid storage when public buffer checks compose allocation and input-validation failures       |
-//   unit tests that assert invalid controls are rejected instead of repaired or ignored                      |
+//   unit tests that assert invalid controls produce the expected boundary error                              |
 //                                                                                                            |
 // current meanings                                                                                           |
 //   OutOfMemory                   : allocation or capacity growth failed                                     |
@@ -14,8 +14,7 @@
 //                                                                                                            |
 // contract                                                                                                   |
 //   Keep this set small and caller-visible. Code that parses or validates controls should return one of      |
-//   these typed failures instead of accepting a partially ignored control or silently choosing another       |
-//   physics path.                                                                                            |
+//   these typed failures where unsupported or incomplete configuration is detected.                          |
 // -----------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{
