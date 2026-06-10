@@ -1,7 +1,6 @@
 const Scene = @import("../../../input/Scene.zig").Scene;
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const transport_common = @import("../../radiative_transfer/root.zig");
-const Evaluation = @import("evaluation.zig");
 const State = @import("state.zig");
 const carrier_eval = @import("carrier_eval.zig");
 const shared_geometry = @import("shared_geometry.zig");
