@@ -93,6 +93,12 @@ pub const min_spectroscopy_pressure_atm = 1.0e-12;
 // unused bits: 48 padding + 7 bool-storage slack = 55 bits                                                    |
 // cache span: 2 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 104 B; total = per instance * line count                                          |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   Setup scans in line_list.zig, adaptive_plan.zig, bundled/assets.zig, and runtime controls read            |
+//   center_wavelength_nm at [8..15], line_strength_cm2_per_molecule at [24..31], or gas_index at [88..89]     |
+//   by pointer. Wavelength-time evaluation keeps the full row for width, energy, pressure shift, isotope,     |
+//   sidecar tags, and line-mixing coefficient.                                                                |
 pub const SpectroscopyLine = struct {
     gas_index: u16 = 0,
     isotope_number: u8 = 1,

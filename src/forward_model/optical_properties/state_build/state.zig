@@ -124,7 +124,11 @@ pub const ActiveCrossSectionAbsorber = struct {
 // unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
 // cache span: 5 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 280 B; line list, densities, and optional line states own out-of-line storage     |
-// hot reads: setup-only owner scan reads species at [272..272]; wavelength loops read the larger payload      |
+//                                                                                                             |
+// hot reads                                                                                                   |
+//   spectroscopy.zig setup reads species at [272..272] by pointer while choosing the continuum owner.         |
+//   Wavelength evaluation keeps the full row because line_list, density columns, and prepared strong-line     |
+//   states are consumed together for the same absorber.                                                       |
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
