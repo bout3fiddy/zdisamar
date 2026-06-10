@@ -20,6 +20,12 @@ const Allocator = std.mem.Allocator;
 //   Bands.zig validates named spectral windows; this file is where the measurement mask actually removes      |
 //   samples from the selected measurement wavelength set.                                                     |
 //                                                                                                             |
+// mask band boundary                                                                                          |
+//   SpectralMask.band is retained as the caller's band label, but this file does not resolve that label       |
+//   against Scene.bands because Measurement only receives already-built wavelength arrays. At this boundary,  |
+//   only mask.exclude changes sample selection; band-aware wavelength-grid construction belongs beside Scene  |
+//   band resolution. Tests cover that a band label by itself is inert here instead of silently filtering.     |
+//                                                                                                             |
 // row model                                                                                                   |
 //   SpectralMask stores one band id plus optional exclusion windows.                                          |
 //   ErrorModel carries the source-noise/floor switches that tell later retrieval code whether covariance      |
@@ -51,6 +57,14 @@ pub const SpectralMask = struct {
     exclude: []const SpectralWindow = &[_]SpectralWindow{},
 
     pub fn validate(self: SpectralMask) errors.Error!void {
+        // SpectralMask.validate ------------------------------------------------------------------------------|
+        // Validate exclusion windows for the local measurement mask.                                          |
+        //                                                                                                     |
+        // boundary                                                                                            |
+        //   band is a retained label, not resolved here. This type does not have the Scene.bands table needed |
+        //   to turn that label into wavelength bounds, so validation only checks exclusion-window shape.      |
+        // ----------------------------------------------------------------------------------------------------|
+
         var previous_end_nm: f64 = 0.0;
         for (self.exclude, 0..) |window, index| {
             try window.validate();
@@ -153,7 +167,14 @@ pub const Measurement = struct {
     }
 
     pub fn includesWavelength(self: Measurement, wavelength_nm: f64) bool {
-        _ = self.mask.band;
+        // Measurement.includesWavelength ---------------------------------------------------------------------|
+        // Apply only the local exclusion windows to one wavelength.                                           |
+        //                                                                                                     |
+        // boundary                                                                                            |
+        //   mask.band is retained metadata here. Band label resolution requires Scene.bands plus grid         |
+        //   construction context, while this helper receives only a wavelength value.                         |
+        // ----------------------------------------------------------------------------------------------------|
+
         for (self.mask.exclude) |window| {
             if (wavelength_nm >= window.start_nm and wavelength_nm <= window.end_nm) {
                 return false;

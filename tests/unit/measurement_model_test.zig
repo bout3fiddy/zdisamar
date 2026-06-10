@@ -29,6 +29,7 @@ test "measurement sample selection honors excluded spectral windows" {
         .sample_count = 3,
         .source = .{ .stage_product = .{ .name = "truth_radiance" } },
         .mask = .{
+            .band = "o2a",
             .exclude = &[_]SpectralWindow{
                 .{ .start_nm = 760.0, .end_nm = 761.0 },
             },
@@ -39,4 +40,17 @@ test "measurement sample selection honors excluded spectral windows" {
     try std.testing.expect(value.includesWavelength(759.5));
     try std.testing.expect(!value.includesWavelength(760.5));
     try std.testing.expectEqual(@as(u32, 3), value.selectedSampleCount(&wavelengths));
+}
+
+test "measurement mask band label does not filter without resolved band grid" {
+    const value: Measurement = .{
+        .product_name = "radiance",
+        .observable = .radiance,
+        .sample_count = 1,
+        .source = .{ .stage_product = .{ .name = "truth_radiance" } },
+        .mask = .{ .band = "o2a" },
+    };
+
+    try std.testing.expect(value.includesWavelength(405.0));
+    try std.testing.expectEqual(@as(u32, 3), value.selectedSampleCount(&[_]f64{ 405.0, 760.0, 900.0 }));
 }
