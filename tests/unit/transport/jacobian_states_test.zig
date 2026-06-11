@@ -32,5 +32,6 @@ test "jacobian masked vector helpers leave inactive lanes untouched" {
 
     jacobian.addScaledMasked(&accumulator, vector, 4.0, mask);
     try std.testing.expectEqual(jacobian.Vector{ 14.0, 28.0, 30.0 }, accumulator);
+    try std.testing.expectEqual(jacobian.Vector{ 2.0, 4.0, 6.0 }, jacobian.scale(vector, 2.0));
     try std.testing.expectEqual(jacobian.Vector{ 2.0, 4.0, 0.0 }, jacobian.scaleMasked(vector, 2.0, mask));
 }
