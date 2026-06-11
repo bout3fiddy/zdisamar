@@ -1,6 +1,7 @@
 const rows = @import("rows.zig");
 
 const Mat = rows.Mat;
+const Vec = rows.Vec;
 
 // matrix_12x10.zig -----------------------------------------------------------------------------------------  |
 // Small LABOS matrix multiply kernels used by layer-doubling and q-series transport.                          |
@@ -242,6 +243,98 @@ pub inline fn smulIntoKnownTracesIfNonzero(
     return true;
 }
 
+pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
+    // esmul (left diagonal scale: diag(e) * A) -------------------------------------------------------------- |
+    // Scale each row by e[i].                                                                                 |
+    //                                                                                                         |
+    //   C[i,j] = e[i] * A[i,j]                                                                                |
+    //                                                                                                         |
+    // Fixed n=12 dispatches to a constant-bound kernel so the row/column limits are visible to the compiler.  |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return esmul12(e, a);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        var idx = j;
+        for (0..n) |i| {
+
+            // Left diagonal scale: C[i,j] = e[i] * A[i,j].
+            result.data[idx] = e.data[i] * a.data[idx];
+            idx += n;
+        }
+    }
+    return result;
+}
+
+pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
+    // semul (right diagonal scale: A * diag(e)) ------------------------------------------------------------- |
+    // Scale each column by e[j].                                                                              |
+    //                                                                                                         |
+    //   C[i,j] = A[i,j] * e[j]                                                                                |
+    //                                                                                                         |
+    // This is the right-side diagonal scale used by LABOS layer-combination formulas.                         |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return semul12(a, e);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |_| {
+
+            // Right diagonal scale: C[i,j] = A[i,j] * e[j].
+            result.data[idx] = a.data[idx] * ej;
+            idx += n;
+        }
+    }
+    return result;
+}
+
+pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
+    // matAdd (elementwise matrix add) ----------------------------------------------------------------------- |
+    // Add two row-major Mat values element by element.                                                        |
+    //                                                                                                         |
+    //   C[i,j] = A[i,j] + B[i,j]                                                                              |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = n };
+
+    // Elementwise add: C = A + B.
+    for (0..n * n) |idx| result.data[idx] = a.data[idx] + b.data[idx];
+    return result;
+}
+
+pub inline fn matAddSemul3(
+    n: usize,
+    a: *const Mat,
+    b: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+) Mat {
+    // matAddSemul3 (right diagonal scale plus two adds) ----------------------------------------------------- |
+    // Fused right-diagonal scale plus two matrix adds.                                                        |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] + B[i,j] * e[j] + C[i,j]                                                            |
+    //                                                                                                         |
+    // `semul` means scale on the right: each column j uses e[j]. Fixed n=12 uses the constant-bound path;     |
+    // generic n keeps the same row-major formula.                                                             |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return matAddSemul3_12(a, b, e, c);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |_| {
+
+            // Right-scale add: out[i,j] = A[i,j] + B[i,j] * e[j] + C[i,j].
+            result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += n;
+        }
+    }
+    return result;
+}
+
 fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     // smulNonzeroProduct ------------------------------------------------------------------------------------ |
     // Build A * B after the caller has already retained the product.                                          |
@@ -410,4 +503,80 @@ inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
 
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&row[j]);
     return pair.*;
+}
+
+fn esmul12(e: *const Vec, a: *const Mat) Mat {
+    // esmul12 (left diagonal scale, fixed n=12) ------------------------------------------------------------- |
+    // Fixed-shape version of esmul.                                                                           |
+    //                                                                                                         |
+    //   C[i,j] = e[i] * A[i,j]                                                                                |
+    //                                                                                                         |
+    // inline for keeps the source readable while generating constant-bound row and column code.               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    inline for (0..12) |j| {
+        var idx = j;
+        inline for (0..12) |i| {
+            result.data[idx] = e.data[i] * a.data[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn semul12(a: *const Mat, e: *const Vec) Mat {
+    // semul12 (right diagonal scale, fixed n=12 return value) ----------------------------------------------- |
+    // Returning wrapper around semul12Into. The caller-owned-output version holds the actual fixed-shape loop.|
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    semul12Into(&result, a, e);
+    return result;
+}
+
+fn semul12Into(noalias result: *Mat, a: *const Mat, e: *const Vec) void {
+    // semul12Into (right diagonal scale, fixed n=12) -------------------------------------------------------- |
+    // Fixed-shape version of semul.                                                                           |
+    //                                                                                                         |
+    //   C[i,j] = A[i,j] * e[j]                                                                                |
+    //                                                                                                         |
+    // The outer loop fixes column j once, then reuses e[j] down the column.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        inline for (0..12) |_| {
+            result.data[idx] = a.data[idx] * ej;
+            idx += 12;
+        }
+    }
+}
+
+fn matAddSemul3_12(
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+    noalias e: *const Vec,
+    noalias c: *const Mat,
+) Mat {
+    // matAddSemul3_12 (right diagonal scale plus two adds, fixed n=12) -------------------------------------- |
+    // Fixed-shape fused right-diagonal scale plus two matrix adds.                                            |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] + B[i,j] * e[j] + C[i,j]                                                            |
+    //                                                                                                         |
+    // inline for exposes all 12 rows and columns as compile-time bounds.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        inline for (0..12) |j| {
+            const idx = row + j;
+            const ej = e.data[j];
+            result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
+        }
+    }
+    return result;
 }
