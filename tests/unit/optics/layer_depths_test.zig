@@ -4,6 +4,7 @@ const internal = @import("internal");
 const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.o2_run_tables;
+const jacobian = internal.transport.jacobian_states;
 
 const allocator = std.testing.allocator;
 
@@ -166,6 +167,115 @@ const layer_zero_758_rows = [_]SupportEvidence{
     },
 };
 
+// LayerAerosolEvidence ---------------------------------------------------------------------------------------|
+// Test-local aerosol layer evidence from WP1 baseline artifact:                                               |
+// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// internal-dump-baseline.json .probe_forward_inputs[0].layers.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] aerosol_optical_depth           : f64                                                              |
+// [ 8..15] aerosol_scattering_optical_depth: f64                                                              |
+// [16..19] layer_index                     : u32                                                              |
+// [20..23] trailing padding                : 4 B                                                              |
+const LayerAerosolEvidence = struct {
+    aerosol_optical_depth: f64,
+    aerosol_scattering_optical_depth: f64,
+    layer_index: u32,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// LayerJacobianEvidence --------------------------------------------------------------------------------------|
+// Test-local aerosol Jacobian values derived from old-route evidence and formula.                             |
+//                                                                                                             |
+// source                                                                                                      |
+//   Scalars come from baseline-main-56605387/internal-dump-baseline.json                                      |
+//   .probe_forward_inputs[0].layers. The formula is main:`state_build/forward_layers.zig`                     |
+//   attachAerosolOpticalDepthJacobian with aerosol optical depth = 0.3.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] gas_absorption_optical_depth      : f64                                                            |
+// [ 8..15] optical_depth_derivative          : f64                                                            |
+// [16..23] scattering_optical_depth_derivative: f64                                                           |
+// [24..31] single_scatter_albedo_derivative  : f64                                                            |
+// [32..35] layer_index                       : u32                                                            |
+// [36..47] trailing padding                  : 12 B                                                           |
+const LayerJacobianEvidence = struct {
+    gas_absorption_optical_depth: f64,
+    optical_depth_derivative: f64,
+    scattering_optical_depth_derivative: f64,
+    single_scatter_albedo_derivative: f64,
+    layer_index: u32,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+const aerosol_layers_758 = [_]LayerAerosolEvidence{
+    .{
+        .layer_index = 9,
+        .aerosol_optical_depth = 0.01012957286952694,
+        .aerosol_scattering_optical_depth = 0.01012957286952694,
+    },
+    .{
+        .layer_index = 10,
+        .aerosol_optical_depth = 0.04068901916053303,
+        .aerosol_scattering_optical_depth = 0.04068901916053303,
+    },
+    .{
+        .layer_index = 11,
+        .aerosol_optical_depth = 0.06338853005746009,
+        .aerosol_scattering_optical_depth = 0.06338853005746009,
+    },
+    .{
+        .layer_index = 12,
+        .aerosol_optical_depth = 0.07158575582495894,
+        .aerosol_scattering_optical_depth = 0.07158575582495894,
+    },
+    .{
+        .layer_index = 13,
+        .aerosol_optical_depth = 0.06338853005746009,
+        .aerosol_scattering_optical_depth = 0.06338853005746009,
+    },
+    .{
+        .layer_index = 14,
+        .aerosol_optical_depth = 0.04068901916053303,
+        .aerosol_scattering_optical_depth = 0.04068901916053303,
+    },
+    .{
+        .layer_index = 15,
+        .aerosol_optical_depth = 0.01012957286952782,
+        .aerosol_scattering_optical_depth = 0.01012957286952782,
+    },
+};
+
+const aerosol_jacobian_layers_758 = [_]LayerJacobianEvidence{
+    .{
+        .layer_index = 9,
+        .gas_absorption_optical_depth = 0.00000246394159728,
+        .optical_depth_derivative = 0.033765242898423135,
+        .scattering_optical_depth_derivative = 0.033765242898423135,
+        .single_scatter_albedo_derivative = 0.0015414220169939379,
+    },
+    .{
+        .layer_index = 12,
+        .gas_absorption_optical_depth = 0.00001684577436891,
+        .optical_depth_derivative = 0.23861918608319646,
+        .scattering_optical_depth_derivative = 0.23861918608319646,
+        .single_scatter_albedo_derivative = 0.0014927223923151265,
+    },
+    .{
+        .layer_index = 15,
+        .gas_absorption_optical_depth = 0.00000230590151375,
+        .optical_depth_derivative = 0.033765242898426064,
+        .scattering_optical_depth_derivative = 0.033765242898426064,
+        .single_scatter_albedo_derivative = 0.001445446413616297,
+    },
+};
+
 test "support-row optics reproduce atmospheric-budget components at probe wavelengths" {
     var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
@@ -244,6 +354,103 @@ test "layer optics reduce active support rows and skip boundary rows" {
     try expectClose(0.6785664018150539, layers[0].single_scatter_albedo, 1.0e-14);
 }
 
+test "layer optics place aerosol optical depth on the configured explicit interval" {
+    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    defer tables.deinit(allocator);
+
+    const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
+    defer allocator.free(line_sigma);
+    @memset(line_sigma, 0.0);
+
+    const support_rows = try allocator.alloc(layer_depths.SupportOptics, tables.layers.support_mid_altitudes_km.len);
+    defer allocator.free(support_rows);
+    try layer_depths.fillSupportOpticsAtWavelength(
+        758.0,
+        tables.layers,
+        line_sigma,
+        tables.cia,
+        tables.aerosol,
+        support_rows,
+    );
+
+    const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
+    defer allocator.free(layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers);
+
+    for (aerosol_layers_758) |expected| {
+        const layer_index: usize = @intCast(expected.layer_index);
+        try expectClose(expected.aerosol_optical_depth, layers[layer_index].aerosol_optical_depth, 1.0e-16);
+        try expectClose(
+            expected.aerosol_scattering_optical_depth,
+            layers[layer_index].aerosol_scattering_optical_depth,
+            1.0e-16,
+        );
+    }
+}
+
+test "layer optics fill aerosol optical-depth jacobian lanes from old route formula" {
+    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    defer tables.deinit(allocator);
+
+    const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
+    defer allocator.free(line_sigma);
+    @memset(line_sigma, 0.0);
+
+    for (aerosol_jacobian_layers_758) |expected| {
+        const layer_index: usize = @intCast(expected.layer_index);
+        const support_index: usize = @intCast(tables.layers.layer_support_starts[layer_index] + 1);
+        line_sigma[support_index] =
+            expected.gas_absorption_optical_depth /
+            (tables.layers.support_o2_number_densities_cm3[support_index] *
+                tables.layers.support_path_lengths_cm[support_index]);
+    }
+
+    const support_rows = try allocator.alloc(layer_depths.SupportOptics, tables.layers.support_mid_altitudes_km.len);
+    defer allocator.free(support_rows);
+    try layer_depths.fillSupportOpticsAtWavelength(
+        758.0,
+        tables.layers,
+        line_sigma,
+        tables.cia,
+        tables.aerosol,
+        support_rows,
+    );
+
+    const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
+    defer allocator.free(layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers);
+    layer_depths.fillLayerAerosolJacobians(
+        tables.aerosol,
+        jacobian.stateMask(.aerosol_optical_depth),
+        layers,
+    );
+
+    for (aerosol_jacobian_layers_758) |expected| {
+        const layer_index: usize = @intCast(expected.layer_index);
+        const layer = layers[layer_index];
+        try expectClose(
+            expected.optical_depth_derivative,
+            jacobian.get(layer.optical_depth_jacobian, .aerosol_optical_depth),
+            1.0e-14,
+        );
+        try expectClose(
+            expected.scattering_optical_depth_derivative,
+            jacobian.get(layer.scattering_optical_depth_jacobian, .aerosol_optical_depth),
+            1.0e-14,
+        );
+        try expectClose(
+            expected.single_scatter_albedo_derivative,
+            jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_optical_depth),
+            1.0e-14,
+        );
+        try expectClose(0.0, jacobian.get(layer.optical_depth_jacobian, .surface_albedo), 0.0);
+        try expectClose(0.0, jacobian.get(layer.aerosol_phase_weight_jacobian, .aerosol_optical_depth), 0.0);
+    }
+}
+
 fn expectClose(expected: f64, actual: f64, tolerance: f64) !void {
+    // expectClose --------------------------------------------------------------------------------------------|
+    // Compare evidence decimals after JSON parsing and Zig floating-point recomputation.                      |
+    // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectApproxEqAbs(expected, actual, tolerance);
 }

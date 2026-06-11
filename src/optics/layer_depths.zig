@@ -22,6 +22,9 @@ const oxygen_volume_mixing_ratio = 0.20946;
 //   k_cia = sigma_cia * n_pair * 1e5, then support rows multiply those per-km carriers by path length.        |
 //   n_pair follows main:`layer_accumulation.zig` CollisionComplexProfileCache on the old spectroscopy         |
 //   profile and falls back to n_o2^2 only when the profile cache is unusable.                                 |
+//   Aerosol placement follows main:`shared/particle_profiles.zig` buildIntervalMatchedDistribution for the    |
+//   reference explicit interval route, then main:`carrier_eval.zig` particleWavelengthScale at wavelength     |
+//   time.                                                                                                     |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This file does not evaluate HITRAN line lists. The line sigma vector is an explicit input so spectroscopy |
@@ -209,10 +212,12 @@ pub fn fillSupportOpticsAtWavelength(
     if (line_sigma_cm2_per_molecule.len != support_count or out_support.len != support_count) {
         return error.InvalidShape;
     }
-    if (aerosol.optical_depth != 0.0) return error.UnsupportedAerosolOptics;
 
     const rayleigh_sigma_cm2 = rayleigh.crossSectionCm2(wavelength_nm);
     const collision_pair_profile = CollisionPairProfile.init(layer_grid);
+    const aerosol_weight_sum_cm = aerosolSupportWeightSumCm(layer_grid, aerosol);
+    const aerosol_wavelength_scale = aerosolWavelengthScale(aerosol, wavelength_nm);
+
     for (out_support, 0..) |*row, support_index| {
         const path_length_cm = @max(layer_grid.support_path_lengths_cm[support_index], 0.0);
         const oxygen_density_cm3 = layer_grid.support_o2_number_densities_cm3[support_index];
@@ -233,8 +238,16 @@ pub fn fillSupportOpticsAtWavelength(
             oxygen_density_cm3,
         );
         const cia_depth = cia_sigma_cm5 * cia_pair_density_cm6 * path_length_cm;
-        const total_scattering = gas_scattering;
-        const total_depth = gas_absorption + gas_scattering + cia_depth;
+        const aerosol_depth = aerosolDepthAtSupport(
+            layer_grid,
+            aerosol,
+            support_index,
+            aerosol_weight_sum_cm,
+            aerosol_wavelength_scale,
+        );
+        const aerosol_scattering = aerosol_depth * aerosol.single_scatter_albedo;
+        const total_scattering = gas_scattering + aerosol_scattering;
+        const total_depth = gas_absorption + gas_scattering + cia_depth + aerosol_depth;
 
         row.* = .{
             .wavelength_nm = wavelength_nm,
@@ -243,8 +256,8 @@ pub fn fillSupportOpticsAtWavelength(
             .gas_absorption_optical_depth = gas_absorption,
             .gas_scattering_optical_depth = gas_scattering,
             .cia_optical_depth = cia_depth,
-            .aerosol_optical_depth = 0.0,
-            .aerosol_scattering_optical_depth = 0.0,
+            .aerosol_optical_depth = aerosol_depth,
+            .aerosol_scattering_optical_depth = aerosol_scattering,
             .total_optical_depth = total_depth,
             .total_scattering_optical_depth = total_scattering,
             .single_scatter_albedo = singleScatterAlbedo(total_scattering, total_depth),
@@ -252,6 +265,67 @@ pub fn fillSupportOpticsAtWavelength(
             .interval_index_1based = layer_grid.support_interval_indices_1based[support_index],
         };
     }
+}
+
+fn aerosolSupportWeightSumCm(
+    layer_grid: atmosphere_layers.LayerGrid,
+    aerosol: aerosol_tables.AerosolLayerTable,
+) f64 {
+    // aerosolSupportWeightSumCm ----------------------------------------------------------------------------- |
+    // Sum explicit-interval support weights for scalar aerosol placement.                                     |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   main:`shared/particle_profiles.zig` buildIntervalMatchedDistribution selects support rows whose       |
+    //   parent interval matches placement.interval_index_1based, then normalizes by max(support_weight, 0).   |
+    // --------------------------------------------------------------------------------------------------------|
+    if (aerosol.optical_depth <= 0.0 or aerosol.interval_index_1based == 0) return 0.0;
+
+    var total_weight_cm: f64 = 0.0;
+    for (layer_grid.support_path_lengths_cm, layer_grid.support_interval_indices_1based) |
+        path_length_cm,
+        interval_index_1based,
+    | {
+        if (interval_index_1based != aerosol.interval_index_1based) continue;
+
+        total_weight_cm += @max(path_length_cm, 0.0);
+    }
+
+    return total_weight_cm;
+}
+
+fn aerosolDepthAtSupport(
+    layer_grid: atmosphere_layers.LayerGrid,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    support_index: usize,
+    aerosol_weight_sum_cm: f64,
+    wavelength_scale: f64,
+) f64 {
+    // aerosolDepthAtSupport --------------------------------------------------------------------------------- |
+    // Return wavelength-scaled aerosol optical depth for one support row.                                     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   tau_i(lambda) = tau_ref * scale(lambda) * support_weight_i / sum_selected_support_weights             |
+    // --------------------------------------------------------------------------------------------------------|
+    if (aerosol_weight_sum_cm <= 0.0 or support_index >= layer_grid.support_path_lengths_cm.len) return 0.0;
+    if (layer_grid.support_interval_indices_1based[support_index] != aerosol.interval_index_1based) return 0.0;
+
+    const support_weight_cm = @max(layer_grid.support_path_lengths_cm[support_index], 0.0);
+    return aerosol.optical_depth * wavelength_scale * support_weight_cm / aerosol_weight_sum_cm;
+}
+
+fn aerosolWavelengthScale(aerosol: aerosol_tables.AerosolLayerTable, wavelength_nm: f64) f64 {
+    // aerosolWavelengthScale -------------------------------------------------------------------------------- |
+    // Apply the old Angstrom reference-wavelength scaling for aerosol optical depth.                          |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   main:`shared/particle_profiles.zig` scaleOpticalDepth and main:`carrier_eval.zig`                     |
+    //   particleWavelengthScale use the same safe wavelength/reference guard.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    if (aerosol.angstrom_exponent == 0.0 or aerosol.reference_wavelength_nm == wavelength_nm) return 1.0;
+
+    const safe_wavelength_nm = @max(wavelength_nm, 1.0);
+    const safe_reference_nm = @max(aerosol.reference_wavelength_nm, 1.0);
+    return std.math.pow(f64, safe_reference_nm / safe_wavelength_nm, aerosol.angstrom_exponent);
 }
 
 pub fn reduceLayerOpticsFromSupportRows(
@@ -302,7 +376,67 @@ pub fn reduceLayerOpticsFromSupportRows(
     }
 }
 
+pub fn fillLayerAerosolJacobians(
+    aerosol: aerosol_tables.AerosolLayerTable,
+    state_mask: jacobian_states.StateMask,
+    layers: []LayerOptics,
+) void {
+    // fillLayerAerosolJacobians ----------------------------------------------------------------------------- |
+    // Fill aerosol optical-depth derivative lanes on already-reduced layer rows.                              |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Formula follows main:`state_build/forward_layers.zig` attachAerosolOpticalDepthJacobian. The old      |
+    //   route writes total optical depth, scattering optical depth, and single-scatter albedo derivatives     |
+    //   beside each LayerInput row. It has no layer aerosol phase-weight derivative field, so that vector     |
+    //   remains zero here.                                                                                    |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   d_tau / d_tau_aer = tau_aerosol_layer / tau_aer                                                       |
+    //   d_sca / d_tau_aer = sca_aerosol_layer / tau_aer                                                       |
+    //   d_ssa / d_tau_aer = (d_sca * tau_total - sca_total * d_tau) / tau_total^2                             |
+    // --------------------------------------------------------------------------------------------------------|
+    for (layers) |*layer| {
+        layer.optical_depth_jacobian = jacobian_states.zero();
+        layer.scattering_optical_depth_jacobian = jacobian_states.zero();
+        layer.single_scatter_albedo_jacobian = jacobian_states.zero();
+        layer.aerosol_phase_weight_jacobian = jacobian_states.zero();
+    }
+
+    if (!jacobian_states.includes(state_mask, .aerosol_optical_depth)) return;
+    if (aerosol.optical_depth <= 0.0) return;
+
+    for (layers) |*layer| {
+        const optical_derivative = layer.aerosol_optical_depth / aerosol.optical_depth;
+        const scattering_derivative = layer.aerosol_scattering_optical_depth / aerosol.optical_depth;
+        jacobian_states.set(
+            &layer.optical_depth_jacobian,
+            .aerosol_optical_depth,
+            optical_derivative,
+        );
+        jacobian_states.set(
+            &layer.scattering_optical_depth_jacobian,
+            .aerosol_optical_depth,
+            scattering_derivative,
+        );
+
+        if (layer.total_optical_depth <= 0.0) continue;
+
+        const ssa_derivative =
+            (scattering_derivative * layer.total_optical_depth -
+                layer.total_scattering_optical_depth * optical_derivative) /
+            (layer.total_optical_depth * layer.total_optical_depth);
+        jacobian_states.set(
+            &layer.single_scatter_albedo_jacobian,
+            .aerosol_optical_depth,
+            ssa_derivative,
+        );
+    }
+}
+
 fn singleScatterAlbedo(scattering_optical_depth: f64, total_optical_depth: f64) f64 {
+    // singleScatterAlbedo ------------------------------------------------------------------------------------|
+    // Clamp the local scattering fraction to the physical single-scatter-albedo interval.                     |
+    // --------------------------------------------------------------------------------------------------------|
     if (total_optical_depth <= 0.0) return 0.0;
     return std.math.clamp(scattering_optical_depth / total_optical_depth, 0.0, 1.0);
 }

@@ -127,8 +127,10 @@ pub const cache = struct {
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const optics = struct {
     pub const cia_absorption = @import("optics/cia_absorption.zig");
+    pub const curved_sun_path = @import("optics/curved_sun_path.zig");
     pub const layer_depths = @import("optics/layer_depths.zig");
     pub const rayleigh = @import("optics/rayleigh.zig");
+    pub const source_levels = @import("optics/source_levels.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -143,7 +145,10 @@ pub const optics = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const transport = struct {
+    pub const controls = @import("transport/controls.zig");
+    pub const gauss_angles = @import("transport/gauss_angles.zig");
     pub const jacobian_states = @import("transport/jacobian_states.zig");
+    pub const rows = @import("transport/rows.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 
