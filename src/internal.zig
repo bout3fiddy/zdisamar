@@ -150,6 +150,7 @@ pub const transport = struct {
     pub const jacobian_states = @import("transport/jacobian_states.zig");
     pub const layer_reflect_transmit = @import("transport/layer_reflect_transmit.zig");
     pub const matrix_12x10 = @import("transport/matrix_12x10.zig");
+    pub const phase_timing = @import("transport/phase_timing.zig");
     pub const rows = @import("transport/rows.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
