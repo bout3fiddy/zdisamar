@@ -202,6 +202,13 @@ test "diagonal scale helpers match scalar references for generic path" {
         6,
         1.0e-13,
     );
+    try expectMatrixClose(scalarEsmulSemul(6, &e, &a, &b), matrix_12x10.esmulSemul(6, &e, &a, &b), 6, 1.0e-13);
+    try expectMatrixClose(
+        scalarEsmulSemulAdd(6, &e, &a, &b, &c),
+        matrix_12x10.esmulSemulAdd(6, &e, &a, &b, &c),
+        6,
+        1.0e-13,
+    );
 }
 
 test "diagonal scale helpers match scalar references for fixed n12 path" {
@@ -231,6 +238,25 @@ test "diagonal scale helpers match scalar references for fixed n12 path" {
     var left_add = rows.Mat.zero(12);
     matrix_12x10.matAddEsmulInto(&left_add, 12, &a, &e, &b);
     try expectMatrixClose(scalarMatAddEsmul(12, &a, &e, &b), left_add, 12, 1.0e-13);
+
+    var right_scale = rows.Mat.zero(12);
+    matrix_12x10.semulInto(&right_scale, 12, &a, &e);
+    try expectMatrixClose(scalarSemul(12, &a, &e), right_scale, 12, 1.0e-13);
+
+    var two_sided = rows.Mat.zero(12);
+    matrix_12x10.esmulSemulInto(&two_sided, 12, &e, &a, &b);
+    try expectMatrixClose(scalarEsmulSemul(12, &e, &a, &b), two_sided, 12, 1.0e-13);
+
+    var self_two_sided = rows.Mat.zero(12);
+    matrix_12x10.esmulSemulSelfInto(&self_two_sided, 12, &e, &a);
+    try expectMatrixClose(scalarEsmulSemulSelf(12, &e, &a), self_two_sided, 12, 1.0e-13);
+
+    try expectMatrixClose(
+        scalarEsmulSemulAdd(12, &e, &a, &b, &c),
+        matrix_12x10.esmulSemulAdd(12, &e, &a, &b, &c),
+        12,
+        1.0e-13,
+    );
 }
 
 test "retained product diagonal add writers match scalar references" {
@@ -250,6 +276,14 @@ test "retained product diagonal add writers match scalar references" {
     var right_scaled = rows.Mat.zero(12);
     matrix_12x10.semulAddProductKnownNonzeroInto(&right_scaled, 12, 10, &a, &e, &b);
     try expectMatrixClose(scalarSemulAddProduct(12, 10, &a, &e, &b), right_scaled, 12, 1.0e-13);
+
+    var two_sided = rows.Mat.zero(12);
+    matrix_12x10.esmulSemulAddProductKnownNonzeroInto(&two_sided, 12, 10, &e, &a, &b);
+    try expectMatrixClose(scalarEsmulSemulAddProduct(12, 10, &e, &a, &b), two_sided, 12, 1.0e-13);
+
+    var self_two_sided = rows.Mat.zero(12);
+    matrix_12x10.esmulSemulSelfAddProductKnownNonzeroInto(&self_two_sided, 12, 10, &e, &a);
+    try expectMatrixClose(scalarEsmulSemulSelfAddProduct(12, 10, &e, &a), self_two_sided, 12, 1.0e-13);
 }
 
 test "retained product diagonal add writers keep generic active-size formulas" {
@@ -269,6 +303,14 @@ test "retained product diagonal add writers keep generic active-size formulas" {
     var right_scaled = rows.Mat.zero(6);
     matrix_12x10.semulAddProductKnownNonzeroInto(&right_scaled, 6, 4, &a, &e, &b);
     try expectMatrixClose(scalarSemulAddProduct(6, 4, &a, &e, &b), right_scaled, 6, 1.0e-13);
+
+    var two_sided = rows.Mat.zero(6);
+    matrix_12x10.esmulSemulAddProductKnownNonzeroInto(&two_sided, 6, 4, &e, &a, &b);
+    try expectMatrixClose(scalarEsmulSemulAddProduct(6, 4, &e, &a, &b), two_sided, 6, 1.0e-13);
+
+    var self_two_sided = rows.Mat.zero(6);
+    matrix_12x10.esmulSemulSelfAddProductKnownNonzeroInto(&self_two_sided, 6, 4, &e, &a);
+    try expectMatrixClose(scalarEsmulSemulSelfAddProduct(6, 4, &e, &a), self_two_sided, 6, 1.0e-13);
 }
 
 test "smulAddSemul3 generic path matches retained and skipped scalar references" {
@@ -492,6 +534,52 @@ fn scalarSemulAdd(n: usize, a: *const rows.Mat, e: *const rows.Vec, b: *const ro
     return result;
 }
 
+fn scalarEsmulSemul(n: usize, e: *const rows.Vec, a: *const rows.Mat, b: *const rows.Mat) rows.Mat {
+    // scalarEsmulSemul -------------------------------------------------------------------------------------- |
+    // Independent test reference for diag(e) * A + B * diag(e).                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            result.set(row, col, e.get(row) * a.get(row, col) + b.get(row, col) * e.get(col));
+        }
+    }
+    return result;
+}
+
+fn scalarEsmulSemulSelf(n: usize, e: *const rows.Vec, a: *const rows.Mat) rows.Mat {
+    // scalarEsmulSemulSelf ---------------------------------------------------------------------------------- |
+    // Independent test reference for A * (e[row] + e[col]).                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            result.set(row, col, a.get(row, col) * (e.get(row) + e.get(col)));
+        }
+    }
+    return result;
+}
+
+fn scalarEsmulSemulAdd(
+    n: usize,
+    e: *const rows.Vec,
+    a: *const rows.Mat,
+    b: *const rows.Mat,
+    c: *const rows.Mat,
+) rows.Mat {
+    // scalarEsmulSemulAdd ----------------------------------------------------------------------------------- |
+    // Independent test reference for diag(e) * A + B * diag(e) + C.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            const value = (e.get(row) * a.get(row, col) + b.get(row, col) * e.get(col)) + c.get(row, col);
+            result.set(row, col, value);
+        }
+    }
+    return result;
+}
+
 fn scalarMatAddEsmul3Product(
     n: usize,
     n_gauss: usize,
@@ -511,6 +599,52 @@ fn scalarMatAddEsmul3Product(
                 product += c.get(row, gauss_index) * b.get(gauss_index, col);
             }
             result.set(row, col, (a.get(row, col) + e.get(row) * b.get(row, col)) + product);
+        }
+    }
+    return result;
+}
+
+fn scalarEsmulSemulAddProduct(
+    n: usize,
+    n_gauss: usize,
+    e: *const rows.Vec,
+    a: *const rows.Mat,
+    b: *const rows.Mat,
+) rows.Mat {
+    // scalarEsmulSemulAddProduct ---------------------------------------------------------------------------- |
+    // Independent test reference for diag(e) * A + B * diag(e) + B*A over Gaussian streams.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |gauss_index| {
+                product += b.get(row, gauss_index) * a.get(gauss_index, col);
+            }
+            const base = e.get(row) * a.get(row, col) + b.get(row, col) * e.get(col);
+            result.set(row, col, base + product);
+        }
+    }
+    return result;
+}
+
+fn scalarEsmulSemulSelfAddProduct(
+    n: usize,
+    n_gauss: usize,
+    e: *const rows.Vec,
+    a: *const rows.Mat,
+) rows.Mat {
+    // scalarEsmulSemulSelfAddProduct ------------------------------------------------------------------------ |
+    // Independent test reference for A * (e[row] + e[col]) + A*A over Gaussian streams.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |gauss_index| {
+                product += a.get(row, gauss_index) * a.get(gauss_index, col);
+            }
+            result.set(row, col, a.get(row, col) * (e.get(row) + e.get(col)) + product);
         }
     }
     return result;

@@ -623,6 +623,171 @@ pub inline fn semulAddProductKnownNonzeroInto(
     }
 }
 
+pub inline fn semulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec) void {
+    // semulInto (right diagonal scale into caller storage) -------------------------------------------------- |
+    // Caller-owned-output version of semul.                                                                   |
+    // Fixed n=12 writes through semul12Into; generic n delegates to the returning wrapper.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return semul12Into(out, a, e);
+    out.* = semul(n, a, e);
+}
+
+pub inline fn esmulSemul(
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) Mat {
+    // esmulSemul (left and right diagonal scales) ----------------------------------------------------------- |
+    // Combine a left-diagonal scale and a right-diagonal scale.                                               |
+    //                                                                                                         |
+    //   out[i,j] = e[i] * A[i,j] + B[i,j] * e[j]                                                              |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return esmulSemul12(e, a, b);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |i| {
+
+            // Two-sided scale: out[i,j] = e[i] * A[i,j] + B[i,j] * e[j].
+            result.data[idx] = e.data[i] * a.data[idx] + b.data[idx] * ej;
+            idx += n;
+        }
+    }
+    return result;
+}
+
+pub inline fn esmulSemulInto(
+    noalias out: *Mat,
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    // esmulSemulInto (left and right diagonal scales into caller storage) ----------------------------------- |
+    // Caller-owned-output version of esmulSemul.                                                              |
+    // Fixed n=12 writes through esmulSemul12Into; generic n delegates to the returning wrapper.               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return esmulSemul12Into(out, e, a, b);
+    out.* = esmulSemul(n, e, a, b);
+}
+
+pub inline fn esmulSemulSelfInto(noalias out: *Mat, n: usize, e: *const Vec, a: *const Mat) void {
+    // esmulSemulSelfInto (self left and right diagonal scales into caller storage) -------------------------- |
+    // Same matrix appears on both sides of the diagonal scaling.                                              |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] * (e[i] + e[j])                                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return esmulSemulSelf12Into(out, e, a);
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |i| {
+
+            // Symmetric scale: out[i,j] = A[i,j] * (e[i] + e[j]).
+            out.data[idx] = a.data[idx] * (e.data[i] + ej);
+            idx += n;
+        }
+    }
+}
+
+pub inline fn esmulSemulAdd(
+    n: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+    c: *const Mat,
+) Mat {
+    // esmulSemulAdd (two diagonal scales plus add) ---------------------------------------------------------- |
+    // Combine both diagonal scales and add a third matrix.                                                    |
+    //                                                                                                         |
+    //   out[i,j] = e[i] * A[i,j] + B[i,j] * e[j] + C[i,j]                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return esmulSemulAdd12(e, a, b, c);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |i| {
+
+            // Two-sided scale plus add: out[i,j] = e[i] * A[i,j] + B[i,j] * e[j] + C[i,j].
+            result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += n;
+        }
+    }
+    return result;
+}
+
+pub inline fn esmulSemulAddProductKnownNonzeroInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    // esmulSemulAddProductKnownNonzeroInto (retained product plus two diagonal scales) ---------------------- |
+    // Caller already knows B*A should be retained. Write both diagonal-scale terms plus the retained product  |
+    // into caller storage.                                                                                    |
+    //                                                                                                         |
+    //   product[i,j] = sum k=0..n_gauss-1 B[i,k] * A[k,j]                                                     |
+    //   out[i,j]     = e[i] * A[i,j] + B[i,j] * e[j] + product[i,j]                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) return esmulSemulAddProductKnownNonzero12x10Into(out, e, a, b);
+
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |k| product += b.data[i * n + k] * a.data[k * n + j];
+            const idx = i * n + j;
+
+            // Retained product: out[i,j] = e[i] * A[i,j] + B[i,j] * e[j] + sum k B[i,k] * A[k,j].
+            out.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + product;
+        }
+    }
+}
+
+pub inline fn esmulSemulSelfAddProductKnownNonzeroInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    e: *const Vec,
+    a: *const Mat,
+) void {
+    // esmulSemulSelfAddProductKnownNonzeroInto (retained self-product plus two diagonal scales) ------------- |
+    // Caller already knows A*A should be retained. Write the symmetric diagonal-scale term plus the retained  |
+    // self-product into caller storage.                                                                       |
+    //                                                                                                         |
+    //   product[i,j] = sum k=0..n_gauss-1 A[i,k] * A[k,j]                                                     |
+    //   out[i,j]     = A[i,j] * (e[i] + e[j]) + product[i,j]                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) return esmulSemulSelfAddProductKnownNonzero12x10Into(out, e, a);
+
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |k| product += a.data[i * n + k] * a.data[k * n + j];
+            const idx = i * n + j;
+
+            // Retained self-product: out[i,j] = A[i,j] * (e[i] + e[j]) + sum k A[i,k] * A[k,j].
+            out.data[idx] = a.data[idx] * (e.data[i] + ej) + product;
+        }
+    }
+}
+
 fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     // smulNonzeroProduct ------------------------------------------------------------------------------------ |
     // Build A * B after the caller has already retained the product.                                          |
@@ -1714,6 +1879,333 @@ fn semulAddProductKnownNonzero12x10Into(
             // Each product line multiplies A[i,k] across the two output columns B[k,j] and B[k,j+1].          |
             // This is the same pair-loop shape as the retained smulAdd proof above: one splat, one            |
             // two-lane load, one two-lane multiply-add chain, then one two-lane store.                        |
+            // ------------------------------------------------------------------------------------------------|
+
+            storePair(result_row, j, value);
+        }
+    }
+}
+
+fn esmulSemul12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) Mat {
+    // esmulSemul12 (left and right diagonal scales, fixed n=12 return value) -------------------------------- |
+    // Returning wrapper around esmulSemul12Into.                                                              |
+    // The caller-owned-output version holds the fixed-shape two-sided diagonal scale loop.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    esmulSemul12Into(&result, e, a, b);
+    return result;
+}
+
+fn esmulSemul12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+) void {
+    // esmulSemul12Into (left and right diagonal scales, fixed n=12) ----------------------------------------- |
+    // Fixed-shape two-sided diagonal scale.                                                                   |
+    //                                                                                                         |
+    //   left term  : e[i] * A[i,j]                                                                            |
+    //   right term : B[i,j] * e[j]                                                                            |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   i chooses one row and loads e[i] once.                                                                |
+    //   j walks the 12 columns in that row and loads e[j] for the right-scale term.                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const ei = e.data[i];
+        inline for (0..12) |j| {
+            const idx = row + j;
+            const ej = e.data[j];
+            result.data[idx] = ei * a.data[idx] + b.data[idx] * ej;
+        }
+    }
+}
+
+fn esmulSemulSelf12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+) void {
+    // esmulSemulSelf12Into (self left and right diagonal scales, fixed n=12) -------------------------------- |
+    // Same matrix appears on both sides of the diagonal scale.                                                |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] * (e[i] + e[j])                                                                     |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   e[i] is reused across the row.                                                                        |
+    //   e[j] changes with each column, giving the symmetric scale for A[i,j].                                 |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const ei = e.data[i];
+        inline for (0..12) |j| {
+            const idx = row + j;
+            result.data[idx] = a.data[idx] * (ei + e.data[j]);
+        }
+    }
+}
+
+fn esmulSemulAdd12(
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) Mat {
+    // esmulSemulAdd12 (two diagonal scales plus add, fixed n=12 return value) ------------------------------- |
+    // Returning wrapper around esmulSemulAdd12Into.                                                           |
+    // The caller-owned-output version holds the fixed-shape two-sided diagonal scale plus add loop.           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    esmulSemulAdd12Into(&result, e, a, b, c);
+    return result;
+}
+
+fn esmulSemulAdd12Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+    noalias c: *const Mat,
+) void {
+    // esmulSemulAdd12Into (two diagonal scales plus add, fixed n=12) ---------------------------------------- |
+    // Fixed-shape two-sided diagonal scale plus add.                                                          |
+    //                                                                                                         |
+    //   left term  : e[i] * A[i,j]                                                                            |
+    //   right term : B[i,j] * e[j]                                                                            |
+    //   add term   : C[i,j]                                                                                   |
+    //                                                                                                         |
+    // Row/column walk                                                                                         |
+    //   e[i] is reused across one row.                                                                        |
+    //   e[j] changes with each column.                                                                        |
+    //   the add term C[i,j] uses the same row-major slot as the two scaled terms.                             |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const ei = e.data[i];
+        inline for (0..12) |j| {
+            const idx = row + j;
+            const ej = e.data[j];
+            result.data[idx] = (ei * a.data[idx] + b.data[idx] * ej) + c.data[idx];
+        }
+    }
+}
+
+fn esmulSemulAddProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+    noalias b: *const Mat,
+) void {
+    // esmulSemulAddProductKnownNonzero12x10Into (retained product plus two scales, fixed 12x10) ------------- |
+    // Fixed-shape fused kernel after the caller has already retained B*A.                                     |
+    //                                                                                                         |
+    // B*A uses the Gaussian sum k=0..9. For each row i, B[i,0..9] is splatted once, then reused while the     |
+    // loop walks A column pairs. The two diagonal-scale terms are added after the product pair.               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    @setEvalBranchQuota(20_000);
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+
+        // B row scalars --------------------------------------------------------------------------------------|
+        // Read B[i,0..9] once for this output row. Each value becomes a two-lane vector below.                |
+        const b0 = b.data[row];
+        const b1 = b.data[row + 1];
+        const b2 = b.data[row + 2];
+        const b3 = b.data[row + 3];
+        const b4 = b.data[row + 4];
+        const b5 = b.data[row + 5];
+        const b6 = b.data[row + 6];
+        const b7 = b.data[row + 7];
+        const b8 = b.data[row + 8];
+        const b9 = b.data[row + 9];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // A Gaussian rows ------------------------------------------------------------------------------------|
+        // a0..a9 are the A rows used in product = B*A over Gaussian k.                                        |
+        const a0 = a.data[0..12];
+        const a1 = a.data[12..24];
+        const a2 = a.data[24..36];
+        const a3 = a.data[36..48];
+        const a4 = a.data[48..60];
+        const a5 = a.data[60..72];
+        const a6 = a.data[72..84];
+        const a7 = a.data[84..96];
+        const a8 = a.data[96..108];
+        const a9 = a.data[108..120];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // Local row slices -----------------------------------------------------------------------------------|
+        // These rows are loaded in two-column pairs inside the inner loop.                                    |
+        //                                                                                                     |
+        //   A[i,j:j+2]          left-scale base term                                                          |
+        //   B[i,j:j+2]          right-scale base term                                                         |
+        //   result[i,j:j+2]     two output columns                                                            |
+        const a_row = a.data[row .. row + 12];
+        const b_row = b.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // Row scale and B broadcasts -------------------------------------------------------------------------|
+        // e[i] is copied into both lanes because the left-scale base uses the same row scale for both output  |
+        // columns. B[i,0..9] is copied the same way so each B[i,k] multiplies A[k,j] and A[k,j+1].            |
+        //                                                                                                     |
+        //   ei  = [e[i], e[i]]                                                                                |
+        //   b0v = [B[i,0], B[i,0]]                                                                            |
+        //   b1v = [B[i,1], B[i,1]]                                                                            |
+        //   ...                                                                                               |
+        //   b9v = [B[i,9], B[i,9]]                                                                            |
+        const ei: @Vector(2, f64) = @splat(e.data[i]);
+        const b0v: @Vector(2, f64) = @splat(b0);
+        const b1v: @Vector(2, f64) = @splat(b1);
+        const b2v: @Vector(2, f64) = @splat(b2);
+        const b3v: @Vector(2, f64) = @splat(b3);
+        const b4v: @Vector(2, f64) = @splat(b4);
+        const b5v: @Vector(2, f64) = @splat(b5);
+        const b6v: @Vector(2, f64) = @splat(b6);
+        const b7v: @Vector(2, f64) = @splat(b7);
+        const b8v: @Vector(2, f64) = @splat(b8);
+        const b9v: @Vector(2, f64) = @splat(b9);
+        // ----------------------------------------------------------------------------------------------------|
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+
+            // Product pair plus two diagonal-scale pairs -----------------------------------------------------|
+            // product[j:j+2] = sum k=0..9 B[i,k] * A[k,j:j+2].                                                |
+            // base[j:j+2]    = e[i] * A[i,j:j+2] + B[i,j:j+2] * e[j:j+2].                                     |
+            // ------------------------------------------------------------------------------------------------|
+
+            var product = b0v * loadPair(a0, j);
+            product += b1v * loadPair(a1, j);
+            product += b2v * loadPair(a2, j);
+            product += b3v * loadPair(a3, j);
+            product += b4v * loadPair(a4, j);
+            product += b5v * loadPair(a5, j);
+            product += b6v * loadPair(a6, j);
+            product += b7v * loadPair(a7, j);
+            product += b8v * loadPair(a8, j);
+            product += b9v * loadPair(a9, j);
+            const value =
+                (ei * loadPair(a_row, j) + loadPair(b_row, j) * loadPair(e.data[0..], j)) +
+                product;
+
+            // SIMD source shape and retained codegen ---------------------------------------------------------|
+            // The retained product is B*A, but the vector shape is the same: B[i,k] is copied into both       |
+            // lanes, A[k,j:j+2] is loaded as one pair, and the result pair is stored once.                    |
+            // The extra scale terms use the same j:j+2 pair, so they do not change the two-lane layout.       |
+            // ------------------------------------------------------------------------------------------------|
+
+            storePair(result_row, j, value);
+        }
+    }
+}
+
+fn esmulSemulSelfAddProductKnownNonzero12x10Into(
+    noalias result: *Mat,
+    noalias e: *const Vec,
+    noalias a: *const Mat,
+) void {
+    // esmulSemulSelfAddProductKnownNonzero12x10Into (retained self-product plus two scales, fixed 12x10) ---- |
+    // Fixed-shape fused kernel after the caller has already retained A*A.                                     |
+    //                                                                                                         |
+    // A*A uses the Gaussian sum k=0..9. The same matrix supplies both the row scalars and the Gaussian rows.  |
+    // The symmetric diagonal-scale term A[i,j] * (e[i] + e[j]) is added after the product pair.               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    @setEvalBranchQuota(20_000);
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+
+        // A row scalars --------------------------------------------------------------------------------------|
+        // Read A[i,0..9] once for this output row. Each value becomes a two-lane vector below.                |
+        const a0 = a.data[row];
+        const a1 = a.data[row + 1];
+        const a2 = a.data[row + 2];
+        const a3 = a.data[row + 3];
+        const a4 = a.data[row + 4];
+        const a5 = a.data[row + 5];
+        const a6 = a.data[row + 6];
+        const a7 = a.data[row + 7];
+        const a8 = a.data[row + 8];
+        const a9 = a.data[row + 9];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // A Gaussian rows ------------------------------------------------------------------------------------|
+        // c0..c9 are A rows used as the right-hand side of product = A*A over Gaussian k.                     |
+        const c0 = a.data[0..12];
+        const c1 = a.data[12..24];
+        const c2 = a.data[24..36];
+        const c3 = a.data[36..48];
+        const c4 = a.data[48..60];
+        const c5 = a.data[60..72];
+        const c6 = a.data[72..84];
+        const c7 = a.data[84..96];
+        const c8 = a.data[96..108];
+        const c9 = a.data[108..120];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // Local row slices -----------------------------------------------------------------------------------|
+        // A[i,j:j+2] supplies the symmetric scale term. result[i,j:j+2] receives the two output columns.      |
+        const a_row = a.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // Row scale and A broadcasts -------------------------------------------------------------------------|
+        // e[i] is copied into both lanes for the symmetric scale. A[i,0..9] is copied the same way so each    |
+        // A[i,k] multiplies A[k,j] and A[k,j+1].                                                              |
+        //                                                                                                     |
+        //   ei  = [e[i], e[i]]                                                                                |
+        //   a0v = [A[i,0], A[i,0]]                                                                            |
+        //   a1v = [A[i,1], A[i,1]]                                                                            |
+        //   ...                                                                                               |
+        //   a9v = [A[i,9], A[i,9]]                                                                            |
+        const ei: @Vector(2, f64) = @splat(e.data[i]);
+        const a0v: @Vector(2, f64) = @splat(a0);
+        const a1v: @Vector(2, f64) = @splat(a1);
+        const a2v: @Vector(2, f64) = @splat(a2);
+        const a3v: @Vector(2, f64) = @splat(a3);
+        const a4v: @Vector(2, f64) = @splat(a4);
+        const a5v: @Vector(2, f64) = @splat(a5);
+        const a6v: @Vector(2, f64) = @splat(a6);
+        const a7v: @Vector(2, f64) = @splat(a7);
+        const a8v: @Vector(2, f64) = @splat(a8);
+        const a9v: @Vector(2, f64) = @splat(a9);
+        // ----------------------------------------------------------------------------------------------------|
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+
+            // Self-product pair plus symmetric scale ---------------------------------------------------------|
+            // product[j:j+2] = sum k=0..9 A[i,k] * A[k,j:j+2].                                                |
+            // base[j:j+2]    = A[i,j:j+2] * (e[i] + e[j:j+2]).                                                |
+            // ------------------------------------------------------------------------------------------------|
+
+            var product = a0v * loadPair(c0, j);
+            product += a1v * loadPair(c1, j);
+            product += a2v * loadPair(c2, j);
+            product += a3v * loadPair(c3, j);
+            product += a4v * loadPair(c4, j);
+            product += a5v * loadPair(c5, j);
+            product += a6v * loadPair(c6, j);
+            product += a7v * loadPair(c7, j);
+            product += a8v * loadPair(c8, j);
+            product += a9v * loadPair(c9, j);
+            const value = loadPair(a_row, j) * (ei + loadPair(e.data[0..], j)) + product;
+
+            // SIMD source shape and retained codegen ---------------------------------------------------------|
+            // The self-product still follows the same pair-loop proof: A[i,k] is splatted, A[k,j:j+2] is      |
+            // loaded as two lanes, and the symmetric scale term is added to the same output pair.             |
             // ------------------------------------------------------------------------------------------------|
 
             storePair(result_row, j, value);
