@@ -212,6 +212,58 @@ test "diagonal scale helpers match scalar references for fixed n12 path" {
     );
 }
 
+test "smulAddSemul3 generic path matches retained and skipped scalar references" {
+    var a = rows.Mat.zero(6);
+    var c = rows.Mat.zero(6);
+    var e = rows.Vec.zero(6);
+    fillPattern(&a, 6, 0.03, 0.07);
+    fillPattern(&c, 6, -0.04, 0.09);
+    fillVector(&e, 6, 0.5, 0.125);
+
+    const retained = matrix_12x10.smulAddSemul3(6, 4, 1.0e-30, &a, &e, &c);
+    const retained_expected = scalarSmulAddSemul3(6, 4, &a, &e, &c);
+    try expectMatrixClose(retained_expected, retained, 6, 1.0e-13);
+
+    const skipped = matrix_12x10.smulAddSemul3(6, 4, 1.0e9, &a, &e, &c);
+    const skipped_expected = scalarSemulAdd(6, &a, &e, &c);
+    try expectMatrixClose(skipped_expected, skipped, 6, 1.0e-13);
+}
+
+test "smulAddSemul3 fixed path matches retained and skipped scalar references" {
+    var a = rows.Mat.zero(12);
+    var c = rows.Mat.zero(12);
+    var e = rows.Vec.zero(12);
+    fillPattern(&a, 12, 0.017, 0.031);
+    fillPattern(&c, 12, 0.019, -0.027);
+    fillVector(&e, 12, 0.5, 0.0625);
+
+    const retained = matrix_12x10.smulAddSemul3(12, 10, 1.0e-30, &a, &e, &c);
+    const retained_expected = scalarSmulAddSemul3(12, 10, &a, &e, &c);
+    try expectMatrixClose(retained_expected, retained, 12, 1.0e-13);
+
+    const skipped = matrix_12x10.smulAddSemul3(12, 10, 1.0e9, &a, &e, &c);
+    const skipped_expected = scalarSemulAdd(12, &a, &e, &c);
+    try expectMatrixClose(skipped_expected, skipped, 12, 1.0e-13);
+}
+
+test "smulAddSemul3KnownRightTraceInto writes caller-owned output" {
+    var a = rows.Mat.zero(12);
+    var c = rows.Mat.zero(12);
+    var e = rows.Vec.zero(12);
+    fillPattern(&a, 12, 0.017, 0.031);
+    fillPattern(&c, 12, 0.019, -0.027);
+    fillVector(&e, 12, 0.5, 0.0625);
+
+    const trace_c = scalarGaussianTrace(12, 10, &c);
+    var retained = rows.Mat.zero(12);
+    matrix_12x10.smulAddSemul3KnownRightTraceInto(&retained, 12, 10, 1.0e-30, &a, &e, &c, trace_c);
+    try expectMatrixClose(scalarSmulAddSemul3(12, 10, &a, &e, &c), retained, 12, 1.0e-13);
+
+    var skipped = rows.Mat.zero(12);
+    matrix_12x10.smulAddSemul3KnownRightTraceInto(&skipped, 12, 10, 1.0e9, &a, &e, &c, trace_c);
+    try expectMatrixClose(scalarSemulAdd(12, &a, &e, &c), skipped, 12, 1.0e-13);
+}
+
 fn fillPattern(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64) void {
     // fillPattern ------------------------------------------------------------------------------------------- |
     // Build deterministic dense test input with nonzero Gaussian traces.                                      |
@@ -331,6 +383,42 @@ fn scalarMatAddSemul3(
     for (0..n) |row| {
         for (0..n) |col| {
             result.set(row, col, (a.get(row, col) + b.get(row, col) * e.get(col)) + c.get(row, col));
+        }
+    }
+    return result;
+}
+
+fn scalarSemulAdd(n: usize, a: *const rows.Mat, e: *const rows.Vec, b: *const rows.Mat) rows.Mat {
+    // scalarSemulAdd ---------------------------------------------------------------------------------------- |
+    // Independent test reference for A * diag(e) + B.                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            result.set(row, col, a.get(row, col) * e.get(col) + b.get(row, col));
+        }
+    }
+    return result;
+}
+
+fn scalarSmulAddSemul3(
+    n: usize,
+    n_gauss: usize,
+    a: *const rows.Mat,
+    e: *const rows.Vec,
+    c: *const rows.Mat,
+) rows.Mat {
+    // scalarSmulAddSemul3 ----------------------------------------------------------------------------------- |
+    // Independent test reference for C + A * diag(e) + A*C over Gaussian streams.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |gauss_index| {
+                product += a.get(row, gauss_index) * c.get(gauss_index, col);
+            }
+            result.set(row, col, (c.get(row, col) + a.get(row, col) * e.get(col)) + product);
         }
     }
     return result;

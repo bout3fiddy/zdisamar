@@ -397,6 +397,102 @@ pub inline fn matAddSemul3(
     return result;
 }
 
+pub inline fn smulAddSemul3(
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+) Mat {
+    // smulAddSemul3 (small multiply plus right diagonal scale) ---------------------------------------------- |
+    // Fused LABOS update used in layer-combination algebra.                                                   |
+    //                                                                                                         |
+    //   product[i,j] = sum k=0..n_gauss-1 A[i,k] * C[k,j]                                                     |
+    //   out[i,j]     = C[i,j] + A[i,j] * e[j] + product[i,j]                                                  |
+    //                                                                                                         |
+    // `smul` supplies the Gaussian product. `semul` supplies the right diagonal scale. The trace gate can     |
+    // skip product and fall back to the cheaper right-scale add rtm_config.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+
+    // Fused update: out = C + A*diag(e) + A*C over Gaussian k.
+    if (n == 12 and n_gauss == 10) return smulAddSemul3_12(threshold_mul, a, e, c);
+    var product: Mat = undefined;
+    smulInto(&product, n, n_gauss, threshold_mul, a, c);
+    return matAddSemul3(n, c, a, e, &product);
+}
+
+pub inline fn smulAddSemul3KnownRightTrace(
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trace_c: f64,
+) Mat {
+    // smulAddSemul3KnownRightTrace (small multiply plus right scale, trace(C_gg) known) --------------------- |
+    // Same fused update as smulAddSemul3, but the caller already computed trace(C_gg).                        |
+    //                                                                                                         |
+    // This function scans only trace(A_gg), then uses both traces to decide whether A*C should be retained.   |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) return smulAddSemul3_12KnownRightTrace(threshold_mul, a, e, c, trace_c);
+
+    var trace_a: f64 = 0.0;
+    for (0..n_gauss) |k| trace_a += a.data[k * n + k];
+
+    var product: Mat = undefined;
+    if (smulIntoKnownTracesIfNonzero(&product, n, n_gauss, threshold_mul, trace_a, trace_c, a, c)) {
+        return matAddSemul3(n, c, a, e, &product);
+    }
+    return semulAdd(n, a, e, c);
+}
+
+pub inline fn smulAddSemul3KnownRightTraceInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trace_c: f64,
+) void {
+    // smulAddSemul3KnownRightTraceInto (small multiply plus right scale into caller storage) ---------------- |
+    // Caller-owned-output version of smulAddSemul3KnownRightTrace.                                            |
+    //                                                                                                         |
+    // Used when the surrounding LABOS loop already owns the output buffer and already knows trace(C_gg).      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) {
+        return smulAddSemul3_12KnownRightTraceInto(out, threshold_mul, a, e, c, trace_c);
+    }
+    out.* = smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, a, e, c, trace_c);
+}
+
+pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+    // semulAdd (right diagonal scale plus add) -------------------------------------------------------------- |
+    // Fused right-diagonal scale plus add.                                                                    |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] * e[j] + B[i,j]                                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12) return semulAdd12(a, e, b);
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..n) |_| {
+
+            // Right-scale add: out[i,j] = A[i,j] * e[j] + B[i,j].
+            result.data[idx] = a.data[idx] * ej + b.data[idx];
+            idx += n;
+        }
+    }
+    return result;
+}
+
 fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     // smulNonzeroProduct ------------------------------------------------------------------------------------ |
     // Build A * B after the caller has already retained the product.                                          |
@@ -565,6 +661,18 @@ inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
 
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&row[j]);
     return pair.*;
+}
+
+inline fn storePair(row: []f64, comptime j: usize, values: @Vector(2, f64)) void {
+    // storePair (two-column f64 vector store) --------------------------------------------------------------- |
+    // Write columns j and j+1 from one @Vector(2, f64).                                                       |
+    //                                                                                                         |
+    //   lane 0 -> column j                                                                                    |
+    //   lane 1 -> column j+1                                                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const pair: *align(1) @Vector(2, f64) = @ptrCast(&row[j]);
+    pair.* = values;
 }
 
 inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, noalias ab: *const Mat) void {
@@ -1159,4 +1267,316 @@ fn matAddSemul3_12(
         }
     }
     return result;
+}
+
+fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+    // semulAdd12 (right diagonal scale plus add, fixed n=12 return value) ----------------------------------- |
+    // Returning wrapper around semulAdd12Into. The caller-owned-output version holds the fixed-shape right    |
+    // diagonal scale plus add loop.                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    semulAdd12Into(&result, a, e, b);
+    return result;
+}
+
+fn semulAdd12Into(noalias result: *Mat, a: *const Mat, e: *const Vec, b: *const Mat) void {
+    // semulAdd12Into (right diagonal scale plus add, fixed n=12) -------------------------------------------- |
+    // Fixed-shape right diagonal scale plus add.                                                              |
+    //                                                                                                         |
+    //   out[i,j] = A[i,j] * e[j] + B[i,j]                                                                     |
+    //                                                                                                         |
+    // Column walk                                                                                             |
+    //   j chooses one output column.                                                                          |
+    //   e[j] is loaded once for that column.                                                                  |
+    //   idx starts at j, then idx += 12 walks row-major storage down that column.                             |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        inline for (0..12) |_| {
+            result.data[idx] = a.data[idx] * ej + b.data[idx];
+            idx += 12;
+        }
+    }
+}
+
+fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    // smulAddSemul3_12 (small multiply plus right diagonal scale, fixed 12x10) ------------------------------ |
+    // Fixed-shape entry point for the fused product/update path when neither Gaussian trace is known.         |
+    //                                                                                                         |
+    //   product = A*C over Gaussian k=0..9                                                                    |
+    //   out     = C + A*diag(e) + product                                                                     |
+    //                                                                                                         |
+    // This wrapper scans trace(A_gg) and trace(C_gg), then calls the known-traces kernel so the threshold     |
+    // decision stays in one place.                                                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
+    // Gaussian-block traces ----------------------------------------------------------------------------------|
+    // The threshold uses the 10 Gaussian directions that form the q-series block.                             |
+    //                                                                                                         |
+    //   trace(A_gg) = A[0,0] + A[1,1] + ... + A[9,9]                                                          |
+    //   trace(C_gg) = C[0,0] + C[1,1] + ... + C[9,9]                                                          |
+    //                                                                                                         |
+    // Row-major n=12 puts diagonal slot k at k*12 + k = 13*k.                                                 |
+    // That is why the hard-coded slots are 0, 13, 26, ..., 117.                                               |
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+    var trc = c.data[0];
+    trc += c.data[13];
+    trc += c.data[26];
+    trc += c.data[39];
+    trc += c.data[52];
+    trc += c.data[65];
+    trc += c.data[78];
+    trc += c.data[91];
+    trc += c.data[104];
+    trc += c.data[117];
+    // --------------------------------------------------------------------------------------------------------|
+
+    return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
+}
+
+fn smulAddSemul3_12KnownRightTrace(
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trc: f64,
+) Mat {
+    // smulAddSemul3_12KnownRightTrace (small multiply plus right scale, trace(C_gg) known) ------------------ |
+    // Same fused update as smulAddSemul3_12, but the caller already has trace(C_gg).                          |
+    //                                                                                                         |
+    // This wrapper scans only trace(A_gg), then reuses the known-traces kernel.                               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    // Gaussian-block trace -----------------------------------------------------------------------------------|
+    // trace(C_gg) came from the caller. This wrapper only scans trace(A_gg).                                  |
+    // Row-major n=12 puts A[k,k] at k*12 + k = 13*k for k = 0..9.                                             |
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+    // --------------------------------------------------------------------------------------------------------|
+
+    return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
+}
+
+fn smulAddSemul3_12KnownRightTraceInto(
+    noalias result: *Mat,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trc: f64,
+) void {
+    // smulAddSemul3_12KnownRightTraceInto (small multiply plus right scale into caller storage) ------------- |
+    // Caller-owned-output version when trace(C_gg) is already known.                                          |
+    //                                                                                                         |
+    // It scans trace(A_gg) only, then writes the fused update through the known-traces kernel.                |
+    // --------------------------------------------------------------------------------------------------------|
+
+    // Gaussian-block trace -----------------------------------------------------------------------------------|
+    // trace(C_gg) came from the caller. This caller-owned-output wrapper only scans trace(A_gg).              |
+    // Row-major n=12 puts A[k,k] at k*12 + k = 13*k for k = 0..9.                                             |
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+    // --------------------------------------------------------------------------------------------------------|
+
+    smulAddSemul3_12KnownTracesInto(result, threshold_mul, a, e, c, tra, trc);
+}
+
+fn smulAddSemul3_12KnownTraces(
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    tra: f64,
+    trc: f64,
+) Mat {
+    // smulAddSemul3_12KnownTraces (small multiply plus right scale, both traces known) ---------------------- |
+    // Returning wrapper around smulAddSemul3_12KnownTracesInto.                                               |
+    // Both Gaussian traces are already available, so this does no diagonal scans itself.                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = 12 };
+    smulAddSemul3_12KnownTracesInto(&result, threshold_mul, a, e, c, tra, trc);
+    return result;
+}
+
+fn smulAddSemul3_12KnownTracesInto(
+    noalias result: *Mat,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    tra: f64,
+    trc: f64,
+) void {
+    // smulAddSemul3_12KnownTracesInto (small multiply plus right scale, fixed 12x10) ------------------------ |
+    // Fixed-shape fused kernel for the retained or skipped A*C update.                                        |
+    //                                                                                                         |
+    // If trace(A_gg) * trace(C_gg) is below threshold, the A*C product is skipped and the function writes     |
+    // only C + A*diag(e). Otherwise it uses the same row broadcast / B-row / two-column vector-pair shape     |
+    // as smul12x10Into, then adds the base C + A*diag(e) pair.                                                |
+    // --------------------------------------------------------------------------------------------------------|
+
+    @setEvalBranchQuota(20_000);
+    result.* = .{ .data = undefined, .n = 12 };
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: fixed fused-product trace gate                                                                |
+    // Skip A*C when abs(trace(A_gg) * trace(C_gg)) <= threshold_mul.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2 A. The skipped path       |
+    // keeps the base C + A*diag(e) term and drops only the small Gaussian product contribution.               |
+    if (@abs(tra * trc) <= threshold_mul) {
+        // Product skipped ------------------------------------------------------------------------------------|
+        // The Gaussian product A*C is small enough to ignore. Write only the base term:                       |
+        //                                                                                                     |
+        //   out[i, j : j+2] = C[i, j : j+2] + A[i, j : j+2] * e[j : j+2]                                      |
+        // ----------------------------------------------------------------------------------------------------|
+
+        inline for (0..12) |i| {
+            const row = i * 12;
+            const a_row = a.data[row .. row + 12];
+            const c_row = c.data[row .. row + 12];
+            const result_row = result.data[row .. row + 12];
+            inline for (0..6) |pair_index| {
+                const j = pair_index * 2;
+
+                // Paired base path ---------------------------------------------------------------------------|
+                // No Gaussian product is retained here. loadPair still handles columns j and j+1 together, so |
+                // the skipped-product rtm_config keeps the same two-lane store shape for the base term.       |
+                // --------------------------------------------------------------------------------------------|
+
+                const value = loadPair(c_row, j) + loadPair(a_row, j) * loadPair(e.data[0..], j);
+                storePair(result_row, j, value);
+            }
+        }
+        return;
+    }
+    // end tradeoff: fixed fused-product trace gate -----------------------------------------------------------|
+
+    inline for (0..12) |i| {
+        const row = i * 12;
+
+        // A row scalars --------------------------------------------------------------------------------------|
+        // Read A[i,0..9] once for this output row. The scalar values are splatted below so each one can       |
+        // multiply a two-column pair from C.                                                                  |
+        const a0 = a.data[row];
+        const a1 = a.data[row + 1];
+        const a2 = a.data[row + 2];
+        const a3 = a.data[row + 3];
+        const a4 = a.data[row + 4];
+        const a5 = a.data[row + 5];
+        const a6 = a.data[row + 6];
+        const a7 = a.data[row + 7];
+        const a8 = a.data[row + 8];
+        const a9 = a.data[row + 9];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // C Gaussian rows ------------------------------------------------------------------------------------|
+        // c0..c9 are the right-hand rows used in product = A*C over Gaussian k.                               |
+        const c0 = c.data[0..12];
+        const c1 = c.data[12..24];
+        const c2 = c.data[24..36];
+        const c3 = c.data[36..48];
+        const c4 = c.data[48..60];
+        const c5 = c.data[60..72];
+        const c6 = c.data[72..84];
+        const c7 = c.data[84..96];
+        const c8 = c.data[96..108];
+        const c9 = c.data[108..120];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // Local row slices -----------------------------------------------------------------------------------|
+        // These rows are loaded in two-column pairs inside the inner loop.                                    |
+        //                                                                                                     |
+        //   A[i,j:j+2]          right-scale base term                                                         |
+        //   C[i,j:j+2]          base add term                                                                 |
+        //   result[i,j:j+2]     two output columns                                                            |
+        const a_row = a.data[row .. row + 12];
+        const c_row = c.data[row .. row + 12];
+        const result_row = result.data[row .. row + 12];
+        // ----------------------------------------------------------------------------------------------------|
+
+        // A row broadcasts -----------------------------------------------------------------------------------|
+        // Copy A[i,0..9] into both SIMD lanes so each A[i,k] multiplies C[k,j] and C[k,j+1].                  |
+        //                                                                                                     |
+        //   a0v = [A[i,0], A[i,0]]                                                                            |
+        //   a1v = [A[i,1], A[i,1]]                                                                            |
+        //   ...                                                                                               |
+        //   a9v = [A[i,9], A[i,9]]                                                                            |
+        const a0v: @Vector(2, f64) = @splat(a0);
+        const a1v: @Vector(2, f64) = @splat(a1);
+        const a2v: @Vector(2, f64) = @splat(a2);
+        const a3v: @Vector(2, f64) = @splat(a3);
+        const a4v: @Vector(2, f64) = @splat(a4);
+        const a5v: @Vector(2, f64) = @splat(a5);
+        const a6v: @Vector(2, f64) = @splat(a6);
+        const a7v: @Vector(2, f64) = @splat(a7);
+        const a8v: @Vector(2, f64) = @splat(a8);
+        const a9v: @Vector(2, f64) = @splat(a9);
+        // ----------------------------------------------------------------------------------------------------|
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+
+            // Product pair plus base pair --------------------------------------------------------------------|
+            // First compute product[j:j+2] = sum k=0..9 A[i,k] * C[k,j:j+2].                                  |
+            // Then add the local base term C[i,j:j+2] + A[i,j:j+2] * e[j:j+2].                                |
+            // ------------------------------------------------------------------------------------------------|
+
+            var product = a0v * loadPair(c0, j);
+            product += a1v * loadPair(c1, j);
+            product += a2v * loadPair(c2, j);
+            product += a3v * loadPair(c3, j);
+            product += a4v * loadPair(c4, j);
+            product += a5v * loadPair(c5, j);
+            product += a6v * loadPair(c6, j);
+            product += a7v * loadPair(c7, j);
+            product += a8v * loadPair(c8, j);
+            product += a9v * loadPair(c9, j);
+            const base = loadPair(c_row, j) + loadPair(a_row, j) * loadPair(e.data[0..], j);
+
+            // ARM64 SIMD codegen proof -----------------------------------------------------------------------|
+            // Retained primitive harness symbols codegen_smul_add_semul3_12 and                               |
+            // codegen_smul_add_semul3_known_right_trace_12 both call this known-traces shape.                 |
+            // Current ReleaseFast disassembly for the shared pair loop includes:                              |
+            //                                                                                                 |
+            //   fmul.2d   v4, v29, v5[0]          multiply two f64 lanes by one row scalar                    |
+            //   fadd.2d   v4, v4, v23             add two f64 product lanes                                   |
+            //   str       q3, [sp, #0x400]        store two f64 result lanes                                  |
+            //                                                                                                 |
+            // Retained harness mix: 1729 floating-point arithmetic instructions, zero floating-point divides. |
+            // ------------------------------------------------------------------------------------------------|
+
+            storePair(result_row, j, base + product);
+        }
+    }
 }
