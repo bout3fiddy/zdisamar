@@ -3,19 +3,30 @@ const rows = @import("rows.zig");
 const Mat = rows.Mat;
 const Vec = rows.Vec;
 
+const threshold_q: f64 = 1.0e-3;
+const lu_diagonal_floor: f64 = 1.0e-30;
+
 // matrix_12x10.zig -----------------------------------------------------------------------------------------  |
 // Small LABOS matrix multiply kernels used by layer-doubling and q-series transport.                          |
 //                                                                                                             |
 // provenance                                                                                                  |
-//   Trace gates, generic multiply shape, and the fixed 12x10 loop are ported from main:                       |
-//   `src/forward_model/radiative_transfer/labos/matrix.zig` `smul`, `smulInto`, and `smul12x10Into`.          |
+//   Trace gates, generic multiply/q-series shape, and the fixed 12x10 loops are ported from main:             |
+//   `src/forward_model/radiative_transfer/labos/matrix.zig` `smul`, `smulInto`, `qseries`,                    |
+//   `qseriesFromProduct`, `smul12x10Into`, and `qseriesFromProduct12x10Into`.                                 |
 //                                                                                                             |
 // math                                                                                                        |
 //   C[i,j] = sum over Gaussian k of A[i,k] * B[k,j].                                                          |
+//   Q(AB) uses the LABOS repeated-scattering transform:                                                       |
+//     Q_gg = inverse(I - AB_gg) - I                                                                           |
+//     Q_gx = inverse(I - AB_gg) * AB_gx                                                                       |
+//     Q_xg = AB_xg * inverse(I - AB_gg)                                                                       |
+//     Q_xx = AB_xx + Q_xg * AB_gx                                                                             |
 //                                                                                                             |
 // numerical guard                                                                                             |
 //   threshold_mul is the LABOS product-size gate. When abs(trace(A_gg) * trace(B_gg)) is below the caller     |
 //   threshold, the product is treated as negligible and a zero matrix is returned.                            |
+//   threshold_q skips the q-series inverse when AB_gg is negligible. lu_diagonal_floor returns the bounded AB |
+//   product when a pivot would make the inverse unstable.                                                     |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
@@ -241,6 +252,57 @@ pub inline fn smulIntoKnownTracesIfNonzero(
     }
     out.* = smulNonzeroProduct(n, n_gauss, a, b);
     return true;
+}
+
+pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    // qseries (thresholded product, then q-series transform) ------------------------------------------------ |
+    // Build AB with the same trace-gated small matrix multiply as smul, then convert AB into the LABOS        |
+    // q-series matrix.                                                                                        |
+    //                                                                                                         |
+    //   AB = A * B over Gaussian k                                                                            |
+    //   out = Q(AB)                                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const ab = smul(n, n_gauss, threshold_mul, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+    // qseriesKnownNonzeroProduct (q-series after retained product) ------------------------------------------ |
+    // Caller already knows A*B should not be thresholded to zero. Build the product directly, then apply the  |
+    // q-series transform.                                                                                     |
+    //                                                                                                         |
+    // This is used by callers that already made the trace decision while building surrounding terms.          |
+    // --------------------------------------------------------------------------------------------------------|
+
+    const ab = smulNonzeroProduct(n, n_gauss, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+pub inline fn qseriesKnownNonzeroProductInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    // qseriesKnownNonzeroProductInto (q-series into caller storage) ----------------------------------------- |
+    // Caller-owned-output version of qseriesKnownNonzeroProduct.                                              |
+    //                                                                                                         |
+    //   1. build retained AB = A * B                                                                          |
+    //   2. write Q(AB) into out                                                                               |
+    //                                                                                                         |
+    // Fixed n=12, n_gauss=10 uses the same hand-shaped product kernel as smul12x10Into before the q-series    |
+    // solve.                                                                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var ab: Mat = undefined;
+    if (n == 12 and n_gauss == 10) {
+        smul12x10Into(&ab, a, b);
+    } else {
+        ab = smulNonzeroProduct(n, n_gauss, a, b);
+    }
+    qseriesFromProductInto(out, n, n_gauss, &ab);
 }
 
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
@@ -503,6 +565,448 @@ inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
 
     const pair: *align(1) const @Vector(2, f64) = @ptrCast(&row[j]);
     return pair.*;
+}
+
+inline fn qseriesFromProductInto(noalias out: *Mat, n: usize, n_gauss: usize, noalias ab: *const Mat) void {
+    // qseriesFromProductInto (Q(AB) into caller storage) ---------------------------------------------------- |
+    // Caller-owned-output wrapper around qseriesFromProduct.                                                  |
+    //                                                                                                         |
+    // Fixed n=12, n_gauss=10 writes through the fixed q-series kernel; generic n delegates to the returning   |
+    // implementation.                                                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) {
+        qseriesFromProduct12x10Into(out, ab);
+        return;
+    }
+    out.* = qseriesFromProduct(n, n_gauss, ab);
+}
+
+inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *const Mat) Mat {
+    // qseriesFromProduct (build Q(AB) from a retained AB product) ------------------------------------------- |
+    // Turn an already-built AB product into the LABOS q-series matrix.                                        |
+    //                                                                                                         |
+    // zdisamar uses the same repeated-reflection shape as the reference Qseries:                              |
+    //                                                                                                         |
+    //   AB + AB * AB + AB * AB * AB + ...                                                                     |
+    //                                                                                                         |
+    // Instead of summing terms directly, LABOS inverts the Gaussian block of I - AB and fills the extra       |
+    // view/solar rows and columns from that inverse.                                                          |
+    //                                                                                                         |
+    // Split AB by stream kind:                                                                                |
+    //   [ gg | gx ]                                                                                           |
+    //   [ xg | xx ]                                                                                           |
+    //                                                                                                         |
+    //   Q_gg = inverse(I - AB_gg) - I                                                                         |
+    //   Q_gx = inverse(I - AB_gg) * AB_gx                                                                     |
+    //   Q_xg = AB_xg * inverse(I - AB_gg)                                                                     |
+    //   Q_xx = AB_xx + Q_xg * AB_gx                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) return qseriesFromProduct12x10(ab_product);
+
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: q-series trace gate                                                                           |
+    // Return AB directly when abs(trace(AB_gg)) < threshold_q = 1.0e-3.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // Q adds repeated-reflection feedback from inverse(I - AB_gg). When the Gaussian trace is tiny, this      |
+    // skips the inversion and keeps AB as the q-series result.                                                |
+    var gaussian_trace: f64 = 0.0;
+    for (0..n_gauss) |gaussian_index| {
+        gaussian_trace += ab_product.data[gaussian_index * n + gaussian_index];
+    }
+    if (@abs(gaussian_trace) < threshold_q) return ab_product.*;
+    // end tradeoff: q-series trace gate ----------------------------------------------------------------------|
+
+    const n_extra_streams = n - n_gauss;
+    var factor_matrix: [rows.max_gauss * rows.max_gauss]f64 = undefined;
+    for (0..n_gauss) |gaussian_row| {
+        const factor_row_offset = gaussian_row * n_gauss;
+        const product_row_offset = gaussian_row * n;
+
+        for (0..n_gauss) |gaussian_col| {
+            const identity_value: f64 = if (gaussian_row == gaussian_col) 1.0 else 0.0;
+
+            // Factorization target: M = I - AB restricted to Gaussian streams.
+            factor_matrix[factor_row_offset + gaussian_col] =
+                identity_value - ab_product.data[product_row_offset + gaussian_col];
+        }
+    }
+
+    var pivot_row: [rows.max_gauss]usize = undefined;
+    var pivot_row_offset: [rows.max_gauss]usize = undefined;
+    var upper_inverse_diag: [rows.max_gauss]f64 = undefined;
+
+    // Generic LU storage -------------------------------------------------------------------------------------|
+    // factor_matrix holds M = I - AB_gg in a flat n_gauss by n_gauss table.                                   |
+    // pivot_row[i] is the original row currently used at LU row i.                                            |
+    // pivot_row_offset[i] is pivot_row[i] * n_gauss, so inner loops avoid that multiply.                      |
+    // upper_inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    for (0..n_gauss) |factor_row| {
+        pivot_row[factor_row] = factor_row;
+        pivot_row_offset[factor_row] = factor_row * n_gauss;
+    }
+
+    // Pivoted LU ---------------------------------------------------------------------------------------------|
+    // Factor M into L and U in-place. A near-zero pivot returns the bounded AB fallback.                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    for (0..n_gauss) |pivot_col| {
+        var max_val: f64 = @abs(factor_matrix[pivot_row_offset[pivot_col] + pivot_col]);
+        var max_row = pivot_col;
+
+        for (pivot_col + 1..n_gauss) |candidate_row| {
+            const val = @abs(factor_matrix[pivot_row_offset[candidate_row] + pivot_col]);
+            if (val > max_val) {
+                max_val = val;
+                max_row = candidate_row;
+            }
+        }
+
+        if (max_row != pivot_col) {
+            const pivot_tmp = pivot_row[pivot_col];
+            pivot_row[pivot_col] = pivot_row[max_row];
+            pivot_row[max_row] = pivot_tmp;
+
+            const offset_tmp = pivot_row_offset[pivot_col];
+            pivot_row_offset[pivot_col] = pivot_row_offset[max_row];
+            pivot_row_offset[max_row] = offset_tmp;
+        }
+
+        const factor_col_offset = pivot_row_offset[pivot_col];
+        const diag = factor_matrix[factor_col_offset + pivot_col];
+
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: LU pivot floor                                                                            |
+        // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
+        // ----------------------------------------------------------------------------------------------------|
+        // This avoids unstable division in the Gaussian-block inverse. The fallback keeps the pre-inversion   |
+        // product so the q-series correction remains bounded.                                                 |
+        if (@abs(diag) < lu_diagonal_floor) return ab_product.*;
+        // end tradeoff: LU pivot floor -----------------------------------------------------------------------|
+
+        const inv_diag = 1.0 / diag;
+        upper_inverse_diag[pivot_col] = inv_diag;
+
+        for (pivot_col + 1..n_gauss) |target_row| {
+            const target_row_offset = pivot_row_offset[target_row];
+            const factor = factor_matrix[target_row_offset + pivot_col] * inv_diag;
+            factor_matrix[target_row_offset + pivot_col] = factor;
+
+            for (pivot_col + 1..n_gauss) |update_col| {
+                factor_matrix[target_row_offset + update_col] -=
+                    factor * factor_matrix[factor_col_offset + update_col];
+            }
+        }
+    }
+
+    var inverse: [rows.max_gauss * rows.max_gauss]f64 = undefined;
+    inverseGaussianBlock(&inverse, n_gauss, &factor_matrix, &pivot_row, &pivot_row_offset, &upper_inverse_diag);
+    return fillQseriesBlocks(n, n_gauss, n_extra_streams, ab_product, &inverse);
+}
+
+fn inverseGaussianBlock(
+    inverse: *[rows.max_gauss * rows.max_gauss]f64,
+    n_gauss: usize,
+    factor_matrix: *const [rows.max_gauss * rows.max_gauss]f64,
+    pivot_row: *const [rows.max_gauss]usize,
+    pivot_row_offset: *const [rows.max_gauss]usize,
+    upper_inverse_diag: *const [rows.max_gauss]f64,
+) void {
+    // inverseGaussianBlock ---------------------------------------------------------------------------------- |
+    // Solve one identity-column right-hand side at a time after generic pivoted LU factorization.             |
+    //                                                                                                         |
+    // For one inverse column:                                                                                 |
+    //   pivoted identity column -> solve L*y -> solve U*x -> store x in inverse[:, column]                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    for (0..n_gauss) |inverse_col| {
+        var forward_solution: [rows.max_gauss]f64 = undefined;
+        for (0..n_gauss) |factor_row| {
+            var residual: f64 = if (pivot_row[factor_row] == inverse_col) 1.0 else 0.0;
+            const factor_row_offset = pivot_row_offset[factor_row];
+
+            for (0..factor_row) |known_col| {
+                residual -= factor_matrix[factor_row_offset + known_col] * forward_solution[known_col];
+            }
+            forward_solution[factor_row] = residual;
+        }
+
+        var inverse_column: [rows.max_gauss]f64 = undefined;
+        var reverse_row = n_gauss;
+        while (reverse_row > 0) {
+            reverse_row -= 1;
+            var residual: f64 = forward_solution[reverse_row];
+            const factor_row_offset = pivot_row_offset[reverse_row];
+
+            for (reverse_row + 1..n_gauss) |known_col| {
+                residual -= factor_matrix[factor_row_offset + known_col] * inverse_column[known_col];
+            }
+            inverse_column[reverse_row] = residual * upper_inverse_diag[reverse_row];
+        }
+
+        for (0..n_gauss) |factor_row| {
+            inverse[factor_row * n_gauss + inverse_col] = inverse_column[factor_row];
+        }
+    }
+}
+
+fn fillQseriesBlocks(
+    n: usize,
+    n_gauss: usize,
+    n_extra_streams: usize,
+    ab_product: *const Mat,
+    inverse: *const [rows.max_gauss * rows.max_gauss]f64,
+) Mat {
+    // fillQseriesBlocks ------------------------------------------------------------------------------------- |
+    // Fill the four LABOS q-series blocks from inverse(I - AB_gg).                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result = Mat{ .data = undefined, .n = n };
+
+    for (0..n_gauss) |gaussian_row| {
+        const result_row_offset = gaussian_row * n;
+        const inverse_row_offset = gaussian_row * n_gauss;
+
+        for (0..n_gauss) |gaussian_col| {
+            const identity_value: f64 = if (gaussian_row == gaussian_col) 1.0 else 0.0;
+            result.data[result_row_offset + gaussian_col] =
+                inverse[inverse_row_offset + gaussian_col] - identity_value;
+        }
+    }
+
+    for (0..n_extra_streams) |extra_col_index| {
+        const output_col = n_gauss + extra_col_index;
+
+        for (0..n_gauss) |gaussian_row| {
+            const inverse_row_offset = gaussian_row * n_gauss;
+            var dot_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_col| {
+                dot_sum += inverse[inverse_row_offset + gaussian_col] *
+                    ab_product.data[gaussian_col * n + output_col];
+            }
+
+            result.data[gaussian_row * n + output_col] = dot_sum;
+        }
+    }
+
+    var extra_to_gaussian: [rows.max_extra_streams * rows.max_gauss]f64 = undefined;
+    for (0..n_extra_streams) |extra_row_index| {
+        const output_row = n_gauss + extra_row_index;
+        const product_row_offset = output_row * n;
+        const extra_to_gaussian_row_offset = extra_row_index * n_gauss;
+
+        for (0..n_gauss) |gaussian_col| {
+            var dot_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_inner| {
+                dot_sum += ab_product.data[product_row_offset + gaussian_inner] *
+                    inverse[gaussian_inner * n_gauss + gaussian_col];
+            }
+
+            extra_to_gaussian[extra_to_gaussian_row_offset + gaussian_col] = dot_sum;
+            result.data[product_row_offset + gaussian_col] = dot_sum;
+        }
+    }
+
+    for (0..n_extra_streams) |extra_row_index| {
+        const output_row = n_gauss + extra_row_index;
+        const result_row_offset = output_row * n;
+        const extra_to_gaussian_row_offset = extra_row_index * n_gauss;
+
+        for (0..n_extra_streams) |extra_col_index| {
+            const output_col = n_gauss + extra_col_index;
+            var feedback_sum: f64 = 0.0;
+
+            for (0..n_gauss) |gaussian_col| {
+                feedback_sum += extra_to_gaussian[extra_to_gaussian_row_offset + gaussian_col] *
+                    ab_product.data[gaussian_col * n + output_col];
+            }
+
+            result.data[result_row_offset + output_col] =
+                ab_product.data[result_row_offset + output_col] + feedback_sum;
+        }
+    }
+
+    return result;
+}
+
+fn qseriesFromProduct12x10(noalias ab: *const Mat) Mat {
+    // qseriesFromProduct12x10 (Q(AB), fixed 12x10 return value) --------------------------------------------- |
+    // Returning wrapper around qseriesFromProduct12x10Into.                                                   |
+    // The caller-owned-output version holds the fixed 10x10 Gaussian solve and block fill.                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    var result: Mat = undefined;
+    qseriesFromProduct12x10Into(&result, ab);
+    return result;
+}
+
+fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) void {
+    // qseriesFromProduct12x10Into (Q(AB), fixed 12x10) ------------------------------------------------------ |
+    // Fixed n=12, n_gauss=10 version of qseriesFromProduct.                                                   |
+    // Works on the same gg/gx/xg/xx split but keeps loop bounds constant for the compiler.                    |
+    //                                                                                                         |
+    // The first 10 rows/columns are Gaussian streams. The final 2 are extra directions.                       |
+    // The 10x10 Gaussian block is LU-factorized, inverted, then used to fill all four blocks:                 |
+    //                                                                                                         |
+    //   Q_gg = inverse(I - AB_gg) - I                                                                         |
+    //   Q_gx = inverse(I - AB_gg) * AB_gx                                                                     |
+    //   Q_xg = AB_xg * inverse(I - AB_gg)                                                                     |
+    //   Q_xx = AB_xx + Q_xg * AB_gx                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    result.* = .{ .data = undefined, .n = 12 };
+
+    var trab = ab.data[0];
+    trab += ab.data[13];
+    trab += ab.data[26];
+    trab += ab.data[39];
+    trab += ab.data[52];
+    trab += ab.data[65];
+    trab += ab.data[78];
+    trab += ab.data[91];
+    trab += ab.data[104];
+    trab += ab.data[117];
+    if (@abs(trab) < threshold_q) {
+        result.* = ab.*;
+        return;
+    }
+
+    var one_minus_ab_gg: [rows.max_gauss * rows.max_gauss]f64 = undefined;
+    inline for (0..10) |i| {
+        inline for (0..10) |j| {
+            const delta: f64 = if (i == j) 1.0 else 0.0;
+            one_minus_ab_gg[i * 10 + j] = delta - ab.data[i * 12 + j];
+        }
+    }
+
+    var pivot: [rows.max_gauss]usize = undefined;
+    var inverse_diag: [rows.max_gauss]f64 = undefined;
+
+    inline for (0..10) |i| {
+        pivot[i] = i;
+    }
+
+    // Pivoted LU ---------------------------------------------------------------------------------------------|
+    // Fixed n=12 swaps full 10-wide rows when pivoting.                                                       |
+    // --------------------------------------------------------------------------------------------------------|
+
+    for (0..10) |col| {
+        var max_val: f64 = @abs(one_minus_ab_gg[col * 10 + col]);
+        var max_row: usize = col;
+        for (col + 1..10) |row| {
+            const val = @abs(one_minus_ab_gg[row * 10 + col]);
+            if (val > max_val) {
+                max_val = val;
+                max_row = row;
+            }
+        }
+
+        if (max_row != col) {
+            const tmp = pivot[col];
+            pivot[col] = pivot[max_row];
+            pivot[max_row] = tmp;
+
+            inline for (0..10) |k| {
+                const lhs = col * 10 + k;
+                const rhs = max_row * 10 + k;
+                const matrix_tmp = one_minus_ab_gg[lhs];
+                one_minus_ab_gg[lhs] = one_minus_ab_gg[rhs];
+                one_minus_ab_gg[rhs] = matrix_tmp;
+            }
+        }
+
+        const diag = one_minus_ab_gg[col * 10 + col];
+
+        // ----------------------------------------------------------------------------------------------------|
+        // ----------------------------------------------------------------------------------------------------|
+        // tradeoff: fixed LU pivot floor                                                                      |
+        // Return AB directly when an LU pivot is smaller than lu_diagonal_floor = 1.0e-30.                    |
+        // ----------------------------------------------------------------------------------------------------|
+        // This avoids unstable division in the fixed 10x10 inverse. The fallback keeps the pre-inversion      |
+        // product so the q-series correction remains bounded.                                                 |
+        if (@abs(diag) < lu_diagonal_floor) {
+            result.* = ab.*;
+            return;
+        }
+        // end tradeoff: fixed LU pivot floor -----------------------------------------------------------------|
+
+        const inv_diag = 1.0 / diag;
+        inverse_diag[col] = inv_diag;
+        const col_offset = col * 10;
+
+        for (col + 1..10) |row| {
+            const row_offset = row * 10;
+            const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
+            one_minus_ab_gg[row_offset + col] = factor;
+            for (col + 1..10) |k| {
+                one_minus_ab_gg[row_offset + k] -=
+                    factor * one_minus_ab_gg[col_offset + k];
+            }
+        }
+    }
+
+    var inverse: [rows.max_gauss * rows.max_gauss]f64 = undefined;
+    for (0..10) |rhs_col| {
+        var y: [rows.max_gauss]f64 = undefined;
+        for (0..10) |i| {
+            var s: f64 = if (pivot[i] == rhs_col) 1.0 else 0.0;
+            const row_offset = i * 10;
+            for (0..i) |j| s -= one_minus_ab_gg[row_offset + j] * y[j];
+            y[i] = s;
+        }
+
+        var x: [rows.max_gauss]f64 = undefined;
+        var ii: usize = 10;
+        while (ii > 0) {
+            ii -= 1;
+            var s: f64 = y[ii];
+            const row_offset = ii * 10;
+            for (ii + 1..10) |j| s -= one_minus_ab_gg[row_offset + j] * x[j];
+            x[ii] = s * inverse_diag[ii];
+        }
+        inline for (0..10) |i| inverse[i * 10 + rhs_col] = x[i];
+    }
+
+    inline for (0..10) |i| {
+        inline for (0..10) |j| {
+            const delta: f64 = if (i == j) 1.0 else 0.0;
+            result.data[i * 12 + j] = inverse[i * 10 + j] - delta;
+        }
+    }
+
+    inline for (0..10) |i| {
+        inline for (0..2) |ja| {
+            const j = 10 + ja;
+            var s: f64 = 0.0;
+            inline for (0..10) |k| s += inverse[i * 10 + k] * ab.data[k * 12 + j];
+            result.data[i * 12 + j] = s;
+        }
+    }
+
+    inline for (0..2) |ia| {
+        inline for (0..10) |j| {
+            var s: f64 = 0.0;
+            inline for (0..10) |k| s += ab.data[(10 + ia) * 12 + k] * inverse[k * 10 + j];
+            result.data[(10 + ia) * 12 + j] = s;
+        }
+    }
+
+    inline for (0..2) |ia| {
+        const i = 10 + ia;
+        inline for (0..2) |ja| {
+            const j = 10 + ja;
+            var s: f64 = 0.0;
+            inline for (0..10) |k| s += result.data[i * 12 + k] * ab.data[k * 12 + j];
+            result.data[i * 12 + j] = s + ab.data[i * 12 + j];
+        }
+    }
 }
 
 fn esmul12(e: *const Vec, a: *const Mat) Mat {

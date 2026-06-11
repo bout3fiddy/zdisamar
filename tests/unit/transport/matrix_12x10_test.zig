@@ -120,6 +120,57 @@ test "smulIntoKnownTracesIfNonzero reports whether product was retained" {
     try std.testing.expect(!skipped);
 }
 
+test "qseries generic path matches scalar inverse reference" {
+    var a = rows.Mat.zero(6);
+    var b = rows.Mat.zero(6);
+    fillQseriesInputs(&a, &b, 6, 4);
+
+    const product = scalarGaussianProduct(6, 4, &a, &b);
+    const expected = scalarQseriesFromProduct(6, 4, &product);
+    const actual = matrix_12x10.qseriesKnownNonzeroProduct(6, 4, &a, &b);
+
+    try expectMatrixClose(expected, actual, 6, 1.0e-12);
+}
+
+test "qseries fixed 12x10 path matches scalar inverse reference" {
+    var a = rows.Mat.zero(12);
+    var b = rows.Mat.zero(12);
+    fillQseriesInputs(&a, &b, 12, 10);
+
+    const product = scalarGaussianProduct(12, 10, &a, &b);
+    const expected = scalarQseriesFromProduct(12, 10, &product);
+    const actual = matrix_12x10.qseriesKnownNonzeroProduct(12, 10, &a, &b);
+
+    try expectMatrixClose(expected, actual, 12, 1.0e-12);
+}
+
+test "qseriesKnownNonzeroProductInto writes caller-owned fixed output" {
+    var a = rows.Mat.zero(12);
+    var b = rows.Mat.zero(12);
+    fillQseriesInputs(&a, &b, 12, 10);
+
+    const product = scalarGaussianProduct(12, 10, &a, &b);
+    const expected = scalarQseriesFromProduct(12, 10, &product);
+    var actual = rows.Mat.zero(12);
+
+    matrix_12x10.qseriesKnownNonzeroProductInto(&actual, 12, 10, &a, &b);
+
+    try expectMatrixClose(expected, actual, 12, 1.0e-12);
+}
+
+test "qseries trace gate returns zero matrix after skipped product" {
+    var a = rows.Mat.zero(12);
+    var b = rows.Mat.zero(12);
+    fillQseriesInputs(&a, &b, 12, 10);
+
+    const actual = matrix_12x10.qseries(12, 10, 1.0e9, &a, &b);
+
+    try std.testing.expectEqual(@as(usize, 12), actual.n);
+    for (actual.data) |value| {
+        try std.testing.expectEqual(@as(f64, 0.0), value);
+    }
+}
+
 test "diagonal scale helpers match scalar references for generic path" {
     var a = rows.Mat.zero(6);
     var b = rows.Mat.zero(6);
@@ -171,6 +222,36 @@ fn fillPattern(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64) vo
             const row_term = @as(f64, @floatFromInt(row + 1)) * row_factor;
             const col_term = @as(f64, @floatFromInt(col + 2)) * col_factor;
             matrix.set(row, col, 1.0 + row_term + col_term);
+        }
+    }
+}
+
+fn fillQseriesInputs(a: *rows.Mat, b: *rows.Mat, n: usize, n_gauss: usize) void {
+    // fillQseriesInputs ------------------------------------------------------------------------------------- |
+    // Build small deterministic matrices whose AB Gaussian block is well below singularity but above the      |
+    // q-series trace gate from LABOS `matrix.zig` threshold_q = 1.0e-3.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    a.* = rows.Mat.zero(n);
+    b.* = rows.Mat.zero(n);
+
+    for (0..n_gauss) |stream_index| {
+        a.set(stream_index, stream_index, 1.0);
+    }
+
+    for (n_gauss..n) |row| {
+        for (0..n_gauss) |col| {
+            const row_term = @as(f64, @floatFromInt(row - n_gauss + 1)) * 0.002;
+            const col_term = @as(f64, @floatFromInt(col + 1)) * 0.0004;
+            a.set(row, col, row_term + col_term);
+        }
+    }
+
+    for (0..n_gauss) |row| {
+        for (0..n) |col| {
+            const diagonal: f64 = if (row == col) 0.02 else 0.0;
+            const row_term = @as(f64, @floatFromInt(row + 1)) * 0.0007;
+            const col_term = @as(f64, @floatFromInt(col + 1)) * 0.0003;
+            b.set(row, col, diagonal + row_term + col_term);
         }
     }
 }
@@ -269,6 +350,132 @@ fn scalarGaussianProduct(n: usize, n_gauss: usize, a: *const rows.Mat, b: *const
             result.set(row, col, sum);
         }
     }
+    return result;
+}
+
+fn scalarQseriesFromProduct(n: usize, n_gauss: usize, ab_product: *const rows.Mat) rows.Mat {
+    // scalarQseriesFromProduct ------------------------------------------------------------------------------ |
+    // Independent test reference for Q(AB). It uses Gauss-Jordan inversion instead of the production LU       |
+    // factorization so the tests check values through a different algorithm.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    const test_threshold_q: f64 = 1.0e-3;
+    const test_lu_diagonal_floor: f64 = 1.0e-30;
+
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |index| {
+        trace += ab_product.get(index, index);
+    }
+    if (@abs(trace) < test_threshold_q) return ab_product.*;
+
+    var matrix: [rows.max_gauss * rows.max_gauss]f64 = .{0.0} ** (rows.max_gauss * rows.max_gauss);
+    var inverse: [rows.max_gauss * rows.max_gauss]f64 = .{0.0} ** (rows.max_gauss * rows.max_gauss);
+    for (0..n_gauss) |row| {
+        for (0..n_gauss) |col| {
+            const delta: f64 = if (row == col) 1.0 else 0.0;
+            matrix[row * n_gauss + col] = delta - ab_product.get(row, col);
+            inverse[row * n_gauss + col] = delta;
+        }
+    }
+
+    for (0..n_gauss) |col| {
+        var pivot_row = col;
+        var pivot_abs = @abs(matrix[col * n_gauss + col]);
+        for (col + 1..n_gauss) |candidate_row| {
+            const candidate_abs = @abs(matrix[candidate_row * n_gauss + col]);
+            if (candidate_abs > pivot_abs) {
+                pivot_abs = candidate_abs;
+                pivot_row = candidate_row;
+            }
+        }
+
+        if (pivot_abs < test_lu_diagonal_floor) return ab_product.*;
+
+        if (pivot_row != col) {
+            swapScalarRows(&matrix, n_gauss, col, pivot_row);
+            swapScalarRows(&inverse, n_gauss, col, pivot_row);
+        }
+
+        const pivot = matrix[col * n_gauss + col];
+        for (0..n_gauss) |entry_col| {
+            matrix[col * n_gauss + entry_col] /= pivot;
+            inverse[col * n_gauss + entry_col] /= pivot;
+        }
+
+        for (0..n_gauss) |target_row| {
+            if (target_row == col) continue;
+
+            const factor = matrix[target_row * n_gauss + col];
+            for (0..n_gauss) |entry_col| {
+                matrix[target_row * n_gauss + entry_col] -= factor * matrix[col * n_gauss + entry_col];
+                inverse[target_row * n_gauss + entry_col] -= factor * inverse[col * n_gauss + entry_col];
+            }
+        }
+    }
+
+    return scalarQseriesBlocks(n, n_gauss, ab_product, &inverse);
+}
+
+fn swapScalarRows(matrix: *[rows.max_gauss * rows.max_gauss]f64, n_gauss: usize, lhs: usize, rhs: usize) void {
+    // swapScalarRows ---------------------------------------------------------------------------------------- |
+    // Swap two active rows in a flat n_gauss by n_gauss test matrix.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..n_gauss) |col| {
+        const lhs_index = lhs * n_gauss + col;
+        const rhs_index = rhs * n_gauss + col;
+        const tmp = matrix[lhs_index];
+        matrix[lhs_index] = matrix[rhs_index];
+        matrix[rhs_index] = tmp;
+    }
+}
+
+fn scalarQseriesBlocks(
+    n: usize,
+    n_gauss: usize,
+    ab_product: *const rows.Mat,
+    inverse: *const [rows.max_gauss * rows.max_gauss]f64,
+) rows.Mat {
+    // scalarQseriesBlocks ----------------------------------------------------------------------------------- |
+    // Fill Q_gg, Q_gx, Q_xg, and Q_xx from the independent inverse reference.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+
+    for (0..n_gauss) |row| {
+        for (0..n_gauss) |col| {
+            const delta: f64 = if (row == col) 1.0 else 0.0;
+            result.set(row, col, inverse[row * n_gauss + col] - delta);
+        }
+    }
+
+    for (0..n_gauss) |row| {
+        for (n_gauss..n) |col| {
+            var sum: f64 = 0.0;
+            for (0..n_gauss) |inner| {
+                sum += inverse[row * n_gauss + inner] * ab_product.get(inner, col);
+            }
+            result.set(row, col, sum);
+        }
+    }
+
+    for (n_gauss..n) |row| {
+        for (0..n_gauss) |col| {
+            var sum: f64 = 0.0;
+            for (0..n_gauss) |inner| {
+                sum += ab_product.get(row, inner) * inverse[inner * n_gauss + col];
+            }
+            result.set(row, col, sum);
+        }
+    }
+
+    for (n_gauss..n) |row| {
+        for (n_gauss..n) |col| {
+            var sum = ab_product.get(row, col);
+            for (0..n_gauss) |inner| {
+                sum += result.get(row, inner) * ab_product.get(inner, col);
+            }
+            result.set(row, col, sum);
+        }
+    }
+
     return result;
 }
 
