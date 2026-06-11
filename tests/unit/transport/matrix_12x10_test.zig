@@ -190,6 +190,18 @@ test "diagonal scale helpers match scalar references for generic path" {
         6,
         1.0e-13,
     );
+    try expectMatrixClose(
+        scalarMatAddEsmul3(6, &a, &e, &b, &c),
+        matrix_12x10.matAddEsmul3(6, &a, &e, &b, &c),
+        6,
+        1.0e-13,
+    );
+    try expectMatrixClose(
+        scalarMatAddEsmul(6, &a, &e, &b),
+        matrix_12x10.matAddEsmul(6, &a, &e, &b),
+        6,
+        1.0e-13,
+    );
 }
 
 test "diagonal scale helpers match scalar references for fixed n12 path" {
@@ -210,6 +222,53 @@ test "diagonal scale helpers match scalar references for fixed n12 path" {
         12,
         1.0e-13,
     );
+    try expectMatrixClose(
+        scalarMatAddEsmul3(12, &a, &e, &b, &c),
+        matrix_12x10.matAddEsmul3(12, &a, &e, &b, &c),
+        12,
+        1.0e-13,
+    );
+    var left_add = rows.Mat.zero(12);
+    matrix_12x10.matAddEsmulInto(&left_add, 12, &a, &e, &b);
+    try expectMatrixClose(scalarMatAddEsmul(12, &a, &e, &b), left_add, 12, 1.0e-13);
+}
+
+test "retained product diagonal add writers match scalar references" {
+    var a = rows.Mat.zero(12);
+    var b = rows.Mat.zero(12);
+    var c = rows.Mat.zero(12);
+    var e = rows.Vec.zero(12);
+    fillPattern(&a, 12, 0.017, 0.031);
+    fillPattern(&b, 12, -0.013, 0.021);
+    fillPattern(&c, 12, 0.019, -0.027);
+    fillVector(&e, 12, 0.5, 0.0625);
+
+    var left_scaled = rows.Mat.zero(12);
+    matrix_12x10.matAddEsmul3ProductKnownNonzeroInto(&left_scaled, 12, 10, &a, &e, &b, &c);
+    try expectMatrixClose(scalarMatAddEsmul3Product(12, 10, &a, &e, &b, &c), left_scaled, 12, 1.0e-13);
+
+    var right_scaled = rows.Mat.zero(12);
+    matrix_12x10.semulAddProductKnownNonzeroInto(&right_scaled, 12, 10, &a, &e, &b);
+    try expectMatrixClose(scalarSemulAddProduct(12, 10, &a, &e, &b), right_scaled, 12, 1.0e-13);
+}
+
+test "retained product diagonal add writers keep generic active-size formulas" {
+    var a = rows.Mat.zero(6);
+    var b = rows.Mat.zero(6);
+    var c = rows.Mat.zero(6);
+    var e = rows.Vec.zero(6);
+    fillPattern(&a, 6, 0.03, 0.07);
+    fillPattern(&b, 6, 0.11, -0.02);
+    fillPattern(&c, 6, -0.04, 0.09);
+    fillVector(&e, 6, 0.5, 0.125);
+
+    var left_scaled = rows.Mat.zero(6);
+    matrix_12x10.matAddEsmul3ProductKnownNonzeroInto(&left_scaled, 6, 4, &a, &e, &b, &c);
+    try expectMatrixClose(scalarMatAddEsmul3Product(6, 4, &a, &e, &b, &c), left_scaled, 6, 1.0e-13);
+
+    var right_scaled = rows.Mat.zero(6);
+    matrix_12x10.semulAddProductKnownNonzeroInto(&right_scaled, 6, 4, &a, &e, &b);
+    try expectMatrixClose(scalarSemulAddProduct(6, 4, &a, &e, &b), right_scaled, 6, 1.0e-13);
 }
 
 test "smulAddSemul3 generic path matches retained and skipped scalar references" {
@@ -388,6 +447,38 @@ fn scalarMatAddSemul3(
     return result;
 }
 
+fn scalarMatAddEsmul3(
+    n: usize,
+    a: *const rows.Mat,
+    e: *const rows.Vec,
+    b: *const rows.Mat,
+    c: *const rows.Mat,
+) rows.Mat {
+    // scalarMatAddEsmul3 ------------------------------------------------------------------------------------ |
+    // Independent test reference for A + diag(e) * B + C.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            result.set(row, col, (a.get(row, col) + e.get(row) * b.get(row, col)) + c.get(row, col));
+        }
+    }
+    return result;
+}
+
+fn scalarMatAddEsmul(n: usize, a: *const rows.Mat, e: *const rows.Vec, b: *const rows.Mat) rows.Mat {
+    // scalarMatAddEsmul ------------------------------------------------------------------------------------- |
+    // Independent test reference for A + diag(e) * B.                                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            result.set(row, col, a.get(row, col) + e.get(row) * b.get(row, col));
+        }
+    }
+    return result;
+}
+
 fn scalarSemulAdd(n: usize, a: *const rows.Mat, e: *const rows.Vec, b: *const rows.Mat) rows.Mat {
     // scalarSemulAdd ---------------------------------------------------------------------------------------- |
     // Independent test reference for A * diag(e) + B.                                                         |
@@ -396,6 +487,53 @@ fn scalarSemulAdd(n: usize, a: *const rows.Mat, e: *const rows.Vec, b: *const ro
     for (0..n) |row| {
         for (0..n) |col| {
             result.set(row, col, a.get(row, col) * e.get(col) + b.get(row, col));
+        }
+    }
+    return result;
+}
+
+fn scalarMatAddEsmul3Product(
+    n: usize,
+    n_gauss: usize,
+    a: *const rows.Mat,
+    e: *const rows.Vec,
+    b: *const rows.Mat,
+    c: *const rows.Mat,
+) rows.Mat {
+    // scalarMatAddEsmul3Product ----------------------------------------------------------------------------- |
+    // Independent test reference for A + diag(e) * B + C*B over Gaussian streams.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |gauss_index| {
+                product += c.get(row, gauss_index) * b.get(gauss_index, col);
+            }
+            result.set(row, col, (a.get(row, col) + e.get(row) * b.get(row, col)) + product);
+        }
+    }
+    return result;
+}
+
+fn scalarSemulAddProduct(
+    n: usize,
+    n_gauss: usize,
+    a: *const rows.Mat,
+    e: *const rows.Vec,
+    b: *const rows.Mat,
+) rows.Mat {
+    // scalarSemulAddProduct --------------------------------------------------------------------------------- |
+    // Independent test reference for A * diag(e) + A*B over Gaussian streams.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |gauss_index| {
+                product += a.get(row, gauss_index) * b.get(gauss_index, col);
+            }
+            result.set(row, col, a.get(row, col) * e.get(col) + product);
         }
     }
     return result;
