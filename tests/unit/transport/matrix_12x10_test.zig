@@ -63,6 +63,63 @@ test "smulInto writes caller-owned output for retained and skipped products" {
     }
 }
 
+test "smulIntoKnownTraces uses caller traces for retained and skipped products" {
+    var a = rows.Mat.zero(12);
+    var b = rows.Mat.zero(12);
+    fillPattern(&a, 12, 0.017, 0.031);
+    fillPattern(&b, 12, -0.013, 0.021);
+
+    const trace_a = scalarGaussianTrace(12, 10, &a);
+    const trace_b = scalarGaussianTrace(12, 10, &b);
+    const expected = scalarGaussianProduct(12, 10, &a, &b);
+    var out = rows.Mat.zero(12);
+
+    matrix_12x10.smulIntoKnownTraces(&out, 12, 10, 1.0e-30, trace_a, trace_b, &a, &b);
+    try expectMatrixClose(expected, out, 12, 1.0e-13);
+
+    matrix_12x10.smulIntoKnownTraces(&out, 12, 10, 1.0e9, trace_a, trace_b, &a, &b);
+    for (out.data) |value| {
+        try std.testing.expectEqual(@as(f64, 0.0), value);
+    }
+}
+
+test "smulIntoKnownTracesIfNonzero reports whether product was retained" {
+    var a = rows.Mat.zero(6);
+    var b = rows.Mat.zero(6);
+    fillPattern(&a, 6, 0.03, 0.07);
+    fillPattern(&b, 6, 0.11, -0.02);
+
+    const trace_a = scalarGaussianTrace(6, 4, &a);
+    const trace_b = scalarGaussianTrace(6, 4, &b);
+    const expected = scalarGaussianProduct(6, 4, &a, &b);
+    var out = rows.Mat.zero(6);
+
+    const retained = matrix_12x10.smulIntoKnownTracesIfNonzero(
+        &out,
+        6,
+        4,
+        1.0e-30,
+        trace_a,
+        trace_b,
+        &a,
+        &b,
+    );
+    try std.testing.expect(retained);
+    try expectMatrixClose(expected, out, 6, 1.0e-13);
+
+    const skipped = matrix_12x10.smulIntoKnownTracesIfNonzero(
+        &out,
+        6,
+        4,
+        1.0e9,
+        trace_a,
+        trace_b,
+        &a,
+        &b,
+    );
+    try std.testing.expect(!skipped);
+}
+
 fn fillPattern(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64) void {
     // fillPattern ------------------------------------------------------------------------------------------- |
     // Build deterministic dense test input with nonzero Gaussian traces.                                      |
@@ -75,6 +132,18 @@ fn fillPattern(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64) vo
             matrix.set(row, col, 1.0 + row_term + col_term);
         }
     }
+}
+
+fn scalarGaussianTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64 {
+    // scalarGaussianTrace ----------------------------------------------------------------------------------- |
+    // Independent test reference for trace(M_gg).                                                             |
+    // --------------------------------------------------------------------------------------------------------|
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |gauss_index| {
+        trace += matrix.get(gauss_index, gauss_index);
+    }
+    _ = n;
+    return trace;
 }
 
 fn scalarGaussianProduct(n: usize, n_gauss: usize, a: *const rows.Mat, b: *const rows.Mat) rows.Mat {

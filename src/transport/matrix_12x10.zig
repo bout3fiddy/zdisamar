@@ -181,6 +181,67 @@ pub inline fn smulInto(
     out.* = smul(n, n_gauss, threshold_mul, a, b);
 }
 
+pub inline fn smulIntoKnownTraces(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    trace_a: f64,
+    trace_b: f64,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    // smulIntoKnownTraces (small matrix multiply with caller traces) ---------------------------------------- |
+    // Caller already has trace(A_gg) and trace(B_gg). Use those traces for the threshold decision, then write |
+    // either the retained product or a zero matrix into caller storage.                                       |
+    //                                                                                                         |
+    // Used when an upstream fused kernel already scanned one or both Gaussian diagonals.                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (smulIntoKnownTracesIfNonzero(out, n, n_gauss, threshold_mul, trace_a, trace_b, a, b)) return;
+    out.* = Mat.zero(n);
+}
+
+pub inline fn smulIntoKnownTracesIfNonzero(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    trace_a: f64,
+    trace_b: f64,
+    a: *const Mat,
+    b: *const Mat,
+) bool {
+    // smulIntoKnownTracesIfNonzero (trace-gated product probe) ---------------------------------------------- |
+    // Return false when the trace gate says A*B is negligible. Return true after writing the product into     |
+    // caller storage.                                                                                         |
+    //                                                                                                         |
+    // Fused add/scale kernels use the boolean to choose between:                                              |
+    //   retained product path                                                                                 |
+    //   cheaper no-product path                                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+
+    @setEvalBranchQuota(10_000);
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: known-trace product gate                                                                      |
+    // Return false when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    // The caller already paid for the traces, so this keeps fused kernels from doing a product they will      |
+    // immediately treat as negligible.                                                                        |
+    if (@abs(trace_a * trace_b) <= threshold_mul) {
+        return false;
+    }
+    // end tradeoff: known-trace product gate -----------------------------------------------------------------|
+
+    if (n == 12 and n_gauss == 10) {
+        smul12x10Into(out, a, b);
+        return true;
+    }
+    out.* = smulNonzeroProduct(n, n_gauss, a, b);
+    return true;
+}
+
 fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     // smulNonzeroProduct ------------------------------------------------------------------------------------ |
     // Build A * B after the caller has already retained the product.                                          |
