@@ -18,8 +18,10 @@ test "asset readers load reference profile, line list, CIA, and solar rows" {
 
     var cia = try internal.assets.readers.readCiaTable(allocator, case.cia.table.path);
     defer cia.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 16451), cia.rows.len);
+    try std.testing.expectEqual(@as(usize, 18938), cia.rows.len);
     try std.testing.expectApproxEqAbs(1.0e-46, cia.scale_factor_cm5_per_molecule2, 0.0);
+    try std.testing.expectApproxEqAbs(260.0, cia.rows[0].wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(2400.0, cia.rows[cia.rows.len - 1].wavelength_nm, 0.0);
 
     const solar = try internal.assets.readers.readSolarReference(allocator, case.observation.solar_reference.path);
     defer allocator.free(solar);

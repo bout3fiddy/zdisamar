@@ -115,6 +115,38 @@ pub const cache = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// optics -----------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for WP3 optical-depth fill modules.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const optics = struct {
+    pub const cia_absorption = @import("optics/cia_absorption.zig");
+    pub const layer_depths = @import("optics/layer_depths.zig");
+    pub const rayleigh = @import("optics/rayleigh.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// transport --------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for WP3 transport state modules.                                         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const transport = struct {
+    pub const jacobian_states = @import("transport/jacobian_states.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // instrumentation --------------------------------------------------------------------------------------------|
 // Namespace-only test import wrapper for instrumentation facades.                                             |
 //                                                                                                             |

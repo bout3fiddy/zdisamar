@@ -52,7 +52,9 @@ test "O2RunTables match WP1 baseline table evidence" {
     const diagnostic_line = findLineByWavenumber(tables.lines.rows, 13165.249392) orelse return error.MissingLine;
     try std.testing.expectApproxEqAbs(759.5754324317322, diagnostic_line.center_wavelength_nm, 1.0e-12);
 
-    try std.testing.expectEqual(@as(usize, 16451), tables.cia.rows.len);
+    try std.testing.expectEqual(@as(usize, 18938), tables.cia.rows.len);
+    try std.testing.expectApproxEqAbs(260.0, tables.cia.rows[0].wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(2400.0, tables.cia.rows[tables.cia.rows.len - 1].wavelength_nm, 0.0);
 
     try std.testing.expectApproxEqAbs(0.3, tables.aerosol.optical_depth, 0.0);
     try std.testing.expectApproxEqAbs(1.0, tables.aerosol.single_scatter_albedo, 0.0);

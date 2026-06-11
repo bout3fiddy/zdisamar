@@ -11,6 +11,8 @@ test {
     _ = @import("setup/o2_run_tables_test.zig");
     _ = @import("cache/profile_line_memory_test.zig");
     _ = @import("cache/weak_line_cutoff_memory_test.zig");
+    _ = @import("optics/layer_depths_test.zig");
+    _ = @import("transport/jacobian_states_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
 

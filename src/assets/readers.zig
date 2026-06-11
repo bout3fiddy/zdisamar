@@ -198,47 +198,60 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
 
 pub fn readCiaTable(allocator: Allocator, path: []const u8) !CiaAsset {
     // readCiaTable -------------------------------------------------------------------------------------------|
-    // Parse the BIRA header scale and polynomial coefficient rows into an owned table.                        |
+    // Parse the BIRA header scale and every numeric polynomial coefficient row into an owned table.           |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig`                           |
+    //   parseBiraCiaPolynomial: the vendor count is a lower-bound check, while appended O2 A rows after the   |
+    //   nominal count are retained because the old optical route samples them at 758-776 nm.                  |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 4 << 20);
     defer allocator.free(bytes);
 
     var lines = std.mem.splitScalar(u8, bytes, '\n');
-    const scale_line = trimLine(lines.next() orelse return errors.Error.EmptyAsset);
-    const scale_factor = try parseFirstFloat(scale_line);
 
-    const header_line = trimLine(lines.next() orelse return errors.Error.InvalidAssetFormat);
-    const header_count = try parseFirstInteger(header_line);
-    const data_line = trimLine(lines.next() orelse return errors.Error.InvalidAssetFormat);
-    const data_count = try parseFirstInteger(data_line);
+    var rows = std.ArrayList(CiaAssetRow).empty;
+    defer rows.deinit(allocator);
 
-    var skipped_header_rows: usize = 0;
-    while (skipped_header_rows < header_count and lines.next() != null) {
-        skipped_header_rows += 1;
-    }
-    if (skipped_header_rows != header_count) return errors.Error.InvalidAssetFormat;
+    var numeric_header_index: usize = 0;
+    var scale_factor: f64 = 0.0;
+    var expected_data_rows: ?usize = null;
 
-    var rows = try allocator.alloc(CiaAssetRow, data_count);
-    errdefer allocator.free(rows);
-
-    var row_index: usize = 0;
-    while (row_index < rows.len) {
-        const line = trimLine(lines.next() orelse return errors.Error.InvalidAssetFormat);
-        if (line.len == 0) continue;
+    while (lines.next()) |raw_line| {
+        const line = trimLine(raw_line);
+        if (line.len == 0 or line[0] == '#') continue;
 
         var tokens = std.mem.tokenizeAny(u8, line, " \t\r");
-        rows[row_index] = .{
-            .wavelength_nm = try parseTokenFloat(tokens.next()),
+        const first_token = tokens.next() orelse continue;
+        if (first_token[0] == '!') continue;
+
+        if (numeric_header_index < 3) {
+            switch (numeric_header_index) {
+                0 => scale_factor = try parseTokenFloat(first_token),
+                1 => {},
+                2 => expected_data_rows = try std.fmt.parseInt(usize, first_token, 10),
+                else => unreachable,
+            }
+            numeric_header_index += 1;
+            continue;
+        }
+
+        try rows.append(allocator, .{
+            .wavelength_nm = try parseTokenFloat(first_token),
             .a0 = try parseTokenFloat(tokens.next()),
             .a1 = try parseTokenFloat(tokens.next()),
             .a2 = try parseTokenFloat(tokens.next()),
-        };
-        row_index += 1;
+        });
+    }
+
+    if (numeric_header_index < 3 or rows.items.len == 0) return errors.Error.InvalidAssetFormat;
+    if (expected_data_rows) |expected| {
+        if (rows.items.len < expected) return errors.Error.InvalidAssetFormat;
     }
 
     return .{
         .scale_factor_cm5_per_molecule2 = scale_factor,
-        .rows = rows,
+        .rows = try rows.toOwnedSlice(allocator),
     };
 }
 

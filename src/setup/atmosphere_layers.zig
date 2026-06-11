@@ -7,7 +7,9 @@ const spline = @import("../common/math/spline.zig");
 
 const Allocator = std.mem.Allocator;
 const boltzmann_hpa_cm3_per_k = 1.380658e-19;
-const oxygen_volume_mixing_ratio = 0.2095;
+
+// main:`state_build/spectroscopy.zig` default_o2_volume_mixing_ratio.
+const oxygen_volume_mixing_ratio = 0.20946;
 const centimeters_per_kilometer = 1.0e5;
 const max_spline_profile_rows: usize = 256;
 
@@ -39,25 +41,28 @@ pub const AtmosphereProfileTable = struct {
 // Computed atmosphere layer and support-row setup arrays.                                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 368 B (0.359 KiB), align: 8 B                                                                         |
+// size: 384 B (0.375 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] source_profile                 : AtmosphereProfileTable                                          |
-// [ 16.. 23] interval_count                 : usize                                                           |
-// [ 24.. 31] configured_layer_count         : usize                                                           |
-// [ 32.. 39] sublayer_divisions             : usize                                                           |
-// [ 40.. 47] surface_pressure_hpa           : f64                                                             |
-// [ 48..207] layer f64 arrays               : 10 slice headers                                                |
-// [208..255] layer u32 arrays               : 3 slice headers                                                 |
-// [256..351] support f64 arrays             : 6 slice headers                                                 |
-// [352..367] support u32 arrays             : 1 slice header                                                  |
+// [ 16.. 31] spectroscopy_profile           : AtmosphereProfileTable                                          |
+// [ 32.. 39] interval_count                 : usize                                                           |
+// [ 40.. 47] configured_layer_count         : usize                                                           |
+// [ 48.. 55] sublayer_divisions             : usize                                                           |
+// [ 56.. 63] surface_pressure_hpa           : f64                                                             |
+// [ 64..223] layer f64 arrays               : 10 slice headers                                                |
+// [224..271] layer u32 arrays               : 3 slice headers                                                 |
+// [272..367] support f64 arrays             : 6 slice headers                                                 |
+// [368..383] support u32 arrays             : 1 slice header                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every array is owned. source_profile holds the old-route densified climatology used for vertical setup.   |
-//   Layer rows hold boundaries and lower-boundary representative thermodynamics. Support rows hold the        |
-//   boundary/active samples.                                                                                  |
+//   spectroscopy_profile holds the old-route raw vendor pressure nodes with densified altitudes for line/CIA  |
+//   profile caches. Layer rows hold boundaries and lower-boundary representative thermodynamics. Support rows |
+//   hold the boundary/active samples.                                                                         |
 pub const LayerGrid = struct {
     source_profile: AtmosphereProfileTable,
+    spectroscopy_profile: AtmosphereProfileTable,
     interval_count: usize,
     configured_layer_count: usize,
     sublayer_divisions: usize,
@@ -88,6 +93,7 @@ pub const LayerGrid = struct {
         // Release computed layer/support arrays and the parsed source profile rows.                           |
         // ----------------------------------------------------------------------------------------------------|
         self.source_profile.deinit(allocator);
+        self.spectroscopy_profile.deinit(allocator);
         freeF64(allocator, self.layer_top_altitudes_km);
         freeF64(allocator, self.layer_bottom_altitudes_km);
         freeF64(allocator, self.layer_top_pressures_hpa);
@@ -129,6 +135,14 @@ pub fn build(allocator: Allocator, case: o2_case.O2Case) !LayerGrid {
     errdefer if (dense_profile_owned) allocator.free(dense_profile_rows);
 
     var profile = ProfileView{ .rows = dense_profile_rows };
+    const spectroscopy_profile_rows = try buildSpectroscopyProfileRows(
+        allocator,
+        .{ .rows = raw_profile_rows },
+        profile,
+    );
+    var spectroscopy_profile_owned = true;
+    errdefer if (spectroscopy_profile_owned) allocator.free(spectroscopy_profile_rows);
+
     const intervals = case.atmosphere.intervals;
     const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
     var layer_count: usize = 0;
@@ -139,8 +153,9 @@ pub fn build(allocator: Allocator, case: o2_case.O2Case) !LayerGrid {
         support_count += interval_layer_count * (support_order + 1);
     }
 
-    var grid = try allocate(allocator, dense_profile_rows, layer_count, support_count);
+    var grid = try allocate(allocator, dense_profile_rows, spectroscopy_profile_rows, layer_count, support_count);
     dense_profile_owned = false;
+    spectroscopy_profile_owned = false;
     errdefer grid.deinit(allocator);
     grid.interval_count = intervals.len;
     grid.configured_layer_count = case.atmosphere.layer_count;
@@ -417,9 +432,36 @@ fn densifyVendorPressureGrid(
     return dense_rows;
 }
 
+fn buildSpectroscopyProfileRows(
+    allocator: Allocator,
+    source_profile: ProfileView,
+    dense_profile: ProfileView,
+) ![]readers.AtmosphereProfileRow {
+    // buildSpectroscopyProfileRows -------------------------------------------------------------------------- |
+    // Mirror old o2a_reference/run.zig buildVendorTraceGasSpectroscopyProfile for line/CIA profile caches.    |
+    // The row count stays on the vendor pressure nodes; altitude is mapped through the densified profile.     |
+    // --------------------------------------------------------------------------------------------------------|
+    const rows = try allocator.alloc(readers.AtmosphereProfileRow, source_profile.rows.len);
+    errdefer allocator.free(rows);
+
+    for (source_profile.rows, rows) |source_row, *target_row| {
+        const pressure_hpa = source_row.pressure_hpa;
+        const temperature_k = source_row.temperature_k;
+        target_row.* = .{
+            .altitude_km = dense_profile.interpolateAltitudeForPressureSpline(pressure_hpa),
+            .pressure_hpa = pressure_hpa,
+            .temperature_k = temperature_k,
+            .air_number_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k,
+        };
+    }
+
+    return rows;
+}
+
 fn allocate(
     allocator: Allocator,
     profile_rows: []readers.AtmosphereProfileRow,
+    spectroscopy_profile_rows: []readers.AtmosphereProfileRow,
     layer_count: usize,
     support_count: usize,
 ) !LayerGrid {
@@ -469,6 +511,7 @@ fn allocate(
 
     return .{
         .source_profile = .{ .rows = profile_rows },
+        .spectroscopy_profile = .{ .rows = spectroscopy_profile_rows },
         .interval_count = 0,
         .configured_layer_count = 0,
         .sublayer_divisions = 0,
