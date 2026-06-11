@@ -2,9 +2,52 @@ const std = @import("std");
 
 const internal = @import("internal");
 
+const controls = internal.transport.controls;
 const gauss_angles = internal.transport.gauss_angles;
 const layer_rt = internal.transport.layer_reflect_transmit;
 const rows = internal.transport.rows;
+
+test "layer-doubling decision keeps old layout" {
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(layer_rt.LayerDoublingDecision));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(layer_rt.LayerDoublingDecision));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(layer_rt.LayerDoublingDecision, "start_optical_depth"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(layer_rt.LayerDoublingDecision, "doubling_count"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(layer_rt.LayerDoublingDecision, "uses_doubling"));
+}
+
+test "layer-doubling decision skips non-multiple and weak layers" {
+    const no_scatter = layer_rt.classifyLayerDoubling(.single, 0.1, 2.5, 0.4, 1.0);
+    try expectDoublingDecision(no_scatter, 2.5, 0, false);
+
+    const weak = layer_rt.classifyLayerDoubling(.multiple, 0.1, 2.5, 0.01, 0.025);
+    try expectDoublingDecision(weak, 2.5, 0, false);
+
+    const equal_threshold = layer_rt.classifyLayerDoubling(.multiple, 0.1, 2.5, 0.04, 0.1);
+    try expectDoublingDecision(equal_threshold, 2.5, 0, false);
+}
+
+test "layer-doubling decision matches old split selection loops" {
+    const normal = layer_rt.classifyLayerDoubling(.multiple, 0.1, 4.0, 0.4, 1.6);
+    try expectDoublingDecision(normal, 0.125, 5, true);
+    try std.testing.expect(normal.start_optical_depth * 0.4 < 0.1);
+    try std.testing.expect(normal.start_optical_depth * 2.0 * 0.4 >= 0.1);
+
+    const smaller_ratio = layer_rt.classifyLayerDoubling(.multiple, 0.1, 4.0, 0.2, 0.8);
+    try expectDoublingDecision(smaller_ratio, 0.25, 4, true);
+    try std.testing.expect(smaller_ratio.start_optical_depth * 0.2 < 0.1);
+    try std.testing.expect(smaller_ratio.start_optical_depth * 2.0 * 0.2 >= 0.1);
+}
+
+test "layer-doubling decision caps pathological split count at sixty" {
+    const decision = layer_rt.classifyLayerDoubling(.multiple, 0.1, 1.0, 1.0e30, 1.0e30);
+    try std.testing.expectEqual(@as(usize, 60), decision.doubling_count);
+    try std.testing.expect(decision.uses_doubling);
+    try std.testing.expectApproxEqAbs(@as(f64, 0x1p-60), decision.start_optical_depth, 0.0);
+
+    const o2a_thresholds = controls.PerformanceThresholds.o2a_default;
+    const o2a_decision = layer_rt.classifyLayerDoubling(.multiple, o2a_thresholds.threshold_doubl, 1.0, 3.0e-6, 3.0e-6);
+    try expectDoublingDecision(o2a_decision, 0.25, 2, true);
+}
 
 test "single-scatter reflection and transmission match scalar references for generic stream count" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
@@ -98,6 +141,20 @@ test "attenuation square matches old layer-doubling support path" {
     fillAttenuationWithSentinel(&fixed, rows.max_stream_count, -1.0);
     layer_rt.squareAttenuation(rows.max_stream_count, &fixed);
     try expectSquaredPrefix(fixed, rows.max_stream_count, -1.0);
+}
+
+fn expectDoublingDecision(
+    actual: layer_rt.LayerDoublingDecision,
+    expected_start_optical_depth: f64,
+    expected_doubling_count: usize,
+    expected_uses_doubling: bool,
+) !void {
+    // expectDoublingDecision -------------------------------------------------------------------------------- |
+    // Compare the old LABOS layer-doubling decision row.                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    try std.testing.expectApproxEqAbs(expected_start_optical_depth, actual.start_optical_depth, 1.0e-14);
+    try std.testing.expectEqual(expected_doubling_count, actual.doubling_count);
+    try std.testing.expectEqual(expected_uses_doubling, actual.uses_doubling);
 }
 
 fn fillAttenuation(attenuation: *rows.Vec, n: usize) void {
