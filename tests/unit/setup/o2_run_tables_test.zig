@@ -58,7 +58,9 @@ test "O2RunTables match WP1 baseline table evidence" {
 
     try std.testing.expectApproxEqAbs(0.3, tables.aerosol.optical_depth, 0.0);
     try std.testing.expectApproxEqAbs(1.0, tables.aerosol.single_scatter_albedo, 0.0);
-    try std.testing.expectEqual(@as(usize, 3), tables.phase.coefficient_count);
+    try std.testing.expectEqual(@as(usize, 39), tables.phase.aerosol_phase_max_index);
+    try std.testing.expectApproxEqAbs(1.0, tables.phase.aerosol_phase_coefficients[0], 0.0);
+    try std.testing.expectApproxEqAbs(2.1, tables.phase.aerosol_phase_coefficients[1], 1.0e-14);
     try std.testing.expectEqual(@as(usize, 2501), tables.solar.rows.len);
 }
 

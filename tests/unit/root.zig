@@ -9,6 +9,7 @@ test {
     _ = @import("common/math/gauss_legendre_test.zig");
     _ = @import("common/math/spline_test.zig");
     _ = @import("setup/o2_run_tables_test.zig");
+    _ = @import("setup/phase_table_test.zig");
     _ = @import("cache/profile_line_memory_test.zig");
     _ = @import("cache/weak_line_cutoff_memory_test.zig");
     _ = @import("optics/curved_sun_path_test.zig");
