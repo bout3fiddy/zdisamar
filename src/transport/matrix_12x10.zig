@@ -704,27 +704,20 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab_product: *cons
         }
     }
 
-    var inverse: [rows.max_gauss * rows.max_gauss]f64 = undefined;
-    inverseGaussianBlock(&inverse, n_gauss, &factor_matrix, &pivot_row, &pivot_row_offset, &upper_inverse_diag);
-    return fillQseriesBlocks(n, n_gauss, n_extra_streams, ab_product, &inverse);
-}
-
-fn inverseGaussianBlock(
-    inverse: *[rows.max_gauss * rows.max_gauss]f64,
-    n_gauss: usize,
-    factor_matrix: *const [rows.max_gauss * rows.max_gauss]f64,
-    pivot_row: *const [rows.max_gauss]usize,
-    pivot_row_offset: *const [rows.max_gauss]usize,
-    upper_inverse_diag: *const [rows.max_gauss]f64,
-) void {
-    // inverseGaussianBlock ---------------------------------------------------------------------------------- |
-    // Solve one identity-column right-hand side at a time after generic pivoted LU factorization.             |
+    // Inverse columns ----------------------------------------------------------------------------------------|
+    // Invert M by solving one identity-column right-hand side at a time.                                      |
     //                                                                                                         |
     // For one inverse column:                                                                                 |
+    //                                                                                                         |
     //   pivoted identity column -> solve L*y -> solve U*x -> store x in inverse[:, column]                    |
+    //                                                                                                         |
+    // The factor_matrix array now contains both L and U: L below the diagonal, U on and above the diagonal.   |
     // --------------------------------------------------------------------------------------------------------|
 
+    var inverse: [rows.max_gauss * rows.max_gauss]f64 = undefined;
     for (0..n_gauss) |inverse_col| {
+
+        // Forward solve: L * y = pivoted identity column.
         var forward_solution: [rows.max_gauss]f64 = undefined;
         for (0..n_gauss) |factor_row| {
             var residual: f64 = if (pivot_row[factor_row] == inverse_col) 1.0 else 0.0;
@@ -733,19 +726,24 @@ fn inverseGaussianBlock(
             for (0..factor_row) |known_col| {
                 residual -= factor_matrix[factor_row_offset + known_col] * forward_solution[known_col];
             }
+
             forward_solution[factor_row] = residual;
         }
 
+        // Back solve: U * x = y. Walk upward because each row uses
+        // already-solved rows below it.
         var inverse_column: [rows.max_gauss]f64 = undefined;
         var reverse_row = n_gauss;
         while (reverse_row > 0) {
             reverse_row -= 1;
+
             var residual: f64 = forward_solution[reverse_row];
             const factor_row_offset = pivot_row_offset[reverse_row];
 
             for (reverse_row + 1..n_gauss) |known_col| {
                 residual -= factor_matrix[factor_row_offset + known_col] * inverse_column[known_col];
             }
+
             inverse_column[reverse_row] = residual * upper_inverse_diag[reverse_row];
         }
 
@@ -753,31 +751,42 @@ fn inverseGaussianBlock(
             inverse[factor_row * n_gauss + inverse_col] = inverse_column[factor_row];
         }
     }
-}
 
-fn fillQseriesBlocks(
-    n: usize,
-    n_gauss: usize,
-    n_extra_streams: usize,
-    ab_product: *const Mat,
-    inverse: *const [rows.max_gauss * rows.max_gauss]f64,
-) Mat {
-    // fillQseriesBlocks ------------------------------------------------------------------------------------- |
-    // Fill the four LABOS q-series blocks from inverse(I - AB_gg).                                            |
+    // Gaussian block -----------------------------------------------------------------------------------------|
+    // Q_gg = inverse(I - AB_gg) - I.                                                                          |
     // --------------------------------------------------------------------------------------------------------|
 
     var result = Mat{ .data = undefined, .n = n };
-
     for (0..n_gauss) |gaussian_row| {
         const result_row_offset = gaussian_row * n;
         const inverse_row_offset = gaussian_row * n_gauss;
 
         for (0..n_gauss) |gaussian_col| {
             const identity_value: f64 = if (gaussian_row == gaussian_col) 1.0 else 0.0;
+
+            // Gaussian block: Q[i,j] = inverse(I - AB)[i,j] - delta[i,j].
             result.data[result_row_offset + gaussian_col] =
                 inverse[inverse_row_offset + gaussian_col] - identity_value;
         }
     }
+
+    // Gaussian-to-extra block --------------------------------------------------------------------------------|
+    // Fill the upper-right q-series block. This is one ordinary matrix multiply, but only for the             |
+    // Gaussian rows and extra-stream columns.                                                                 |
+    //                                                                                                         |
+    //   Q_gx = inverse(I - AB_gg) * AB_gx                                                                     |
+    //                                                                                                         |
+    // One output cell:                                                                                        |
+    //                                                                                                         |
+    //   Q[row, extra_col] = sum k=0..n_gauss-1 inverse[row,k] * AB[k, extra_col]                              |
+    //                                                                                                         |
+    // Loop order:                                                                                             |
+    //   1. choose one extra output column: n_gauss + extra_col_index                                          |
+    //   2. choose one Gaussian output row                                                                     |
+    //   3. dot across Gaussian columns k=0..n_gauss-1                                                         |
+    //                                                                                                         |
+    // For n=11 and n_gauss=9, this writes 9 rows x 2 extra columns = 18 output cells.                         |
+    // --------------------------------------------------------------------------------------------------------|
 
     for (0..n_extra_streams) |extra_col_index| {
         const output_col = n_gauss + extra_col_index;
@@ -791,11 +800,19 @@ fn fillQseriesBlocks(
                     ab_product.data[gaussian_col * n + output_col];
             }
 
+            // Upper-extra block: Q_gx = inverse(I - AB_gg) * AB_gx.
             result.data[gaussian_row * n + output_col] = dot_sum;
         }
     }
 
+    // Extra-to-Gaussian block --------------------------------------------------------------------------------|
+    // Q_xg = AB_xg * inverse(I - AB_gg). extra_to_gaussian is reused when filling Q_xx.                       |
+    // --------------------------------------------------------------------------------------------------------|
+
     var extra_to_gaussian: [rows.max_extra_streams * rows.max_gauss]f64 = undefined;
+
+    // The nested loops are one block multiply:
+    //   output extra row -> output Gaussian column -> Gaussian dot product.
     for (0..n_extra_streams) |extra_row_index| {
         const output_row = n_gauss + extra_row_index;
         const product_row_offset = output_row * n;
@@ -810,10 +827,18 @@ fn fillQseriesBlocks(
             }
 
             extra_to_gaussian[extra_to_gaussian_row_offset + gaussian_col] = dot_sum;
+
+            // Lower-Gaussian block: Q_xg = AB_xg * inverse(I - AB_gg).
             result.data[product_row_offset + gaussian_col] = dot_sum;
         }
     }
 
+    // Extra-to-extra block -----------------------------------------------------------------------------------|
+    // Q_xx = AB_xx + Q_xg * AB_gx.                                                                            |
+    // --------------------------------------------------------------------------------------------------------|
+
+    // The nested loops are one block multiply:
+    //   output extra row -> output extra column -> Gaussian feedback dot product.
     for (0..n_extra_streams) |extra_row_index| {
         const output_row = n_gauss + extra_row_index;
         const result_row_offset = output_row * n;
@@ -828,8 +853,10 @@ fn fillQseriesBlocks(
                     ab_product.data[gaussian_col * n + output_col];
             }
 
+            // Extra-extra block:
+            // Q_xx = AB_xx + AB_xg * inverse(I - AB_gg) * AB_gx.
             result.data[result_row_offset + output_col] =
-                ab_product.data[result_row_offset + output_col] + feedback_sum;
+                feedback_sum + ab_product.data[result_row_offset + output_col];
         }
     }
 
@@ -863,6 +890,14 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
 
     result.* = .{ .data = undefined, .n = 12 };
 
+    // --------------------------------------------------------------------------------------------------------|
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: fixed q-series trace gate                                                                     |
+    // Return AB directly when abs(trace(AB_gg)) < threshold_q = 1.0e-3.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    // Same cutoff as the generic rtm_config, but with fixed 10x10 Gaussian diagonal indexes.                  |
+    // This avoids the fixed LU solve when the repeated-reflection correction is already negligible.           |
+
     var trab = ab.data[0];
     trab += ab.data[13];
     trab += ab.data[26];
@@ -877,6 +912,11 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         result.* = ab.*;
         return;
     }
+    // end tradeoff: fixed q-series trace gate ----------------------------------------------------------------|
+
+    // Factorization matrix -----------------------------------------------------------------------------------|
+    // Build the fixed 10x10 matrix M = I - AB_gg. The final two rows/columns are handled after the inverse.   |
+    // --------------------------------------------------------------------------------------------------------|
 
     var one_minus_ab_gg: [rows.max_gauss * rows.max_gauss]f64 = undefined;
     inline for (0..10) |i| {
@@ -886,15 +926,28 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         }
     }
 
+    // Pivot bookkeeping --------------------------------------------------------------------------------------|
+    // Fixed n=12 swaps full 10-wide rows when pivoting. The pivot array maps inverse right-hand sides.        |
+    // --------------------------------------------------------------------------------------------------------|
+
     var pivot: [rows.max_gauss]usize = undefined;
     var inverse_diag: [rows.max_gauss]f64 = undefined;
+
+    // Fixed LU storage ---------------------------------------------------------------------------------------|
+    // one_minus_ab_gg holds M = I - AB_gg as a flat 10 by 10 table.                                           |
+    //                                                                                                         |
+    // pivot[i]        tells which original row now sits at factorization row i.                               |
+    // inverse_diag[i] stores 1 / U[i,i] after each accepted pivot.                                            |
+    //                                                                                                         |
+    // This fixed rtm_config swaps the row contents directly, so it does not need pivot_offset.                |
+    // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..10) |i| {
         pivot[i] = i;
     }
 
     // Pivoted LU ---------------------------------------------------------------------------------------------|
-    // Fixed n=12 swaps full 10-wide rows when pivoting.                                                       |
+    // Factor M into L and U in-place. A near-zero pivot returns the bounded AB fallback.                      |
     // --------------------------------------------------------------------------------------------------------|
 
     for (0..10) |col| {
@@ -913,6 +966,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
             pivot[col] = pivot[max_row];
             pivot[max_row] = tmp;
 
+            // Previous-column LU factors belong to the pivoted row too.
             inline for (0..10) |k| {
                 const lhs = col * 10 + k;
                 const rhs = max_row * 10 + k;
@@ -952,6 +1006,12 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         }
     }
 
+    // Inverse columns ----------------------------------------------------------------------------------------|
+    // Solve M * x = one basis column at a time. Forward substitution builds y, back substitution builds x.    |
+    //                                                                                                         |
+    // rhs_col chooses one column of inverse(M). The solved x is written into inverse[:, rhs_col].             |
+    // --------------------------------------------------------------------------------------------------------|
+
     var inverse: [rows.max_gauss * rows.max_gauss]f64 = undefined;
     for (0..10) |rhs_col| {
         var y: [rows.max_gauss]f64 = undefined;
@@ -974,12 +1034,20 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         inline for (0..10) |i| inverse[i * 10 + rhs_col] = x[i];
     }
 
+    // Gaussian block -----------------------------------------------------------------------------------------|
+    // Q_gg = inverse(I - AB_gg) - I.                                                                          |
+    // --------------------------------------------------------------------------------------------------------|
+
     inline for (0..10) |i| {
         inline for (0..10) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
             result.data[i * 12 + j] = inverse[i * 10 + j] - delta;
         }
     }
+
+    // Gaussian-to-extra block --------------------------------------------------------------------------------|
+    // Q_gx = inverse(I - AB_gg) * AB_gx.                                                                      |
+    // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..10) |i| {
         inline for (0..2) |ja| {
@@ -990,6 +1058,10 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
         }
     }
 
+    // Extra-to-Gaussian block --------------------------------------------------------------------------------|
+    // Q_xg = AB_xg * inverse(I - AB_gg).                                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
     inline for (0..2) |ia| {
         inline for (0..10) |j| {
             var s: f64 = 0.0;
@@ -997,6 +1069,10 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
             result.data[(10 + ia) * 12 + j] = s;
         }
     }
+
+    // Extra-to-extra block -----------------------------------------------------------------------------------|
+    // Q_xx = AB_xx + Q_xg * AB_gx. This uses the Q_xg values already written into result.                     |
+    // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..2) |ia| {
         const i = 10 + ia;
