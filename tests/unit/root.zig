@@ -17,6 +17,7 @@ test {
     _ = @import("transport/controls_test.zig");
     _ = @import("transport/gauss_angles_test.zig");
     _ = @import("transport/jacobian_states_test.zig");
+    _ = @import("transport/matrix_12x10_test.zig");
     _ = @import("transport/rows_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
