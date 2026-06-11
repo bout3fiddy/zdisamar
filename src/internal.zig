@@ -20,6 +20,21 @@ pub const public = @import("root.zig");
 pub const common = struct {
     pub const errors = @import("common/errors.zig");
     pub const hashing = @import("common/hashing.zig");
+
+    // math ---------------------------------------------------------------------------------------------------|
+    // Namespace-only test import wrapper for shared math helpers.                                             |
+    //                                                                                                         |
+    // layout(64-bit)                                                                                          |
+    // size: 0 B (0.000 KiB), align: 1 B                                                                       |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   no stored fields                                                                                      |
+    pub const math = struct {
+        pub const gauss_legendre = @import("common/math/gauss_legendre.zig");
+        pub const spline = @import("common/math/spline.zig");
+    };
+    // --------------------------------------------------------------------------------------------------------|
+
     pub const units = @import("common/units.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -37,6 +52,7 @@ pub const common = struct {
 pub const input = struct {
     pub const defaults = @import("input/defaults.zig");
     pub const fast_mode = @import("input/fast_mode.zig");
+    pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
     pub const json = @import("input/json.zig");
     pub const o2_case = @import("input/o2_case.zig");
     pub const validate = @import("input/validate.zig");

@@ -3,7 +3,11 @@ const internal = @import("internal");
 
 test {
     _ = @import("input/o2_case_test.zig");
+    _ = @import("input/hitran_partition_tables_test.zig");
     _ = @import("assets/readers_test.zig");
+    _ = @import("common/units_test.zig");
+    _ = @import("common/math/gauss_legendre_test.zig");
+    _ = @import("common/math/spline_test.zig");
     _ = @import("setup/o2_run_tables_test.zig");
     _ = @import("cache/profile_line_memory_test.zig");
     _ = @import("cache/weak_line_cutoff_memory_test.zig");

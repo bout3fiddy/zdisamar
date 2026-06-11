@@ -6,24 +6,20 @@ const o2_case = @import("../input/o2_case.zig");
 const Allocator = std.mem.Allocator;
 
 // O2CiaTable -------------------------------------------------------------------------------------------------|
-// O2-O2 CIA coefficient table plus diagnostic evidence anchors.                                               |
+// O2-O2 CIA coefficient table parsed from the configured BIRA asset.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] scale_factor_cm5_per_molecule2: f64                                                                |
 // [ 8..23] rows                          : []CiaAssetRow                                                      |
-// [24..31] diagnostic_row_count          : usize                                                              |
-// [32..39] first_probe_cia_optical_depth : f64                                                                |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   rows owns parsed CIA coefficient rows and is released by deinit.                                          |
 pub const O2CiaTable = struct {
     scale_factor_cm5_per_molecule2: f64,
     rows: []readers.CiaAssetRow,
-    diagnostic_row_count: usize,
-    first_probe_cia_optical_depth: f64,
 
     pub fn deinit(self: *O2CiaTable, allocator: Allocator) void {
         // O2CiaTable.deinit ----------------------------------------------------------------------------------|
@@ -37,7 +33,7 @@ pub const O2CiaTable = struct {
 
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !O2CiaTable {
     // build --------------------------------------------------------------------------------------------------|
-    // Load BIRA CIA coefficients and attach the WP1 diagnostic row-count evidence.                            |
+    // Load BIRA CIA coefficients for later wavelength/profile evaluation.                                     |
     // --------------------------------------------------------------------------------------------------------|
     var asset = try readers.readCiaTable(allocator, case.cia.table.path);
     errdefer asset.deinit(allocator);
@@ -45,7 +41,5 @@ pub fn build(allocator: Allocator, case: o2_case.O2Case) !O2CiaTable {
     return .{
         .scale_factor_cm5_per_molecule2 = asset.scale_factor_cm5_per_molecule2,
         .rows = asset.rows,
-        .diagnostic_row_count = 1130,
-        .first_probe_cia_optical_depth = 0.00314377591581326,
     };
 }

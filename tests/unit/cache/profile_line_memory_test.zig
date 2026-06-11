@@ -1,44 +1,340 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const internal = @import("internal");
 
-test "ProfileLineValues keep one value per exact radiance wavelength" {
+const profile_line_test_sample_count = 7;
+
+test "ProfileLineValues keep wavelength-major line values for each layer node" {
+    var case = internal.input.defaults.referenceCase();
+    case.spectral_grid.sample_count = profile_line_test_sample_count;
+
     var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        case,
     );
     defer values.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(usize, 701), values.values.len);
-    try std.testing.expectEqual(@as(usize, 3874), values.recorded_forward_miss_count);
+    try std.testing.expectEqual(@as(usize, profile_line_test_sample_count), values.wavelength_count);
+    try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
+    try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
     try std.testing.expect(values.reuse_stamp.value != 0);
-    try std.testing.expectApproxEqAbs(755.0, values.values[0].wavelength_nm, 0.0);
-    try std.testing.expectApproxEqAbs(776.0, values.values[values.values.len - 1].wavelength_nm, 0.0);
+
+    const first = values.row(0, 0) orelse return error.MissingProfileLineValue;
+    const last = values.row(values.wavelength_count - 1, values.profile_node_count - 1) orelse
+        return error.MissingProfileLineValue;
+    try std.testing.expectApproxEqAbs(755.0, first.wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(776.0, last.wavelength_nm, 0.0);
+    try std.testing.expectEqual(@as(u32, 0), first.layer_index);
+    try std.testing.expectEqual(@as(u32, 44), last.layer_index);
 }
 
-test "ProfileLineValues reproduce WP1 probe optical-depth values" {
+test "ProfileLineValues contain computed finite weak-line sigma rows" {
+    var case = internal.input.defaults.referenceCase();
+    case.spectral_grid.sample_count = profile_line_test_sample_count;
+
+    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        std.testing.allocator,
+        case,
+    );
+    defer values.deinit(std.testing.allocator);
+
+    var nonzero_count: usize = 0;
+    var max_sigma: f64 = 0.0;
+    for (values.values) |value| {
+        try std.testing.expect(std.math.isFinite(value.weak_line_sigma_cm2_per_molecule));
+        try std.testing.expect(value.weak_line_sigma_cm2_per_molecule >= 0.0);
+        try std.testing.expect(std.math.isFinite(value.d_sigma_d_temperature_cm2_per_molecule_per_k));
+        if (value.weak_line_sigma_cm2_per_molecule > 0.0) nonzero_count += 1;
+        max_sigma = @max(max_sigma, value.weak_line_sigma_cm2_per_molecule);
+    }
+
+    try std.testing.expect(nonzero_count > values.profile_node_count);
+    try std.testing.expect(max_sigma > 1.0e-28);
+}
+
+test "ProfileLineValues build the full reference wavelength route in optimized mode" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
     var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
     defer values.deinit(std.testing.allocator);
 
-    try expectProbe(values, 758.0, 0.00350565072324649, 0.33305592074048884);
-    try expectProbe(values, 760.0, 0.8352435635463854, 1.1671196972657576);
-    try expectProbe(values, 765.0, 0.14846720294997337, 0.48065469408656813);
-    try expectProbe(values, 767.0, 0.01613470147641476, 0.3447530683438321);
-    try expectProbe(values, 776.0, 0.0001201820341403, 0.32427558378395965);
+    try std.testing.expectEqual(@as(usize, 701), values.wavelength_count);
+    try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
+    try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
 }
 
-fn expectProbe(
-    values: internal.cache.profile_line_memory.ProfileLineValues,
-    wavelength_nm: f64,
-    gas_absorption: f64,
-    total_optical_depth: f64,
-) !void {
-    // expectProbe --------------------------------------------------------------------------------------------|
-    // Assert one recorded diagnostic profile-line probe against its WP1 evidence values.                      |
-    // --------------------------------------------------------------------------------------------------------|
-    const probe = values.findProbe(wavelength_nm) orelse return error.MissingProbe;
-    try std.testing.expectApproxEqAbs(gas_absorption, probe.gas_absorption_optical_depth, 1.0e-15);
-    try std.testing.expectApproxEqAbs(total_optical_depth, probe.total_optical_depth, 1.0e-15);
+test "ProfileLineValues match old profile-node line math evidence" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    var probe_index: usize = 0;
+    while (probe_index < profile_line_probe_evidence.len) {
+        const wavelength_nm = profile_line_probe_evidence[probe_index].wavelength_nm;
+        var case = internal.input.defaults.referenceCase();
+        case.spectral_grid = .{
+            .start_nm = wavelength_nm,
+            .end_nm = wavelength_nm,
+            .sample_count = 1,
+        };
+
+        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+            std.testing.allocator,
+            case,
+        );
+        defer values.deinit(std.testing.allocator);
+
+        try std.testing.expectEqual(@as(usize, 1), values.wavelength_count);
+        while (probe_index < profile_line_probe_evidence.len and
+            profile_line_probe_evidence[probe_index].wavelength_nm == wavelength_nm)
+        {
+            const expected = profile_line_probe_evidence[probe_index];
+            const actual = values.row(0, expected.profile_node_index) orelse return error.MissingProfileLineValue;
+            try std.testing.expectApproxEqAbs(expected.wavelength_nm, actual.wavelength_nm, 0.0);
+            try std.testing.expectApproxEqAbs(expected.pressure_hpa, actual.pressure_hpa, 1.0e-10);
+            try std.testing.expectApproxEqAbs(expected.temperature_k, actual.temperature_k, 1.0e-10);
+            try std.testing.expectApproxEqRel(
+                expected.weak_line_sigma_cm2_per_molecule,
+                actual.weak_line_sigma_cm2_per_molecule,
+                1.0e-12,
+            );
+            try std.testing.expectApproxEqRel(
+                expected.d_sigma_d_temperature_cm2_per_molecule_per_k,
+                actual.d_sigma_d_temperature_cm2_per_molecule_per_k,
+                1.0e-12,
+            );
+            probe_index += 1;
+        }
+    }
 }
+
+// ProfileLineProbeEvidence -----------------------------------------------------------------------------------|
+// One old-route weak-line value anchor for a diagnostic wavelength and layer node.                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wavelength_nm                                   : f64                                              |
+// [ 8..15] profile_node_index                              : usize                                            |
+// [16..23] pressure_hpa                                    : f64                                              |
+// [24..31] temperature_k                                   : f64                                              |
+// [32..39] weak_line_sigma_cm2_per_molecule                : f64                                              |
+// [40..47] d_sigma_d_temperature_cm2_per_molecule_per_k    : f64                                              |
+const ProfileLineProbeEvidence = struct {
+    wavelength_nm: f64,
+    profile_node_index: usize,
+    pressure_hpa: f64,
+    temperature_k: f64,
+    weak_line_sigma_cm2_per_molecule: f64,
+    d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-baseline-probe.zig.
+// The WP1 public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
+// derived by running origin/main SpectroscopyLineList.evaluateAt over the WP2 layer nodes at the five diagnostic
+// wavelengths used by public-python-baseline.json.
+const profile_line_probe_evidence = [_]ProfileLineProbeEvidence{
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 0,
+        .pressure_hpa = 1013.249997412,
+        .temperature_k = 294.202056207578,
+        .weak_line_sigma_cm2_per_molecule = 1.05726969292054615e-27,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -1.83595503527988427e-30,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 7,
+        .pressure_hpa = 558.458199121273,
+        .temperature_k = 267.57720774615,
+        .weak_line_sigma_cm2_per_molecule = 6.11944055373625292e-28,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -1.18536201795389974e-30,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 16,
+        .pressure_hpa = 500.000004070198,
+        .temperature_k = 262.439089747901,
+        .weak_line_sigma_cm2_per_molecule = 5.53440020740344944e-28,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -1.09677396542423947e-30,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 29,
+        .pressure_hpa = 17.351474312025,
+        .temperature_k = 229.646997591592,
+        .weak_line_sigma_cm2_per_molecule = 2.06091670097212271e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -4.80320128223989631e-32,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 44,
+        .pressure_hpa = 0.303708050815,
+        .temperature_k = 259.502897487829,
+        .weak_line_sigma_cm2_per_molecule = 3.38194079559902818e-31,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -6.79114241671697228e-34,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 0,
+        .pressure_hpa = 1013.249997412,
+        .temperature_k = 294.202056207578,
+        .weak_line_sigma_cm2_per_molecule = 1.96387183565113823e-25,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 3.41659597628889760e-28,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 7,
+        .pressure_hpa = 558.458199121273,
+        .temperature_k = 267.57720774615,
+        .weak_line_sigma_cm2_per_molecule = 1.02384922563819883e-25,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 2.64247929549664367e-28,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 16,
+        .pressure_hpa = 500.000004070198,
+        .temperature_k = 262.439089747901,
+        .weak_line_sigma_cm2_per_molecule = 9.04243012588960301e-26,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 2.51176133229739802e-28,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 29,
+        .pressure_hpa = 17.351474312025,
+        .temperature_k = 229.646997591592,
+        .weak_line_sigma_cm2_per_molecule = 2.79583210321738751e-27,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.22244579875582963e-29,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 44,
+        .pressure_hpa = 0.303708050815,
+        .temperature_k = 259.502897487829,
+        .weak_line_sigma_cm2_per_molecule = 5.44573943793696381e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.57019570621925716e-31,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 0,
+        .pressure_hpa = 1013.249997412,
+        .temperature_k = 294.202056207578,
+        .weak_line_sigma_cm2_per_molecule = 3.22632892489860087e-26,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -1.64717214020881762e-29,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 7,
+        .pressure_hpa = 558.458199121273,
+        .temperature_k = 267.57720774615,
+        .weak_line_sigma_cm2_per_molecule = 1.79551941170372428e-26,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = -7.39700758793966184e-31,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 16,
+        .pressure_hpa = 500.000004070198,
+        .temperature_k = 262.439089747901,
+        .weak_line_sigma_cm2_per_molecule = 1.60783757155988610e-26,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.14047281928550909e-30,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 29,
+        .pressure_hpa = 17.351474312025,
+        .temperature_k = 229.646997591592,
+        .weak_line_sigma_cm2_per_molecule = 5.49809079452546309e-28,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 5.56850013368800901e-31,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 44,
+        .pressure_hpa = 0.303708050815,
+        .temperature_k = 259.502897487829,
+        .weak_line_sigma_cm2_per_molecule = 9.78225414489972006e-30,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.37423779824044953e-33,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 0,
+        .pressure_hpa = 1013.249997412,
+        .temperature_k = 294.202056207578,
+        .weak_line_sigma_cm2_per_molecule = 4.36567880988005421e-27,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.84445006847780998e-29,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 7,
+        .pressure_hpa = 558.458199121273,
+        .temperature_k = 267.57720774615,
+        .weak_line_sigma_cm2_per_molecule = 2.11957461524255781e-27,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.11345392485255979e-29,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 16,
+        .pressure_hpa = 500.000004070198,
+        .temperature_k = 262.439089747901,
+        .weak_line_sigma_cm2_per_molecule = 1.84589899908685568e-27,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.00971749402109018e-29,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 29,
+        .pressure_hpa = 17.351474312025,
+        .temperature_k = 229.646997591592,
+        .weak_line_sigma_cm2_per_molecule = 5.22269420322659805e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 3.61870776201212978e-31,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 44,
+        .pressure_hpa = 0.303708050815,
+        .temperature_k = 259.502897487829,
+        .weak_line_sigma_cm2_per_molecule = 1.10189905694067465e-30,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 6.16462519843508840e-33,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 0,
+        .pressure_hpa = 1013.249997412,
+        .temperature_k = 294.202056207578,
+        .weak_line_sigma_cm2_per_molecule = 2.51588836605153841e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 9.27419151490685533e-32,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 7,
+        .pressure_hpa = 558.458199121273,
+        .temperature_k = 267.57720774615,
+        .weak_line_sigma_cm2_per_molecule = 1.27406181163098260e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 3.49547764082895642e-32,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 16,
+        .pressure_hpa = 500.000004070198,
+        .temperature_k = 262.439089747901,
+        .weak_line_sigma_cm2_per_molecule = 1.12507393405501891e-29,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 2.95042246033502089e-32,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 29,
+        .pressure_hpa = 17.351474312025,
+        .temperature_k = 229.646997591592,
+        .weak_line_sigma_cm2_per_molecule = 3.60584079613569218e-31,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 8.57551093752559266e-34,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 44,
+        .pressure_hpa = 0.303708050815,
+        .temperature_k = 259.502897487829,
+        .weak_line_sigma_cm2_per_molecule = 6.78137085917089848e-33,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 1.73662029992673027e-35,
+    },
+};
