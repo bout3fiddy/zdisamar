@@ -2,11 +2,12 @@ const gauss_angles = @import("gauss_angles.zig");
 const rows = @import("rows.zig");
 
 // layer_reflect_transmit.zig ---------------------------------------------------------------------------------|
-// Single-layer LABOS reflection/transmission matrix fills.                                                    |
+// Single-layer LABOS reflection/transmission matrix fills and layer-doubling support math.                    |
 //                                                                                                             |
 // provenance                                                                                                  |
 //   Ports main:`src/forward_model/radiative_transfer/labos/layers.zig` `fillSingleScatterR`,                  |
-//   `fillSingleScatterR12`, `fillSingleScatterT`, and `fillSingleScatterT12`.                                 |
+//   `fillSingleScatterR12`, `fillSingleScatterT`, `fillSingleScatterT12`, `gaussTrace`, and                   |
+//   `squareAttenuation`.                                                                                      |
 //                                                                                                             |
 // math                                                                                                        |
 //   R[i,j] = omega * Zmin[i,j]  * (1 - E[i] * E[j]) * dmu_plus[i,j]                                           |
@@ -14,6 +15,8 @@ const rows = @import("rows.zig");
 //                                                                                                             |
 //   EET[i,j] = tau_start * E[i]     when mu_i ~= mu_j                                                         |
 //            = E[i] - E[j]          otherwise                                                                 |
+//   trace_gg = sum over Gaussian k of M[k,k]                                                                  |
+//   E <- E * E after each layer-doubling step                                                                 |
 //                                                                                                             |
 // memory                                                                                                      |
 //   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the old    |
@@ -107,6 +110,53 @@ pub fn fillSingleScatterTransmission(
     }
 }
 
+pub fn gaussianBlockTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64 {
+    // gaussianBlockTrace ------------------------------------------------------------------------------------ |
+    // Sum the diagonal of the Gaussian block used by LABOS layer-doubling threshold gates.                    |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `gaussTrace`.                                                                  |
+    //                                                                                                         |
+    // Fixed n=12, n_gauss=10 uses literal row-major diagonal indexes: k*12 + k = 13*k.                        |
+    // Generic stream counts use k*n + k.                                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == rows.max_stream_count and n_gauss == rows.max_gauss) {
+        var trace = matrix.data[0];
+        trace += matrix.data[13];
+        trace += matrix.data[26];
+        trace += matrix.data[39];
+        trace += matrix.data[52];
+        trace += matrix.data[65];
+        trace += matrix.data[78];
+        trace += matrix.data[91];
+        trace += matrix.data[104];
+        trace += matrix.data[117];
+        return trace;
+    }
+
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |k| trace += matrix.data[k * n + k];
+
+    return trace;
+}
+
+pub inline fn squareAttenuation(n: usize, attenuation: *rows.Vec) void {
+    // squareAttenuation ------------------------------------------------------------------------------------- |
+    // One doubling step turns half-layer attenuation into full-layer attenuation: E <- E * E.                 |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `squareAttenuation`.                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+
+    if (n == rows.max_stream_count) return squareAttenuation12(attenuation);
+
+    for (0..n) |direction_index| {
+        const e = attenuation.data[direction_index];
+        attenuation.data[direction_index] = e * e;
+    }
+}
+
 fn fillSingleScatterReflection12(
     out: *rows.Mat,
     single_scatter_albedo: f64,
@@ -132,6 +182,17 @@ fn fillSingleScatterReflection12(
             out.data[idx] = phase_term * (1.0 - direct_pair) * geometry.dmu_plus[idx];
             idx += rows.max_stream_count;
         }
+    }
+}
+
+inline fn squareAttenuation12(attenuation: *rows.Vec) void {
+    // squareAttenuation12 ----------------------------------------------------------------------------------- |
+    // Fixed 12-direction attenuation square for the LABOS O2 A rtm_config.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+
+    inline for (0..rows.max_stream_count) |direction_index| {
+        const e = attenuation.data[direction_index];
+        attenuation.data[direction_index] = e * e;
     }
 }
 

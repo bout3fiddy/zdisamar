@@ -70,12 +70,55 @@ test "single-scatter reflection and transmission match scalar references for fix
     );
 }
 
+test "Gaussian block trace matches scalar reference for generic and fixed paths" {
+    var generic = rows.Mat.zero(6);
+    fillTraceMatrix(&generic, 6, 0.2);
+    try std.testing.expectApproxEqAbs(
+        scalarGaussianTrace(6, 4, &generic),
+        layer_rt.gaussianBlockTrace(6, 4, &generic),
+        1.0e-14,
+    );
+
+    var fixed = rows.Mat.zero(rows.max_stream_count);
+    fillTraceMatrix(&fixed, rows.max_stream_count, 0.37);
+    try std.testing.expectApproxEqAbs(
+        scalarGaussianTrace(rows.max_stream_count, rows.max_gauss, &fixed),
+        layer_rt.gaussianBlockTrace(rows.max_stream_count, rows.max_gauss, &fixed),
+        1.0e-14,
+    );
+}
+
+test "attenuation square matches old layer-doubling support path" {
+    var generic = rows.Vec.zero(6);
+    fillAttenuationWithSentinel(&generic, 6, 0.123);
+    layer_rt.squareAttenuation(6, &generic);
+    try expectSquaredPrefix(generic, 6, 0.123);
+
+    var fixed = rows.Vec.zero(rows.max_stream_count);
+    fillAttenuationWithSentinel(&fixed, rows.max_stream_count, -1.0);
+    layer_rt.squareAttenuation(rows.max_stream_count, &fixed);
+    try expectSquaredPrefix(fixed, rows.max_stream_count, -1.0);
+}
+
 fn fillAttenuation(attenuation: *rows.Vec, n: usize) void {
     // fillAttenuation --------------------------------------------------------------------------------------- |
     // Build deterministic direct-beam survival values in (0, 1).                                              |
     // --------------------------------------------------------------------------------------------------------|
     for (0..n) |index| {
         attenuation.set(index, 0.91 - 0.025 * @as(f64, @floatFromInt(index)));
+    }
+}
+
+fn fillAttenuationWithSentinel(attenuation: *rows.Vec, n: usize, sentinel: f64) void {
+    // fillAttenuationWithSentinel ----------------------------------------------------------------------------|
+    // Build deterministic direct-beam survival values and mark inactive storage.                              |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..rows.max_stream_count) |index| {
+        attenuation.set(index, sentinel);
+    }
+
+    for (0..n) |index| {
+        attenuation.set(index, 0.92 - 0.031 * @as(f64, @floatFromInt(index)));
     }
 }
 
@@ -89,6 +132,20 @@ fn fillPhaseMatrix(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64
             const row_term = row_factor * @as(f64, @floatFromInt(row + 1));
             const col_term = col_factor * @as(f64, @floatFromInt(col + 2));
             matrix.set(row, col, 0.4 + row_term + col_term);
+        }
+    }
+}
+
+fn fillTraceMatrix(matrix: *rows.Mat, n: usize, base: f64) void {
+    // fillTraceMatrix --------------------------------------------------------------------------------------- |
+    // Build deterministic row-major matrix values for the old Gaussian diagonal trace helper.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    matrix.* = rows.Mat.zero(n);
+    for (0..n) |row| {
+        for (0..n) |col| {
+            const row_term = 0.17 * @as(f64, @floatFromInt(row + 1));
+            const col_term = 0.023 * @as(f64, @floatFromInt(col + 3));
+            matrix.set(row, col, base + row_term - col_term);
         }
     }
 }
@@ -143,6 +200,32 @@ fn scalarTransmission(
         }
     }
     return result;
+}
+
+fn scalarGaussianTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64 {
+    // scalarGaussianTrace ----------------------------------------------------------------------------------- |
+    // Independent test reference for old LABOS `gaussTrace`.                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |index| {
+        trace += matrix.data[index * n + index];
+    }
+    return trace;
+}
+
+fn expectSquaredPrefix(actual: rows.Vec, n: usize, sentinel: f64) !void {
+    // expectSquaredPrefix ----------------------------------------------------------------------------------- |
+    // Compare active attenuation entries after old LABOS `squareAttenuation`; inactive generic storage stays  |
+    // untouched.                                                                                              |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..n) |index| {
+        const before = 0.92 - 0.031 * @as(f64, @floatFromInt(index));
+        try std.testing.expectApproxEqAbs(before * before, actual.get(index), 1.0e-14);
+    }
+
+    for (n..rows.max_stream_count) |index| {
+        try std.testing.expectEqual(sentinel, actual.get(index));
+    }
 }
 
 fn expectMatrixClose(expected: rows.Mat, actual: rows.Mat, n: usize, tolerance: f64) !void {
