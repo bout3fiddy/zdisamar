@@ -1,204 +1,28 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
+const internal = @import("internal");
 
-// See tests/unit/internal_root.zig for the rationale: a `test` block is
-// required to force Zig to analyze the imported test files.
 test {
-    _ = @import("observation_model_test.zig");
-    _ = @import("input/o2a_reference/root_test.zig");
-    _ = @import("optimal_estimation_test.zig");
+    _ = @import("input/o2_case_test.zig");
+    _ = @import("assets/readers_test.zig");
+    _ = @import("setup/o2_run_tables_test.zig");
+    _ = @import("cache/profile_line_memory_test.zig");
+    _ = @import("cache/weak_line_cutoff_memory_test.zig");
+    _ = @import("instrumentation/facades_test.zig");
 }
 
-const Scene = zdisamar.Input;
-const empty_scene: Scene = .{};
-const ObservationModel = @TypeOf(empty_scene.observation_model);
-const Absorber = std.meta.Child(@TypeOf(empty_scene.absorbers.items));
-const empty_observation_model: ObservationModel = .{};
-const OperationalBandSupport = std.meta.Child(@TypeOf(empty_observation_model.operational_band_support));
+test "public root exposes only WP2 setup surface" {
+    const zdisamar = internal.public;
 
-test "unit suite keeps the public surface literal" {
-    try std.testing.expect(@hasDecl(zdisamar, "Input"));
-    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
-    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionTable"));
-    try std.testing.expect(@hasDecl(zdisamar, "prepare"));
-    try std.testing.expect(@hasDecl(zdisamar, "run"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
-    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
-    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
-    try std.testing.expect(!@hasDecl(zdisamar, "compat"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
-    try std.testing.expect(!@hasDecl(zdisamar, "calculation_telemetry"));
-}
+    try std.testing.expect(@hasDecl(zdisamar, "O2Case"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2RunTables"));
+    try std.testing.expect(@hasDecl(zdisamar, "ProfileLineValues"));
+    try std.testing.expect(@hasDecl(zdisamar, "defaultO2Case"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildReferenceO2RunTables"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
 
-test "prepared lifecycle owns resolved O2A state" {
-    var input: zdisamar.Input = .{
-        .id = "prepared-lifecycle",
-        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
-    defer prepared.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("prepared-lifecycle", prepared.input.id);
-    try std.testing.expect(prepared.optical_properties.total_optical_depth >= 0.0);
-}
-
-test "unsupported bundled line-by-line spectroscopy fails instead of dropping absorption" {
-    const absorbers = [_]Absorber{.{
-        .id = "no2",
-        .species = "no2",
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .line_by_line,
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "unsupported-line-by-line",
-        .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    try std.testing.expectError(
-        error.UnsupportedSpectroscopyConfiguration,
-        zdisamar.prepare(std.testing.allocator, &input),
-    );
-}
-
-test "unsupported bundled cross-section spectroscopy fails instead of zeroing continuum" {
-    const absorbers = [_]Absorber{.{
-        .id = "o2_o2",
-        .species = "o2_o2",
-        .resolved_species = .o2_o2,
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .cross_sections,
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "unsupported-cross-section",
-        .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    try std.testing.expectError(
-        error.UnsupportedSpectroscopyConfiguration,
-        zdisamar.prepare(std.testing.allocator, &input),
-    );
-}
-
-test "generated O2A LUTs live only in operational band support" {
-    const support = [_]OperationalBandSupport{.{
-        .id = "primary",
-        .high_resolution_step_nm = 0.05,
-        .high_resolution_half_span_nm = 0.25,
-    }};
-    const absorbers = [_]Absorber{.{
-        .id = "o2",
-        .species = "o2",
-        .resolved_species = .o2,
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .line_by_line,
-            .line_gas_controls = .{
-                .active_stage = .simulation,
-            },
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "generated-lut-ownership",
-        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-            .operational_band_support = support[0..],
-        },
-        .lut_controls = .{
-            .xsec = .{
-                .mode = .generate,
-                .min_temperature_k = 180.0,
-                .max_temperature_k = 325.0,
-                .min_pressure_hpa = 0.03,
-                .max_pressure_hpa = 1050.0,
-                .temperature_grid_count = 3,
-                .pressure_grid_count = 3,
-                .temperature_coefficient_count = 2,
-                .pressure_coefficient_count = 2,
-            },
-        },
-    };
-
-    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
-    defer prepared.deinit(std.testing.allocator);
-
-    const prepared_support = prepared.input.observation_model.primaryOperationalBandSupport();
-    try std.testing.expect(prepared_support.o2_operational_lut.enabled());
-}
-
-test "public root exposes the O2A forward lab surface" {
-    try std.testing.expect(@hasDecl(zdisamar, "Input"));
-    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
-    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
-    try std.testing.expect(@hasDecl(zdisamar, "CalculationStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "Output"));
-    try std.testing.expect(@hasDecl(zdisamar, "DiagnosticReport"));
-    try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionTable"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2AInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2ASessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "defaultO2AInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "prepareO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "runO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "runO2AWithSessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
-    try std.testing.expect(@hasDecl(zdisamar, "o2a"));
-    try std.testing.expect(@hasDecl(zdisamar, "prepare"));
-    try std.testing.expect(@hasDecl(zdisamar, "run"));
-    try std.testing.expect(@hasDecl(zdisamar, "writeReport"));
-}
-
-test "public root no longer exposes removed framework scaffolding" {
-    try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
-    try std.testing.expect(!@hasDecl(zdisamar, "PreparedPlan"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Storage"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Request"));
-    try std.testing.expect(!@hasDecl(zdisamar, "canonical_config"));
-    try std.testing.expect(!@hasDecl(zdisamar, "mission_s5p"));
-    try std.testing.expect(!@hasDecl(zdisamar, "exporters"));
-    try std.testing.expect(!@hasDecl(zdisamar, "test_support"));
-    try std.testing.expect(!@hasDecl(zdisamar, "vendor_case"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Case"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Data"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Optics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "RunStorage"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Result"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Report"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Prepared"));
-    try std.testing.expect(!@hasDecl(zdisamar, "parity"));
-    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
-    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Scene"));
+    try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));
+    try std.testing.expect(!@hasDecl(zdisamar, "ProductStorage"));
+    try std.testing.expect(!@hasDecl(zdisamar, "run"));
+    try std.testing.expect(!@hasDecl(zdisamar, "prepare"));
 }

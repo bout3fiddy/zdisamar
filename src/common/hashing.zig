@@ -1,39 +1,32 @@
 const std = @import("std");
 
 // hashing.zig ------------------------------------------------------------------------------------------------|
-// Shared exact-bit hash helpers for cache and plan keys. These helpers only append bytes to a caller-owned    |
-// Wyhash; seed choice and domain-specific fields stay local to each key builder.                              |
+// Reuse stamps for setup/cache owners.                                                                        |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateInt(hash, resolved);
-}
+// ReuseStamp -------------------------------------------------------------------------------------------------|
+// Compact identity stamp for retained setup/cache rows.                                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] value : u64                                                                                          |
+pub const ReuseStamp = struct {
+    value: u64 = 0,
 
-pub fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |item| updateOptionalInt(hash, item);
+    pub fn fromBytes(bytes: []const u8) ReuseStamp {
+        // ReuseStamp.fromBytes -------------------------------------------------------------------------------|
+        // Hash stable setup identity bytes into the compact reuse stamp.                                      |
+        // ----------------------------------------------------------------------------------------------------|
+        return .{ .value = std.hash.Wyhash.hash(0, bytes) };
     }
-}
 
-pub fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateFloat(hash, resolved);
-}
-
-pub fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
-    updateInt(hash, values.len);
-    hash.update(std.mem.sliceAsBytes(values));
-}
-
-pub fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-pub fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
-}
+    pub fn eql(self: ReuseStamp, other: ReuseStamp) bool {
+        // ReuseStamp.eql -------------------------------------------------------------------------------------|
+        // Compare two retained setup/cache stamps.                                                            |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.value == other.value;
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|

@@ -23,6 +23,10 @@ def synced_library_path(root: str) -> Path:
     return candidates[0]
 
 
+def native_api_expected(root: str) -> bool:
+    return (Path(root) / "src" / "api" / "c.zig").exists()
+
+
 def platform_tag_for_zig_target(zig_target: str | None) -> str | None:
 
     if zig_target == "x86_64-linux-gnu":
@@ -83,6 +87,10 @@ class NativeWheelHook(BuildHookInterface):
         command.append(f"-Doptimize={optimize}")
 
         subprocess.run(command, cwd=self.root, check=True)
+        if not native_api_expected(self.root):
+            build_data["pure_python"] = True
+            return
+
         library = synced_library_path(self.root)
         build_data["force_include"][str(library)] = f"zdisamar/bindings/{library.name}"
         build_data["tag"] = f"py3-none-{platform_tag(self.build_config)}"
