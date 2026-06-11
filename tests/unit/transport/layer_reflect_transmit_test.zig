@@ -143,6 +143,72 @@ test "attenuation square matches old layer-doubling support path" {
     try expectSquaredPrefix(fixed, rows.max_stream_count, -1.0);
 }
 
+test "layer doubling matches scalar q-skipped reference for generic stream count" {
+    const n = 6;
+    const n_gauss = 4;
+    const thresholds = controls.PerformanceThresholds{ .threshold_mul = 1.0e9 };
+    var reflection = rows.Mat.zero(n);
+    var transmission = rows.Mat.zero(n);
+    var attenuation = rows.Vec.zero(n);
+    fillDoublingInputs(&reflection, &transmission, &attenuation, n);
+
+    var expected_reflection = reflection;
+    var expected_transmission = transmission;
+    var expected_attenuation = attenuation;
+    scalarDoubleLayerSkippedProducts(2, n, &expected_reflection, &expected_transmission, &expected_attenuation);
+
+    layer_rt.doubleLayer(
+        2,
+        n,
+        n_gauss,
+        thresholds,
+        &reflection,
+        &transmission,
+        &attenuation,
+        1,
+        3,
+        5,
+        null,
+    );
+
+    try expectMatrixClose(expected_reflection, reflection, n, 1.0e-14);
+    try expectMatrixClose(expected_transmission, transmission, n, 1.0e-14);
+    try expectVecClose(expected_attenuation, attenuation, n, 1.0e-14);
+}
+
+test "layer doubling matches scalar q-skipped reference for fixed 12x10 path" {
+    const n = rows.max_stream_count;
+    const n_gauss = rows.max_gauss;
+    const thresholds = controls.PerformanceThresholds{ .threshold_mul = 1.0e9 };
+    var reflection = rows.Mat.zero(n);
+    var transmission = rows.Mat.zero(n);
+    var attenuation = rows.Vec.zero(n);
+    fillDoublingInputs(&reflection, &transmission, &attenuation, n);
+
+    var expected_reflection = reflection;
+    var expected_transmission = transmission;
+    var expected_attenuation = attenuation;
+    scalarDoubleLayerSkippedProducts(2, n, &expected_reflection, &expected_transmission, &expected_attenuation);
+
+    layer_rt.doubleLayer(
+        2,
+        n,
+        n_gauss,
+        thresholds,
+        &reflection,
+        &transmission,
+        &attenuation,
+        2,
+        4,
+        6,
+        null,
+    );
+
+    try expectMatrixClose(expected_reflection, reflection, n, 1.0e-14);
+    try expectMatrixClose(expected_transmission, transmission, n, 1.0e-14);
+    try expectVecClose(expected_attenuation, attenuation, n, 1.0e-14);
+}
+
 fn expectDoublingDecision(
     actual: layer_rt.LayerDoublingDecision,
     expected_start_optical_depth: f64,
@@ -203,6 +269,63 @@ fn fillTraceMatrix(matrix: *rows.Mat, n: usize, base: f64) void {
             const row_term = 0.17 * @as(f64, @floatFromInt(row + 1));
             const col_term = 0.023 * @as(f64, @floatFromInt(col + 3));
             matrix.set(row, col, base + row_term - col_term);
+        }
+    }
+}
+
+fn fillDoublingInputs(reflection: *rows.Mat, transmission: *rows.Mat, attenuation: *rows.Vec, n: usize) void {
+    // fillDoublingInputs -------------------------------------------------------------------------------------|
+    // Build small deterministic LABOS layer rows that keep all trace products below the high skip threshold.  |
+    // --------------------------------------------------------------------------------------------------------|
+    reflection.* = rows.Mat.zero(n);
+    transmission.* = rows.Mat.zero(n);
+    attenuation.* = rows.Vec.zero(n);
+
+    for (0..n) |row| {
+        attenuation.set(row, 0.72 - 0.011 * @as(f64, @floatFromInt(row)));
+        for (0..n) |col| {
+            const row_term = 0.0007 * @as(f64, @floatFromInt(row + 1));
+            const col_term = 0.00013 * @as(f64, @floatFromInt(col + 3));
+            reflection.set(row, col, row_term + col_term);
+            transmission.set(row, col, 0.0011 + row_term - 0.00007 * @as(f64, @floatFromInt(col + 1)));
+        }
+    }
+}
+
+fn scalarDoubleLayerSkippedProducts(
+    doubling_count: usize,
+    n: usize,
+    reflection: *rows.Mat,
+    transmission: *rows.Mat,
+    attenuation: *rows.Vec,
+) void {
+    // scalarDoubleLayerSkippedProducts -----------------------------------------------------------------------|
+    // Independent reference for the old doubling route when Q, R-D, T-U, and T-D products are skipped.        |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   U = R*diag(E)                                                                                         |
+    //   R = R + diag(E)*U                                                                                     |
+    //   T = diag(E)*T + T*diag(E)                                                                             |
+    //   E = E*E                                                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..doubling_count) |_| {
+        var next_reflection = rows.Mat.zero(n);
+        var next_transmission = rows.Mat.zero(n);
+        for (0..n) |row| {
+            const erow = attenuation.get(row);
+            for (0..n) |col| {
+                const ecol = attenuation.get(col);
+                const u = reflection.get(row, col) * ecol;
+                next_reflection.set(row, col, reflection.get(row, col) + erow * u);
+                next_transmission.set(row, col, erow * transmission.get(row, col) + transmission.get(row, col) * ecol);
+            }
+        }
+
+        reflection.* = next_reflection;
+        transmission.* = next_transmission;
+        for (0..n) |index| {
+            const e = attenuation.get(index);
+            attenuation.set(index, e * e);
         }
     }
 }
@@ -294,5 +417,14 @@ fn expectMatrixClose(expected: rows.Mat, actual: rows.Mat, n: usize, tolerance: 
         for (0..n) |col| {
             try std.testing.expectApproxEqAbs(expected.get(row, col), actual.get(row, col), tolerance);
         }
+    }
+}
+
+fn expectVecClose(expected: rows.Vec, actual: rows.Vec, n: usize, tolerance: f64) !void {
+    // expectVecClose -----------------------------------------------------------------------------------------|
+    // Compare active vector entries used by one LABOS layer row.                                              |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..n) |index| {
+        try std.testing.expectApproxEqAbs(expected.get(index), actual.get(index), tolerance);
     }
 }
