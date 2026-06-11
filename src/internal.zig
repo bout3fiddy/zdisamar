@@ -148,6 +148,7 @@ pub const transport = struct {
     pub const controls = @import("transport/controls.zig");
     pub const gauss_angles = @import("transport/gauss_angles.zig");
     pub const jacobian_states = @import("transport/jacobian_states.zig");
+    pub const layer_reflect_transmit = @import("transport/layer_reflect_transmit.zig");
     pub const matrix_12x10 = @import("transport/matrix_12x10.zig");
     pub const rows = @import("transport/rows.zig");
 };
