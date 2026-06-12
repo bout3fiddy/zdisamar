@@ -1,7 +1,7 @@
 const std = @import("std");
 
 // o2_case.zig ----------------------------------------------------------------------------------------------- |
-// Typed reference-case controls consumed by WP2 setup tables.                                                 |
+// Typed O2 A product-case controls consumed by setup tables and forward runs.                                 |
 //                                                                                                             |
 // runtime boundary                                                                                            |
 //   These rows are setup inputs only. Asset paths and text formats are resolved by src/assets; setup tables   |
