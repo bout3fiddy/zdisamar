@@ -8,6 +8,7 @@ test {
     _ = @import("assets/readers_test.zig");
     _ = @import("common/units_test.zig");
     _ = @import("common/memory_test.zig");
+    _ = @import("common/worker_partition_test.zig");
     _ = @import("common/math/gauss_legendre_test.zig");
     _ = @import("common/math/spline_test.zig");
     _ = @import("setup/o2_run_tables_test.zig");
