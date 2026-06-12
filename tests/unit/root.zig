@@ -38,6 +38,7 @@ test {
     _ = @import("spectrum/sampling_table_test.zig");
     _ = @import("spectrum/solar_lookup_test.zig");
     _ = @import("spectrum/spectrum_run_test.zig");
+    _ = @import("validation/o2a_band_metrics_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
 

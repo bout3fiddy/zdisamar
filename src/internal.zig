@@ -185,6 +185,21 @@ pub const spectrum = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// validation -------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for validation-only WP3 metric helpers.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const validation = struct {
+    pub const o2a_band_metrics = @import("validation/o2a_band_metrics.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // instrumentation --------------------------------------------------------------------------------------------|
 // Namespace-only test import wrapper for instrumentation facades.                                             |
 //                                                                                                             |
