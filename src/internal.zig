@@ -145,6 +145,7 @@ pub const optics = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const transport = struct {
+    pub const attenuation = @import("transport/attenuation.zig");
     pub const controls = @import("transport/controls.zig");
     pub const gauss_angles = @import("transport/gauss_angles.zig");
     pub const jacobian_states = @import("transport/jacobian_states.zig");
