@@ -71,6 +71,23 @@ pub const SpectrumMemory = struct {
         _ = try memory.ensureSliceCapacity(f64, allocator, &self.kernel_weights, side_sample_count);
     }
 
+    pub fn takeTable(
+        self: *SpectrumMemory,
+        allocator: Allocator,
+        owned_table: *sampling_table.OwnedSpectrumSamplingTable,
+    ) void {
+        // SpectrumMemory.takeTable ---------------------------------------------------------------------------|
+        // Move an owned sampling table into retained session memory without copying the row or side arrays.   |
+        // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.rows);
+        allocator.free(self.kernel_offsets_nm);
+        allocator.free(self.kernel_weights);
+        self.rows = owned_table.rows;
+        self.kernel_offsets_nm = owned_table.kernel_offsets_nm;
+        self.kernel_weights = owned_table.kernel_weights;
+        owned_table.* = .{};
+    }
+
     pub fn table(
         self: *const SpectrumMemory,
         row_count: usize,

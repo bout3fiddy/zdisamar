@@ -140,6 +140,21 @@ pub const optics = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// output -----------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for public output owner rows.                                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const output = struct {
+    pub const spectrum = @import("output/spectrum.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // transport --------------------------------------------------------------------------------------------------|
 // Namespace-only test import wrapper for WP3 transport state modules.                                         |
 //                                                                                                             |

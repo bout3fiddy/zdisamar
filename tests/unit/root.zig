@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const internal = @import("internal");
 
 test {
@@ -43,19 +44,107 @@ test {
     _ = @import("instrumentation/facades_test.zig");
 }
 
-test "public root exposes only WP2 setup surface" {
+test "public root exposes setup session and spectrum surface" {
     const zdisamar = internal.public;
 
     try std.testing.expect(@hasDecl(zdisamar, "O2Case"));
     try std.testing.expect(@hasDecl(zdisamar, "O2RunTables"));
     try std.testing.expect(@hasDecl(zdisamar, "ProfileLineValues"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2SessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2Spectrum"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2SpectrumRunResult"));
     try std.testing.expect(@hasDecl(zdisamar, "defaultO2Case"));
+    try std.testing.expect(@hasDecl(zdisamar, "prepareO2A"));
+    try std.testing.expect(@hasDecl(zdisamar, "initO2SessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "runO2AWithSessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "runO2A"));
     try std.testing.expect(@hasDecl(zdisamar, "buildReferenceO2RunTables"));
     try std.testing.expect(@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
 
     try std.testing.expect(!@hasDecl(zdisamar, "Scene"));
     try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));
     try std.testing.expect(!@hasDecl(zdisamar, "ProductStorage"));
-    try std.testing.expect(!@hasDecl(zdisamar, "run"));
-    try std.testing.expect(!@hasDecl(zdisamar, "prepare"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Context"));
+    try std.testing.expect(!@hasDecl(zdisamar, "zds_context_create"));
+}
+
+test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+    if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_ROOT_SESSION_PARITY")) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const zdisamar = internal.public;
+    const jacobian_states = internal.transport.jacobian_states;
+
+    var case = zdisamar.defaultO2Case();
+    case.spectral_grid = .{
+        .start_nm = 758.0,
+        .end_nm = 760.0,
+        .sample_count = 2,
+    };
+
+    var prepared = try zdisamar.prepareO2A(allocator, case);
+    defer prepared.deinit(allocator);
+    var session = zdisamar.initO2SessionMemory(allocator);
+    defer session.deinit(allocator);
+
+    const solve_config = zdisamar.SolveConfig{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .controls = .{
+            .scattering = .none,
+            .n_streams = @intCast(case.rtm.stream_count),
+            .integrate_source_function = false,
+        },
+    };
+
+    var first = try zdisamar.runO2AWithSessionMemory(
+        allocator,
+        &session,
+        &prepared,
+        solve_config,
+    );
+    defer first.deinit(allocator);
+    const profile_values_ptr = session.profile_lines.values.ptr;
+    const support_profile_values_ptr = session.profile_lines.support_profile_values.ptr;
+
+    var second = try zdisamar.runO2AWithSessionMemory(
+        allocator,
+        &session,
+        &prepared,
+        solve_config,
+    );
+    defer second.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), first.spectrum.sampleCount());
+    try std.testing.expectEqual(first.spectrum.sampleCount(), second.spectrum.sampleCount());
+    try std.testing.expect(session.profile_lines.values.ptr == profile_values_ptr);
+    try std.testing.expect(session.profile_lines.support_profile_values.ptr == support_profile_values_ptr);
+
+    for (
+        first.spectrum.wavelength_nm,
+        first.spectrum.radiance,
+        first.spectrum.irradiance,
+        first.spectrum.reflectance,
+        second.spectrum.radiance,
+        second.spectrum.irradiance,
+        second.spectrum.reflectance,
+    ) |
+        wavelength_nm,
+        first_radiance,
+        first_irradiance,
+        first_reflectance,
+        second_radiance,
+        second_irradiance,
+        second_reflectance,
+    | {
+        try std.testing.expect(std.math.isFinite(wavelength_nm));
+        try std.testing.expect(std.math.isFinite(first_radiance));
+        try std.testing.expect(std.math.isFinite(first_irradiance));
+        try std.testing.expect(std.math.isFinite(first_reflectance));
+        try std.testing.expectApproxEqAbs(first_radiance, second_radiance, 0.0);
+        try std.testing.expectApproxEqAbs(first_irradiance, second_irradiance, 0.0);
+        try std.testing.expectApproxEqAbs(first_reflectance, second_reflectance, 0.0);
+    }
 }
