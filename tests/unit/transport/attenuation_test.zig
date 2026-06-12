@@ -5,6 +5,7 @@ const internal = @import("internal");
 const attenuation = internal.transport.attenuation;
 const curved_sun_path = internal.optics.curved_sun_path;
 const gauss_angles = internal.transport.gauss_angles;
+const jacobian_states = internal.transport.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 
 const earth_radius_km: f64 = 6371.0;
@@ -84,6 +85,54 @@ test "dynamic attenuation expands every level pair from layer cache" {
     }
 }
 
+test "dynamic tangent attenuation follows optical-depth product rule" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const layers = tangentLayers();
+    var data: [8 * 4 * 4]f64 = undefined;
+
+    const tangent = try attenuation.fillDynamicTangent(
+        &data,
+        &layers,
+        .aerosol_optical_depth,
+        &geometry,
+    );
+
+    try std.testing.expectEqual(@as(usize, geometry.stream_count), tangent.stream_count);
+    try std.testing.expectEqual(@as(usize, layers.len + 1), tangent.level_count);
+    for (0..geometry.stream_count) |stream_index| {
+        for (0..layers.len + 1) |from_level| {
+            for (0..layers.len + 1) |to_level| {
+                try expectClose(
+                    scalarPathTransmittanceTangent(
+                        layers[0..],
+                        geometry.u[stream_index],
+                        from_level,
+                        to_level,
+                        .aerosol_optical_depth,
+                    ),
+                    tangent.get(stream_index, from_level, to_level),
+                    1.0e-15,
+                );
+            }
+        }
+    }
+}
+
+test "dynamic tangent attenuation returns zero for inactive Jacobian state" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const layers = tangentLayers();
+    var data: [8 * 4 * 4]f64 = undefined;
+
+    const tangent = try attenuation.fillDynamicTangent(
+        &data,
+        &layers,
+        .aerosol_layer_mid_pressure_hpa,
+        &geometry,
+    );
+
+    for (tangent.data) |value| try std.testing.expectEqual(@as(f64, 0.0), value);
+}
+
 test "pseudo-spherical correction replaces top-to-level attenuation only" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
     const layers = testLayers();
@@ -148,6 +197,17 @@ fn testLayers() [3]layer_depths.LayerOptics {
     };
 }
 
+fn tangentLayers() [3]layer_depths.LayerOptics {
+    // tangentLayers ----------------------------------------------------------------------------------------- |
+    // Build deterministic optical-depth rows with AOD derivative lanes for tangent attenuation tests.         |
+    // --------------------------------------------------------------------------------------------------------|
+    var layers = testLayers();
+    jacobian_states.set(&layers[0].optical_depth_jacobian, .aerosol_optical_depth, 0.2);
+    jacobian_states.set(&layers[1].optical_depth_jacobian, .aerosol_optical_depth, -0.1);
+    jacobian_states.set(&layers[2].optical_depth_jacobian, .aerosol_optical_depth, 0.4);
+    return layers;
+}
+
 fn testCurvedGrid() attenuation.CurvedSunPathGrid {
     // testCurvedGrid ---------------------------------------------------------------------------------------- |
     // Build a small valid pseudo-spherical support grid with one sample in each lower level span.             |
@@ -187,6 +247,38 @@ fn scalarPathTransmittance(
         product *= scalarLayerTransmittance(layers[layer_index], stream_mu);
     }
     return product;
+}
+
+fn scalarPathTransmittanceTangent(
+    layers: []const layer_depths.LayerOptics,
+    stream_mu: f64,
+    from_level: usize,
+    to_level: usize,
+    state: jacobian_states.State,
+) f64 {
+    // scalarPathTransmittanceTangent ------------------------------------------------------------------------ |
+    // Independent product-rule derivative of adjacent layer survival values.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    const start = @min(from_level, to_level);
+    const end = @max(from_level, to_level);
+    var total: f64 = 0.0;
+
+    for (start..end) |tangent_layer_index| {
+        var product: f64 = 1.0;
+        for (start..end) |layer_index| {
+            const layer_transmittance = scalarLayerTransmittance(layers[layer_index], stream_mu);
+            if (layer_index == tangent_layer_index) {
+                const mu = @max(stream_mu, 1.0e-6);
+                const optical_depth_tangent =
+                    jacobian_states.get(layers[layer_index].optical_depth_jacobian, state);
+                product *= layer_transmittance * (-optical_depth_tangent / mu);
+            } else {
+                product *= layer_transmittance;
+            }
+        }
+        total += product;
+    }
+    return total;
 }
 
 fn scalarCurvedTopToLevel(

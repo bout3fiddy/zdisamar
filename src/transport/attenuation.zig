@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const gauss_angles = @import("gauss_angles.zig");
+const jacobian_states = @import("jacobian_states.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const curved_sun_path = @import("../optics/curved_sun_path.zig");
 
@@ -239,6 +240,82 @@ pub fn fillDynamicWithLayerCache(
     return attenuation;
 }
 
+pub fn fillDynamicTangent(
+    data: []f64,
+    layers: []const layer_depths.LayerOptics,
+    state: jacobian_states.State,
+    geometry: *const gauss_angles.GaussGeometry,
+) Error!DynamicAttenuation {
+    // fillDynamicTangent ------------------------------------------------------------------------------------ |
+    // Fill the derivative of the full direct-beam attenuation table for one Jacobian state.                   |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`radiative_transfer/labos/attenuation.zig` `fillAttenuationTangentDynamic` without the     |
+    //   old heap allocation. The non-integrated LABOS tangent route uses this only for layer optical-depth    |
+    //   derivatives; pseudo-spherical Jacobian weighting is an integrated-source route.                       |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   d exp(-tau / mu) = exp(-tau / mu) * (-(d tau) / mu)                                                   |
+    //   d(product * T_layer) = d(product) * T_layer + product * dT_layer                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_count = layers.len;
+    const level_count = layer_count + 1;
+    if (data.len < dynamicRequiredLength(geometry.stream_count, layer_count)) return error.InvalidShape;
+
+    var attenuation = DynamicAttenuation{
+        .data = data[0..dynamicRequiredLength(geometry.stream_count, layer_count)],
+        .stream_count = geometry.stream_count,
+        .level_count = level_count,
+    };
+    @memset(attenuation.data, 0.0);
+
+    for (1..level_count) |to_level| {
+        var from_level_index = to_level;
+
+        while (from_level_index >= 1) : (from_level_index -= 1) {
+            const layer_index = from_level_index - 1;
+
+            for (0..geometry.stream_count) |stream_index| {
+                const mu = @max(geometry.u[stream_index], direction_cosine_floor);
+                const transmittance = math.exp(-layers[layer_index].total_optical_depth / mu);
+                const optical_depth_tangent =
+                    jacobian_states.get(layers[layer_index].optical_depth_jacobian, state);
+                const layer_tangent = transmittance * (-optical_depth_tangent / mu);
+                const path_tangent = attenuation.get(stream_index, from_level_index, to_level);
+                const base_path = cumulativeBaseTransmittance(
+                    layers,
+                    geometry,
+                    stream_index,
+                    from_level_index,
+                    to_level,
+                );
+
+                attenuation.set(
+                    stream_index,
+                    from_level_index - 1,
+                    to_level,
+                    path_tangent * transmittance + base_path * layer_tangent,
+                );
+            }
+        }
+    }
+
+    for (0..level_count) |to_level| {
+        for (to_level..level_count) |from_level| {
+            for (0..geometry.stream_count) |stream_index| {
+                attenuation.set(
+                    stream_index,
+                    from_level,
+                    to_level,
+                    attenuation.get(stream_index, to_level, from_level),
+                );
+            }
+        }
+    }
+
+    return attenuation;
+}
+
 pub fn fillRuntimeInBuffers(
     layer_transmittance: []f64,
     top_to_level: []f64,
@@ -330,6 +407,27 @@ fn fillRuntimeTopToLevelFromLayerTransmittance(
             top_to_level[top_offset + level] = cumulative;
         }
     }
+}
+
+fn cumulativeBaseTransmittance(
+    layers: []const layer_depths.LayerOptics,
+    geometry: *const gauss_angles.GaussGeometry,
+    stream_index: usize,
+    from_level: usize,
+    to_level: usize,
+) f64 {
+    // cumulativeBaseTransmittance --------------------------------------------------------------------------- |
+    // Rebuild the unchanged base path product multiplied by one layer tangent.                                |
+    // --------------------------------------------------------------------------------------------------------|
+    if (from_level >= to_level) return 1.0;
+
+    const mu = @max(geometry.u[stream_index], direction_cosine_floor);
+    var value: f64 = 1.0;
+    for (from_level..to_level) |layer_index| {
+        if (layer_index >= layers.len) break;
+        value *= math.exp(-layers[layer_index].total_optical_depth / mu);
+    }
+    return value;
 }
 
 fn fillDynamicFromLayerTransmittance(

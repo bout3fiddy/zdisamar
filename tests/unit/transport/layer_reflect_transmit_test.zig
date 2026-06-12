@@ -4,11 +4,14 @@ const internal = @import("internal");
 
 const controls = internal.transport.controls;
 const gauss_angles = internal.transport.gauss_angles;
+const jacobian_states = internal.transport.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 const layer_rt = internal.transport.layer_reflect_transmit;
 const phase_basis = internal.transport.phase_basis;
 const phase_table = internal.setup.phase_table;
 const rows = internal.transport.rows;
+
+const tangent_step: f64 = 1.0e-5;
 
 test "layer-doubling decision keeps old layout" {
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(layer_rt.LayerDoublingDecision));
@@ -285,6 +288,67 @@ test "layer row builder matches phase kernel and single scatter without doubling
     }
 }
 
+test "layer tangent rows match old central-difference route" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const phase = testPhaseTable();
+    const rayleigh2: f64 = 0.48;
+    const layer = testLayerWithAerosolTangent(.{
+        .gas_scattering = 0.02,
+        .aerosol_scattering = 0.01,
+        .total_depth = 0.06,
+    });
+    const layers = [_]layer_depths.LayerOptics{layer};
+    var max_indices: [1]usize = undefined;
+    layer_rt.fillLayerPhaseMaxIndices(&max_indices, &layers, phase, rayleigh2);
+    const basis = phase_basis.FourierPlmBasis.init(0, max_indices[0], &geometry);
+    const transport_controls = controls.TransportControls{
+        .scattering = .single,
+        .n_streams = 8,
+        .performance_thresholds = .{},
+    };
+    var tangent_rows: [2]rows.LayerRT = undefined;
+    var inactive_tangent_rows: [2]rows.LayerRT = undefined;
+
+    layer_rt.fillLayerReflectTransmitTangentRowsWithBasis(
+        &tangent_rows,
+        &layers,
+        .aerosol_optical_depth,
+        0,
+        &geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        &basis,
+    );
+    layer_rt.fillLayerReflectTransmitTangentRowsWithBasis(
+        &inactive_tangent_rows,
+        &layers,
+        .aerosol_layer_mid_pressure_hpa,
+        0,
+        &geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        &basis,
+    );
+
+    const expected = centralDifferenceLayerRt(
+        layer,
+        .aerosol_optical_depth,
+        0,
+        &geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        &basis,
+    );
+    try expectLayerRtZero(tangent_rows[0], geometry.stream_count);
+    try expectMatrixClose(expected.R, tangent_rows[1].R, geometry.stream_count, 1.0e-10);
+    try expectMatrixClose(expected.T, tangent_rows[1].T, geometry.stream_count, 1.0e-10);
+    try expectLayerRtZero(inactive_tangent_rows[0], geometry.stream_count);
+    try expectLayerRtZero(inactive_tangent_rows[1], geometry.stream_count);
+}
+
 test "layer doubling matches scalar q-skipped reference for generic stream count" {
     const n = 6;
     const n_gauss = 4;
@@ -353,6 +417,17 @@ fn testLayer(args: TestLayerArgs) layer_depths.LayerOptics {
     };
 }
 
+fn testLayerWithAerosolTangent(args: TestLayerArgs) layer_depths.LayerOptics {
+    // testLayerWithAerosolTangent --------------------------------------------------------------------------- |
+    // Build a deterministic optics row with old non-integrated AOD tangent lanes.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    var layer = testLayer(args);
+    jacobian_states.set(&layer.optical_depth_jacobian, .aerosol_optical_depth, 0.30);
+    jacobian_states.set(&layer.scattering_optical_depth_jacobian, .aerosol_optical_depth, 0.08);
+    jacobian_states.set(&layer.single_scatter_albedo_jacobian, .aerosol_optical_depth, -0.20);
+    return layer;
+}
+
 fn testPhaseTable() phase_table.PhaseTable {
     // testPhaseTable ---------------------------------------------------------------------------------------- |
     // Build a short explicit phase row for scalar phase-mixture tests.                                        |
@@ -365,6 +440,114 @@ fn testPhaseTable() phase_table.PhaseTable {
         .aerosol_phase_max_index = 2,
         .aerosol_asymmetry_factor = 0.0,
     };
+}
+
+fn centralDifferenceLayerRt(
+    layer: layer_depths.LayerOptics,
+    state: jacobian_states.State,
+    fourier_index: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    transport_controls: controls.TransportControls,
+    phase: phase_table.PhaseTable,
+    rayleigh2: f64,
+    basis: *const phase_basis.FourierPlmBasis,
+) rows.LayerRT {
+    // centralDifferenceLayerRt ------------------------------------------------------------------------------ |
+    // Test reference for main:`labos/layers.zig` `calcRTlayersTangentIntoWithBasis`.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    const plus_layers = [_]layer_depths.LayerOptics{
+        perturbedLayer(layer, state, tangent_step),
+    };
+    const minus_layers = [_]layer_depths.LayerOptics{
+        perturbedLayer(layer, state, -tangent_step),
+    };
+    var plus_rt: [2]rows.LayerRT = undefined;
+    var minus_rt: [2]rows.LayerRT = undefined;
+
+    layer_rt.fillLayerReflectTransmitRowsWithBasis(
+        &plus_rt,
+        &plus_layers,
+        fourier_index,
+        geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        basis,
+        null,
+        null,
+        0,
+        null,
+        null,
+        null,
+        null,
+    );
+    layer_rt.fillLayerReflectTransmitRowsWithBasis(
+        &minus_rt,
+        &minus_layers,
+        fourier_index,
+        geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        basis,
+        null,
+        null,
+        0,
+        null,
+        null,
+        null,
+        null,
+    );
+
+    return scaledLayerRtDifference(plus_rt[1], minus_rt[1], 0.5 / tangent_step);
+}
+
+fn perturbedLayer(
+    layer: layer_depths.LayerOptics,
+    state: jacobian_states.State,
+    signed_step: f64,
+) layer_depths.LayerOptics {
+    // perturbedLayer ---------------------------------------------------------------------------------------- |
+    // Apply the old finite-difference perturbation to the scalar layer optical variables.                     |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = layer;
+    result.total_optical_depth = @max(
+        layer.total_optical_depth + signed_step * jacobian_states.get(layer.optical_depth_jacobian, state),
+        0.0,
+    );
+    result.total_scattering_optical_depth = @max(
+        layer.total_scattering_optical_depth +
+            signed_step * jacobian_states.get(layer.scattering_optical_depth_jacobian, state),
+        0.0,
+    );
+    result.single_scatter_albedo = std.math.clamp(
+        layer.single_scatter_albedo +
+            signed_step * jacobian_states.get(layer.single_scatter_albedo_jacobian, state),
+        0.0,
+        1.0,
+    );
+    return result;
+}
+
+fn scaledLayerRtDifference(plus: rows.LayerRT, minus: rows.LayerRT, scale: f64) rows.LayerRT {
+    // scaledLayerRtDifference ------------------------------------------------------------------------------- |
+    // Build an expected derivative RT row from two ordinary RT rows.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .R = scaledMatrixDifference(plus.R, minus.R, scale),
+        .T = scaledMatrixDifference(plus.T, minus.T, scale),
+    };
+}
+
+fn scaledMatrixDifference(plus: rows.Mat, minus: rows.Mat, scale: f64) rows.Mat {
+    // scaledMatrixDifference -------------------------------------------------------------------------------- |
+    // Build an expected derivative matrix from two ordinary LABOS matrices.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat{ .data = undefined, .n = plus.n };
+    for (0..plus.n * plus.n) |index| {
+        result.data[index] = (plus.data[index] - minus.data[index]) * scale;
+    }
+    return result;
 }
 
 test "layer doubling matches scalar q-skipped reference for fixed 12x10 path" {
@@ -607,6 +790,18 @@ fn expectMatrixClose(expected: rows.Mat, actual: rows.Mat, n: usize, tolerance: 
     for (0..n) |row| {
         for (0..n) |col| {
             try std.testing.expectApproxEqAbs(expected.get(row, col), actual.get(row, col), tolerance);
+        }
+    }
+}
+
+fn expectLayerRtZero(actual: rows.LayerRT, n: usize) !void {
+    // expectLayerRtZero ------------------------------------------------------------------------------------- |
+    // Verify the active block of a surface or inactive tangent row is exactly empty.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..n) |row| {
+        for (0..n) |col| {
+            try std.testing.expectEqual(@as(f64, 0.0), actual.R.get(row, col));
+            try std.testing.expectEqual(@as(f64, 0.0), actual.T.get(row, col));
         }
     }
 }

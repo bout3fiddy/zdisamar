@@ -2,6 +2,7 @@ const std = @import("std");
 
 const controls = @import("controls.zig");
 const gauss_angles = @import("gauss_angles.zig");
+const jacobian_states = @import("jacobian_states.zig");
 const matrix12 = @import("matrix_12x10.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const phase_basis = @import("phase_basis.zig");
@@ -17,6 +18,7 @@ const math = std.math;
 const phase_normalization_floor: f64 = 1.0e-30;
 const empty_layer_optical_depth_floor: f64 = 1.0e-20;
 const layer_direction_cosine_floor: f64 = 1.0e-12;
+const tangent_step: f64 = 1.0e-5;
 
 const phase_odd_reciprocal = build_phase_odd_reciprocal: {
     var values: [phase_table.coefficient_count]f64 = undefined;
@@ -310,6 +312,113 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
     }
 }
 
+pub fn fillLayerReflectTransmitTangentRowsWithBasis(
+    rt_tangent: []rows.LayerRT,
+    layers: []const layer_depths.LayerOptics,
+    state: jacobian_states.State,
+    fourier_index: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    transport_controls: controls.TransportControls,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    plm_basis: *const phase_basis.FourierPlmBasis,
+) void {
+    // fillLayerReflectTransmitTangentRowsWithBasis ---------------------------------------------------------- |
+    // Build derivative RT rows for one Jacobian state using the old central-difference route.                 |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`radiative_transfer/labos/layers.zig` `calcRTlayersTangentIntoWithBasis`. The old route    |
+    //   perturbs optical depth, scattering optical depth, and single-scatter albedo; phase rows are copied    |
+    //   from the base layer and are not recomputed from the perturbation.                                     |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   tangent RT = (RT(x + eps * dx) - RT(x - eps * dx)) / (2 * eps)                                        |
+    //   eps = tangent_step = 1.0e-5                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    const level_count = layers.len + 1;
+    std.debug.assert(rt_tangent.len >= level_count);
+    for (rt_tangent[0..level_count]) |*layer_rt| layer_rt.* = zeroLayerRt(geometry.stream_count);
+
+    const inverse_span = 0.5 / tangent_step;
+    for (layers, 0..) |layer, layer_index| {
+        const optical_depth_tangent = jacobian_states.get(layer.optical_depth_jacobian, state);
+        const scattering_depth_tangent =
+            jacobian_states.get(layer.scattering_optical_depth_jacobian, state);
+        const single_scatter_albedo_tangent =
+            jacobian_states.get(layer.single_scatter_albedo_jacobian, state);
+        if (optical_depth_tangent == 0.0 and
+            scattering_depth_tangent == 0.0 and
+            single_scatter_albedo_tangent == 0.0)
+        {
+            continue;
+        }
+
+        var plus_layer = layer;
+        plus_layer.total_optical_depth =
+            @max(layer.total_optical_depth + tangent_step * optical_depth_tangent, 0.0);
+        plus_layer.total_scattering_optical_depth =
+            @max(layer.total_scattering_optical_depth + tangent_step * scattering_depth_tangent, 0.0);
+        plus_layer.single_scatter_albedo = std.math.clamp(
+            layer.single_scatter_albedo + tangent_step * single_scatter_albedo_tangent,
+            0.0,
+            1.0,
+        );
+
+        var minus_layer = layer;
+        minus_layer.total_optical_depth =
+            @max(layer.total_optical_depth - tangent_step * optical_depth_tangent, 0.0);
+        minus_layer.total_scattering_optical_depth =
+            @max(layer.total_scattering_optical_depth - tangent_step * scattering_depth_tangent, 0.0);
+        minus_layer.single_scatter_albedo = std.math.clamp(
+            layer.single_scatter_albedo - tangent_step * single_scatter_albedo_tangent,
+            0.0,
+            1.0,
+        );
+
+        const plus_layers = [_]layer_depths.LayerOptics{plus_layer};
+        const minus_layers = [_]layer_depths.LayerOptics{minus_layer};
+        var plus_rt: [2]rows.LayerRT = undefined;
+        var minus_rt: [2]rows.LayerRT = undefined;
+
+        fillLayerReflectTransmitRowsWithBasis(
+            &plus_rt,
+            &plus_layers,
+            fourier_index,
+            geometry,
+            transport_controls,
+            phase,
+            rayleigh_phase_coefficient2,
+            plm_basis,
+            null,
+            null,
+            0,
+            null,
+            null,
+            null,
+            null,
+        );
+        fillLayerReflectTransmitRowsWithBasis(
+            &minus_rt,
+            &minus_layers,
+            fourier_index,
+            geometry,
+            transport_controls,
+            phase,
+            rayleigh_phase_coefficient2,
+            plm_basis,
+            null,
+            null,
+            0,
+            null,
+            null,
+            null,
+            null,
+        );
+
+        rt_tangent[layer_index + 1] = layerRtDifferenceScaled(plus_rt[1], minus_rt[1], inverse_span);
+    }
+}
+
 fn buildLayerPhaseKernel(
     layer: layer_depths.LayerOptics,
     fourier_index: usize,
@@ -499,6 +608,27 @@ fn zeroLayerRt(stream_count: usize) rows.LayerRT {
         .R = rows.Mat.zero(stream_count),
         .T = rows.Mat.zero(stream_count),
     };
+}
+
+fn layerRtDifferenceScaled(plus: rows.LayerRT, minus: rows.LayerRT, scale: f64) rows.LayerRT {
+    // layerRtDifferenceScaled ------------------------------------------------------------------------------- |
+    // Difference two RT rows and multiply by the central-difference scale.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .R = matDifferenceScaled(plus.R, minus.R, scale),
+        .T = matDifferenceScaled(plus.T, minus.T, scale),
+    };
+}
+
+fn matDifferenceScaled(plus: rows.Mat, minus: rows.Mat, scale: f64) rows.Mat {
+    // matDifferenceScaled ----------------------------------------------------------------------------------- |
+    // Elementwise scaled matrix difference for one active RT block.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = rows.Mat{ .data = undefined, .n = plus.n };
+    for (0..plus.n * plus.n) |index| {
+        result.data[index] = (plus.data[index] - minus.data[index]) * scale;
+    }
+    return result;
 }
 
 pub fn renormalizeZeroFourierPhaseKernel(
