@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 
+const controls = internal.transport.controls;
 const jacobian_states = internal.transport.jacobian_states;
 const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
@@ -336,6 +337,167 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
             out_wavelengths[0..],
             out_radiance[0..],
             out_irradiance[0..],
+        ),
+    );
+}
+
+test "postprocessAndAssembleProductRows carries integrated radiance irradiance and Jacobians" {
+    const solve_config: controls.SolveConfig = .{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo) |
+            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+    };
+    const raw_radiance = [_]radiance_results.RadianceResult{
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
+    };
+    const raw_irradiance = [_]f64{ 100.0, 200.0 };
+    var out_radiance: [2]radiance_results.RadianceResult = undefined;
+    var out_irradiance: [2]f64 = undefined;
+    var out_reflectance: [2]f64 = undefined;
+    var out_jacobian: [2]jacobian_states.Vector = undefined;
+
+    const summary = try spectrum_run.postprocessAndAssembleProductRows(
+        solve_config,
+        true,
+        true,
+        .{ .gain = 2.0, .offset = 1.0 },
+        .{ .gain = 0.5, .offset = 2.0 },
+        &.{},
+        &.{},
+        0.25,
+        raw_radiance[0..],
+        raw_irradiance[0..],
+        out_radiance[0..],
+        out_irradiance[0..],
+        out_reflectance[0..],
+        out_jacobian[0..],
+    );
+
+    const row0_scale = std.math.pi / (52.0 * 0.25);
+    const row1_scale = std.math.pi / (102.0 * 0.25);
+    try std.testing.expectApproxEqAbs(21.0, out_radiance[0].radiance, 0.0);
+    try std.testing.expectEqual([3]f64{ 2.0, 0.0, 200.0 }, out_radiance[0].jacobian);
+    try std.testing.expectApproxEqAbs(41.0, out_radiance[1].radiance, 0.0);
+    try std.testing.expectEqual([3]f64{ 4.0, 0.0, 400.0 }, out_radiance[1].jacobian);
+    try std.testing.expectEqual([2]f64{ 52.0, 102.0 }, out_irradiance);
+    try std.testing.expectApproxEqAbs(21.0 * row0_scale, out_reflectance[0], 1.0e-14);
+    try std.testing.expectApproxEqAbs(41.0 * row1_scale, out_reflectance[1], 1.0e-14);
+    try std.testing.expectApproxEqAbs(2.0 * row0_scale, out_jacobian[0][0], 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.0, out_jacobian[0][1], 0.0);
+    try std.testing.expectApproxEqAbs(200.0 * row0_scale, out_jacobian[0][2], 1.0e-14);
+    try std.testing.expectApproxEqAbs(4.0 * row1_scale, out_jacobian[1][0], 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.0, out_jacobian[1][1], 0.0);
+    try std.testing.expectApproxEqAbs(400.0 * row1_scale, out_jacobian[1][2], 1.0e-14);
+    try std.testing.expectEqual(@as(usize, 2), summary.sample_count);
+    try std.testing.expectApproxEqAbs(out_reflectance[0] + out_reflectance[1], summary.reflectance_sum, 1.0e-14);
+}
+
+test "postprocessAndAssembleProductRows convolves non-integrated product rows" {
+    const solve_config: controls.SolveConfig = .{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+    };
+    const kernel = [_]f64{ 1.0, 1.0, 1.0 };
+    const raw_radiance = [_]radiance_results.RadianceResult{
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
+        .{ .radiance = 40.0, .jacobian = .{ 4.0, 40.0, 400.0 } },
+    };
+    const raw_irradiance = [_]f64{ 100.0, 200.0, 300.0 };
+    var out_radiance: [3]radiance_results.RadianceResult = undefined;
+    var out_irradiance: [3]f64 = undefined;
+    var out_reflectance: [3]f64 = undefined;
+    var out_jacobian: [3]jacobian_states.Vector = undefined;
+
+    const summary = try spectrum_run.postprocessAndAssembleProductRows(
+        solve_config,
+        false,
+        false,
+        .{},
+        .{},
+        kernel[0..],
+        kernel[0..],
+        0.5,
+        raw_radiance[0..],
+        raw_irradiance[0..],
+        out_radiance[0..],
+        out_irradiance[0..],
+        out_reflectance[0..],
+        out_jacobian[0..],
+    );
+
+    const expected_radiance = [_]f64{ 15.0, 70.0 / 3.0, 30.0 };
+    const expected_irradiance = [_]f64{ 150.0, 200.0, 250.0 };
+    const expected_jacobian = [_]f64{ 1.5, 7.0 / 3.0, 3.0 };
+    for (expected_radiance, expected_irradiance, expected_jacobian, 0..) |radiance, irradiance, jacobian, index| {
+        const scale = std.math.pi / (irradiance * 0.5);
+        try std.testing.expectApproxEqAbs(radiance, out_radiance[index].radiance, 1.0e-14);
+        try std.testing.expectApproxEqAbs(jacobian, out_radiance[index].jacobian[0], 1.0e-14);
+        try std.testing.expectApproxEqAbs(0.0, out_radiance[index].jacobian[1], 0.0);
+        try std.testing.expectApproxEqAbs(0.0, out_radiance[index].jacobian[2], 0.0);
+        try std.testing.expectApproxEqAbs(irradiance, out_irradiance[index], 1.0e-14);
+        try std.testing.expectApproxEqAbs(radiance * scale, out_reflectance[index], 1.0e-14);
+        try std.testing.expectApproxEqAbs(jacobian * scale, out_jacobian[index][0], 1.0e-14);
+        try std.testing.expectApproxEqAbs(0.0, out_jacobian[index][1], 0.0);
+        try std.testing.expectApproxEqAbs(0.0, out_jacobian[index][2], 0.0);
+    }
+    try std.testing.expectEqual(@as(usize, 3), summary.sample_count);
+    try std.testing.expectApproxEqAbs(15.0 + 70.0 / 3.0 + 30.0, summary.radiance_sum, 1.0e-14);
+}
+
+test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
+    const raw_radiance = [_]radiance_results.RadianceResult{
+        .{ .radiance = 10.0 },
+        .{ .radiance = 20.0 },
+    };
+    const raw_irradiance = [_]f64{100.0};
+    const full_raw_irradiance = [_]f64{ 100.0, 200.0 };
+    var out_radiance: [2]radiance_results.RadianceResult = undefined;
+    var out_irradiance: [2]f64 = undefined;
+    var out_reflectance: [2]f64 = undefined;
+    var out_jacobian: [2]jacobian_states.Vector = undefined;
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        spectrum_run.postprocessAndAssembleProductRows(
+            .{},
+            true,
+            true,
+            .{},
+            .{},
+            &.{},
+            &.{},
+            1.0,
+            raw_radiance[0..],
+            raw_irradiance[0..],
+            out_radiance[0..],
+            out_irradiance[0..],
+            out_reflectance[0..],
+            out_jacobian[0..],
+        ),
+    );
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        spectrum_run.postprocessAndAssembleProductRows(
+            .{
+                .derivative_mode = .semi_analytical,
+                .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+            },
+            true,
+            true,
+            .{},
+            .{},
+            &.{},
+            &.{},
+            1.0,
+            raw_radiance[0..],
+            full_raw_irradiance[0..],
+            out_radiance[0..],
+            out_irradiance[0..],
+            out_reflectance[0..],
+            &.{},
         ),
     );
 }

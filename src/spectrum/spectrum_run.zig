@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const instrument_average = @import("instrument_average.zig");
+const jacobian_states = @import("../transport/jacobian_states.zig");
 const radiance_results = @import("radiance_results.zig");
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
 const sampling_table = @import("sampling_table.zig");
@@ -349,6 +351,99 @@ pub fn gatherProductRows(
             table.kernel_storage,
         );
     }
+}
+
+pub fn postprocessAndAssembleProductRows(
+    solve_config: controls.SolveConfig,
+    uses_integrated_radiance_sampling: bool,
+    uses_integrated_irradiance_sampling: bool,
+    radiance_calibration: instrument_average.Calibration,
+    irradiance_calibration: instrument_average.Calibration,
+    radiance_slit_kernel: []const f64,
+    irradiance_slit_kernel: []const f64,
+    solar_cosine: f64,
+    raw_radiance: []const radiance_results.RadianceResult,
+    raw_irradiance: []const f64,
+    out_radiance: []radiance_results.RadianceResult,
+    out_irradiance: []f64,
+    out_reflectance: []f64,
+    out_jacobian: []jacobian_states.Vector,
+) (Error || instrument_average.Error)!instrument_average.ReflectanceAssemblySummary {
+    // postprocessAndAssembleProductRows ------------------------------------------------------------------     |
+    // Apply the old product-grid postprocess order and final reflectance assembly to caller-owned rows.        |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the orchestration order from main: `simulate.zig` `fillRadianceSamples`,                         |
+    //   `fillIrradianceSamples`, `processJacobianSamples`, and `assembleReflectance`. The scalar               |
+    //   convolution, calibration, and reflectance math stays in `instrument_average.zig`.                      |
+    //                                                                                                          |
+    // data flow                                                                                                |
+    //   raw product radiance     -> radiance convolution/calibration plus active Jacobian lanes                |
+    //   raw product irradiance   -> irradiance convolution/calibration                                         |
+    //   calibrated product rows  -> reflectance and optional reflectance Jacobian rows                         |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Every slice is caller-owned. Non-integrated convolution overlap guards are enforced by                 |
+    //   `instrument_average`; this wrapper only proves that all product-row slices describe the same count.    |
+    // ---------------------------------------------------------------------------------------------------------|
+    const row_count = raw_radiance.len;
+    const shape_matches = raw_irradiance.len == row_count and
+        out_radiance.len == row_count and
+        out_irradiance.len == row_count and
+        out_reflectance.len == row_count;
+    if (!shape_matches) return error.ShapeMismatch;
+
+    // instrumentation: trace zone: radiance postprocess ------------------------------------------------------ |
+    // captures: product-row radiance convolution/calibration wall time                                         |
+    // why: preserves visibility of the old simulate.radiance_postprocess stage.                                |
+    {
+        const radiance_zone = Trace.staticZone(@src(), "spectrum.radiance_postprocess");
+        radiance_zone.value(@intCast(row_count));
+        defer radiance_zone.end();
+        try instrument_average.postprocessRadianceResults(
+            solve_config,
+            uses_integrated_radiance_sampling,
+            radiance_calibration,
+            radiance_slit_kernel,
+            raw_radiance,
+            out_radiance,
+        );
+    }
+    // end instrumentation: trace zone: radiance postprocess -------------------------------------------------- |
+
+    // instrumentation: trace zone: irradiance postprocess ---------------------------------------------------- |
+    // captures: product-row irradiance convolution/calibration wall time                                       |
+    // why: preserves visibility of the old simulate.irradiance_postprocess stage.                              |
+    {
+        const irradiance_zone = Trace.staticZone(@src(), "spectrum.irradiance_postprocess");
+        irradiance_zone.value(@intCast(row_count));
+        defer irradiance_zone.end();
+        try instrument_average.postprocessSignal(
+            uses_integrated_irradiance_sampling,
+            irradiance_calibration,
+            irradiance_slit_kernel,
+            raw_irradiance,
+            out_irradiance,
+        );
+    }
+    // end instrumentation: trace zone: irradiance postprocess ------------------------------------------------ |
+
+    // instrumentation: trace zone: reflectance assembly ------------------------------------------------------ |
+    // captures: final reflectance and reflectance-Jacobian assembly wall time                                  |
+    // why: keeps the final product conversion separate from sampling and channel postprocess costs.            |
+    const reflectance_zone = Trace.staticZone(@src(), "spectrum.reflectance_assembly");
+    reflectance_zone.value(@intCast(row_count));
+    defer reflectance_zone.end();
+    // end instrumentation: trace zone: reflectance assembly -------------------------------------------------- |
+
+    return instrument_average.assembleReflectanceResults(
+        solve_config,
+        solar_cosine,
+        out_radiance,
+        out_irradiance,
+        out_reflectance,
+        out_jacobian,
+    );
 }
 
 pub fn preferredRadianceWorkerCount(radiance_count: usize) usize {
