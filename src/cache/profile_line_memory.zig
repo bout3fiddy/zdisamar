@@ -335,6 +335,26 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         0.0,
     );
     defer deinitWeakLineStates(allocator, weak_states);
+
+    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. Preparing those
+    // two thermodynamic rows once per layer keeps HITRAN partition interpolation out of the dense
+    // wavelength/profile loop while preserving the scalar multiplication order in weakLinePreparedContribution.
+    const upper_weak_states = try prepareLayerWeakLineStates(
+        allocator,
+        active_lines,
+        layers.layer_temperatures_k,
+        layers.layer_pressures_hpa,
+        0.5,
+    );
+    defer deinitWeakLineStates(allocator, upper_weak_states);
+    const lower_weak_states = try prepareLayerWeakLineStates(
+        allocator,
+        active_lines,
+        layers.layer_temperatures_k,
+        layers.layer_pressures_hpa,
+        -0.5,
+    );
+    defer deinitWeakLineStates(allocator, lower_weak_states);
     const total_weak_states = try prepareLayerWeakLineStates(
         allocator,
         total_lines,
@@ -381,18 +401,16 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
                 wavelength_nm,
                 runtime,
             );
-            const upper_sigma = weakLineSigmaAt(
+            const upper_sigma = weakLineSigmaAtPreparedFiniteDifference(
                 active_lines,
+                &upper_weak_states[profile_node_index],
                 wavelength_nm,
-                temperature_k + 0.5,
-                pressure_hpa,
                 runtime,
             );
-            const lower_sigma = weakLineSigmaAt(
+            const lower_sigma = weakLineSigmaAtPreparedFiniteDifference(
                 active_lines,
+                &lower_weak_states[profile_node_index],
                 wavelength_nm,
-                @max(temperature_k - 0.5, min_hitran_temperature_k),
-                pressure_hpa,
                 runtime,
             );
             const total = totalSpectroscopyAt(
@@ -955,7 +973,6 @@ fn totalSpectroscopyAt(
             prepared_state.?.safe_pressure,
         );
     };
-
     var weak_line_sigma: f64 = 0.0;
     for (window.lines, 0..) |line, line_index| {
         if (shouldExcludeWeakLine(line, line_index, window.lines, strong_lines, vendor_partition)) continue;
@@ -1005,26 +1022,6 @@ fn totalSpectroscopyAt(
     };
 }
 
-fn weakLineSigmaAt(
-    active_lines: []const readers.O2LineAssetRow,
-    wavelength_nm: f64,
-    temperature_k: f64,
-    pressure_hpa: f64,
-    runtime: RuntimeControls,
-) f64 {
-    // weakLineSigmaAt ----------------------------------------------------------------------------------------|
-    // Sum filtered weak-line Voigt contributions at one wavelength and profile-node thermodynamic point.      |
-    // --------------------------------------------------------------------------------------------------------|
-    const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
-    const pressure_atm = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
-    const window = relevantLineWindow(active_lines, wavelength_nm, runtime.cutoff_cm1);
-    var sigma: f64 = 0.0;
-    for (window.lines) |line| {
-        sigma += weakLineContribution(wavelength_nm, line, safe_temperature, pressure_atm, runtime);
-    }
-    return sigma;
-}
-
 fn weakLineSigmaAtPrepared(
     active_lines: []const readers.O2LineAssetRow,
     state: *const WeakLinePreparedState,
@@ -1056,6 +1053,38 @@ fn weakLineSigmaAtPrepared(
             runtime,
             stimulated_emission_scale,
             thermodynamic_scale,
+        );
+    }
+    return sigma;
+}
+
+fn weakLineSigmaAtPreparedFiniteDifference(
+    active_lines: []const readers.O2LineAssetRow,
+    state: *const WeakLinePreparedState,
+    wavelength_nm: f64,
+    runtime: RuntimeControls,
+) f64 {
+    // weakLineSigmaAtPreparedFiniteDifference ----------------------------------------------------------------|
+    // Evaluate T +/- 0.5 K rows with the scalar old-route multiplication order for d_sigma/dT evidence.       |
+    // --------------------------------------------------------------------------------------------------------|
+    std.debug.assert(state.line_count == active_lines.len);
+    std.debug.assert(state.lines.len == active_lines.len);
+
+    const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+    const stimulated_emission_scale = weakLinePreparedStimulatedEmissionScale(
+        evaluation_wavenumber_cm1,
+        state.safe_temperature,
+    );
+    const window = relevantLineWindow(active_lines, wavelength_nm, runtime.cutoff_cm1);
+    var sigma: f64 = 0.0;
+    for (window.lines, 0..) |_, line_index| {
+        sigma += weakLinePreparedContributionFiniteDifference(
+            evaluation_wavenumber_cm1,
+            state.lines[window.start_index + line_index],
+            runtime,
+            stimulated_emission_scale,
+            state.safe_temperature,
+            state.safe_pressure,
         );
     }
     return sigma;
@@ -1357,6 +1386,32 @@ fn weakLinePreparedContribution(
     const prefactor = prepared_line.prefactor_base *
         stimulated_emission_scale *
         thermodynamic_scale;
+    return @max(prefactor * cpf.wr, 0.0);
+}
+
+fn weakLinePreparedContributionFiniteDifference(
+    evaluation_wavenumber_cm1: f64,
+    prepared_line: WeakLinePreparedLineState,
+    runtime: RuntimeControls,
+    stimulated_emission_scale: f64,
+    safe_temperature: f64,
+    safe_pressure: f64,
+) f64 {
+    // weakLinePreparedContributionFiniteDifference -----------------------------------------------------------|
+    // Match weakLineContribution's multiply/divide order for pinned d_sigma/dT finite-difference rows.        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!preparedInsideCutoff(prepared_line, evaluation_wavenumber_cm1, runtime)) return 0.0;
+
+    const cpf = complexProbabilityFunction(
+        (prepared_line.shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1) * prepared_line.cte,
+        prepared_line.line_shape_y,
+    );
+    const prefactor = prepared_line.prefactor_base *
+        stimulated_emission_scale *
+        safe_temperature *
+        hitran_boltzmann_constant_cm3_hpa_per_k /
+        safe_pressure /
+        1013.25;
     return @max(prefactor * cpf.wr, 0.0);
 }
 
